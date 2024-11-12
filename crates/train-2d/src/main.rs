@@ -7,7 +7,6 @@ use brush_render::{
     bounding_box::BoundingBox,
     camera::{focal_to_fov, fov_to_focal, Camera},
     gaussian_splats::{RandomSplatsConfig, Splats},
-    PrimaryBackend,
 };
 use brush_train::{
     image::image_to_tensor,
@@ -18,7 +17,7 @@ use brush_ui::burn_texture::BurnTexture;
 use burn::{
     backend::{
         wgpu::{WgpuDevice, WgpuSetup},
-        Autodiff,
+        Autodiff, Wgpu,
     },
     lr_scheduler::exponential::ExponentialLrSchedulerConfig,
     module::AutodiffModule,
@@ -28,8 +27,10 @@ use egui::{load::SizedTexture, ImageSource, TextureHandle, TextureOptions};
 use glam::{Quat, Vec2, Vec3};
 use rand::SeedableRng;
 
+type Backend = Wgpu;
+
 struct TrainStep {
-    splats: Splats<PrimaryBackend>,
+    splats: Splats<Backend>,
     step: u32,
 }
 
@@ -44,12 +45,12 @@ fn spawn_train_loop(
     async_std::task::spawn(async move {
         let seed = 42;
 
-        <PrimaryBackend as burn::prelude::Backend>::seed(seed);
+        <Wgpu as burn::prelude::Backend>::seed(seed);
         let mut rng = rand::rngs::StdRng::from_seed([seed as u8; 32]);
 
         let init_bounds = BoundingBox::from_min_max(-Vec3::ONE * 5.0, Vec3::ONE * 5.0);
 
-        let mut splats: Splats<Autodiff<PrimaryBackend>> = Splats::from_random_config(
+        let mut splats: Splats<Autodiff<Backend>> = Splats::from_random_config(
             RandomSplatsConfig::new()
                 .with_sh_degree(0)
                 .with_init_count(32),
@@ -139,11 +140,10 @@ impl eframe::App for App {
             );
 
             let renderer = frame.wgpu_render_state().unwrap().renderer.clone();
-            let texture_id = self.backbuffer.update_texture(img, renderer);
-
             let size = egui::vec2(image.width() as f32, image.height() as f32);
 
             ui.horizontal(|ui| {
+                let texture_id = self.backbuffer.update_texture(img, renderer);
                 ui.image(ImageSource::Texture(SizedTexture::new(texture_id, size)));
                 ui.image(ImageSource::Texture(SizedTexture::new(
                     self.tex_handle.id(),

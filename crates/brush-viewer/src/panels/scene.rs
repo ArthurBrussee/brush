@@ -1,5 +1,6 @@
 use brush_dataset::splat_export;
 use brush_ui::burn_texture::BurnTexture;
+use burn_wgpu::Wgpu;
 use egui::epaint::mutex::RwLock as EguiRwLock;
 use std::sync::Arc;
 
@@ -60,7 +61,7 @@ impl ScenePanel {
         &mut self,
         ui: &mut egui::Ui,
         context: &mut ViewerContext,
-        splats: &Splats<brush_render::PrimaryBackend>,
+        splats: &Splats<Wgpu>,
     ) {
         let mut size = ui.available_size();
         let focal = context.camera.focal(glam::uvec2(1, 1));

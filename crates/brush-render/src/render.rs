@@ -1,4 +1,4 @@
-use super::{shaders, Backend, RenderAux};
+use super::{shaders, RenderAux};
 
 use std::mem::{offset_of, size_of};
 
@@ -9,7 +9,7 @@ use crate::{
         GatherGrads, GetTileBinEdges, MapGaussiansToIntersect, ProjectBackwards, ProjectSplats,
         ProjectVisible, Rasterize, RasterizeBackwards,
     },
-    PrimaryBackend,
+    SplatGrads,
 };
 
 use brush_kernel::{
@@ -17,23 +17,13 @@ use brush_kernel::{
 };
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
+use burn::tensor::ops::FloatTensorOps;
 use burn::tensor::ops::IntTensorOps;
-use burn::tensor::ops::{FloatTensor, FloatTensorOps};
-use burn::tensor::{Tensor, TensorPrimitive};
-use burn::{backend::autodiff::NodeID, tensor::BasicAutodiffOps};
-use burn::{
-    backend::{
-        autodiff::{
-            checkpoint::{base::Checkpointer, strategy::CheckpointStrategy},
-            grads::Gradients,
-            ops::{Backward, Ops, OpsKind},
-        },
-        Autodiff,
-    },
-    tensor::Float,
-};
+use burn_jit::JitBackend;
 use burn_wgpu::{JitTensor, WgpuRuntime};
 use glam::uvec2;
+
+type InnerWgpu = JitBackend<WgpuRuntime, f32, i32>;
 
 pub const SH_C0: f32 = shaders::gather_grads::SH_C0;
 
@@ -52,7 +42,7 @@ pub fn sh_degree_from_coeffs(coeffs_per_channel: u32) -> u32 {
     }
 }
 
-fn render_forward(
+pub(crate) fn render_forward(
     camera: &Camera,
     img_size: glam::UVec2,
     means: JitTensor<WgpuRuntime, f32>,
@@ -61,7 +51,7 @@ fn render_forward(
     sh_coeffs: JitTensor<WgpuRuntime, f32>,
     raw_opacities: JitTensor<WgpuRuntime, f32>,
     raster_u32: bool,
-) -> (JitTensor<WgpuRuntime, f32>, RenderAux<PrimaryBackend>) {
+) -> (JitTensor<WgpuRuntime, f32>, RenderAux<InnerWgpu>) {
     let device = &means.device.clone();
     let client = means.client.clone();
 
@@ -121,7 +111,7 @@ fn render_forward(
     let client = &means.client.clone();
 
     let (global_from_compact_gid, num_visible) = {
-        let global_from_presort_gid = PrimaryBackend::int_zeros([num_points].into(), device);
+        let global_from_presort_gid = InnerWgpu::int_zeros([num_points].into(), device);
         let depths = create_tensor::<f32, 1, _>([num_points], device, client);
 
         tracing::trace_span!("ProjectSplats", sync_burn = true).in_scope(||
@@ -143,7 +133,7 @@ fn render_forward(
 
         // Get just the number of visible splats from the uniforms buffer.
         let num_vis_field_offset = offset_of!(shaders::helpers::RenderUniforms, num_visible) / 4;
-        let num_visible = PrimaryBackend::int_slice(
+        let num_visible = InnerWgpu::int_slice(
             uniforms_buffer.clone(),
             &[num_vis_field_offset..num_vis_field_offset + 1],
         );
@@ -162,7 +152,7 @@ fn render_forward(
     let projected_splats = create_tensor::<f32, 2, _>([num_points, projected_size], device, client);
 
     // Number of tiles hit per splat. Has to be zerod as we later sum over this.
-    let num_tiles_hit = PrimaryBackend::int_zeros([num_points].into(), device);
+    let num_tiles_hit = InnerWgpu::int_zeros([num_points].into(), device);
     let num_vis_wg = create_dispatch_buffer(num_visible.clone(), [shaders::helpers::MAIN_WG, 1, 1]);
 
     tracing::trace_span!("ProjectVisibile", sync_burn = true).in_scope(|| unsafe {
@@ -189,7 +179,7 @@ fn render_forward(
     });
 
     let num_intersections =
-        PrimaryBackend::int_slice(cum_tiles_hit.clone(), &[num_points - 1..num_points]);
+        InnerWgpu::int_slice(cum_tiles_hit.clone(), &[num_points - 1..num_points]);
 
     let num_tiles = tile_bounds[0] * tile_bounds[1];
 
@@ -238,7 +228,7 @@ fn render_forward(
 
         let _span = tracing::trace_span!("GetTileBinEdges", sync_burn = true).entered();
 
-        let tile_bins = PrimaryBackend::int_zeros(
+        let tile_bins = InnerWgpu::int_zeros(
             [tile_bounds.y as usize, tile_bounds.x as usize, 2].into(),
             device,
         );
@@ -322,306 +312,134 @@ fn render_forward(
     )
 }
 
-impl Backend for PrimaryBackend {
-    fn render_splats(
-        camera: &Camera,
-        img_size: glam::UVec2,
-        means: Tensor<Self, 2>,
-        _xy_dummy: Tensor<Self, 2>,
-        log_scales: Tensor<Self, 2>,
-        quats: Tensor<Self, 2>,
-        sh_coeffs: Tensor<Self, 3>,
-        raw_opacity: Tensor<Self, 1>,
-        render_u32_buffer: bool,
-    ) -> (Tensor<Self, 3>, RenderAux<Self>) {
-        let (out_img, aux) = render_forward(
-            camera,
-            img_size,
-            means.into_primitive().tensor(),
-            log_scales.into_primitive().tensor(),
-            quats.into_primitive().tensor(),
-            sh_coeffs.into_primitive().tensor(),
-            raw_opacity.into_primitive().tensor(),
-            render_u32_buffer,
-        );
+pub(crate) fn render_backward(
+    means: JitTensor<WgpuRuntime, f32>,
+    quats: JitTensor<WgpuRuntime, f32>,
+    log_scales: JitTensor<WgpuRuntime, f32>,
+    raw_opac: JitTensor<WgpuRuntime, f32>,
+    out_img: JitTensor<WgpuRuntime, f32>,
+    v_output: JitTensor<WgpuRuntime, f32>,
 
-        (Tensor::from_primitive(TensorPrimitive::Float(out_img)), aux)
-    }
-}
+    projected_splats: JitTensor<WgpuRuntime, f32>,
+    num_visible: JitTensor<WgpuRuntime, i32>,
+    uniforms_buffer: JitTensor<WgpuRuntime, i32>,
+    compact_gid_from_isect: JitTensor<WgpuRuntime, i32>,
+    global_from_compact_gid: JitTensor<WgpuRuntime, i32>,
+    tile_bins: JitTensor<WgpuRuntime, i32>,
+    final_index: JitTensor<WgpuRuntime, i32>,
 
-#[derive(Debug, Clone)]
-struct GaussianBackwardState<B: Backend> {
-    means: NodeID,
-    log_scales: NodeID,
-    quats: NodeID,
-    raw_opac: NodeID,
     sh_degree: u32,
-    out_img: B::FloatTensorPrimitive,
-    aux: RenderAux<B>,
-}
+) -> SplatGrads<InnerWgpu> {
+    let device = &out_img.device;
+    let img_dimgs = out_img.shape.dims;
+    let img_size = glam::uvec2(img_dimgs[1] as u32, img_dimgs[0] as u32);
 
-#[derive(Debug)]
-struct RenderBackwards;
+    let num_points = means.shape.dims[0];
 
-impl<C: CheckpointStrategy> Backend for Autodiff<PrimaryBackend, C> {
-    fn render_splats(
-        camera: &Camera,
-        img_size: glam::UVec2,
-        means: Tensor<Self, 2>,
-        xy_dummy: Tensor<Self, 2>,
-        log_scales: Tensor<Self, 2>,
-        quats: Tensor<Self, 2>,
-        sh_coeffs: Tensor<Self, 3>,
-        raw_opacity: Tensor<Self, 1>,
-        render_u32_buffer: bool,
-    ) -> (Tensor<Self, 3>, RenderAux<Self>) {
-        // Get backend tensors & dequantize if needed. Could try and support quantized inputs
-        // in the future.
-        let means = means.into_primitive().tensor();
-        let xy_dummy = xy_dummy.into_primitive().tensor();
-        let log_scales = log_scales.into_primitive().tensor();
-        let quats = quats.into_primitive().tensor();
-        let sh_coeffs = sh_coeffs.into_primitive().tensor();
-        let raw_opacity = raw_opacity.into_primitive().tensor();
+    let client = &means.client;
 
-        // Render complete forward pass.
-        let (out_img, aux) = render_forward(
-            camera,
-            img_size,
-            means.clone().into_primitive(),
-            log_scales.clone().into_primitive(),
-            quats.clone().into_primitive(),
-            sh_coeffs.clone().into_primitive(),
-            raw_opacity.clone().into_primitive(),
-            render_u32_buffer,
+    let (v_xys_local, v_xys_global, v_conics, v_coeffs, v_raw_opac) = {
+        let tile_bounds = uvec2(
+            img_size.x.div_ceil(shaders::helpers::TILE_WIDTH),
+            img_size.y.div_ceil(shaders::helpers::TILE_WIDTH),
         );
 
-        // Not sure why going into the autodiff float tensor type is so verbose.
-        let diff_proj = <Float as BasicAutodiffOps<Self>>::from_inner(TensorPrimitive::Float(
-            aux.projected_splats.clone(),
-        ))
-        .tensor();
+        let invocations = tile_bounds.x * tile_bounds.y;
 
-        let auxc = aux.clone();
-        let wrapped_aux = RenderAux::<Self> {
-            projected_splats: diff_proj,
-            uniforms_buffer: aux.uniforms_buffer,
-            num_intersections: aux.num_intersections,
-            num_visible: aux.num_visible,
-            final_index: aux.final_index,
-            cum_tiles_hit: aux.cum_tiles_hit,
-            tile_bins: aux.tile_bins,
-            compact_gid_from_isect: aux.compact_gid_from_isect,
-            global_from_compact_gid: aux.global_from_compact_gid,
-        };
+        // These gradients are atomically added to so important to zero them.
+        let v_xys_local = InnerWgpu::float_zeros([num_points, 2].into(), device);
+        let v_conics = InnerWgpu::float_zeros([num_points, 3].into(), device);
+        let v_colors = InnerWgpu::float_zeros([num_points, 4].into(), device);
 
-        // Prepare backward pass, and check if we even need to do it. Store nodes that need gradients.
-        let prep_nodes = RenderBackwards
-            .prepare::<C>([
-                means.clone().node,
-                xy_dummy.clone().node,
-                log_scales.clone().node,
-                quats.clone().node,
-                sh_coeffs.clone().node,
-                raw_opacity.clone().node,
-            ])
-            .compute_bound()
-            .stateful();
+        // TODO: Properly register hardware atomic floats as a cube feature when
+        // https://github.com/gfx-rs/wgpu/pull/6234 lands.
+        //
+        // On mac, this is needed as our wgpu version doesn't support CAS on metal yet...
+        let hard_floats = cfg!(target_os = "macos");
 
-        let sh_degree = sh_degree_from_coeffs(sh_coeffs.primitive.shape.dims[1] as u32);
-
-        match prep_nodes {
-            OpsKind::Tracked(mut prep) => {
-                // Save state needed for backward pass.
-                let state = GaussianBackwardState {
-                    means: prep.checkpoint(&means),
-                    log_scales: prep.checkpoint(&log_scales),
-                    quats: prep.checkpoint(&quats),
-                    raw_opac: prep.checkpoint(&raw_opacity),
-                    sh_degree,
-                    aux: auxc,
-                    out_img: out_img.clone(),
-                };
-
-                let finish = prep.finish(state, out_img);
-
-                (
-                    Tensor::from_primitive(TensorPrimitive::Float(finish)),
-                    wrapped_aux,
-                )
-            }
-            OpsKind::UnTracked(prep) => {
-                // When no node is tracked, we can just use the original operation without
-                // keeping any state.
-                (
-                    Tensor::from_primitive(TensorPrimitive::Float(prep.finish(out_img))),
-                    wrapped_aux,
-                )
-            }
-        }
-    }
-}
-
-impl Backward<PrimaryBackend, 6> for RenderBackwards {
-    type State = GaussianBackwardState<PrimaryBackend>;
-
-    fn backward(
-        self,
-        ops: Ops<Self::State, 6>,
-        grads: &mut Gradients,
-        checkpointer: &mut Checkpointer,
-    ) {
-        let _span = tracing::trace_span!("render_gaussians backwards").entered();
-
-        let state = ops.state;
-        let aux = state.aux;
-
-        let img_dimgs = state.out_img.shape.dims;
-        let img_size = glam::uvec2(img_dimgs[1] as u32, img_dimgs[0] as u32);
-
-        let v_output = grads.consume::<PrimaryBackend>(&ops.node);
-        let client = &v_output.client;
-        let device = &v_output.device;
-
-        let means = checkpointer.retrieve_node_output::<FloatTensor<PrimaryBackend>>(state.means);
-        let quats = checkpointer.retrieve_node_output::<FloatTensor<PrimaryBackend>>(state.quats);
-        let log_scales =
-            checkpointer.retrieve_node_output::<FloatTensor<PrimaryBackend>>(state.log_scales);
-        let raw_opac =
-            checkpointer.retrieve_node_output::<FloatTensor<PrimaryBackend>>(state.raw_opac);
-
-        let num_points = means.shape.dims[0];
-        let num_visible = aux.num_visible;
-
-        let (v_xys_local, v_xys_global, v_conics, v_coeffs, v_opacities) = {
-            let tile_bounds = uvec2(
-                img_size.x.div_ceil(shaders::helpers::TILE_WIDTH),
-                img_size.y.div_ceil(shaders::helpers::TILE_WIDTH),
-            );
-
-            let invocations = tile_bounds.x * tile_bounds.y;
-
-            // These gradients are atomically added to so important to zero them.
-            let v_xys_local = PrimaryBackend::float_zeros([num_points, 2].into(), device);
-            let v_conics = PrimaryBackend::float_zeros([num_points, 3].into(), device);
-            let v_colors = PrimaryBackend::float_zeros([num_points, 4].into(), device);
-
-            // TODO: Properly register hardware atomic floats as a cube feature when
-            // https://github.com/gfx-rs/wgpu/pull/6234 lands.
-            //
-            // On mac, this is needed as our wgpu version doesn't support CAS on metal yet...
-            let hard_floats = cfg!(target_os = "macos");
-
-            tracing::trace_span!("RasterizeBackwards", sync_burn = true).in_scope(|| unsafe {
-                client.execute_unchecked(
-                    RasterizeBackwards::task(hard_floats),
-                    CubeCount::Static(invocations, 1, 1),
-                    vec![
-                        aux.uniforms_buffer.clone().handle.binding(),
-                        aux.compact_gid_from_isect.handle.binding(),
-                        aux.tile_bins.handle.binding(),
-                        aux.projected_splats.handle.binding(),
-                        aux.final_index.handle.binding(),
-                        state.out_img.handle.binding(),
-                        v_output.handle.binding(),
-                        v_xys_local.clone().handle.binding(),
-                        v_conics.clone().handle.binding(),
-                        v_colors.clone().handle.binding(),
-                    ],
-                );
-            });
-
-            let v_coeffs_shape = [
-                num_points,
-                sh_coeffs_for_degree(state.sh_degree) as usize,
-                3,
-            ];
-            let v_coeffs = PrimaryBackend::float_zeros(v_coeffs_shape.into(), device);
-            let v_opacities = PrimaryBackend::float_zeros([num_points].into(), device);
-
-            let _span = tracing::trace_span!("GatherGrads", sync_burn = true).entered();
-
-            let num_vis_wg =
-                create_dispatch_buffer(num_visible.clone(), GatherGrads::WORKGROUP_SIZE);
-
-            let v_xys_global = PrimaryBackend::float_zeros([num_points, 2].into(), device);
-            unsafe {
-                client.execute_unchecked(
-                    GatherGrads::task(),
-                    CubeCount::Dynamic(num_vis_wg.handle.binding()),
-                    vec![
-                        aux.uniforms_buffer.clone().handle.binding(),
-                        aux.global_from_compact_gid.clone().handle.binding(),
-                        raw_opac.clone().handle.binding(),
-                        means.clone().handle.binding(),
-                        v_colors.clone().handle.binding(),
-                        v_xys_local.clone().handle.binding(),
-                        v_coeffs.handle.clone().binding(),
-                        v_opacities.handle.clone().binding(),
-                        v_xys_global.handle.clone().binding(),
-                    ],
-                );
-            }
-
-            (v_xys_local, v_xys_global, v_conics, v_coeffs, v_opacities)
-        };
-
-        // Create tensors to hold gradients.
-
-        // Nb: these are packed vec3 values, special care is taken in the kernel to respect alignment.
-        // Nb: These have to be zerod out - as we only write to visible splats.
-        let v_means = PrimaryBackend::float_zeros([num_points, 3].into(), device);
-        let v_scales = PrimaryBackend::float_zeros([num_points, 3].into(), device);
-        let v_quats = PrimaryBackend::float_zeros([num_points, 4].into(), device);
-
-        tracing::trace_span!("ProjectBackwards", sync_burn = true).in_scope(|| unsafe {
+        tracing::trace_span!("RasterizeBackwards", sync_burn = true).in_scope(|| unsafe {
             client.execute_unchecked(
-                ProjectBackwards::task(),
-                calc_cube_count([num_points as u32], ProjectBackwards::WORKGROUP_SIZE),
+                RasterizeBackwards::task(hard_floats),
+                CubeCount::Static(invocations, 1, 1),
                 vec![
-                    aux.uniforms_buffer.handle.binding(),
-                    means.handle.binding(),
-                    log_scales.handle.binding(),
-                    quats.handle.binding(),
-                    aux.global_from_compact_gid.handle.binding(),
-                    v_xys_local.handle.clone().binding(),
-                    v_conics.handle.binding(),
-                    v_means.handle.clone().binding(),
-                    v_scales.handle.clone().binding(),
-                    v_quats.handle.clone().binding(),
+                    uniforms_buffer.clone().handle.binding(),
+                    compact_gid_from_isect.handle.binding(),
+                    tile_bins.handle.binding(),
+                    projected_splats.handle.binding(),
+                    final_index.handle.binding(),
+                    out_img.handle.binding(),
+                    v_output.handle.binding(),
+                    v_xys_local.clone().handle.binding(),
+                    v_conics.clone().handle.binding(),
+                    v_colors.clone().handle.binding(),
                 ],
             );
         });
 
-        // Register gradients for parent nodes (This code is already skipped entirely
-        // if no parent nodes require gradients).
-        let [mean_parent, xys_parent, log_scales_parent, quats_parent, coeffs_parent, raw_opacity_parent] =
-            ops.parents;
+        let v_coeffs_shape = [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3];
+        let v_coeffs = InnerWgpu::float_zeros(v_coeffs_shape.into(), device);
+        let v_opacities = InnerWgpu::float_zeros([num_points].into(), device);
 
-        if let Some(node) = mean_parent {
-            grads.register::<PrimaryBackend>(node.id, v_means);
+        let _span = tracing::trace_span!("GatherGrads", sync_burn = true).entered();
+
+        let num_vis_wg = create_dispatch_buffer(num_visible.clone(), GatherGrads::WORKGROUP_SIZE);
+
+        let v_xys_global = InnerWgpu::float_zeros([num_points, 2].into(), device);
+        unsafe {
+            client.execute_unchecked(
+                GatherGrads::task(),
+                CubeCount::Dynamic(num_vis_wg.handle.binding()),
+                vec![
+                    uniforms_buffer.clone().handle.binding(),
+                    global_from_compact_gid.clone().handle.binding(),
+                    raw_opac.clone().handle.binding(),
+                    means.clone().handle.binding(),
+                    v_colors.clone().handle.binding(),
+                    v_xys_local.clone().handle.binding(),
+                    v_coeffs.handle.clone().binding(),
+                    v_opacities.handle.clone().binding(),
+                    v_xys_global.handle.clone().binding(),
+                ],
+            );
         }
 
-        // Register the gradients for the dummy xy input.
-        if let Some(node) = xys_parent {
-            grads.register::<PrimaryBackend>(node.id, v_xys_global);
-        }
+        (v_xys_local, v_xys_global, v_conics, v_coeffs, v_opacities)
+    };
 
-        if let Some(node) = log_scales_parent {
-            grads.register::<PrimaryBackend>(node.id, v_scales);
-        }
+    // Create tensors to hold gradients.
 
-        if let Some(node) = quats_parent {
-            grads.register::<PrimaryBackend>(node.id, v_quats);
-        }
+    // Nb: these are packed vec3 values, special care is taken in the kernel to respect alignment.
+    // Nb: These have to be zerod out - as we only write to visible splats.
+    let v_means = InnerWgpu::float_zeros([num_points, 3].into(), device);
+    let v_scales = InnerWgpu::float_zeros([num_points, 3].into(), device);
+    let v_quats = InnerWgpu::float_zeros([num_points, 4].into(), device);
 
-        if let Some(node) = coeffs_parent {
-            grads.register::<PrimaryBackend>(node.id, v_coeffs);
-        }
+    tracing::trace_span!("ProjectBackwards", sync_burn = true).in_scope(|| unsafe {
+        client.execute_unchecked(
+            ProjectBackwards::task(),
+            calc_cube_count([num_points as u32], ProjectBackwards::WORKGROUP_SIZE),
+            vec![
+                uniforms_buffer.handle.binding(),
+                means.handle.binding(),
+                log_scales.handle.binding(),
+                quats.handle.binding(),
+                global_from_compact_gid.handle.binding(),
+                v_xys_local.handle.clone().binding(),
+                v_conics.handle.binding(),
+                v_means.handle.clone().binding(),
+                v_scales.handle.clone().binding(),
+                v_quats.handle.clone().binding(),
+            ],
+        );
+    });
 
-        if let Some(node) = raw_opacity_parent {
-            grads.register::<PrimaryBackend>(node.id, v_opacities);
-        }
+    SplatGrads {
+        v_means,
+        v_quats,
+        v_scales,
+        v_coeffs,
+        v_raw_opac,
+        v_xy: v_xys_global,
     }
 }
 
@@ -634,16 +452,20 @@ mod tests {
         camera::{focal_to_fov, fov_to_focal},
         gaussian_splats::Splats,
         safetensor_utils::safetensor_to_burn,
+        Backend,
     };
 
     use super::*;
     use assert_approx_eq::assert_approx_eq;
     use async_std::task;
     use brush_rerun::{BurnToImage, BurnToRerun};
-    use burn::tensor::{Float, Int};
-    use burn_wgpu::WgpuDevice;
+    use burn::{
+        backend::Autodiff,
+        tensor::{Float, Int, Tensor, TensorPrimitive},
+    };
+    use burn_wgpu::{Wgpu, WgpuDevice};
 
-    type DiffBack = Autodiff<PrimaryBackend>;
+    type DiffBack = Autodiff<Wgpu>;
     use anyhow::{Context, Result};
     use safetensors::SafeTensors;
 
@@ -664,26 +486,28 @@ mod tests {
         let img_size = glam::uvec2(32, 32);
         let device = WgpuDevice::DefaultDevice;
         let num_points = 8;
-        let means = Tensor::<DiffBack, 2, _>::zeros([num_points, 3], &device);
-        let xy_dummy = Tensor::<DiffBack, 2, _>::zeros([num_points, 2], &device);
-        let log_scales = Tensor::ones([num_points, 3], &device) * 2.0;
-        let quats = Tensor::<_, 1, _>::from_floats(glam::Quat::IDENTITY.to_array(), &device)
-            .unsqueeze_dim(0)
-            .repeat_dim(0, num_points);
-        let sh_coeffs = Tensor::ones([num_points, 1, 3], &device);
-        let raw_opacity = Tensor::zeros([num_points], &device);
+        let means = Tensor::<DiffBack, 2>::zeros([num_points, 3], &device);
+        let xy_dummy = Tensor::<DiffBack, 2>::zeros([num_points, 2], &device);
+        let log_scales = Tensor::<DiffBack, 2>::ones([num_points, 3], &device) * 2.0;
+        let quats: Tensor<DiffBack, 2> =
+            Tensor::<DiffBack, 1>::from_floats(glam::Quat::IDENTITY.to_array(), &device)
+                .unsqueeze_dim(0)
+                .repeat_dim(0, num_points);
+        let sh_coeffs = Tensor::<DiffBack, 3>::ones([num_points, 1, 3], &device);
+        let raw_opacity = Tensor::<DiffBack, 1>::zeros([num_points], &device);
         let (output, _) = DiffBack::render_splats(
             &cam,
             img_size,
-            means,
-            xy_dummy,
-            log_scales,
-            quats,
-            sh_coeffs,
-            raw_opacity,
+            means.into_primitive().tensor(),
+            xy_dummy.into_primitive().tensor(),
+            log_scales.into_primitive().tensor(),
+            quats.into_primitive().tensor(),
+            sh_coeffs.into_primitive().tensor(),
+            raw_opacity.into_primitive().tensor(),
             false,
         );
 
+        let output: Tensor<DiffBack, 3> = Tensor::from_primitive(TensorPrimitive::Float(output));
         let rgb = output.clone().slice([0..32, 0..32, 0..3]);
         let alpha = output.clone().slice([0..32, 0..32, 3..4]);
         let rgb_mean = rgb.clone().mean().to_data().as_slice::<f32>().unwrap()[0];
@@ -808,6 +632,14 @@ mod tests {
             let v_xys_ref =
                 safetensor_to_burn::<DiffBack, 2>(tensors.tensor("v_xy")?, &device).inner();
             let v_xys = splats.xys_dummy.grad(&grads).context("no xys grad")?;
+
+            let v_xys_data = v_xys.to_data().to_vec::<f32>().unwrap();
+            let v_xys_ref_data = v_xys_ref.to_data().to_vec::<f32>().unwrap();
+
+            for (i, (xy, ref_xy)) in v_xys_data.iter().zip(v_xys_ref_data.iter()).enumerate() {
+                println!("xy[{}] {:.12} != ref {:.12}", i, xy, ref_xy);
+            }
+
             assert!(v_xys.all_close(v_xys_ref, Some(1e-5), Some(1e-10)));
 
             let v_opacities_ref =
@@ -818,20 +650,6 @@ mod tests {
             let v_coeffs_ref =
                 safetensor_to_burn::<DiffBack, 3>(tensors.tensor("v_coeffs")?, &device).inner();
             let v_coeffs = splats.sh_coeffs.grad(&grads).context("coeffs grad")?;
-
-            let v_coeffs_data = v_coeffs.to_data().to_vec::<f32>().unwrap();
-            let v_coeffs_ref_data = v_coeffs_ref.to_data().to_vec::<f32>().unwrap();
-
-            for (i, (coeff, ref_coeff)) in v_coeffs_data
-                .iter()
-                .zip(v_coeffs_ref_data.iter())
-                .enumerate()
-            {
-                if (coeff - ref_coeff).abs() > 1e-8 {
-                    println!("coeff[{}] {:.12} != ref {:.12}", i, coeff, ref_coeff);
-                }
-            }
-
             assert!(v_coeffs.all_close(v_coeffs_ref, Some(1e-4), Some(1e-9)));
 
             let v_means_ref =

@@ -59,16 +59,12 @@ burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',
     'template',
-    # 'autotune',
-    "std",
 ] }
-burn-jit = { git = "https://github.com/tracel-ai/burn", default-features = false, features = [
-    "std",
-    "fusion",
-] }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", default-features = false, features = [
+burn-jit = { git = "https://github.com/tracel-ai/burn" }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
 ] }
+burn-fusion = { git = "https://github.com/tracel-ai/burn" }
 
 egui = { git = "https://github.com/emilk/egui/", rev = "5bfff316c9818b3c140d02bb6cdc488556d46ab7" }
 eframe = { git = "https://github.com/emilk/egui/", rev = "5bfff316c9818b3c140d02bb6cdc488556d46ab7", default-features = false, features = [
@@ -102,6 +98,7 @@ zip = { version = "2.1.3", default-features = false, features = ["deflate"] }
 # burn = { path = "../burn/crates/burn" }
 # burn-jit = { path = "../burn/crates/burn-jit" }
 # burn-wgpu = { path = "../burn/crates/burn-wgpu" }
+# burn-fusion = { path = "../burn/crates/burn-fusion" }
 
 # [patch."https://github.com/tracel-ai/cubecl"]
 # cubecl = { path = "../cubecl/crates/cubecl" }

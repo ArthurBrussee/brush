@@ -5,8 +5,7 @@ use crate::{
 use burn::{
     config::Config,
     module::{Module, Param, ParamId},
-    tensor::activation::sigmoid,
-    tensor::{Device, Shape, Tensor},
+    tensor::{activation::sigmoid, Device, Shape, Tensor, TensorPrimitive},
 };
 use glam::Vec3;
 use kiddo::{KdTree, SquaredEuclidean};
@@ -174,17 +173,19 @@ impl<B: Backend> Splats<B> {
         let rotations = self.rotation.val();
         let norm_rot = rotations.clone() / Tensor::sum_dim(rotations.powi_scalar(2), 1).sqrt();
 
-        B::render_splats(
+        let (img, aux) = B::render_splats(
             camera,
             img_size,
-            self.means.val(),
-            self.xys_dummy.clone(),
-            self.log_scales.val(),
-            norm_rot,
-            self.sh_coeffs.val(),
-            self.raw_opacity.val(),
+            self.means.val().into_primitive().tensor(),
+            self.xys_dummy.clone().into_primitive().tensor(),
+            self.log_scales.val().into_primitive().tensor(),
+            norm_rot.into_primitive().tensor(),
+            self.sh_coeffs.val().into_primitive().tensor(),
+            self.raw_opacity.val().into_primitive().tensor(),
             render_u32_buffer,
-        )
+        );
+
+        (Tensor::from_primitive(TensorPrimitive::Float(img)), aux)
     }
 
     pub fn opacity(&self) -> Tensor<B, 1> {

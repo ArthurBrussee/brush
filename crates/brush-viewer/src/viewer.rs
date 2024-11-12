@@ -8,15 +8,16 @@ use async_std::{
 use brush_dataset::{self, splat_import, Dataset, LoadDatasetArgs, LoadInitArgs};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
-use brush_render::PrimaryBackend;
 use brush_train::train::TrainStepStats;
 use brush_train::{eval::EvalStats, train::TrainConfig};
 use burn::backend::Autodiff;
-use burn_wgpu::WgpuDevice;
+use burn_wgpu::{Wgpu, WgpuDevice};
 use eframe::egui;
 use egui_tiles::{Container, Tile, TileId, Tiles};
 use glam::{Quat, Vec3};
 use web_time::Instant;
+
+type Backend = Wgpu;
 
 use crate::{
     orbit_controls::OrbitControls,
@@ -44,7 +45,7 @@ pub(crate) enum ViewerMessage {
     /// Nb: This includes all the intermediately loaded splats.
     Splats {
         iter: u32,
-        splats: Box<Splats<PrimaryBackend>>,
+        splats: Box<Splats<Backend>>,
     },
     /// Loaded a bunch of viewpoints to train on.
     Dataset {
@@ -56,14 +57,14 @@ pub(crate) enum ViewerMessage {
     },
     /// Some number of training steps are done.
     TrainStep {
-        stats: Box<TrainStepStats<Autodiff<PrimaryBackend>>>,
+        stats: Box<TrainStepStats<Autodiff<Backend>>>,
         iter: u32,
         timestamp: Instant,
     },
     /// Eval was run sucesfully with these results.
     EvalResult {
         iter: u32,
-        eval: EvalStats<PrimaryBackend>,
+        eval: EvalStats<Backend>,
     },
 }
 
@@ -107,8 +108,7 @@ fn process_loop(
             let _ = emitter
                 .emit(ViewerMessage::StartLoading { training: false })
                 .await;
-            let splat_stream =
-                splat_import::load_splat_from_ply::<PrimaryBackend>(data, device.clone());
+            let splat_stream = splat_import::load_splat_from_ply::<Backend>(data, device.clone());
             let mut splat_stream = std::pin::pin!(splat_stream);
             while let Some(splats) = splat_stream.next().await {
                 emitter

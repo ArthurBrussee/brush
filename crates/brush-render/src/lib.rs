@@ -1,12 +1,12 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::single_range_in_vec_init)]
-use burn::backend::Autodiff;
 use burn::prelude::Tensor;
 use burn::tensor::{ElementConversion, Int};
 use burn_jit::JitBackend;
 use burn_wgpu::WgpuRuntime;
 use camera::Camera;
 
+mod burn_glue;
 mod dim_check;
 mod kernels;
 mod safetensor_utils;
@@ -21,7 +21,6 @@ pub mod render;
 pub struct RenderAux<B: Backend> {
     /// The packed projected splat information, see ProjectedSplat in helpers.wgsl
     pub projected_splats: B::FloatTensorPrimitive,
-
     pub uniforms_buffer: B::IntTensorPrimitive,
     pub num_intersections: B::IntTensorPrimitive,
     pub num_visible: B::IntTensorPrimitive,
@@ -62,11 +61,31 @@ impl<B: Backend> RenderAux<B> {
     }
 }
 
+pub struct SplatGrads<B: Backend> {
+    v_means: B::FloatTensorPrimitive,
+    v_quats: B::FloatTensorPrimitive,
+    v_scales: B::FloatTensorPrimitive,
+    v_coeffs: B::FloatTensorPrimitive,
+    v_raw_opac: B::FloatTensorPrimitive,
+    v_xy: B::FloatTensorPrimitive,
+}
+
+#[derive(Debug, Clone)]
+pub struct GaussianBackwardState<B: Backend> {
+    means: B::FloatTensorPrimitive,
+    log_scales: B::FloatTensorPrimitive,
+    quats: B::FloatTensorPrimitive,
+    raw_opac: B::FloatTensorPrimitive,
+    out_img: B::FloatTensorPrimitive,
+    sh_degree: u32,
+    aux: RenderAux<B>,
+}
+
 // Custom operations in Burn work by extending the backend with an extra func.
 pub trait Backend: burn::tensor::backend::Backend {
     /// Render splats to a buffer.
     ///
-    /// This projects the gaussians, sorts them, and rasterizes them to a buffer, in a\
+    /// This projects the gaussians, sorts them, and rasterizes them to a buffer, in a
     /// differentiable way.
     /// The arguments are all passed as raw tensors. See [`Splats`] for a convenient Module that wraps this fun
     /// The ['xy_dummy'] variable is only used to carry screenspace xy gradients.
@@ -75,17 +94,26 @@ pub trait Backend: burn::tensor::backend::Backend {
     fn render_splats(
         cam: &Camera,
         img_size: glam::UVec2,
-        means: Tensor<Self, 2>,
-        xy_grad_dummy: Tensor<Self, 2>,
-        log_scales: Tensor<Self, 2>,
-        quats: Tensor<Self, 2>,
-        sh_coeffs: Tensor<Self, 3>,
-        raw_opacity: Tensor<Self, 1>,
+        means: Self::FloatTensorPrimitive,
+        xy_grad_dummy: Self::FloatTensorPrimitive,
+        log_scales: Self::FloatTensorPrimitive,
+        quats: Self::FloatTensorPrimitive,
+        sh_coeffs: Self::FloatTensorPrimitive,
+        raw_opacity: Self::FloatTensorPrimitive,
         render_u32_buffer: bool,
-    ) -> (Tensor<Self, 3>, RenderAux<Self>);
+    ) -> (Self::FloatTensorPrimitive, RenderAux<Self>);
+
+    /// Backward pass for render_splats.
+    ///
+    /// Do not use directly, render_splats will use this to calculate gradients.
+    #[allow(unused_variables)]
+    fn render_splats_bwd(
+        state: GaussianBackwardState<Self>,
+        v_output: Self::FloatTensorPrimitive,
+    ) -> SplatGrads<Self> {
+        panic!("Do not call this manually.");
+    }
 }
 
-pub trait AutodiffBackend: burn::tensor::backend::AutodiffBackend + Backend {}
-impl<B: Backend> AutodiffBackend for Autodiff<B> where burn::backend::Autodiff<B>: Backend {}
-
-pub type PrimaryBackend = JitBackend<WgpuRuntime, f32, i32>;
+pub trait AutodiffBackend: Backend + burn::tensor::backend::AutodiffBackend {}
+type InnerWgpu = JitBackend<WgpuRuntime, f32, i32>;

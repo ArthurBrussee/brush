@@ -1,14 +1,20 @@
 use std::sync::Arc;
 
-use brush_render::PrimaryBackend;
-use burn::tensor::Tensor;
+use burn::{
+    backend::{
+        wgpu::{JitBackend, WgpuRuntime},
+        Wgpu,
+    },
+    tensor::{Tensor, TensorPrimitive},
+};
+use burn_fusion::client::FusionClient;
 use eframe::egui_wgpu::Renderer;
 use egui::epaint::mutex::RwLock as EguiRwLock;
 use egui::TextureId;
 use wgpu::{CommandEncoderDescriptor, ImageDataLayout};
 
 fn copy_buffer_to_texture(
-    img: Tensor<PrimaryBackend, 3>,
+    img: Tensor<JitBackend<WgpuRuntime, f32, i32>, 3>,
     texture: &wgpu::Texture,
     encoder: &mut wgpu::CommandEncoder,
 ) {
@@ -19,13 +25,14 @@ fn copy_buffer_to_texture(
     // Create padded tensor if needed. The bytes_per_row needs to be divisible
     // by 256 in WebGPU, so 4 bytes per pixel means width needs to be disible by 64.
     let padded = if width % 64 != 0 {
-        let padded = Tensor::<PrimaryBackend, 3>::zeros(&padded_shape, &img.device());
+        let padded = Tensor::zeros(&padded_shape, &img.device());
         padded.slice_assign([0..height, 0..width], img)
     } else {
         img
     };
 
     let prim = padded.clone().into_primitive().tensor();
+
     let client = &prim.client;
     client.flush();
     let img_res = client.get_resource(prim.handle.clone().binding());
@@ -96,7 +103,7 @@ impl BurnTexture {
 
     pub fn update_texture(
         &mut self,
-        tensor: Tensor<PrimaryBackend, 3>,
+        img: Tensor<Wgpu, 3>,
         renderer: Arc<EguiRwLock<Renderer>>,
     ) -> TextureId {
         let mut encoder = self
@@ -105,7 +112,7 @@ impl BurnTexture {
                 label: Some("viewer encoder"),
             });
 
-        let [h, w, _] = tensor.shape().dims();
+        let [h, w, _] = img.shape().dims();
         let size = glam::uvec2(w as u32, h as u32);
 
         let dirty = if let Some(s) = self.state.as_ref() {
@@ -141,7 +148,11 @@ impl BurnTexture {
             unreachable!("Somehow failed to initialize")
         };
 
-        copy_buffer_to_texture(tensor, &s.texture, &mut encoder);
+        let img = img.into_primitive().tensor();
+        let client = img.client.clone();
+        let img = client.resolve_tensor_float::<JitBackend<WgpuRuntime, f32, i32>>(img);
+        let img = Tensor::from_primitive(TensorPrimitive::Float(img));
+        copy_buffer_to_texture(img, &s.texture, &mut encoder);
 
         self.queue.submit([encoder.finish()]);
 

@@ -7,14 +7,11 @@ use async_std::{
 use brush_dataset::{
     scene_loader::SceneLoader, zip::DatasetZip, Dataset, LoadDatasetArgs, LoadInitArgs,
 };
-use brush_render::{
-    gaussian_splats::{RandomSplatsConfig, Splats},
-    PrimaryBackend,
-};
+use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
 use brush_train::train::{SplatTrainer, TrainConfig};
 use burn::module::AutodiffModule;
 use burn_jit::cubecl::Runtime;
-use burn_wgpu::{WgpuDevice, WgpuRuntime};
+use burn_wgpu::{Wgpu, WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
 use tracing::{trace_span, Instrument};
 use web_time::Instant;
@@ -42,7 +39,7 @@ pub(crate) fn train_loop(
 
         // Maybe good if the seed would be configurable.
         let seed = 42;
-        <PrimaryBackend as burn::prelude::Backend>::seed(seed);
+        <Wgpu as burn::prelude::Backend>::seed(seed);
         let mut rng = rand::rngs::StdRng::from_seed([seed as u8; 32]);
 
         // Load initial splats if included
