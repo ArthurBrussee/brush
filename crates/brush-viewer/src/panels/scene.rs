@@ -200,12 +200,13 @@ Or load a dataset to train on. These are zip files with:
             #[cfg(target_family = "wasm")]
             ui.scope(|ui| {
                 ui.visuals_mut().override_text_color = Some(Color32::YELLOW);
-                ui.heading("Note: Running in browser is experimental");
+                ui.heading("Note: Running in browser is still experimental");
 
                 ui.label(
                     r#"
-In browser training is about 2x lower than the native app. For bigger training
-runs consider using the native app."#,
+In browser training is slower, and lower quality than the native app.
+
+For bigger training runs consider using the native app."#,
                 );
             });
 
