@@ -173,33 +173,6 @@ type DataRead = Pin<Box<dyn AsyncRead>>;
 type DataRead = Pin<Box<dyn AsyncRead + Send>>;
 
 impl DataSource {
-    fn parse_url(url: String) -> String {
-        // parse this input
-        // https://drive.google.com/file/d/1Bp0EZgo2YdsQ72t_YJuMV8JMal309-zU/view?usp=drive_link
-        // Into this output
-        // https://drive.usercontent.google.com/download?id=1Bp0EZgo2YdsQ72t_YJuMV8JMal309-zU&confirm=xxx
-        // Look for id= or /d/ in the url, followed by the actual ID
-        if url.contains("drive.google.com") {
-            let id = url.split("id=").nth(1).unwrap_or_else(|| {
-                url.split("/d/")
-                    .nth(1)
-                    .and_then(|s| s.split('/').next())
-                    .unwrap_or(&url)
-            });
-
-            // Clean up any trailing parameters
-            let id = id.split('&').next().unwrap_or(id);
-            let id = id.split('?').next().unwrap_or(id);
-            return format!("https://drive.usercontent.google.com/download?id={id}&confirm=xxx");
-        }
-        url
-    }
-
-    // TODO: This works but... would be a mess to maintain, and a mess secuirity wise.
-    // fn get_proxied_url(original_url: &str) -> String {
-    //     format!("https://arthur-brussee.workers.dev/?url={}", PROXY_URL, original_url)
-    // }
-
     async fn read(&self) -> anyhow::Result<DataRead> {
         match self {
             DataSource::PickFile => {
