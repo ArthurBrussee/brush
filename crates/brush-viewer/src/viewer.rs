@@ -392,7 +392,6 @@ impl Viewer {
 
 impl eframe::App for Viewer {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
-
         if let Some(rec) = self.tree_ctx.context.receiver.as_mut() {
             let mut messages = vec![];
 
