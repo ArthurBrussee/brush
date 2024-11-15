@@ -3,9 +3,9 @@ use crate::{
 };
 use anyhow::Result;
 use async_fn_stream::fn_stream;
-use async_std::stream::Stream;
 use brush_render::{gaussian_splats::Splats, Backend};
-use std::{path::Path, pin::Pin};
+use std::{io::Cursor, path::Path, pin::Pin};
+use tokio_stream::Stream;
 
 pub mod colmap;
 pub mod nerf_synthetic;
@@ -31,7 +31,7 @@ fn read_init_ply<B: Backend>(
     device: &B::Device,
 ) -> Result<DataStream<Splats<B>>> {
     let data = archive.read_bytes_at_path(Path::new("init.ply"))?;
-    let splat_stream = load_splat_from_ply::<B>(data, device.clone());
+    let splat_stream = load_splat_from_ply(Cursor::new(data), device.clone());
     Ok(Box::pin(splat_stream))
 }
 

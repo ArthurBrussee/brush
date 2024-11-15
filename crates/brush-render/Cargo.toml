@@ -28,7 +28,7 @@ naga.workspace = true
 log.workspace = true
 serde.workspace = true
 kiddo.workspace = true
-async-std.workspace = true
+tokio.workspace = true
 rand.workspace = true
 
 [build-dependencies]

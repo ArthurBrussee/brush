@@ -1,10 +1,7 @@
 use std::{pin::Pin, sync::Arc};
 
 use async_fn_stream::try_fn_stream;
-use async_std::{
-    channel::{Receiver, Sender, TrySendError},
-    stream::{Stream, StreamExt},
-};
+
 use brush_dataset::{self, splat_import, Dataset, LoadDatasetArgs, LoadInitArgs};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
@@ -15,6 +12,15 @@ use burn_wgpu::{Wgpu, WgpuDevice};
 use eframe::egui;
 use egui_tiles::{Container, Tile, TileId, Tiles};
 use glam::{Quat, Vec3};
+use tokio_with_wasm::alias as tokio;
+
+use ::tokio::io::AsyncReadExt;
+use ::tokio::sync::mpsc::error::TrySendError;
+use ::tokio::sync::mpsc::{Receiver, Sender};
+use ::tokio::{io::AsyncRead, io::BufReader, sync::mpsc::channel};
+use tokio::task;
+
+use tokio_stream::{Stream, StreamExt};
 use web_time::Instant;
 
 type Backend = Wgpu;
@@ -33,7 +39,7 @@ struct TrainStats {
 
 #[derive(Clone)]
 pub(crate) enum ViewerMessage {
-    PickFile,
+    NewSource,
     StartLoading {
         training: bool,
     },
@@ -79,7 +85,6 @@ pub(crate) struct ViewerContext {
     pub dataset: Dataset,
     pub camera: Camera,
     pub controls: OrbitControls,
-
     device: WgpuDevice,
     ctx: egui::Context,
 
@@ -88,6 +93,7 @@ pub(crate) struct ViewerContext {
 }
 
 fn process_loop(
+    source: DataSource,
     device: WgpuDevice,
     train_receiver: Receiver<TrainMessage>,
     load_data_args: LoadDatasetArgs,
@@ -95,20 +101,26 @@ fn process_loop(
     train_config: TrainConfig,
 ) -> Pin<Box<impl Stream<Item = anyhow::Result<ViewerMessage>>>> {
     let stream = try_fn_stream(|emitter| async move {
-        let _ = emitter.emit(ViewerMessage::PickFile).await;
-        log::info!("Start picking file");
-        let picked = rrfd::pick_file().await?;
-        let name = picked.file_name();
+        let _ = emitter.emit(ViewerMessage::NewSource).await;
 
-        log::info!("Picked file {name}");
+        // Small hack to peek some bytes: Read them
+        // and add them at the start again.
+        let data = source.read().await?;
+        let mut data = BufReader::new(data);
+        let mut peek = [0; 128];
+        data.read_exact(&mut peek).await?;
+        let data = std::io::Cursor::new(peek).chain(data);
 
-        if name.contains(".ply") {
-            let data = picked.read().await;
+        log::info!("{:?}", String::from_utf8(peek.to_vec()));
+
+        if peek.starts_with("ply".as_bytes()) {
+            log::info!("Attempting to load data as .ply data");
 
             let _ = emitter
                 .emit(ViewerMessage::StartLoading { training: false })
                 .await;
-            let splat_stream = splat_import::load_splat_from_ply::<Backend>(data, device.clone());
+            let splat_stream = splat_import::load_splat_from_ply(data, device.clone());
+
             let mut splat_stream = std::pin::pin!(splat_stream);
             while let Some(splats) = splat_stream.next().await {
                 emitter
@@ -118,8 +130,9 @@ fn process_loop(
                     })
                     .await;
             }
-        } else if name.contains(".zip") {
-            let data = picked.read().await;
+        } else if peek.starts_with("PK".as_bytes()) {
+            log::info!("Attempting to load data as .zip data");
+
             let _ = emitter
                 .emit(ViewerMessage::StartLoading { training: true })
                 .await;
@@ -136,14 +149,74 @@ fn process_loop(
             while let Some(message) = stream.next().await {
                 emitter.emit(message?).await;
             }
+        } else if peek.starts_with("<!DOCTYPE html>".as_bytes()) {
+            anyhow::bail!("Failed to download data (are you trying to download from Google Drive? You might have to use the proxy.")
         } else {
-            anyhow::bail!("Only .ply and .zip files are supported.")
+            anyhow::bail!("only zip and ply files are supported.");
         }
 
         Ok(())
     });
 
     Box::pin(stream)
+}
+
+pub enum DataSource {
+    PickFile,
+    Url(String),
+}
+
+#[cfg(target_family = "wasm")]
+type DataRead = Pin<Box<dyn AsyncRead>>;
+
+#[cfg(not(target_family = "wasm"))]
+type DataRead = Pin<Box<dyn AsyncRead + Send>>;
+
+impl DataSource {
+    fn parse_url(url: String) -> String {
+        // parse this input
+        // https://drive.google.com/file/d/1Bp0EZgo2YdsQ72t_YJuMV8JMal309-zU/view?usp=drive_link
+        // Into this output
+        // https://drive.usercontent.google.com/download?id=1Bp0EZgo2YdsQ72t_YJuMV8JMal309-zU&confirm=xxx
+        // Look for id= or /d/ in the url, followed by the actual ID
+        if url.contains("drive.google.com") {
+            let id = url.split("id=").nth(1).unwrap_or_else(|| {
+                url.split("/d/")
+                    .nth(1)
+                    .and_then(|s| s.split('/').next())
+                    .unwrap_or(&url)
+            });
+
+            // Clean up any trailing parameters
+            let id = id.split('&').next().unwrap_or(id);
+            let id = id.split('?').next().unwrap_or(id);
+            return format!("https://drive.usercontent.google.com/download?id={id}&confirm=xxx");
+        }
+        url
+    }
+
+    // TODO: This works but... would be a mess to maintain, and a mess secuirity wise.
+    // fn get_proxied_url(original_url: &str) -> String {
+    //     format!("https://arthur-brussee.workers.dev/?url={}", PROXY_URL, original_url)
+    // }
+
+    async fn read(&self) -> anyhow::Result<DataRead> {
+        match self {
+            DataSource::PickFile => {
+                let picked = rrfd::pick_file().await?;
+                let data = picked.read().await;
+                Ok(Box::pin(std::io::Cursor::new(data)))
+            }
+            DataSource::Url(url) => {
+                // let url = Self::parse_url(url.to_owned());
+                // let url = Self::get_proxied_url(&url);
+                let response = reqwest::get(url).await?.bytes_stream();
+                let mapped = response
+                    .map(|e| e.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
+                Ok(Box::pin(tokio_util::io::StreamReader::new(mapped)))
+            }
+        }
+    }
 }
 
 impl ViewerContext {
@@ -176,6 +249,7 @@ impl ViewerContext {
 
     pub(crate) fn start_data_load(
         &mut self,
+        source: DataSource,
         load_data_args: LoadDatasetArgs,
         load_init_args: LoadInitArgs,
         train_config: TrainConfig,
@@ -184,11 +258,11 @@ impl ViewerContext {
         log::info!("Start data load");
 
         // create a channel for the train loop.
-        let (train_sender, train_receiver) = async_std::channel::unbounded();
+        let (train_sender, train_receiver) = channel(32);
 
         // Create a small channel. We don't want 10 updated splats to be stuck in the queue eating up memory!
         // Bigger channels could mean the train loop spends less time waiting for the UI though.
-        let (sender, receiver) = async_std::channel::bounded(1);
+        let (sender, receiver) = channel(1);
 
         self.receiver = Some(receiver);
         self.sender = Some(train_sender);
@@ -199,6 +273,7 @@ impl ViewerContext {
         let fut = async move {
             // Map errors to a viewer message containing thee error.
             let mut stream = process_loop(
+                source,
                 device,
                 train_receiver,
                 load_data_args,
@@ -214,6 +289,10 @@ impl ViewerContext {
             while let Some(m) = stream.next().await {
                 ctx.request_repaint();
 
+                // Give back to the runtime for a second.
+                // This only really matters in the browser.
+                tokio::task::yield_now().await;
+
                 // If channel is closed, bail.
                 if sender.send(m).await.is_err() {
                     break;
@@ -221,16 +300,7 @@ impl ViewerContext {
             }
         };
 
-        #[cfg(target_family = "wasm")]
-        {
-            let fut = crate::async_lib::with_timeout_yield(fut, web_time::Duration::from_millis(5));
-            async_std::task::spawn_local(fut);
-        }
-
-        #[cfg(not(target_family = "wasm"))]
-        {
-            async_std::task::spawn(fut);
-        }
+        task::spawn(fut);
     }
 
     pub fn send_train_message(&self, message: TrainMessage) {
@@ -322,8 +392,15 @@ impl Viewer {
 
 impl eframe::App for Viewer {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
-        if let Some(rec) = self.tree_ctx.context.receiver.clone() {
+
+        if let Some(rec) = self.tree_ctx.context.receiver.as_mut() {
+            let mut messages = vec![];
+
             while let Ok(message) = rec.try_recv() {
+                messages.push(message);
+            }
+
+            for message in messages {
                 if let ViewerMessage::Dataset { data: _ } = message {
                     // Show the dataset panel if we've loaded one.
                     if self.datasets.is_none() {

@@ -1,5 +1,4 @@
 use async_fn_stream::try_fn_stream;
-use async_std::{stream::Stream, task};
 use brush_render::{render::sh_coeffs_for_degree, Backend};
 use burn::{
     module::{Param, ParamId},
@@ -9,7 +8,8 @@ use ply_rs::{
     parser::Parser,
     ply::{Property, PropertyAccess},
 };
-use std::io::BufRead;
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio_stream::Stream;
 use tracing::trace_span;
 
 use anyhow::{Context, Result};
@@ -153,18 +153,6 @@ fn update_splats<B: Backend>(
     }
 }
 
-pub fn ply_count(ply_data: &[u8]) -> Result<usize> {
-    let mut reader = std::io::Cursor::new(ply_data);
-    let gaussian_parser = Parser::<GaussianData>::new();
-    let header = gaussian_parser.read_header(&mut reader)?;
-    header
-        .elements
-        .iter()
-        .find(|e| e.name == "vertex")
-        .map(|e| e.count)
-        .context("Invalid ply file")
-}
-
 fn interleave_coeffs(sh_dc: [f32; 3], sh_rest: &[f32]) -> Vec<f32> {
     let channels = 3;
     let coeffs_per_channel = sh_rest.len() / channels;
@@ -180,20 +168,20 @@ fn interleave_coeffs(sh_dc: [f32; 3], sh_rest: &[f32]) -> Vec<f32> {
     result
 }
 
-pub fn load_splat_from_ply<B: Backend>(
-    ply_data: Vec<u8>,
+pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
+    reader: T,
     device: B::Device,
 ) -> impl Stream<Item = Result<Splats<B>>> + 'static {
     // set up a reader, in this case a file.
-    let mut reader = std::io::Cursor::new(ply_data);
+    let mut reader = BufReader::new(reader);
     let mut splats: Option<Splats<B>> = None;
 
-    let update_every = 50000;
+    let update_every = 10000;
     let _span = trace_span!("Read splats").entered();
     let gaussian_parser = Parser::<GaussianData>::new();
 
     try_fn_stream(|emitter| async move {
-        let header = gaussian_parser.read_header(&mut reader)?;
+        let header = gaussian_parser.read_header(&mut reader).await?;
 
         for element in &header.elements {
             if element.name == "vertex" {
@@ -230,14 +218,18 @@ pub fn load_splat_from_ply<B: Backend>(
                     let splat = match header.encoding {
                         ply_rs::ply::Encoding::Ascii => {
                             let mut line = String::new();
-                            reader.read_line(&mut line)?;
+                            reader.read_line(&mut line).await?;
                             gaussian_parser.read_ascii_element(&line, element)?
                         }
                         ply_rs::ply::Encoding::BinaryBigEndian => {
-                            gaussian_parser.read_big_endian_element(&mut reader, element)?
+                            gaussian_parser
+                                .read_big_endian_element(&mut reader, element)
+                                .await?
                         }
                         ply_rs::ply::Encoding::BinaryLittleEndian => {
-                            gaussian_parser.read_little_endian_element(&mut reader, element)?
+                            gaussian_parser
+                                .read_little_endian_element(&mut reader, element)
+                                .await?
                         }
                     };
 
@@ -261,18 +253,13 @@ pub fn load_splat_from_ply<B: Backend>(
                     if i % update_every == update_every - 1 {
                         update_splats(
                             &mut splats,
-                            means.clone(),
-                            sh_coeffs.clone(),
-                            rotation.clone(),
-                            opacity.clone(),
-                            scales.clone(),
+                            std::mem::take(&mut means),
+                            std::mem::take(&mut sh_coeffs),
+                            std::mem::take(&mut rotation),
+                            std::mem::take(&mut opacity),
+                            std::mem::take(&mut scales),
                             &device,
                         );
-                        means.clear();
-                        sh_coeffs.clear();
-                        rotation.clear();
-                        opacity.clear();
-                        scales.clear();
 
                         emitter
                             .emit(splats.clone().context("Failed to update splats")?)
@@ -280,8 +267,8 @@ pub fn load_splat_from_ply<B: Backend>(
                     }
 
                     // Ocassionally yield.
-                    if i % 500 == 0 {
-                        task::yield_now().await;
+                    if i % 250 == 0 {
+                        tokio::task::yield_now().await;
                     }
                 }
 

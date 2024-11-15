@@ -11,7 +11,7 @@ brush-train.path = "../brush-train"
 brush-render.path = "../brush-render"
 brush-ui.path = "../brush-ui"
 
-async-std.workspace = true
+tokio.workspace = true
 env_logger.workspace = true
 async-fn-stream.workspace = true
 rand.workspace = true

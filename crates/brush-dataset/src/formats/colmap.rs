@@ -3,7 +3,6 @@ use std::{future::Future, sync::Arc};
 use super::{DataStream, DatasetZip, LoadDatasetArgs, LoadInitArgs};
 use crate::{stream_fut_parallel, Dataset};
 use anyhow::{Context, Result};
-use async_std::stream::StreamExt;
 use brush_render::{
     camera::{self, Camera},
     gaussian_splats::Splats,
@@ -11,6 +10,7 @@ use brush_render::{
 };
 use brush_train::scene::SceneView;
 use glam::Vec3;
+use tokio_stream::StreamExt;
 
 fn read_views(
     mut archive: DatasetZip,
@@ -118,22 +118,22 @@ pub(crate) fn load_dataset(
     let mut eval_views = vec![];
 
     let load_args = load_args.clone();
-    let stream = stream_fut_parallel(handles)
-        .enumerate()
-        .map(move |(i, view)| {
-            // I cannot wait for let chains.
-            if let Some(eval_period) = load_args.eval_split_every {
-                if i % eval_period == 0 {
-                    eval_views.push(view?);
-                } else {
-                    train_views.push(view?);
-                }
+    let mut i = 0;
+    let stream = stream_fut_parallel(handles).map(move |view| {
+        // I cannot wait for let chains.
+        if let Some(eval_period) = load_args.eval_split_every {
+            if i % eval_period == 0 {
+                eval_views.push(view?);
             } else {
                 train_views.push(view?);
             }
+        } else {
+            train_views.push(view?);
+        }
 
-            Ok(Dataset::from_views(train_views.clone(), eval_views.clone()))
-        });
+        i += 1;
+        Ok(Dataset::from_views(train_views.clone(), eval_views.clone()))
+    });
 
     Ok(Box::pin(stream))
 }

@@ -22,5 +22,7 @@ ply-rs.workspace = true
 web-time.workspace = true
 rand.workspace = true
 
-async-std.workspace = true
+tokio.workspace = true
+tokio_with_wasm.workspace = true
+tokio-stream.workspace = true
 async-fn-stream.workspace = true

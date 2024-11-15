@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use async_std::channel::{Receiver, Sender};
 use brush_render::{
     bounding_box::BoundingBox,
     camera::{focal_to_fov, fov_to_focal, Camera},
@@ -26,6 +25,7 @@ use eframe::egui_wgpu::WgpuConfiguration;
 use egui::{load::SizedTexture, ImageSource, TextureHandle, TextureOptions};
 use glam::{Quat, Vec2, Vec3};
 use rand::SeedableRng;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 type Backend = Wgpu;
 
@@ -42,7 +42,7 @@ fn spawn_train_loop(
     sender: Sender<TrainStep>,
 ) {
     // Spawn a task that iterates over the training stream.
-    async_std::task::spawn(async move {
+    tokio::task::spawn(async move {
         let seed = 42;
 
         <Wgpu as burn::prelude::Backend>::seed(seed);
@@ -157,8 +157,9 @@ impl eframe::App for App {
     }
 }
 
-fn main() {
-    let setup = async_std::task::block_on(brush_train::create_wgpu_setup());
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let setup = brush_train::create_wgpu_setup().await;
     let wgpu_options = WgpuConfiguration {
         wgpu_setup: eframe::egui_wgpu::WgpuSetup::Existing {
             instance: setup.instance.clone(),
@@ -223,7 +224,7 @@ fn main() {
         "Brush",
         native_options,
         Box::new(move |cc| {
-            let (sender, receiver) = async_std::channel::unbounded();
+            let (sender, receiver) = tokio::sync::mpsc::channel(32);
 
             spawn_train_loop(view.clone(), config, device, cc.egui_ctx.clone(), sender);
 

@@ -5,10 +5,7 @@ use crate::{
     viewer::{ViewerContext, ViewerMessage},
     ViewerPanel,
 };
-use async_std::{
-    channel::{self, Sender},
-    task,
-};
+
 use brush_rerun::BurnToRerun;
 use burn_wgpu::WgpuDevice;
 
@@ -17,10 +14,11 @@ use brush_train::{image::tensor_into_image, scene::Scene};
 use brush_train::{ssim::Ssim, train::TrainStepStats};
 use burn::tensor::{activation::sigmoid, ElementConversion};
 use rerun::{Color, FillMode, RecordingStream};
+use tokio::{sync::mpsc::UnboundedSender, task};
 
 pub struct VisualizeTools {
     rec: Option<RecordingStream>,
-    task_queue: Sender<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>>,
+    task_queue: UnboundedSender<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>>,
 }
 
 impl VisualizeTools {
@@ -28,11 +26,11 @@ impl VisualizeTools {
         // Spawn rerun - creating this is already explicitly done by a user.
         let rec = rerun::RecordingStreamBuilder::new("Brush").spawn().ok();
 
-        let (queue_send, queue_receive) = channel::unbounded();
+        let (queue_send, mut queue_receive) = tokio::sync::mpsc::unbounded_channel();
 
         // Spawn a task to handle futures one by one as they come in.
         task::spawn(async move {
-            while let Ok(fut) = queue_receive.recv().await {
+            while let Some(fut) = queue_receive.recv().await {
                 if let Err(e) = fut.await {
                     log::error!("Error logging to rerun: {}", e);
                 }
@@ -48,7 +46,7 @@ impl VisualizeTools {
     fn queue_task(&self, fut: impl Future<Output = anyhow::Result<()>> + Send + 'static) {
         // Ignore this error - if the channel is closed we just don't do anything and drop
         // the future.
-        let _ = self.task_queue.try_send(Box::pin(fut));
+        let _ = self.task_queue.send(Box::pin(fut));
     }
 
     pub(crate) fn log_splats<B: Backend>(self: Arc<Self>, splats: Splats<B>) {

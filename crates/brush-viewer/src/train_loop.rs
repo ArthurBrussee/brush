@@ -1,9 +1,5 @@
 use async_fn_stream::try_fn_stream;
-use async_std::{
-    channel::{Receiver, TryRecvError},
-    stream::{Stream, StreamExt},
-    task,
-};
+
 use brush_dataset::{
     scene_loader::SceneLoader, zip::DatasetZip, Dataset, LoadDatasetArgs, LoadInitArgs,
 };
@@ -13,6 +9,12 @@ use burn::module::AutodiffModule;
 use burn_jit::cubecl::Runtime;
 use burn_wgpu::{Wgpu, WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
+use tokio::io::AsyncReadExt;
+use tokio::{
+    io::AsyncRead,
+    sync::mpsc::{error::TryRecvError, Receiver},
+};
+use tokio_stream::{Stream, StreamExt};
 use tracing::{trace_span, Instrument};
 use web_time::Instant;
 
@@ -24,16 +26,19 @@ pub enum TrainMessage {
     Eval { view_count: Option<usize> },
 }
 
-pub(crate) fn train_loop(
-    data: Vec<u8>,
+pub(crate) fn train_loop<T: AsyncRead + Unpin + 'static>(
+    mut data: T,
     device: WgpuDevice,
-    receiver: Receiver<TrainMessage>,
+    mut receiver: Receiver<TrainMessage>,
     load_data_args: LoadDatasetArgs,
     load_init_args: LoadInitArgs,
     config: TrainConfig,
 ) -> impl Stream<Item = anyhow::Result<ViewerMessage>> {
     try_fn_stream(|emitter| async move {
-        let zip_data = DatasetZip::from_data(data)?;
+        let mut bytes = vec![];
+        data.read_to_end(&mut bytes).await?;
+        // TODO: async zip ideally.
+        let zip_data = DatasetZip::from_data(bytes)?;
 
         let batch_size = 1;
 
@@ -100,16 +105,13 @@ pub(crate) fn train_loop(
             let message = if is_paused {
                 // When paused, wait for a message async and handle it. The "default" train iteration
                 // won't be hit.
-                match receiver.recv().await {
-                    Ok(message) => Some(message),
-                    Err(_) => break, // if channel is closed, stop.
-                }
+                receiver.recv().await
             } else {
                 // Otherwise, check for messages, and if there isn't any just proceed training.
                 match receiver.try_recv() {
                     Ok(message) => Some(message),
                     Err(TryRecvError::Empty) => None, // Nothing special to do.
-                    Err(TryRecvError::Closed) => break, // If channel is closed, stop.
+                    Err(TryRecvError::Disconnected) => break, // If channel is closed, stop.
                 }
             };
 
@@ -172,9 +174,7 @@ pub(crate) fn train_loop(
             // and on web where this isn't cached causes a real slowdown. Autotuning takes forever as the GPU is
             // busy with our work. This is only needed on wasm - on native autotuning is
             // synchronous anyway.
-            if cfg!(target_family = "wasm") && trainer.iter == 1 {
-                // Wait 1 second for all autotuning kernels to be submitted
-                task::sleep(web_time::Duration::from_secs(1)).await;
+            if cfg!(target_family = "wasm") && trainer.iter < 5 {
                 // Wait for them all to be done.
                 let client = WgpuRuntime::client(&device);
                 client.sync().await;

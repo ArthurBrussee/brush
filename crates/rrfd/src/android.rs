@@ -1,11 +1,11 @@
-use anyhow::Result;
-use async_std::channel::Sender;
+use anyhow::{anyhow, Result};
 use jni::objects::{GlobalRef, JByteArray, JClass, JStaticMethodID, JString};
 use jni::signature::Primitive;
 use jni::JNIEnv;
 use lazy_static::lazy_static;
 use std::sync::Arc;
 use std::sync::RwLock;
+use tokio::sync::mpsc::Sender;
 
 #[derive(Clone, Debug)]
 pub struct PickedFile {
@@ -38,7 +38,7 @@ pub fn jni_initialize(vm: Arc<jni::JavaVM>) {
 
 #[allow(unused)]
 pub(crate) async fn pick_file() -> Result<PickedFile> {
-    let (sender, receiver) = async_std::channel::bounded(1);
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
     {
         let channel = CHANNEL.write();
         if let Ok(mut channel) = channel {
@@ -76,7 +76,10 @@ pub(crate) async fn pick_file() -> Result<PickedFile> {
         }?;
     }
 
-    receiver.recv().await?
+    receiver
+        .recv()
+        .await
+        .ok_or(anyhow!("Failed to receive anything"))?
 }
 
 #[no_mangle]

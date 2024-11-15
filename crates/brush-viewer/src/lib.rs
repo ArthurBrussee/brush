@@ -5,7 +5,6 @@
 use egui_tiles::SimplificationOptions;
 use viewer::{ViewerContext, ViewerMessage};
 
-mod async_lib;
 mod orbit_controls;
 
 mod panels;

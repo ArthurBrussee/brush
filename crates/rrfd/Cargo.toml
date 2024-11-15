@@ -9,7 +9,7 @@ license.workspace = true
 jni = "0.21.1"
 lazy_static = "1.5.0"
 anyhow.workspace = true
-async-std.workspace = true
+tokio.workspace = true
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.12.1"

@@ -43,7 +43,15 @@ sync-span.path = "../sync-span"
 
 zip.workspace = true
 async-fn-stream.workspace = true
-async-std.workspace = true
+
+tokio_with_wasm = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["io-util", "rt"] }
+tokio-util.workspace = true
+
+reqwest.workspace = true
+
+tokio-stream.workspace = true
+wasm-bindgen-futures.workspace = true
 
 parking_lot.workspace = true
 

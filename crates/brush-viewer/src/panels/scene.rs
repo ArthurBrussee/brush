@@ -8,6 +8,7 @@ use brush_render::gaussian_splats::Splats;
 use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect};
 use glam::{Affine3A, Vec2};
+use tokio_with_wasm::alias as tokio;
 use tracing::trace_span;
 use web_time::Instant;
 
@@ -154,7 +155,7 @@ impl ViewerPanel for ScenePanel {
 
     fn on_message(&mut self, message: ViewerMessage, _: &mut ViewerContext) {
         match message.clone() {
-            ViewerMessage::PickFile => {
+            ViewerMessage::NewSource => {
                 self.last_message = None;
                 self.paused = false;
                 self.is_loading = false;
@@ -289,10 +290,7 @@ For bigger training runs consider using the native app."#,
                                     }
                                 };
 
-                                #[cfg(target_family = "wasm")]
-                                async_std::task::spawn_local(fut);
-                                #[cfg(not(target_family = "wasm"))]
-                                async_std::task::spawn(fut);
+                                tokio::task::spawn(fut);
                             }
                         }
                     });

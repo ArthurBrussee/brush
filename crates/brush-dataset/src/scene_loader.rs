@@ -1,12 +1,12 @@
-use async_std::channel::Receiver;
+use ::tokio::sync::mpsc;
+use ::tokio::sync::mpsc::Receiver;
 use brush_render::Backend;
 use brush_train::image::image_to_tensor;
 use brush_train::scene::Scene;
 use brush_train::train::SceneBatch;
 use burn::tensor::Tensor;
 use rand::{seq::SliceRandom, SeedableRng};
-
-use crate::spawn_future;
+use tokio_with_wasm::alias as tokio;
 
 pub struct SceneLoader<B: Backend> {
     receiver: Receiver<SceneBatch<B>>,
@@ -16,7 +16,7 @@ impl<B: Backend> SceneLoader<B> {
     pub fn new(scene: &Scene, batch_size: usize, seed: u64, device: &B::Device) -> Self {
         let scene = scene.clone();
         // The bounded size == number of batches to prefetch.
-        let (tx, rx) = async_std::channel::bounded(5);
+        let (tx, rx) = mpsc::channel(5);
         let device = device.clone();
         let scene_extent = scene.bounds(0.0, 0.0).extent.max_element() as f64;
 
@@ -52,7 +52,7 @@ impl<B: Backend> SceneLoader<B> {
             }
         };
 
-        spawn_future(fut);
+        tokio::task::spawn(fut);
         Self { receiver: rx }
     }
 

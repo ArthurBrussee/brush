@@ -41,7 +41,7 @@ impl ViewerPanel for DatasetPanel {
 
     fn on_message(&mut self, message: ViewerMessage, context: &mut ViewerContext) {
         match message {
-            ViewerMessage::PickFile => {
+            ViewerMessage::NewSource => {
                 self.loading = false;
             }
             ViewerMessage::StartLoading { training } => {

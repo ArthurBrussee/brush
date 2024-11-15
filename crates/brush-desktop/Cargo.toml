@@ -19,15 +19,21 @@ brush-train.path = "../brush-train"
 log.workspace = true
 env_logger.workspace = true
 parking_lot.workspace = true
-async-std.workspace = true
+tokio_with_wasm = { workspace = true, features = ["rt"] }
 
 # Default to wayland on linux. Change this to x11 if needed.
 # this perhaps could use a feature on our side as well,
 # so you could run with cargo run --no-default-features --features=11
 winit = { version = "0.30", features = ["default"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { workspace = true, features = ["io-util", "rt"] }
+
 wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
 console_error_panic_hook.workspace = true
 web-sys.workspace = true
 wasm-logger.workspace = true

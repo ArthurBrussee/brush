@@ -457,7 +457,6 @@ mod tests {
 
     use super::*;
     use assert_approx_eq::assert_approx_eq;
-    use async_std::task;
     use brush_rerun::{BurnToImage, BurnToRerun};
     use burn::{
         backend::Autodiff,
@@ -471,8 +470,8 @@ mod tests {
 
     const USE_RERUN: bool = false;
 
-    #[test]
-    fn renders_at_all() {
+    #[tokio::test]
+    async fn renders_at_all() {
         // Check if rendering doesn't hard crash or anything.
         // These are some zero-sized gaussians, so we know
         // what the result should look like.
@@ -516,8 +515,8 @@ mod tests {
         assert_approx_eq!(alpha_mean, 0.0);
     }
 
-    #[test]
-    fn test_reference() -> Result<()> {
+    #[tokio::test]
+    async fn test_reference() -> Result<()> {
         let device = WgpuDevice::DefaultDevice;
 
         let crab_img = image::open("./test_cases/crab.png")?;
@@ -583,27 +582,23 @@ mod tests {
             let (out, aux) = splats.render(&cam, glam::uvec2(w as u32, h as u32), false);
 
             if let Some(rec) = rec.as_ref() {
-                task::block_on::<_, anyhow::Result<()>>(async {
-                    rec.set_time_sequence("test case", i as i64);
-                    rec.log("img/render", &out.clone().into_rerun_image().await)?;
-                    rec.log("img/ref", &img_ref.clone().into_rerun_image().await)?;
-                    rec.log(
-                        "img/dif",
-                        &(img_ref.clone() - out.clone()).into_rerun().await,
-                    )?;
-                    rec.log(
-                        "images/tile depth",
-                        &aux.read_tile_depth().into_rerun().await,
-                    )?;
-
-                    Ok(())
-                })?;
+                rec.set_time_sequence("test case", i as i64);
+                rec.log("img/render", &out.clone().into_rerun_image().await)?;
+                rec.log("img/ref", &img_ref.clone().into_rerun_image().await)?;
+                rec.log(
+                    "img/dif",
+                    &(img_ref.clone() - out.clone()).into_rerun().await,
+                )?;
+                rec.log(
+                    "images/tile depth",
+                    &aux.read_tile_depth().into_rerun().await,
+                )?;
             }
 
             // Check if images match.
             assert!(out.clone().all_close(img_ref, Some(1e-5), Some(1e-6)));
 
-            let num_visible = task::block_on(aux.read_num_visible()) as usize;
+            let num_visible = aux.read_num_visible().await as usize;
             let projected_splats =
                 Tensor::from_primitive(TensorPrimitive::Float(aux.projected_splats.clone()));
 

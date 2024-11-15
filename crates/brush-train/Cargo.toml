@@ -14,7 +14,7 @@ rand.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
 log.workspace = true
-async-std.workspace = true
+tokio.workspace = true
 
 burn.workspace = true
 burn-wgpu.workspace = true
