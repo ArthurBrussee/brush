@@ -17,7 +17,7 @@ use std::pin::Pin;
 use tokio_stream::Stream;
 use tokio_with_wasm::alias as tokio;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct LoadDatasetArgs {
     pub max_frames: Option<usize>,
     pub max_resolution: Option<u32>,
@@ -27,6 +27,12 @@ pub struct LoadDatasetArgs {
 #[derive(Clone)]
 pub struct LoadInitArgs {
     pub sh_degree: u32,
+}
+
+impl Default for LoadInitArgs {
+    fn default() -> Self {
+        Self { sh_degree: 2 }
+    }
 }
 
 #[derive(Clone)]

@@ -161,6 +161,7 @@ fn process_loop(
     Box::pin(stream)
 }
 
+#[derive(Debug)]
 pub enum DataSource {
     PickFile,
     Url(String),
@@ -181,8 +182,10 @@ impl DataSource {
                 Ok(Box::pin(std::io::Cursor::new(data)))
             }
             DataSource::Url(url) => {
-                // let url = Self::parse_url(url.to_owned());
-                // let url = Self::get_proxied_url(&url);
+                let mut url = url.to_owned();
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    url = format!("https://{}", url);
+                }
                 let response = reqwest::get(url).await?.bytes_stream();
                 let mapped = response
                     .map(|e| e.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
@@ -228,7 +231,7 @@ impl ViewerContext {
         train_config: TrainConfig,
     ) {
         let device = self.device.clone();
-        log::info!("Start data load");
+        log::info!("Start data load {source:?}");
 
         // create a channel for the train loop.
         let (train_sender, train_receiver) = channel(32);
@@ -313,6 +316,18 @@ impl Viewer {
             }
         }
 
+        let mut start_url = None;
+        if cfg!(target_family = "wasm") {
+            if let Some(window) = web_sys::window() {
+                if let Ok(search) = window.location().search() {
+                    if let Ok(search_params) = web_sys::UrlSearchParams::new_with_str(&search) {
+                        let url = search_params.get("url");
+                        start_url = url;
+                    }
+                }
+            }
+        }
+
         let mut tiles: Tiles<PaneType> = egui_tiles::Tiles::default();
 
         let context = ViewerContext::new(device.clone(), cc.egui_ctx.clone());
@@ -354,7 +369,17 @@ impl Viewer {
         let root_container = tiles.insert_container(lin);
         let tree = egui_tiles::Tree::new("viewer_tree", root_container, tiles);
 
-        let tree_ctx = ViewerTree { context };
+        let mut tree_ctx = ViewerTree { context };
+
+        if let Some(start_url) = start_url {
+            tree_ctx.context.start_data_load(
+                DataSource::Url(start_url.to_owned()),
+                LoadDatasetArgs::default(),
+                LoadInitArgs::default(),
+                TrainConfig::default(),
+            );
+        }
+
         Viewer {
             tree,
             tree_ctx,

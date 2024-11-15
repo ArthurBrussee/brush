@@ -1,7 +1,6 @@
 use crate::{viewer::ViewerContext, ViewerPanel};
 use brush_dataset::{LoadDatasetArgs, LoadInitArgs};
 use brush_train::train::TrainConfig;
-use burn::lr_scheduler::exponential::ExponentialLrSchedulerConfig;
 use egui::Slider;
 
 enum Quality {
@@ -65,14 +64,7 @@ impl ViewerPanel for LoadDataPanel {
                 sh_degree: self.sh_degree,
             };
 
-            // Slightly odd to manage train config here but it'll do for now.
-            let total_steps = 30000;
-
-            let lr_max = 3e-4;
-            let decay = 1e-1f64.powf(1.0 / total_steps as f64);
-
-            let mut config = TrainConfig::new(ExponentialLrSchedulerConfig::new(lr_max, decay));
-
+            let mut config = TrainConfig::default();
             if matches!(self.quality, Quality::Low) {
                 config = config
                     .with_densify_grad_thresh(0.00035)

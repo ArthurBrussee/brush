@@ -97,7 +97,11 @@ gloo-timers = { version = "0.3.0", features = ["futures"] }
 
 # Build dependencies.
 thiserror = "*"
-web-sys = { version = "0.3.72", features = ["Window", "Location"] }
+web-sys = { version = "0.3.72", features = [
+    "Window",
+    "Location",
+    "UrlSearchParams",
+] }
 wasm-logger = "0.2.0"
 zip = { version = "2.1.3", default-features = false, features = ["deflate"] }
 

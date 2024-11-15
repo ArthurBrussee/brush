@@ -89,6 +89,15 @@ pub struct TrainConfig {
     seed: u64,
 }
 
+impl Default for TrainConfig {
+    fn default() -> Self {
+        let decay_steps = 30000;
+        let lr_max = 3e-4;
+        let decay = 1e-1f64.powf(1.0 / decay_steps as f64);
+        TrainConfig::new(ExponentialLrSchedulerConfig::new(lr_max, decay))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SceneBatch<B: Backend> {
     pub gt_images: Tensor<B, 4>,
