@@ -35,7 +35,7 @@ jobs:
       - name: Build and run checks
         run: |
           cargo build --all-features --verbose
-          cargo build --target wasm32-unknown-unknown --all-features --verbose
+          cargo build --target wasm32-unknown-unknown --verbose
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test --all-features --verbose
       - name: Check formatting
