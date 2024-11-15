@@ -6,7 +6,6 @@ on:
     branches: ["main"]
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-C target-cpu=native"
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -35,9 +34,9 @@ jobs:
           components: rustfmt, clippy
       - name: Build and run checks
         run: |
-          cargo clippy --all-targets --all-features -- -D warnings
           cargo build --all-features --verbose
           cargo build --target wasm32-unknown-unknown --all-features --verbose
+          cargo clippy --all-targets --all-features -- -D warnings
           cargo test --all-features --verbose
       - name: Check formatting
         run: cargo fmt -- --check
