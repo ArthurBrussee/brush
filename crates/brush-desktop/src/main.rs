@@ -54,8 +54,6 @@ fn main() {
 
         // On wasm, run as a local task.
         tokio::spawn(async {
-            let setup = create_wgpu_device().await;
-
             let web_options = eframe::WebOptions {
                 wgpu_options,
                 ..Default::default()
