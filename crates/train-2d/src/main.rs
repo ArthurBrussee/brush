@@ -14,14 +14,10 @@ use brush_train::{
 };
 use brush_ui::burn_texture::BurnTexture;
 use burn::{
-    backend::{
-        wgpu::{WgpuDevice, WgpuSetup},
-        Autodiff, Wgpu,
-    },
+    backend::{wgpu::WgpuDevice, Autodiff, Wgpu},
     lr_scheduler::exponential::ExponentialLrSchedulerConfig,
     module::AutodiffModule,
 };
-use eframe::egui_wgpu::WgpuConfiguration;
 use egui::{load::SizedTexture, ImageSource, TextureHandle, TextureOptions};
 use glam::{Quat, Vec2, Vec3};
 use rand::SeedableRng;
@@ -97,24 +93,59 @@ struct App {
 }
 
 impl App {
-    fn new(
-        view: SceneView,
-        setup: &WgpuSetup,
-        ctx: egui::Context,
-        events: Receiver<TrainStep>,
-    ) -> Self {
+    fn new(cc: &eframe::CreationContext) -> Self {
+        let state = cc.wgpu_render_state.as_ref().unwrap();
+        let device = brush_ui::create_wgpu_device(
+            state.adapter.clone(),
+            state.device.clone(),
+            state.queue.clone(),
+        );
+
+        let lr_max = 1.5e-4;
+        let decay = 1.0;
+
+        let image = image::open("./crab.jpg").unwrap();
+
+        let fov_x = 0.5 * std::f64::consts::PI;
+        let fov_y = focal_to_fov(fov_to_focal(fov_x, image.width()), image.height());
+
+        let center_uv = Vec2::ONE * 0.5;
+
+        let camera = Camera::new(
+            glam::vec3(0.0, 0.0, -5.0),
+            Quat::IDENTITY,
+            fov_x,
+            fov_y,
+            center_uv,
+        );
+
+        let view = SceneView {
+            name: "crabby".to_owned(),
+            camera,
+            image: Arc::new(image),
+        };
+        let (sender, receiver) = tokio::sync::mpsc::channel(32);
+
         let color_img = egui::ColorImage::from_rgb(
             [view.image.width() as usize, view.image.height() as usize],
             &view.image.to_rgb8().into_vec(),
         );
+        let handle =
+            cc.egui_ctx
+                .load_texture("nearest_view_tex", color_img, TextureOptions::default());
 
-        let handle = ctx.load_texture("nearest_view_tex", color_img, TextureOptions::default());
+        let config = TrainConfig::new(ExponentialLrSchedulerConfig::new(lr_max, decay))
+            .with_max_refine_step(u32::MAX) // Just keep refining
+            .with_warmup_steps(100) // Don't really need a warmup for simple 2D
+            .with_reset_alpha_every_refine(u32::MAX); // Don't use alpha reset.
+
+        spawn_train_loop(view.clone(), config, device, cc.egui_ctx.clone(), sender);
 
         Self {
             view,
             tex_handle: handle,
-            backbuffer: BurnTexture::new(setup.device.clone(), setup.queue.clone()),
-            receiver: events,
+            backbuffer: BurnTexture::new(state.device.clone(), state.queue.clone()),
+            receiver,
             last_step: None,
         }
     }
@@ -157,19 +188,8 @@ impl eframe::App for App {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
-    let setup = brush_train::create_wgpu_setup().await;
-    let wgpu_options = WgpuConfiguration {
-        wgpu_setup: eframe::egui_wgpu::WgpuSetup::Existing {
-            instance: setup.instance.clone(),
-            adapter: setup.adapter.clone(),
-            device: setup.device.clone(),
-            queue: setup.queue.clone(),
-        },
-        ..Default::default()
-    };
-
     // NB: Load carrying icon. egui at head fails when no icon is included
     // as the built-in one is git-lfs which cargo doesn't clone properly.
     let icon = eframe::icon_data::from_png_bytes(
@@ -183,58 +203,14 @@ async fn main() {
             .with_inner_size(egui::Vec2::new(1100.0, 500.0))
             .with_active(true)
             .with_icon(std::sync::Arc::new(icon)),
-
-        // Need a slightly more careful wgpu init to support burn.
-        wgpu_options,
+        wgpu_options: brush_ui::create_egui_options(),
         ..Default::default()
     };
-
-    let device = WgpuDevice::DefaultDevice;
-
-    let lr_max = 1.5e-4;
-    let decay = 1.0;
-
-    let image = image::open("./crab.jpg").unwrap();
-
-    let fov_x = 0.5 * std::f64::consts::PI;
-    let fov_y = focal_to_fov(fov_to_focal(fov_x, image.width()), image.height());
-
-    let center_uv = Vec2::ONE * 0.5;
-
-    let camera = Camera::new(
-        glam::vec3(0.0, 0.0, -5.0),
-        Quat::IDENTITY,
-        fov_x,
-        fov_y,
-        center_uv,
-    );
-
-    let view = SceneView {
-        name: "crabby".to_owned(),
-        camera,
-        image: Arc::new(image),
-    };
-
-    let config = TrainConfig::new(ExponentialLrSchedulerConfig::new(lr_max, decay))
-        .with_max_refine_step(u32::MAX) // Just keep refining
-        .with_warmup_steps(100) // Don't really need a warmup for simple 2D
-        .with_reset_alpha_every_refine(u32::MAX); // Don't use alpha reset.
 
     eframe::run_native(
         "Brush",
         native_options,
-        Box::new(move |cc| {
-            let (sender, receiver) = tokio::sync::mpsc::channel(32);
-
-            spawn_train_loop(view.clone(), config, device, cc.egui_ctx.clone(), sender);
-
-            Ok(Box::new(App::new(
-                view,
-                &setup,
-                cc.egui_ctx.clone(),
-                receiver,
-            )))
-        }),
+        Box::new(move |cc| Ok(Box::new(App::new(cc)))),
     )
     .unwrap();
 }

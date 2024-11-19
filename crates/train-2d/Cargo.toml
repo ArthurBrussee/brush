@@ -7,11 +7,13 @@ license.workspace = true
 
 [dependencies]
 burn.workspace = true
+burn-wgpu.workspace = true
+wgpu.workspace = true
 brush-train.path = "../brush-train"
 brush-render.path = "../brush-render"
 brush-ui.path = "../brush-ui"
 
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros"] }
 env_logger.workspace = true
 async-fn-stream.workspace = true
 rand.workspace = true

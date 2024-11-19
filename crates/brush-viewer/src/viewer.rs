@@ -297,10 +297,13 @@ impl ViewerContext {
 
 impl Viewer {
     pub fn new(cc: &eframe::CreationContext) -> Self {
-        let state = cc.wgpu_render_state.as_ref().unwrap();
-
         // For now just assume we're running on the default
-        let device = WgpuDevice::DefaultDevice;
+        let state = cc.wgpu_render_state.as_ref().unwrap();
+        let device = brush_ui::create_wgpu_device(
+            state.adapter.clone(),
+            state.device.clone(),
+            state.queue.clone(),
+        );
 
         cfg_if::cfg_if! {
             if #[cfg(target_family = "wasm")] {

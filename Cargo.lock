@@ -715,6 +715,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "brush-train",
+ "brush-ui",
  "brush-viewer",
  "console_error_panic_hook",
  "eframe",
@@ -840,6 +841,7 @@ dependencies = [
  "brush-render",
  "burn",
  "burn-fusion",
+ "burn-wgpu",
  "eframe",
  "egui",
  "glam",
@@ -7672,6 +7674,7 @@ dependencies = [
  "brush-train",
  "brush-ui",
  "burn",
+ "burn-wgpu",
  "eframe",
  "egui",
  "env_logger",
@@ -7679,6 +7682,7 @@ dependencies = [
  "image",
  "rand",
  "tokio",
+ "wgpu",
 ]
 
 [[package]]

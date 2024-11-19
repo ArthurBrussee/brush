@@ -680,7 +680,6 @@ mod tests {
     //     let num_points = 1;
 
     //     let img_size = glam::uvec2(16, 16);
-    //     let device = WgpuDevice::BestAvailable;
 
     //     let means = Tensor::<DiffBack, 2, _>::zeros([num_points, 3], &device).require_grad();
     //     let log_scales = Tensor::ones([num_points, 3], &device).require_grad();

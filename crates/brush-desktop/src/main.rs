@@ -1,11 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use brush_train::create_wgpu_setup;
-
-use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup};
 use tokio_with_wasm::alias as tokio;
 
 fn main() {
+    let wgpu_options = brush_ui::create_egui_options();
+
     #[cfg(not(target_family = "wasm"))]
     {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -14,18 +13,6 @@ fn main() {
             .unwrap();
 
         runtime.block_on(async {
-            let setup = create_wgpu_setup().await;
-
-            let wgpu_options = WgpuConfiguration {
-                wgpu_setup: WgpuSetup::Existing {
-                    instance: setup.instance,
-                    adapter: setup.adapter,
-                    device: setup.device,
-                    queue: setup.queue,
-                },
-                ..Default::default()
-            };
-
             env_logger::init();
 
             // NB: Load carrying icon. egui at head fails when no icon is included
@@ -40,8 +27,6 @@ fn main() {
                     .with_inner_size(egui::Vec2::new(1450.0, 900.0))
                     .with_active(true)
                     .with_icon(std::sync::Arc::new(icon)),
-
-                // Need a slightly more careful wgpu init to support burn.
                 wgpu_options,
                 ..Default::default()
             };
@@ -69,18 +54,10 @@ fn main() {
 
         // On wasm, run as a local task.
         tokio::spawn(async {
-            let setup = create_wgpu_setup().await;
+            let setup = create_wgpu_device().await;
 
             let web_options = eframe::WebOptions {
-                wgpu_options: WgpuConfiguration {
-                    wgpu_setup: WgpuSetup::Existing {
-                        instance: setup.instance,
-                        adapter: setup.adapter,
-                        device: setup.device,
-                        queue: setup.queue,
-                    },
-                    ..Default::default()
-                },
+                wgpu_options,
                 ..Default::default()
             };
 

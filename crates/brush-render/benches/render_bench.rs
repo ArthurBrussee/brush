@@ -33,6 +33,7 @@ fn generate_bench_data() -> anyhow::Result<()> {
     let num_points = 2usize.pow(21); //  Maxmimum number of splats to bench.
 
     let device = WgpuDevice::DefaultDevice;
+
     let means = Tensor::<DiffBack, 2>::random(
         [num_points, 3],
         burn::tensor::Distribution::Uniform(-0.5, 0.5),
@@ -178,7 +179,7 @@ fn bench_general(
                 let _ = out.0.mean().backward();
             }
             // Wait for GPU work.
-            <Wgpu as burn::prelude::Backend>::sync(&WgpuDevice::DefaultDevice);
+            <Wgpu as burn::prelude::Backend>::sync(&device);
         });
     } else {
         // Run with no autodiff graph.
@@ -189,7 +190,7 @@ fn bench_general(
                 let _ = splats.render(&camera, resolution, true);
             }
             // Wait for GPU work.
-            <Wgpu as burn::prelude::Backend>::sync(&WgpuDevice::DefaultDevice);
+            <Wgpu as burn::prelude::Backend>::sync(&device);
         });
     }
 }
