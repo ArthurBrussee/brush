@@ -2,7 +2,7 @@ use brush_dataset::splat_export;
 use brush_ui::burn_texture::BurnTexture;
 use burn_wgpu::Wgpu;
 use egui::epaint::mutex::RwLock as EguiRwLock;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use brush_render::gaussian_splats::Splats;
 use eframe::egui_wgpu::Renderer;
@@ -23,6 +23,7 @@ pub(crate) struct ScenePanel {
     pub(crate) last_draw: Option<Instant>,
 
     view_splats: Vec<Splats<Wgpu>>,
+    frame: f32,
     err: Option<Arc<anyhow::Error>>,
 
     is_loading: bool,
@@ -45,6 +46,7 @@ impl ScenePanel {
         renderer: Arc<EguiRwLock<Renderer>>,
     ) -> Self {
         Self {
+            frame: 0.0,
             backbuffer: BurnTexture::new(device.clone(), queue.clone()),
             last_draw: None,
             err: None,
@@ -66,6 +68,7 @@ impl ScenePanel {
         ui: &mut egui::Ui,
         context: &mut ViewerContext,
         splats: &Splats<Wgpu>,
+        delta_time: web_time::Duration,
     ) {
         let mut size = ui.available_size();
         let focal = context.camera.focal(glam::uvec2(1, 1));
@@ -96,27 +99,18 @@ impl ScenePanel {
         };
 
         let scrolled = ui.input(|r| r.smooth_scroll_delta).y;
-        let cur_time = Instant::now();
 
-        self.dirty |= if let Some(last_draw) = self.last_draw {
-            let delta_time = cur_time - last_draw;
-
-            context.controls.pan_orbit_camera(
-                &mut context.camera,
-                pan * 5.0,
-                rotate * 5.0,
-                scrolled * 0.01,
-                glam::vec2(rect.size().x, rect.size().y),
-                delta_time.as_secs_f32(),
-            )
-        } else {
-            false
-        };
+        self.dirty |= context.controls.pan_orbit_camera(
+            &mut context.camera,
+            pan * 5.0,
+            rotate * 5.0,
+            scrolled * 0.01,
+            glam::vec2(rect.size().x, rect.size().y),
+            delta_time.as_secs_f32(),
+        );
 
         self.dirty |= self.last_size != size;
         context.controls.dirty = false;
-
-        self.last_draw = Some(cur_time);
 
         // Also redraw next frame, need to check if we're still animating.
         if self.dirty {
@@ -190,7 +184,8 @@ impl ViewerPanel for ScenePanel {
             ViewerMessage::ViewSplats { splats, frame } => {
                 if self.live_update {
                     self.view_splats.truncate(*frame);
-                    self.view_splats = vec![*splats.clone()];
+                    log::info!("Received splat at {frame}");
+                    self.view_splats.push(*splats.clone());
                 }
             }
             ViewerMessage::TrainStep {
@@ -211,6 +206,14 @@ impl ViewerPanel for ScenePanel {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, context: &mut ViewerContext) {
+        let cur_time = Instant::now();
+        let delta_time = self
+            .last_draw
+            .map(|last| cur_time - last)
+            .unwrap_or(Duration::from_millis(10));
+
+        self.last_draw = Some(cur_time);
+
         // Empty scene, nothing to show.
         if !self.is_loading && self.view_splats.is_empty() && self.err.is_none() {
             ui.heading("Load a ply file or dataset to get started.");
@@ -245,9 +248,16 @@ For bigger training runs consider using the native app."#,
         if let Some(err) = self.err.as_ref() {
             ui.label("Error: ".to_owned() + &err.to_string());
         } else if !self.view_splats.is_empty() {
-            // TODO: ANimate.
-            let splats = self.view_splats[0].clone();
-            self.draw_splats(ui, context, &splats);
+            const FPS: usize = 24;
+            let frame = ((self.frame * FPS as f32).floor() as usize) % self.view_splats.len();
+            let splats = self.view_splats[frame].clone();
+            self.frame += delta_time.as_secs_f32();
+
+            if self.view_splats.len() > 1 {
+                self.dirty = true;
+            }
+
+            self.draw_splats(ui, context, &splats, delta_time);
 
             if self.is_training {
                 ui.horizontal(|ui| {

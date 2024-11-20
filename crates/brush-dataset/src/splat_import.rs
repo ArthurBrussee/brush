@@ -266,7 +266,7 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                         log_scales.push(splat.log_scale);
                     }
                     if let Some(rotation) = rotations.as_mut() {
-                        rotation.push(splat.rotation.normalize());
+                        rotation.push(splat.rotation);
                     }
                     // Don't emit any intermediate states as it looks strange to have a torn state.
                 }
@@ -300,13 +300,14 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                     splats.log_scales.val()
                 };
 
-                let new_splat = Splats::from_tensor_data(
+                let mut new_splat = Splats::from_tensor_data(
                     means,
                     rotations,
                     log_scales,
                     splats.sh_coeffs.val(),
                     splats.raw_opacity.val(),
                 );
+                new_splat.norm_rotations();
 
                 // Emit newly animated splat.
                 emitter.emit(new_splat).await;
