@@ -27,6 +27,7 @@ pub(crate) struct ScenePanel {
     err: Option<Arc<anyhow::Error>>,
 
     is_loading: bool,
+
     is_training: bool,
     live_update: bool,
     paused: bool,
@@ -112,11 +113,6 @@ impl ScenePanel {
         self.dirty |= self.last_size != size;
         context.controls.dirty = false;
 
-        // Also redraw next frame, need to check if we're still animating.
-        if self.dirty {
-            ui.ctx().request_repaint();
-        }
-
         // If this viewport is re-rendering.
         if ui.ctx().has_requested_repaint() && size.x > 0 && size.y > 0 && self.dirty {
             let _span = trace_span!("Render splats").entered();
@@ -173,6 +169,7 @@ impl ViewerPanel for ScenePanel {
                 self.paused = false;
                 self.is_loading = false;
                 self.is_training = false;
+                self.err = None;
             }
             ViewerMessage::DoneLoading { training: _ } => {
                 self.is_loading = false;
@@ -251,13 +248,27 @@ For bigger training runs consider using the native app."#,
             const FPS: usize = 24;
             let frame = ((self.frame * FPS as f32).floor() as usize) % self.view_splats.len();
             let splats = self.view_splats[frame].clone();
-            self.frame += delta_time.as_secs_f32();
+
+            self.draw_splats(ui, context, &splats, delta_time);
 
             if self.view_splats.len() > 1 {
                 self.dirty = true;
-            }
 
-            self.draw_splats(ui, context, &splats, delta_time);
+                let label = if self.paused {
+                    "⏸ paused"
+                } else {
+                    "⏵ playing"
+                };
+
+                if ui.selectable_label(!self.paused, label).clicked() {
+                    self.paused = !self.paused;
+                }
+
+                if !self.paused {
+                    self.frame += delta_time.as_secs_f32();
+                    self.dirty = true;
+                }
+            }
 
             if self.is_training {
                 ui.horizontal(|ui| {
@@ -320,6 +331,11 @@ For bigger training runs consider using the native app."#,
                         tokio::task::spawn(fut);
                     }
                 });
+            }
+
+            // Also redraw next frame, need to check if we're still animating.
+            if self.dirty {
+                ui.ctx().request_repaint();
             }
         }
     }
