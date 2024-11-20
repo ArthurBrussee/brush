@@ -435,7 +435,7 @@ impl ViewerPanel for RerunPanel {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 ui.label("Stream data to ");
-                ui.hyperlink_to("Rerun.io", "rerun.io");
+                ui.hyperlink_to("Rerun.io", "https://rerun.io");
                 ui.label(" for visualization");
             });
 
