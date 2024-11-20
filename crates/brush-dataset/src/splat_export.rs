@@ -44,7 +44,7 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<Vec<GaussianDa
 
             GaussianData {
                 means: Vec3::new(means[i * 3], means[i * 3 + 1], means[i * 3 + 2]),
-                scale: Vec3::new(
+                log_scale: Vec3::new(
                     log_scales[i * 3],
                     log_scales[i * 3 + 1],
                     log_scales[i * 3 + 2],

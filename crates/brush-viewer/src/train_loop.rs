@@ -60,9 +60,9 @@ pub(crate) fn train_loop<T: AsyncRead + Unpin + 'static>(
         while let Some(splats) = splat_stream.next().await {
             let splats = splats?;
             let splats = splats.with_min_sh_degree(load_init_args.sh_degree);
-            let msg = ViewerMessage::Splats {
-                iter: 0,
+            let msg = ViewerMessage::ViewSplats {
                 splats: Box::new(splats.valid()),
+                frame: 0,
             };
             emitter.emit(msg).await;
             initial_splats = Some(splats);
@@ -155,15 +155,9 @@ pub(crate) fn train_loop<T: AsyncRead + Unpin + 'static>(
                     splats = new_splats;
 
                     if trainer.iter % UPDATE_EVERY == 0 {
-                        // Log out train stats.
-                        emitter
-                            .emit(ViewerMessage::Splats {
-                                iter: trainer.iter,
-                                splats: Box::new(splats.valid()),
-                            })
-                            .await;
                         emitter
                             .emit(ViewerMessage::TrainStep {
+                                splats: Box::new(splats.valid()),
                                 stats: Box::new(stats),
                                 iter: trainer.iter,
                                 timestamp: Instant::now(),

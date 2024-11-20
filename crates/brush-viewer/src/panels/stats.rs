@@ -17,6 +17,7 @@ pub(crate) struct StatsPanel {
 
     training_started: bool,
     num_splats: usize,
+    frames: usize,
 
     start_load_time: Instant,
     adapter_info: AdapterInfo,
@@ -32,6 +33,7 @@ impl StatsPanel {
             last_eval_psnr: None,
             training_started: false,
             num_splats: 0,
+            frames: 0,
             start_load_time: Instant::now(),
             adapter_info,
         }
@@ -73,19 +75,23 @@ impl ViewerPanel for StatsPanel {
                 self.last_eval_psnr = None;
                 self.training_started = *training;
             }
+            ViewerMessage::ViewSplats { splats, frame } => {
+                self.num_splats = splats.num_splats();
+                self.frames = *frame;
+            }
             ViewerMessage::TrainStep {
+                splats,
                 stats: _,
                 iter,
                 timestamp,
             } => {
+                self.num_splats = splats.num_splats();
+
                 let current_iter_per_s = (iter - self.last_train_step.1) as f32
                     / (*timestamp - self.last_train_step.0).as_secs_f32();
 
                 self.train_iter_per_s = 0.95 * self.train_iter_per_s + 0.05 * current_iter_per_s;
                 self.last_train_step = (*timestamp, *iter);
-            }
-            ViewerMessage::Splats { iter: _, splats } => {
-                self.num_splats = splats.num_splats();
             }
             ViewerMessage::EvalResult { iter: _, eval } => {
                 let avg_psnr =
@@ -103,8 +109,14 @@ impl ViewerPanel for StatsPanel {
             .striped(true)
             .show(ui, |ui| {
                 ui.label("Splats");
-                ui.label(format!("{:?}", self.num_splats));
+                ui.label(format!("{}", self.num_splats));
                 ui.end_row();
+
+                if self.frames > 0 {
+                    ui.label("Frames");
+                    ui.label(format!("{}", self.frames));
+                    ui.end_row();
+                }
 
                 if self.training_started {
                     ui.label("Train step");

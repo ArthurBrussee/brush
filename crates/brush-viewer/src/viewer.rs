@@ -49,9 +49,10 @@ pub(crate) enum ViewerMessage {
     /// Loaded a splat from a ply file.
     ///
     /// Nb: This includes all the intermediately loaded splats.
-    Splats {
-        iter: u32,
+    /// Nb: Animated splats will have the 'frame' number set.
+    ViewSplats {
         splats: Box<Splats<Backend>>,
+        frame: usize,
     },
     /// Loaded a bunch of viewpoints to train on.
     Dataset {
@@ -63,6 +64,7 @@ pub(crate) enum ViewerMessage {
     },
     /// Some number of training steps are done.
     TrainStep {
+        splats: Box<Splats<Backend>>,
         stats: Box<TrainStepStats<Autodiff<Backend>>>,
         iter: u32,
         timestamp: Instant,
@@ -124,11 +126,25 @@ fn process_loop(
             let splat_stream = splat_import::load_splat_from_ply(data, subsample, device.clone());
 
             let mut splat_stream = std::pin::pin!(splat_stream);
+
+            let mut last_count = 0;
+            let mut frame = 0;
+
             while let Some(splats) = splat_stream.next().await {
+                let splats = splats?;
+
+                // HACK: Assume the splat stream is animated if the new splats coming out have.
+                // The actual stream should probably tell you about this but that's a bigger refactor.
+                if splats.num_splats() == last_count {
+                    frame += 1;
+                }
+
+                last_count = splats.num_splats();
+
                 emitter
-                    .emit(ViewerMessage::Splats {
-                        iter: 0, // For viewing just use "training step 0", bit weird.
-                        splats: Box::new(splats?),
+                    .emit(ViewerMessage::ViewSplats {
+                        splats: Box::new(splats),
+                        frame,
                     })
                     .await;
             }

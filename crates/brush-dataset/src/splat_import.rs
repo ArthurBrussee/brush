@@ -2,12 +2,13 @@ use std::collections::HashSet;
 
 use async_fn_stream::try_fn_stream;
 use brush_render::{render::rgb_to_sh, Backend};
+use burn::tensor::{Tensor, TensorData};
 use glam::{Quat, Vec3};
 use ply_rs::{
     parser::Parser,
-    ply::{Property, PropertyAccess},
+    ply::{ElementDef, Header, Property, PropertyAccess},
 };
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, BufReader};
 use tokio_stream::Stream;
 use tracing::trace_span;
 
@@ -16,7 +17,7 @@ use brush_render::gaussian_splats::Splats;
 
 pub(crate) struct GaussianData {
     pub(crate) means: Vec3,
-    pub(crate) scale: Vec3,
+    pub(crate) log_scale: Vec3,
     pub(crate) opacity: f32,
     pub(crate) rotation: Quat,
     pub(crate) sh_dc: [f32; 3],
@@ -29,7 +30,7 @@ impl PropertyAccess for GaussianData {
     fn new() -> Self {
         GaussianData {
             means: Vec3::ZERO,
-            scale: Vec3::ZERO,
+            log_scale: Vec3::ZERO,
             opacity: 0.0,
             rotation: Quat::IDENTITY,
             sh_dc: [0.0, 0.0, 0.0],
@@ -45,9 +46,9 @@ impl PropertyAccess for GaussianData {
                 b"x" => self.means[0] = value,
                 b"y" => self.means[1] = value,
                 b"z" => self.means[2] = value,
-                b"scale_0" => self.scale[0] = value,
-                b"scale_1" => self.scale[1] = value,
-                b"scale_2" => self.scale[2] = value,
+                b"scale_0" => self.log_scale[0] = value,
+                b"scale_1" => self.log_scale[1] = value,
+                b"scale_2" => self.log_scale[2] = value,
                 b"opacity" => self.opacity = value,
                 b"rot_0" => self.rotation.w = value,
                 b"rot_1" => self.rotation.x = value,
@@ -85,9 +86,9 @@ impl PropertyAccess for GaussianData {
             b"x" => Some(self.means[0]),
             b"y" => Some(self.means[1]),
             b"z" => Some(self.means[2]),
-            b"scale_0" => Some(self.scale[0]),
-            b"scale_1" => Some(self.scale[1]),
-            b"scale_2" => Some(self.scale[2]),
+            b"scale_0" => Some(self.log_scale[0]),
+            b"scale_1" => Some(self.log_scale[1]),
+            b"scale_2" => Some(self.log_scale[2]),
             b"opacity" => Some(self.opacity),
             b"rot_0" => Some(self.rotation.w),
             b"rot_1" => Some(self.rotation.x),
@@ -123,6 +124,29 @@ fn interleave_coeffs(sh_dc: [f32; 3], sh_rest: &[f32]) -> Vec<f32> {
     result
 }
 
+async fn decode_splat<T: AsyncBufRead + Unpin + 'static>(
+    reader: &mut T,
+    parser: &Parser<GaussianData>,
+    header: &Header,
+    element: &ElementDef,
+) -> tokio::io::Result<GaussianData> {
+    match header.encoding {
+        ply_rs::ply::Encoding::Ascii => {
+            let mut ascii_line = String::new();
+            reader.read_line(&mut ascii_line).await?;
+            let elem = parser.read_ascii_element(&ascii_line, element)?;
+            ascii_line.clear();
+            Ok(elem)
+        }
+        ply_rs::ply::Encoding::BinaryBigEndian => {
+            parser.read_big_endian_element(reader, element).await
+        }
+        ply_rs::ply::Encoding::BinaryLittleEndian => {
+            parser.read_little_endian_element(reader, element).await
+        }
+    }
+}
+
 pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
     reader: T,
     subsample_points: Option<u32>,
@@ -137,41 +161,40 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
 
     try_fn_stream(|emitter| async move {
         let header = gaussian_parser.read_header(&mut reader).await?;
+        let mut final_splat = None;
 
         for element in &header.elements {
-            if element.name == "vertex" {
-                let properties: HashSet<_> =
-                    element.properties.iter().map(|x| x.name.clone()).collect();
+            let properties: HashSet<_> =
+                element.properties.iter().map(|x| x.name.clone()).collect();
 
+            let n_sh_coeffs = (3 + element
+                .properties
+                .iter()
+                .filter_map(|x| {
+                    x.name
+                        .strip_prefix("f_rest_")
+                        .and_then(|x| x.parse::<u32>().ok())
+                })
+                .max()
+                .unwrap_or(0)) as usize;
+
+            let mut means = Vec::with_capacity(element.count);
+            let mut log_scales = properties
+                .contains("scale_0")
+                .then(|| Vec::with_capacity(element.count));
+            let mut rotations = properties
+                .contains("rot_0")
+                .then(|| Vec::with_capacity(element.count));
+            let mut sh_coeffs = (properties.contains("f_dc_0") || properties.contains("red"))
+                .then(|| Vec::with_capacity(element.count * n_sh_coeffs));
+            let mut opacity = properties
+                .contains("opacity")
+                .then(|| Vec::with_capacity(element.count));
+
+            if element.name == "vertex" {
                 if ["x", "y", "z"].into_iter().any(|p| !properties.contains(p)) {
                     Err(anyhow::anyhow!("Invalid splat ply. Missing properties!"))?
                 }
-
-                let n_sh_coeffs = (3 + element
-                    .properties
-                    .iter()
-                    .filter_map(|x| {
-                        x.name
-                            .strip_prefix("f_rest_")
-                            .and_then(|x| x.parse::<u32>().ok())
-                    })
-                    .max()
-                    .unwrap_or(0)) as usize;
-
-                let mut means = Vec::with_capacity(element.count);
-                let mut scales = properties
-                    .contains("scale_0")
-                    .then(|| Vec::with_capacity(element.count));
-                let mut rotation = properties
-                    .contains("rot_0")
-                    .then(|| Vec::with_capacity(element.count));
-                let mut sh_coeffs = (properties.contains("f_dc_0") || properties.contains("red"))
-                    .then(|| Vec::with_capacity(element.count * n_sh_coeffs));
-                let mut opacity = properties
-                    .contains("opacity")
-                    .then(|| Vec::with_capacity(element.count));
-
-                let mut ascii_line = String::new();
 
                 for i in 0..element.count {
                     // Ocassionally yield.
@@ -183,8 +206,8 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                     if i % update_every == update_every - 1 {
                         let splats = Splats::from_raw(
                             means.clone(),
-                            rotation.clone(),
-                            scales.clone(),
+                            rotations.clone(),
+                            log_scales.clone(),
                             sh_coeffs.clone(),
                             opacity.clone(),
                             &device,
@@ -192,25 +215,6 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
 
                         emitter.emit(splats).await;
                     }
-
-                    let splat = match header.encoding {
-                        ply_rs::ply::Encoding::Ascii => {
-                            reader.read_line(&mut ascii_line).await?;
-                            let elem = gaussian_parser.read_ascii_element(&ascii_line, element)?;
-                            ascii_line.clear();
-                            elem
-                        }
-                        ply_rs::ply::Encoding::BinaryBigEndian => {
-                            gaussian_parser
-                                .read_big_endian_element(&mut reader, element)
-                                .await?
-                        }
-                        ply_rs::ply::Encoding::BinaryLittleEndian => {
-                            gaussian_parser
-                                .read_little_endian_element(&mut reader, element)
-                                .await?
-                        }
-                    };
 
                     // Doing this after first reading and parsing the points is quite wasteful, but
                     // we do need to advance the reader.
@@ -220,11 +224,14 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                         }
                     }
 
+                    let splat =
+                        decode_splat(&mut reader, &gaussian_parser, &header, element).await?;
+
                     means.push(splat.means);
-                    if let Some(scales) = scales.as_mut() {
-                        scales.push(splat.scale);
+                    if let Some(scales) = log_scales.as_mut() {
+                        scales.push(splat.log_scale);
                     }
-                    if let Some(rotation) = rotation.as_mut() {
+                    if let Some(rotation) = rotations.as_mut() {
                         rotation.push(splat.rotation.normalize());
                     }
                     if let Some(opacity) = opacity.as_mut() {
@@ -237,13 +244,72 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                     }
                 }
 
-                let splats = Splats::from_raw(means, rotation, scales, sh_coeffs, opacity, &device);
+                let splats =
+                    Splats::from_raw(means, rotations, log_scales, sh_coeffs, opacity, &device);
+                final_splat = Some(splats.clone());
+                emitter.emit(splats).await;
+            } else if element.name.starts_with("delta_vertex_") {
+                let Some(splats) = final_splat.clone() else {
+                    anyhow::bail!("Need to read base splat first.");
+                };
 
-                if splats.num_splats() == 0 {
-                    Err(anyhow::anyhow!("No splats found"))?;
+                for i in 0..element.count {
+                    // Ocassionally yield.
+                    if i % 500 == 0 {
+                        tokio::task::yield_now().await;
+                    }
+                    let splat =
+                        decode_splat(&mut reader, &gaussian_parser, &header, element).await?;
+                    // Let's only animate transforms for now.
+                    means.push(splat.means);
+                    if let Some(log_scales) = log_scales.as_mut() {
+                        log_scales.push(splat.log_scale);
+                    }
+                    if let Some(rotation) = rotations.as_mut() {
+                        rotation.push(splat.rotation.normalize());
+                    }
+                    // Don't emit any intermediate states as it looks strange to have a torn state.
                 }
 
-                emitter.emit(splats).await;
+                let n_splats = splats.num_splats();
+                let means_tensor: Vec<f32> = means.iter().flat_map(|v| [v.x, v.y, v.z]).collect();
+                let means =
+                    Tensor::from_data(TensorData::new(means_tensor, [n_splats, 3]), &device)
+                        + splats.means.val();
+                // The encoding is just delta encoding in floats - nothing fancy
+                // like actually considering the quaternion transform.
+                let rotations = if let Some(rotations) = rotations {
+                    let rotations: Vec<f32> = rotations
+                        .into_iter()
+                        .flat_map(|v| [v.w, v.x, v.y, v.z])
+                        .collect();
+                    Tensor::from_data(TensorData::new(rotations, [n_splats, 4]), &device)
+                        + splats.rotation.val()
+                } else {
+                    splats.rotation.val()
+                };
+
+                let log_scales = if let Some(log_scales) = log_scales {
+                    let log_scales: Vec<f32> = log_scales
+                        .into_iter()
+                        .flat_map(|v| [v.x, v.y, v.z])
+                        .collect();
+                    Tensor::from_data(TensorData::new(log_scales, [n_splats, 3]), &device)
+                        + splats.log_scales.val()
+                } else {
+                    splats.log_scales.val()
+                };
+
+                let new_splat = Splats::from_tensor_data(
+                    means,
+                    rotations,
+                    log_scales,
+                    splats.sh_coeffs.val(),
+                    splats.raw_opacity.val(),
+                );
+
+                // Emit newly animated splat.
+                emitter.emit(new_splat).await;
             }
         }
 

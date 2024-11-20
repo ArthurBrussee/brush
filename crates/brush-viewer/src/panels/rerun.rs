@@ -380,18 +380,8 @@ impl ViewerPanel for RerunPanel {
                     self.ready_to_log_dataset = true;
                 }
             }
-            ViewerMessage::Splats { iter, splats } => {
-                let Some(visualize) = self.visualize.clone() else {
-                    return;
-                };
-
-                if let Some(every) = self.visualize_splats_every {
-                    if iter % every == 0 {
-                        visualize.log_splats(*splats.clone());
-                    }
-                }
-            }
             viewer::ViewerMessage::TrainStep {
+                splats,
                 stats,
                 iter,
                 timestamp: _,
@@ -399,6 +389,12 @@ impl ViewerPanel for RerunPanel {
                 let Some(visualize) = self.visualize.clone() else {
                     return;
                 };
+
+                if let Some(every) = self.visualize_splats_every {
+                    if iter % every == 0 {
+                        visualize.clone().log_splats(*splats.clone());
+                    }
+                }
 
                 // If needed, start an eval run.
                 if iter % self.eval_every == 0 {

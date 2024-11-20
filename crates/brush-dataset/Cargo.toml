@@ -22,7 +22,9 @@ ply-rs.workspace = true
 web-time.workspace = true
 rand.workspace = true
 
-tokio.workspace = true
+safetensors.workspace = true
+
+tokio = { workspace = true, features = ["io-util"] }
 tokio_with_wasm.workspace = true
 tokio-stream.workspace = true
 async-fn-stream.workspace = true

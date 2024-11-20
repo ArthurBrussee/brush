@@ -21,7 +21,9 @@ use crate::{
 pub(crate) struct ScenePanel {
     pub(crate) backbuffer: BurnTexture,
     pub(crate) last_draw: Option<Instant>,
-    pub(crate) last_message: Option<ViewerMessage>,
+
+    view_splats: Vec<Splats<Wgpu>>,
+    err: Option<Arc<anyhow::Error>>,
 
     is_loading: bool,
     is_training: bool,
@@ -45,7 +47,8 @@ impl ScenePanel {
         Self {
             backbuffer: BurnTexture::new(device.clone(), queue.clone()),
             last_draw: None,
-            last_message: None,
+            err: None,
+            view_splats: vec![],
             live_update: true,
             paused: false,
             dirty: true,
@@ -170,9 +173,9 @@ impl ViewerPanel for ScenePanel {
             self.dirty = true;
         }
 
-        match message.clone() {
+        match message {
             ViewerMessage::NewSource => {
-                self.last_message = None;
+                self.view_splats = vec![];
                 self.paused = false;
                 self.is_loading = false;
                 self.is_training = false;
@@ -181,17 +184,27 @@ impl ViewerPanel for ScenePanel {
                 self.is_loading = false;
             }
             ViewerMessage::StartLoading { training } => {
-                self.is_training = training;
-                self.last_message = None;
+                self.is_training = *training;
                 self.is_loading = true;
             }
-            ViewerMessage::Splats { iter: _, splats: _ } => {
+            ViewerMessage::ViewSplats { splats, frame } => {
                 if self.live_update {
-                    self.last_message = Some(message.clone());
+                    self.view_splats.truncate(*frame);
+                    self.view_splats = vec![*splats.clone()];
                 }
             }
-            ViewerMessage::Error(_) => {
-                self.last_message = Some(message.clone());
+            ViewerMessage::TrainStep {
+                splats,
+                stats: _,
+                iter: _,
+                timestamp: _,
+            } => {
+                if self.live_update {
+                    self.view_splats = vec![*splats.clone()];
+                }
+            }
+            ViewerMessage::Error(e) => {
+                self.err = Some(e.clone());
             }
             _ => {}
         }
@@ -199,8 +212,7 @@ impl ViewerPanel for ScenePanel {
 
     fn ui(&mut self, ui: &mut egui::Ui, context: &mut ViewerContext) {
         // Empty scene, nothing to show.
-        if !self.is_loading && context.dataset.train.views.is_empty() && self.last_message.is_none()
-        {
+        if !self.is_loading && self.view_splats.is_empty() && self.err.is_none() {
             ui.heading("Load a ply file or dataset to get started.");
             ui.add_space(5.0);
             ui.label(
@@ -230,78 +242,74 @@ For bigger training runs consider using the native app."#,
             return;
         }
 
-        if let Some(message) = self.last_message.clone() {
-            match message {
-                ViewerMessage::Error(e) => {
-                    ui.label("Error: ".to_owned() + &e.to_string());
-                }
-                ViewerMessage::Splats { iter: _, splats } => {
-                    self.draw_splats(ui, context, &splats);
+        if let Some(err) = self.err.as_ref() {
+            ui.label("Error: ".to_owned() + &err.to_string());
+        } else if !self.view_splats.is_empty() {
+            // TODO: ANimate.
+            let splats = self.view_splats[0].clone();
+            self.draw_splats(ui, context, &splats);
 
-                    ui.horizontal(|ui| {
-                        if self.is_training {
-                            ui.add_space(15.0);
+            if self.is_training {
+                ui.horizontal(|ui| {
+                    ui.add_space(15.0);
 
-                            let label = if self.paused {
-                                "⏸ paused"
-                            } else {
-                                "⏵ training"
-                            };
+                    let label = if self.paused {
+                        "⏸ paused"
+                    } else {
+                        "⏵ training"
+                    };
 
-                            if ui.selectable_label(!self.paused, label).clicked() {
-                                self.paused = !self.paused;
-                                context.send_train_message(TrainMessage::Paused(self.paused));
-                            }
+                    if ui.selectable_label(!self.paused, label).clicked() {
+                        self.paused = !self.paused;
+                        context.send_train_message(TrainMessage::Paused(self.paused));
+                    }
 
-                            ui.add_space(15.0);
+                    ui.add_space(15.0);
 
-                            ui.scope(|ui| {
-                                ui.style_mut().visuals.selection.bg_fill = Color32::DARK_RED;
-                                if ui
-                                    .selectable_label(self.live_update, "🔴 Live update splats")
-                                    .clicked()
-                                {
-                                    self.live_update = !self.live_update;
-                                }
-                            });
-
-                            ui.add_space(15.0);
-
-                            if ui.button("⬆ Export").clicked() {
-                                let splats = splats.clone();
-
-                                let fut = async move {
-                                    let file = rrfd::save_file("export.ply").await;
-
-                                    // Not sure where/how to show this error if any.
-                                    match file {
-                                        Err(e) => {
-                                            log::error!("Failed to save file: {e}");
-                                        }
-                                        Ok(file) => {
-                                            let data = splat_export::splat_to_ply(*splats).await;
-
-                                            let data = match data {
-                                                Ok(data) => data,
-                                                Err(e) => {
-                                                    log::error!("Failed to serialize file: {e}");
-                                                    return;
-                                                }
-                                            };
-
-                                            if let Err(e) = file.write(&data).await {
-                                                log::error!("Failed to write file: {e}");
-                                            }
-                                        }
-                                    }
-                                };
-
-                                tokio::task::spawn(fut);
-                            }
+                    ui.scope(|ui| {
+                        ui.style_mut().visuals.selection.bg_fill = Color32::DARK_RED;
+                        if ui
+                            .selectable_label(self.live_update, "🔴 Live update splats")
+                            .clicked()
+                        {
+                            self.live_update = !self.live_update;
                         }
                     });
-                }
-                _ => {}
+
+                    ui.add_space(15.0);
+
+                    if ui.button("⬆ Export").clicked() {
+                        let splats = splats.clone();
+
+                        let fut = async move {
+                            let file = rrfd::save_file("export.ply").await;
+
+                            // Not sure where/how to show this error if any.
+                            match file {
+                                Err(e) => {
+                                    log::error!("Failed to save file: {e}");
+                                }
+                                Ok(file) => {
+                                    let data = splat_export::splat_to_ply(splats).await;
+
+                                    let data = match data {
+                                        Ok(data) => data,
+                                        Err(e) => {
+                                            log::error!("Failed to serialize file: {e}");
+                                            return;
+                                        }
+                                    };
+
+                                    if let Err(e) = file.write(&data).await {
+                                        log::error!("Failed to write file: {e}");
+                                    }
+                                }
+                            }
+                        };
+
+                        tokio::task::spawn(fut);
+                    }
+                });
             }
         }
     }
