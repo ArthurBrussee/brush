@@ -136,13 +136,12 @@ pub fn build_modules(
         "#[rustfmt::skip]",
         "fn create_composer() -> naga_oil::compose::Composer {",
         "let mut composer = naga_oil::compose::Composer::default().with_capabilities(
-            naga::valid::Capabilities::SUBGROUP |
-            naga::valid::Capabilities::SHADER_FLT32_ATOMIC
+            naga::valid::Capabilities::SUBGROUP
         );",
     ]);
 
     let mut composer = Composer::default()
-        .with_capabilities(Capabilities::SUBGROUP | Capabilities::SHADER_FLT32_ATOMIC);
+        .with_capabilities(naga::valid::Capabilities::SUBGROUP);
     let mut modules = HashMap::new();
 
     for include in includes {

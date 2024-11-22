@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+import argparse
+import subprocess
+import tomllib
+import os
+import shutil
+import zipfile
+import tempfile
+import json
+
+def parse_cargo_toml():
+    with open('Cargo.toml', 'rb') as f:
+        cargo_toml = tomllib.load(f)
+    app_name = cargo_toml['package']['name']
+    app_id = cargo_toml['package']['metadata']['bundle']['identifier']
+    return app_name, app_id
+
+def build(args):
+    # First, ensure iOS target is installed
+    subprocess.run(['rustup', 'target', 'add', 'aarch64-apple-ios'], check=True)
+    
+    # Clean previous build artifacts
+    subprocess.run(['cargo', 'clean'], check=True)
+    
+    # Set environment variables for the build
+    build_env = os.environ.copy()
+    
+    # Remove any flags that might interfere with target_os
+    if 'RUSTFLAGS' in build_env:
+        del build_env['RUSTFLAGS']
+    if 'CARGO_XCODE_TARGET_OS' in build_env:
+        del build_env['CARGO_XCODE_TARGET_OS']
+    
+    build_env.update({
+        'CARGO_BUILD_TARGET': 'aarch64-apple-ios',
+        'TARGET_CC': 'clang',
+        'TARGET_AR': 'ar',
+        'CFLAGS_aarch64_apple_ios': '--target=arm64-apple-ios',
+        'CARGO_TARGET_AARCH64_APPLE_IOS_LINKER': 'clang',
+        'CARGO_TARGET_AARCH64_APPLE_IOS_AR': 'ar',
+        'CARGO_TARGET_DIR': 'target/cargo-ios',
+    })
+    
+    # First build all workspace dependencies
+    deps_command = [
+        'cargo', 'build',
+        '--target', 'aarch64-apple-ios',
+        '--workspace',
+        '-p', 'brush-viewer',
+        '-p', 'brush-kernel',
+        '-p', 'brush-wgsl',
+        '-p', 'brush-ui',
+        '-p', 'brush-train',
+        '-p', 'brush-render',
+    ]
+    if args.release:
+        deps_command.append('--release')
+    
+    print(f"Building dependencies: {' '.join(deps_command)}")
+    subprocess.run(deps_command, env=build_env, check=True)
+    
+    # For xcodebuild, use a separate environment
+    xcode_env = build_env.copy()
+    xcode_env['CARGO_XCODE_TARGET_OS'] = 'ios'  # Only set for xcodebuild
+    
+    # Generate Xcode project
+    command = ['cargo', 'xcode']
+    print(f"Generating Xcode project: {' '.join(command)}")
+    subprocess.run(command, env=build_env, check=True)  # Use build_env without CARGO_XCODE_TARGET_OS
+    
+    # Build using xcodebuild
+    build_type = 'Release' if args.release else 'Debug'
+    xcode_command = [
+        'xcodebuild',
+        '-project', 'brush-ios.xcodeproj',
+        '-scheme', 'brush_ios.dylib (cdylib)',
+        '-configuration', build_type,
+        '-sdk', 'iphoneos',
+        '-destination', 'platform=iOS,id=00008101-001E44560200001E',
+        'CARGO_TARGET_DIR=target/cargo-ios',
+        'CARGO_BUILD_TARGET=aarch64-apple-ios',
+        'CODE_SIGN_IDENTITY=Apple Development',
+        'DEVELOPMENT_TEAM=783337X36X',
+        'CODE_SIGN_STYLE=Automatic',
+        'IPHONEOS_DEPLOYMENT_TARGET=18.1',
+        'BUILD_LIBRARY_FOR_DISTRIBUTION=YES',
+        'ENABLE_BITCODE=NO',
+        'ONLY_ACTIVE_ARCH=YES',
+        'VALID_ARCHS=arm64',
+        'ARCHS=arm64',
+        'SUPPORTED_PLATFORMS=iphoneos',
+        'SKIP_INSTALL=NO',
+        'DYLIB_INSTALL_NAME_BASE=@rpath',
+        'LD_RUNPATH_SEARCH_PATHS=@executable_path/Frameworks',
+        'OTHER_LDFLAGS=-ObjC',
+    ]
+    
+    print(f"Building: {' '.join(xcode_command)}")
+    subprocess.run(xcode_command, env=xcode_env, check=True)  # Use xcode_env with CARGO_XCODE_TARGET_OS
+
+def ipa(args):
+    print("Creating IPA...")
+    build(args)
+    
+    app_name, _ = parse_cargo_toml()
+    build_type = 'Release' if args.release else 'Debug'
+    
+    # Path to the built .app
+    app_path = f'build/{build_type}-iphoneos/{app_name}.app'
+    
+    # Create Payload directory
+    temp_dir = tempfile.mkdtemp()
+    payload_dir = os.path.join(temp_dir, "Payload")
+    os.makedirs(payload_dir)
+    
+    # Copy .app to Payload
+    shutil.copytree(app_path, os.path.join(payload_dir, f'{app_name}.app'))
+    
+    # Create IPA
+    ipa_path = f'{app_name}.ipa'
+    with zipfile.ZipFile(ipa_path, 'w', zipfile.ZIP_DEFLATED) as ipa_file:
+        for root, dirs, files in os.walk(payload_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, os.path.dirname(payload_dir))
+                ipa_file.write(file_path, arcname)
+    
+    shutil.rmtree(temp_dir)
+    print(f"Created {ipa_path}")
+
+def get_target(args):
+    target = 'aarch64-apple-ios'
+    if args.x86:
+        target = 'x86_64-apple-ios'
+    elif args.sim:
+        target = 'aarch64-apple-ios-sim'
+    if args.target:
+        target = args.target
+    return target
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('command', choices=['build', 'ipa'])
+    parser.add_argument('--x86', action='store_true')
+    parser.add_argument('--sim', action='store_true')
+    parser.add_argument('--target', type=str)
+    parser.add_argument('--release', '-r', action='store_true')
+    parser.add_argument('--ipad', action='store_true')
+    
+    args = parser.parse_args()
+    
+    if args.command == 'build':
+        build(args)
+    elif args.command == 'ipa':
+        ipa(args)
+
+if __name__ == '__main__':
+    main()

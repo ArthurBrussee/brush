@@ -3,6 +3,36 @@ pub mod android;
 #[allow(unused)]
 use anyhow::Context;
 use anyhow::Result;
+use tokio::sync::mpsc::Sender;
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub use rfd;
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub struct FileDialog;
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+impl FileDialog {
+    pub fn new() -> Self {
+        FileDialog
+    }
+
+    pub async fn pick_file(self) -> Option<std::path::PathBuf> {
+        None // Mobile platforms don't support direct file picking
+    }
+}
+
+pub async fn pick_file_async(sender: Sender<Result<Vec<u8>>>) -> Result<()> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        if let Some(file) = rfd::FileDialog::new().pick_file() {
+            let contents = std::fs::read(file)?;
+            sender.send(Ok(contents)).await?;
+        }
+    }
+    
+    Ok(())
+}
 
 pub enum FileHandle {
     #[cfg(not(target_os = "android"))]
@@ -39,23 +69,6 @@ impl FileHandle {
     }
 }
 
-/// Pick a file and return the name & bytes of the file.
-pub async fn pick_file() -> Result<FileHandle> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let file = rfd::AsyncFileDialog::new()
-            .pick_file()
-            .await
-            .context("No file selected")?;
-
-        Ok(FileHandle::Rfd(file))
-    }
-    #[cfg(target_os = "android")]
-    {
-        android::pick_file().await.map(FileHandle::Android)
-    }
-}
-
 /// Saves data to a file and returns the filename the data was saved too.
 ///
 /// Nb: Does not work on Android currently.
@@ -74,4 +87,15 @@ pub async fn save_file(default_name: &str) -> Result<FileHandle> {
         let _ = default_name;
         unimplemented!("No saving on Android yet.")
     }
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+pub fn pick_file() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .pick_file()
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub fn pick_file() -> Option<PathBuf> {
+    None // Mobile platforms don't support standard file dialogs
 }

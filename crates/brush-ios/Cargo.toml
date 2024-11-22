@@ -1,0 +1,25 @@
+[package]
+name = "brush-ios"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "brush_ios"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+log = "0.4"
+env_logger = "0.11"
+brush-viewer = { path = "../brush-viewer"}
+rrfd = { path = "../rrfd" }
+eframe = { git = "https://github.com/emilk/egui/", rev = "5bfff316c9818b3c140d02bb6cdc488556d46ab7", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "wgpu",
+] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc = "0.2.7"
+
+[package.metadata]
+cargo-xcode = { ios-target = "aarch64-apple-ios" }
