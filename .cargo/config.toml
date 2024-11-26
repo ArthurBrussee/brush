@@ -1,0 +1,12 @@
+[target.aarch64-apple-ios]
+linker = "xcrun --sdk iphoneos clang"
+ar = "xcrun ar"
+rustflags = [
+    "-C", "link-arg=-target",
+    "-C", "link-arg=arm64-apple-ios",
+    "-C", "link-arg=-isysroot",
+    "-C", "link-arg=/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
+]
+
+[build]
+target = "aarch64-apple-ios"

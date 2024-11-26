@@ -177,9 +177,20 @@ impl DataSource {
     async fn read(&self) -> anyhow::Result<DataRead> {
         match self {
             DataSource::PickFile => {
-                let picked = rrfd::pick_file().await?;
-                let data = picked.read().await;
-                Ok(Box::pin(std::io::Cursor::new(data)))
+                #[cfg(any(target_os = "android", target_os = "ios"))]
+                {
+                    let picked_file = rrfd::ios::pick_file().await?;
+                    return Ok(Box::pin(std::io::Cursor::new(picked_file.data)));
+                }
+
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                {
+                    let picked = rrfd::FileDialog::new()
+                        .pick_file()
+                        .ok_or_else(|| anyhow::anyhow!("No file selected"))?;
+                    let contents = tokio::fs::read(&picked).await?;
+                    Ok(Box::pin(std::io::Cursor::new(contents)))
+                }
             }
             DataSource::Url(url) => {
                 let mut url = url.to_owned();
