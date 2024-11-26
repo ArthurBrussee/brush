@@ -3,7 +3,7 @@
 #![allow(clippy::single_range_in_vec_init)]
 
 use egui_tiles::SimplificationOptions;
-use viewer::{ViewerContext, ProcessMessage};
+use viewer::{ProcessMessage, ViewerContext};
 
 mod orbit_controls;
 

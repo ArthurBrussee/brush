@@ -1,5 +1,5 @@
 use crate::{
-    viewer::{ViewerContext, ProcessMessage},
+    viewer::{ProcessMessage, ViewerContext},
     ViewerPanel,
 };
 use egui::Hyperlink;
