@@ -24,7 +24,6 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-          clean: true
       - name: Install system dependencies
         run: |
           sudo apt-get update
