@@ -1,12 +1,26 @@
 [target.aarch64-apple-ios]
-linker = "xcrun --sdk iphoneos clang"
-ar = "xcrun ar"
+linker = "/usr/bin/ld"
+ar = "/usr/bin/ar"
 rustflags = [
-    "-C", "link-arg=-target",
-    "-C", "link-arg=arm64-apple-ios",
-    "-C", "link-arg=-isysroot",
-    "-C", "link-arg=/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
+    "-C", "link-arg=-arch",
+    "-C", "link-arg=arm64",
+    "-C", "link-arg=-platform_version",
+    "-C", "link-arg=ios",
+    "-C", "link-arg=14.0",
+    "-C", "link-arg=14.0",
+    "-C", "link-arg=-syslibroot",
+    "-C", "link-arg=/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk",
+    "-C", "link-arg=-lSystem",
+    "-C", "link-arg=-L/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/usr/lib",
+    "-C", "link-arg=-F/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks",
+    "-C", "link-arg=-dead_strip",
+    "-C", "link-arg=-dylib",
+    "-C", "link-arg=-exported_symbol",
+    "-C", "link-arg=_*"
 ]
 
 [build]
 target = "aarch64-apple-ios"
+
+[target.'cfg(target_os = "macos")']
+rustflags = []

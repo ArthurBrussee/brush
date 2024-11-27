@@ -26,7 +26,11 @@ tokio = { workspace = true, features = ["io-util", "rt"] }
 objc = "0.2.7"
 
 [package.metadata]
-cargo-xcode = { ios-target = "aarch64-apple-ios" }
+cargo-xcode = { ios-target = "aarch64-apple-ios" } 
 
 [package.metadata.ios]
-deployment_target = "18.1"  # Update this to match your device
+deployment_target = "14.0"
+
+[package.metadata.bundle]
+identifier = "com.your.app.identifier"
+name = "Brush"

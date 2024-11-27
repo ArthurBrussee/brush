@@ -21,12 +21,13 @@ def get_sdk_path():
 SDK_PATH = get_sdk_path()
 
 env_vars = {
-    'PATH': f"/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin:{os.environ.get('PATH', '')}",
+    'PATH': f"/usr/bin:{os.environ.get('PATH', '')}",
     'SDKROOT': SDK_PATH,
     'IPHONEOS_DEPLOYMENT_TARGET': '14.0',
     'CARGO_BUILD_TARGET': 'aarch64-apple-ios',
-    'TARGET_CC': 'xcrun --sdk iphoneos clang',
-    'TARGET_AR': 'xcrun ar'
+    'TARGET_CC': 'clang',
+    'TARGET_AR': 'ar',
+    'MACOSX_DEPLOYMENT_TARGET': ''
 }
 
 def build(args):
