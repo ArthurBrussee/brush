@@ -592,7 +592,7 @@ mod tests {
 
         let rec = if USE_RERUN {
             rerun::RecordingStreamBuilder::new("render test")
-                .connect()
+                .connect_tcp()
                 .ok()
         } else {
             None

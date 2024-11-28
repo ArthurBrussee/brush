@@ -115,5 +115,5 @@ pub trait Backend: burn::tensor::backend::Backend {
     }
 }
 
-pub trait AutodiffBackend: Backend + burn::tensor::backend::AutodiffBackend {}
+pub trait AutodiffBackend: Backend + burn::tensor::backend::AutodiffBackend<InnerBackend: Backend> {}
 type InnerWgpu = JitBackend<WgpuRuntime, f32, i32, u32>;

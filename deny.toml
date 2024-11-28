@@ -38,23 +38,15 @@ skip = [
     { name = 'cfg_aliases' },
     { name = 'syn' },
     { name = 'itertools' },
+    { name = 'derive-new' },
+
+    #
+    { name = 'thiserror' },
+    { name = 'thiserror-impl' },
+    { name = 'unicode-width' },
 
     # Rfd problematic deps.
-    { name = 'futures-lite' },      # Duplicate in rfd.
-    { name = 'fastrand' },          # Duplicate in rfd.
-    { name = 'event-listener' },    # Duplicate in rfd.
-    { name = 'async-io' },          # Duplicate in rfd.
-    { name = 'async-lock' },        # Duplicate in rfd.
-    { name = 'async-fs' },          # Duplicate in rfd.
-    { name = 'polling' },           # Duplicate in rfd.
-    { name = 'memoffset' },         # Duplicate in rfd.
-    { name = 'linux-raw-sys' },     # Duplicate in rfd.
-    { name = 'toml_edit' },         # Duplicate in rfd.
-    { name = 'rustix' },            # Duplicate in rfd.
     { name = 'raw-window-handle' }, # Old version from rfd.
-
-    { name = 'async-process' }, # RFD & async-std
-    { name = 'async-channel' }, # async-std
 
     # Custom ply fork.
     { name = "ply-rs" },         # Custom fork & rerun version.
@@ -63,12 +55,8 @@ skip = [
     { name = 'peg-runtime' },    # Custom ply fork & rerun version.
     { name = 'cargo_metadata' }, # Duplicate from custom ply + rerun
 
-    # Rerun
-    { name = 'fixed' }, # Old version iin rerun
-
     # Other
     { name = "core-foundation" }, # Egui has two?
-    { name = 'bincode' },         # Burn uses rc2, puffin 1.3.1
     # { name = "web-time" },            # Old version from egui & rerun.
     { name = 'windows_x86_64_msvc' }, # Old version from winit.
     { name = 'windows_x86_64_gnu' },  # Old version from winit.
@@ -98,9 +86,10 @@ allow = [
     "MIT",                            # https://tldrlegal.com/license/mit-license
     "MPL-2.0",                        # https://www.mozilla.org/en-US/MPL/2.0/FAQ/ - see Q11. Used by webpki-roots on Linux.
     "OFL-1.1",                        # https://spdx.org/licenses/OFL-1.1.html
-    "Unicode-DFS-2016",               # https://spdx.org/licenses/Unicode-DFS-2016.html
     "Zlib",                           # https://tldrlegal.com/license/zlib-libpng-license-(zlib)
     "Unlicense",                      # https://www.tldrlegal.com/license/unlicense
+    "Unicode-3.0",
+    "OpenSSL",
 ]
 exceptions = []
 
