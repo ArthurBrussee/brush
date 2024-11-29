@@ -96,14 +96,6 @@ def get_target(args):
         target = args.target
     return target
 
-def get_xcrun_path():
-    try:
-        return subprocess.check_output(['which', 'xcrun']).decode().strip()
-    except:
-        return '/usr/bin/xcrun'
-
-XCRUN_PATH = get_xcrun_path()
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['build', 'ipa'])
