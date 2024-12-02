@@ -65,26 +65,54 @@ def ipa(args):
     
     # Path to the built .app
     app_path = f'build/{build_type}-iphoneos/{app_name}.app'
+    if not os.path.exists(app_path):
+        print(f"Error: {app_path} does not exist")
+        return
     
     # Create Payload directory
     temp_dir = tempfile.mkdtemp()
     payload_dir = os.path.join(temp_dir, "Payload")
-    os.makedirs(payload_dir)
+    os.makedirs(payload_dir, exist_ok=True)
     
     # Copy .app to Payload
-    shutil.copytree(app_path, os.path.join(payload_dir, f'{app_name}.app'))
+    app_in_payload = os.path.join(payload_dir, os.path.basename(app_path))
+    print(f"Copying {app_path} to {app_in_payload}")
+    shutil.copytree(app_path, app_in_payload, symlinks=True, dirs_exist_ok=True)
     
     # Create IPA
     ipa_path = f'{app_name}.ipa'
-    with zipfile.ZipFile(ipa_path, 'w', zipfile.ZIP_DEFLATED) as ipa_file:
-        for root, dirs, files in os.walk(payload_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, os.path.dirname(payload_dir))
-                ipa_file.write(file_path, arcname)
+    print(f"Creating IPA at {ipa_path}")
     
+    # Change to temp directory before creating zip to maintain correct structure
+    original_dir = os.getcwd()
+    os.chdir(temp_dir)
+    
+    try:
+        with zipfile.ZipFile(os.path.join(original_dir, ipa_path), 'w', zipfile.ZIP_DEFLATED) as ipa_file:
+            for root, _, files in os.walk('Payload'):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, temp_dir)
+                    print(f"Adding {file_path} as {arcname} to IPA")
+                    ipa_file.write(file_path, arcname)
+    finally:
+        os.chdir(original_dir)
+    
+    # Verify IPA contents
+    with zipfile.ZipFile(ipa_path, 'r') as ipa_file:
+        contents = ipa_file.namelist()
+        print("IPA contents:", contents)
+        if not any(name.startswith('Payload/') for name in contents):
+            print("Warning: IPA file may be malformed - no Payload directory found")
+            return
+    
+    if os.path.exists(ipa_path) and os.path.getsize(ipa_path) > 0:
+        print(f"Successfully created {ipa_path}")
+    else:
+        print(f"Failed to create {ipa_path}")
+    
+    # Clean up temp directory
     shutil.rmtree(temp_dir)
-    print(f"Created {ipa_path}")
 
 def get_target(args):
     target = 'aarch64-apple-ios'

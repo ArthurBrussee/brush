@@ -32,5 +32,5 @@ cargo-xcode = { ios-target = "aarch64-apple-ios" }
 deployment_target = "14.0"
 
 [package.metadata.bundle]
-identifier = "com.your.app.identifier"
+identifier = "com.fantasyfish.brush"
 name = "Brush"
