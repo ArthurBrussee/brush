@@ -64,7 +64,7 @@ impl ViewerPanel for LoadDataPanel {
                         .with_densify_grad_thresh(0.0003)
                         .with_refine_every(150)
                         .with_ssim_weight(0.0)
-                        .with_cull_alpha_thresh(0.01);
+                        .with_cull_opacity(0.01);
                 }
 
                 let source = if file {

@@ -36,7 +36,7 @@ pub struct TrainConfig {
 
     // threshold of opacity for culling gaussians. One can set it to a lower value (e.g. 0.005) for higher quality
     #[config(default = 0.005)]
-    prune_opacity: f32,
+    cull_opacity: f32,
 
     // threshold of scale for culling huge gaussians
     #[config(default = 0.1)]
@@ -216,7 +216,7 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
         map_param(
             &mut splats.raw_opacity,
             record,
-            |op| Tensor::zeros_like(&op) + inverse_sigmoid(self.config.prune_opacity * 2.0),
+            |op| Tensor::zeros_like(&op) + inverse_sigmoid(self.config.cull_opacity * 2.0),
             |state| Tensor::zeros_like(&state),
         );
     }
@@ -492,7 +492,7 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
         // of gradient <-> splat.
         let start_count = splats.num_splats();
         // Remove barely visible gaussians.
-        let alpha_mask = splats.opacity().lower_elem(self.config.prune_opacity);
+        let alpha_mask = splats.opacity().lower_elem(self.config.cull_opacity);
         prune_points(&mut splats, &mut record, alpha_mask).await;
         let alpha_pruned = start_count - splats.num_splats();
 

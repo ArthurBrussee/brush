@@ -135,8 +135,8 @@ impl App {
                 .load_texture("nearest_view_tex", color_img, TextureOptions::default());
 
         let config = TrainConfig::new(ExponentialLrSchedulerConfig::new(lr_max, decay))
-            .with_max_refine_step(u32::MAX) // Just keep refining
-            .with_warmup_steps(100) // Don't really need a warmup for simple 2D
+            .with_refine_start_iter(100) // Don't really need a warmup for simple 2D
+            .with_refine_stop_iter(u32::MAX) // Just keep refining
             .with_reset_alpha_every_refine(u32::MAX); // Don't use alpha reset.
 
         spawn_train_loop(view.clone(), config, device, cc.egui_ctx.clone(), sender);
