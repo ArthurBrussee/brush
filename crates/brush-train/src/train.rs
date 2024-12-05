@@ -7,7 +7,7 @@ use burn::module::{Param, ParamId};
 use burn::optim::adaptor::OptimizerAdaptor;
 use burn::optim::record::AdaptorRecord;
 use burn::optim::{Adam, AdamState};
-use burn::tensor::{Bool, Distribution, Int};
+use burn::tensor::{Bool, Distribution, Int, TensorPrimitive};
 use burn::{
     config::Config,
     optim::{AdamConfig, GradientsParams, Optimizer},
@@ -35,12 +35,17 @@ pub struct TrainConfig {
     #[config(default = 0.0002)]
     densify_grad_thresh: f32,
 
+    // Gaussians bigger than this size in screenspace radius are split.
+    // Set to 1.0 to disable.
+    #[config(default = 1.0)]
+    densify_radius_threshold: f32,
+
     // below this size, gaussians are *duplicated*, otherwise split.
     #[config(default = 0.01)]
     densify_size_threshold: f32,
 
     // threshold of scale for culling huge gaussians
-    #[config(default = 0.1)]
+    #[config(default = 0.5)]
     cull_scale3d_percentage_threshold: f32,
 
     // period of steps where refinement is turned off
@@ -136,6 +141,7 @@ pub struct SplatTrainer<B: AutodiffBackend> {
     // of observations per gaussian. Used in pruning and densification.
     grad_2d_accum: Tensor<B, 1>,
     xy_grad_counts: Tensor<B, 1, Int>,
+    max_radii: Tensor<B, 1>,
 
     ssim: Ssim<B>,
 }
@@ -146,37 +152,45 @@ fn quaternion_vec_multiply<B: Backend>(
 ) -> Tensor<B, 2> {
     let num_points = quaternions.dims()[0];
 
-    // Extract components of quaternions
+    // Extract components
     let qw = quaternions.clone().slice([0..num_points, 0..1]);
     let qx = quaternions.clone().slice([0..num_points, 1..2]);
     let qy = quaternions.clone().slice([0..num_points, 2..3]);
     let qz = quaternions.clone().slice([0..num_points, 3..4]);
 
-    // Extract components of vectors
     let vx = vectors.clone().slice([0..num_points, 0..1]);
     let vy = vectors.clone().slice([0..num_points, 1..2]);
     let vz = vectors.clone().slice([0..num_points, 2..3]);
 
-    // Compute intermediate terms
-    let term1 = qw.clone() * vx.clone() + qy.clone() * vz.clone() - qz.clone() * vy.clone();
-    let term2 = qw.clone() * vy.clone() - qx.clone() * vz.clone() + qz.clone() * vx.clone();
-    let term3 = qw.clone() * vz.clone() + qx.clone() * vy.clone() - qy.clone() * vx.clone();
-    let term4 = qx.clone() * vx.clone() + qy.clone() * vy.clone() + qz.clone() * vz.clone();
+    // Common terms
+    let qw2 = qw.clone().powf_scalar(2.0);
+    let qx2 = qx.clone().powf_scalar(2.0);
+    let qy2 = qy.clone().powf_scalar(2.0);
+    let qz2 = qz.clone().powf_scalar(2.0);
 
-    // Compute final result
-    let rx = vx
-        + (qw.clone() * term1.clone() + qx.clone() * term4.clone() - qy.clone() * term3.clone()
-            + qz.clone() * term2.clone())
-            * 2.0;
-    let ry = vy
-        + (qw.clone() * term2.clone() - qx.clone() * term3.clone()
-            + qy.clone() * term4.clone()
-            + qz.clone() * term1.clone())
-            * 2.0;
-    let rz = vz
-        + (qw * term3.clone() + qx * term2.clone() - qy * term1.clone() + qz * term4.clone()) * 2.0;
+    // Cross products (multiplied by 2.0 later)
+    let xy = qx.clone() * qy.clone();
+    let xz = qx.clone() * qz.clone();
+    let yz = qy.clone() * qz.clone();
+    let wx = qw.clone() * qx.clone();
+    let wy = qw.clone() * qy.clone();
+    let wz = qw * qz;
 
-    Tensor::cat(vec![rx, ry, rz], 1)
+    // Final components with reused terms
+    let x = (qw2.clone() + qx2.clone() - qy2.clone() - qz2.clone()) * vx.clone()
+        + (xy.clone() * vy.clone() + xz.clone() * vz.clone() + wy.clone() * vz.clone()
+            - wz.clone() * vy.clone())
+            * 2.0;
+
+    let y = (qw2.clone() - qx2.clone() + qy2.clone() - qz2.clone()) * vy.clone()
+        + (xy.clone() * vx.clone() + yz.clone() * vz.clone() + wz.clone() * vx.clone()
+            - wx.clone() * vz.clone())
+            * 2.0;
+
+    let z = (qw2 - qx2 - qy2 + qz2) * vz.clone()
+        + (xz * vx.clone() + yz * vy.clone() + wx * vy - wy * vx) * 2.0;
+
+    Tensor::cat(vec![x, y, z], 1)
 }
 
 impl<B: AutodiffBackend> SplatTrainer<B> {
@@ -191,6 +205,7 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
             optim: opt_config.init::<B, Splats<B>>(),
             grad_2d_accum: Tensor::zeros([num_points], device),
             xy_grad_counts: Tensor::zeros([num_points], device),
+            max_radii: Tensor::zeros([num_points], device),
             ssim,
         }
     }
@@ -198,6 +213,7 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
     fn reset_stats(&mut self, num_points: usize, device: &B::Device) {
         self.grad_2d_accum = Tensor::zeros([num_points], device);
         self.xy_grad_counts = Tensor::zeros([num_points], device);
+        self.max_radii = Tensor::zeros([num_points], device);
     }
 
     pub(crate) fn reset_opacity(
@@ -298,8 +314,9 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
                         .expect("XY gradients need to be calculated."),
                 );
 
-                let aux = &auxes[0];
-                let gs_ids = Tensor::from_primitive(aux.global_from_compact_gid.clone());
+                let aux = auxes[0].clone();
+                let gs_ids = Tensor::from_primitive(aux.global_from_compact_gid);
+                let radii = Tensor::from_primitive(TensorPrimitive::Float(aux.radii));
 
                 let [_, h, w, _] = pred_images.dims();
                 let device = batch.gt_images.device();
@@ -321,6 +338,9 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
                     self.xy_grad_counts
                         .clone()
                         .select_assign(0, gs_ids.clone(), valid.int());
+
+                let radii_norm = radii / (w.max(h) as f32);
+                self.max_radii = self.max_radii.clone().max_pair(radii_norm);
             }
         });
 
@@ -453,8 +473,17 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
                 .all_dim(1)
                 .squeeze(1);
 
+        let radii_grow = self
+            .max_radii
+            .clone()
+            .greater_elem(self.config.densify_radius_threshold);
+        let split_mask = Tensor::stack::<2>(vec![split_mask, radii_grow], 1)
+            .any_dim(1)
+            .squeeze(1);
+
         let split_inds = split_mask.clone().argwhere_async().await;
         let split_count = split_inds.dims()[0];
+
         if split_count > 0 {
             let split_inds = split_inds.squeeze(1);
 
@@ -645,4 +674,31 @@ pub fn concat_splats<B: AutodiffBackend>(
         |x| Tensor::cat(vec![x, log_scales.clone()], 0),
         |x| Tensor::cat(vec![x, Tensor::zeros_like(&log_scales.clone().inner())], 0),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use burn::{
+        backend::{wgpu::WgpuDevice, Wgpu},
+        tensor::Tensor,
+    };
+    use glam::Quat;
+
+    use super::quaternion_vec_multiply;
+
+    #[test]
+    fn test_quat_multiply() {
+        let quat = Quat::from_euler(glam::EulerRot::XYZ, 0.2, 0.2, 0.3);
+        let vec = glam::vec3(0.5, 0.7, 0.1);
+        let result_ref = quat * vec;
+
+        let device = WgpuDevice::DefaultDevice;
+        let quaternions = Tensor::<Wgpu, 1>::from_floats([quat.w, quat.x, quat.y, quat.z], &device)
+            .reshape([1, 4]);
+        let vecs = Tensor::<Wgpu, 1>::from_floats([vec.x, vec.y, vec.z], &device).reshape([1, 3]);
+        let result = quaternion_vec_multiply(quaternions, vecs);
+        let result: Vec<f32> = result.into_data().to_vec().unwrap();
+        let result = glam::vec3(result[0], result[1], result[2]);
+        assert!((result_ref - result).length() < 1e-7);
+    }
 }

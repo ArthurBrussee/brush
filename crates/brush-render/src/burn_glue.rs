@@ -8,8 +8,9 @@ use burn::{
         Autodiff,
     },
     tensor::{
+        backend::AutodiffBackend,
         repr::{CustomOpDescription, HandleContainer, OperationDescription},
-        BasicAutodiffOps, DType, Float, Tensor, TensorPrimitive,
+        DType, Tensor, TensorPrimitive,
     },
 };
 use burn_fusion::{client::FusionClient, stream::Operation, Fusion};
@@ -22,7 +23,7 @@ use crate::{
         calc_tile_bounds, max_intersections, render_backward, render_forward, sh_coeffs_for_degree,
         sh_degree_from_coeffs,
     },
-    shaders, AutodiffBackend, Backend, GaussianBackwardState, InnerWgpu, RenderAux, SplatGrads,
+    shaders, Backend, GaussianBackwardState, InnerWgpu, RenderAux, SplatGrads,
 };
 
 // Implement forward functions for the inner wgpu backend.
@@ -170,15 +171,10 @@ impl<B: Backend, C: CheckpointStrategy> Backend for Autodiff<B, C> {
             render_u32_buffer,
         );
 
-        // Not sure why going into the autodiff float tensor type is so verbose.
-        let diff_proj = <Float as BasicAutodiffOps<Self>>::from_inner(TensorPrimitive::Float(
-            aux.projected_splats.clone(),
-        ))
-        .tensor();
-
         let auxc = aux.clone();
         let wrapped_aux = RenderAux::<Self> {
-            projected_splats: diff_proj,
+            projected_splats: <Self as AutodiffBackend>::from_inner(aux.projected_splats),
+            radii: <Self as AutodiffBackend>::from_inner(aux.radii),
             num_intersections: aux.num_intersections,
             num_visible: aux.num_visible,
             final_index: aux.final_index,
@@ -241,7 +237,7 @@ impl Backend for Fusion<InnerWgpu> {
             fn execute(self: Box<Self>, h: &mut HandleContainer<JitFusionHandle<WgpuRuntime>>) {
                 let (
                     [means, log_scales, quats, sh_coeffs, raw_opacity],
-                    [projected_splats, uniforms_buffer, num_intersections, num_visible, final_index, cum_tiles_hit, tile_bins, compact_gid_from_isect, global_from_compact_gid, out_img],
+                    [projected_splats, uniforms_buffer, num_intersections, num_visible, final_index, cum_tiles_hit, tile_bins, compact_gid_from_isect, global_from_compact_gid, radii, out_img],
                 ) = self.desc.consume();
 
                 let (img, aux) = render_forward(
@@ -272,6 +268,7 @@ impl Backend for Fusion<InnerWgpu> {
                     &global_from_compact_gid.id,
                     aux.global_from_compact_gid,
                 );
+                h.register_float_tensor::<InnerWgpu>(&radii.id, aux.radii);
             }
         }
 
@@ -309,6 +306,7 @@ impl Backend for Fusion<InnerWgpu> {
             compact_gid_from_isect: client
                 .tensor_uninitialized(vec![max_intersects as usize], DType::I32),
             global_from_compact_gid: client.tensor_uninitialized(vec![num_points], DType::I32),
+            radii: client.tensor_uninitialized(vec![num_points], DType::F32),
         };
 
         let desc = CustomOpDescription::new(
@@ -330,6 +328,7 @@ impl Backend for Fusion<InnerWgpu> {
                 aux.tile_bins.to_description_out(),
                 aux.compact_gid_from_isect.to_description_out(),
                 aux.global_from_compact_gid.to_description_out(),
+                aux.radii.to_description_out(),
                 out_img.to_description_out(),
             ],
         );
@@ -441,4 +440,4 @@ impl Backend for Fusion<InnerWgpu> {
     }
 }
 
-impl<B: Backend, C: CheckpointStrategy> AutodiffBackend for Autodiff<B, C> {}
+impl<B: Backend, C: CheckpointStrategy> crate::AutodiffBackend for Autodiff<B, C> {}

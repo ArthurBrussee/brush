@@ -29,6 +29,7 @@ pub struct RenderAux<B: Backend> {
     pub tile_bins: B::IntTensorPrimitive,
     pub compact_gid_from_isect: B::IntTensorPrimitive,
     pub global_from_compact_gid: B::IntTensorPrimitive,
+    pub radii: B::FloatTensorPrimitive,
 }
 
 #[derive(Debug, Clone)]
@@ -115,5 +116,8 @@ pub trait Backend: burn::tensor::backend::Backend {
     }
 }
 
-pub trait AutodiffBackend: Backend + burn::tensor::backend::AutodiffBackend<InnerBackend: Backend> {}
+pub trait AutodiffBackend:
+    Backend + burn::tensor::backend::AutodiffBackend<InnerBackend: Backend>
+{
+}
 type InnerWgpu = JitBackend<WgpuRuntime, f32, i32, u32>;
