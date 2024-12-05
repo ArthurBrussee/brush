@@ -384,7 +384,7 @@ pub(crate) fn render_backward(
 
     let client = &means.client;
 
-    let (v_xys_local, v_xys_global, v_conics, v_coeffs, v_raw_opac) = {
+    let (v_xys_local, v_conics, v_coeffs, v_raw_opac) = {
         let tile_bounds = uvec2(
             img_size.x.div_ceil(shaders::helpers::TILE_WIDTH),
             img_size.y.div_ceil(shaders::helpers::TILE_WIDTH),
@@ -430,7 +430,6 @@ pub(crate) fn render_backward(
 
         let num_vis_wg = create_dispatch_buffer(num_visible.clone(), GatherGrads::WORKGROUP_SIZE);
 
-        let v_xys_global = InnerWgpu::float_zeros([num_points, 2].into(), device);
         unsafe {
             client.execute_unchecked(
                 GatherGrads::task(),
@@ -441,15 +440,13 @@ pub(crate) fn render_backward(
                     raw_opac.clone().handle.binding(),
                     means.clone().handle.binding(),
                     v_colors.clone().handle.binding(),
-                    v_xys_local.clone().handle.binding(),
                     v_coeffs.handle.clone().binding(),
                     v_opacities.handle.clone().binding(),
-                    v_xys_global.handle.clone().binding(),
                 ],
             );
         }
 
-        (v_xys_local, v_xys_global, v_conics, v_coeffs, v_opacities)
+        (v_xys_local, v_conics, v_coeffs, v_opacities)
     };
 
     // Create tensors to hold gradients.
@@ -485,7 +482,7 @@ pub(crate) fn render_backward(
         v_scales,
         v_coeffs,
         v_raw_opac,
-        v_xy: v_xys_global,
+        v_xy: v_xys_local,
     }
 }
 

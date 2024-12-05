@@ -107,20 +107,21 @@ impl<B: Backend> Splats<B> {
                 .iter()
                 .map(|p| {
                     // Get average of 3 nearest squared distances.
-                    tree.nearest_n::<SquaredEuclidean>(p, 3)
+                    (tree
+                        .nearest_n::<SquaredEuclidean>(p, 4)
                         .iter()
                         .map(|x| x.distance)
                         .sum::<f32>()
+                        / 4.0)
                         .sqrt()
-                        / 3.0
+                        .max(1e-12)
+                        .ln()
                 })
                 .collect();
 
             Tensor::<B, 1>::from_floats(extents.as_slice(), device)
                 .reshape([n_splats, 1])
                 .repeat_dim(1, 3)
-                .clamp_min(0.00001)
-                .log()
         };
 
         let sh_coeffs = if let Some(sh_coeffs) = sh_coeffs {
@@ -150,7 +151,7 @@ impl<B: Backend> Splats<B> {
         )
     }
 
-    pub fn with_min_sh_degree(mut self, sh_degree: u32) -> Self {
+    pub fn with_sh_degree(mut self, sh_degree: u32) -> Self {
         let n_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
 
         let [n, c, _] = self.sh_coeffs.dims();

@@ -320,10 +320,7 @@ impl ViewerContext {
 
         // Copy the camera, mostly to copy over the intrinsics and such.
         self.controls.focus = transform.translation
-            + transform.matrix3
-                * Vec3A::Z
-                * self.dataset.train.bounds(0.0, 0.0).extent.length()
-                * 0.5;
+            + transform.matrix3 * Vec3A::Z * self.dataset.train.bounds().extent.length() * 0.5;
         self.controls.dirty = true;
         self.camera = cam.clone();
     }

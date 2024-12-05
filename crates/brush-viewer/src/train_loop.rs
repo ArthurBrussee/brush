@@ -59,7 +59,7 @@ pub(crate) fn train_loop<T: AsyncRead + Unpin + 'static>(
         // Read initial splats if any.
         while let Some(message) = splat_stream.next().await {
             let message = message?;
-            let splats = message.splats.with_min_sh_degree(load_init_args.sh_degree);
+            let splats = message.splats.with_sh_degree(load_init_args.sh_degree);
             let msg = ProcessMessage::ViewSplats {
                 up_axis: message.meta.up_axis,
                 splats: Box::new(splats.valid()),
@@ -88,11 +88,13 @@ pub(crate) fn train_loop<T: AsyncRead + Unpin + 'static>(
             splats
         } else {
             // By default, spawn the splats in bounds.
-            let bounds = dataset.train.bounds(0.0, 0.0);
+            let bounds = dataset.train.bounds();
             let bounds_extent = bounds.extent.length();
             // Arbitrarly assume area of interest is 0.2 - 0.75 of scene bounds.
             // Somewhat specific to the blender scenes
-            let adjusted_bounds = dataset.train.bounds(bounds_extent * 0.25, bounds_extent);
+            let adjusted_bounds = dataset
+                .train
+                .adjusted_bounds(bounds_extent * 0.25, bounds_extent);
 
             let config = RandomSplatsConfig::new().with_sh_degree(load_init_args.sh_degree);
             Splats::from_random_config(config, adjusted_bounds, &mut rng, &device)

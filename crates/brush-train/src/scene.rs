@@ -39,7 +39,13 @@ impl Scene {
     }
 
     // Returns the extent of the cameras in the scene.
-    pub fn bounds(&self, cam_near: f32, cam_far: f32) -> BoundingBox {
+    pub fn bounds(&self) -> BoundingBox {
+        self.adjusted_bounds(0.0, 0.0)
+    }
+
+    // Returns the extent of the cameras in the scene, taking into account
+    // the near and far plane of the cameras.
+    pub fn adjusted_bounds(&self, cam_near: f32, cam_far: f32) -> BoundingBox {
         let (min, max) = self.views.iter().fold(
             (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
             |(min, max), view| {

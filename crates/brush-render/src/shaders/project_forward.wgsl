@@ -31,7 +31,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let mean_c = R * mean + viewmat[3].xyz;
 
-    if mean_c.z < 0.01 || mean_c.z > 1e12 {
+    if mean_c.z < 0.01 || mean_c.z > 1e10 {
         return;
     }
 

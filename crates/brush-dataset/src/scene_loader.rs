@@ -18,7 +18,16 @@ impl<B: Backend> SceneLoader<B> {
         // The bounded size == number of batches to prefetch.
         let (tx, rx) = mpsc::channel(5);
         let device = device.clone();
-        let scene_extent = scene.bounds(0.0, 0.0).extent.max_element() as f64;
+
+        let center = scene.bounds().center;
+        let dists = scene
+            .views
+            .iter()
+            .map(|v| (v.camera.position - center).length())
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+            .unwrap();
+
+        let scene_extent = dists * 1.1; // Idk why exactly, but gsplat multiplies this by 1.1
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 

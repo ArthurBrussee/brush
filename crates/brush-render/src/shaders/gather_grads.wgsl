@@ -6,11 +6,9 @@
 @group(0) @binding(2) var<storage, read> raw_opacities: array<f32>;
 @group(0) @binding(3) var<storage, read> means: array<helpers::PackedVec3>;
 @group(0) @binding(4) var<storage, read> v_colors: array<vec4f>;
-@group(0) @binding(5) var<storage, read> v_xy_local: array<vec2f>;
 
-@group(0) @binding(6) var<storage, read_write> v_coeffs: array<f32>;
-@group(0) @binding(7) var<storage, read_write> v_opacs: array<f32>;
-@group(0) @binding(8) var<storage, read_write> v_xy_global: array<vec2f>;
+@group(0) @binding(5) var<storage, read_write> v_coeffs: array<f32>;
+@group(0) @binding(6) var<storage, read_write> v_opacs: array<f32>;
 
 const SH_C0: f32 = 0.2820947917738781f;
 
@@ -223,8 +221,4 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let raw_opac = raw_opacities[global_gid];
     let v_opac = v_color.w * v_sigmoid(raw_opac);
     v_opacs[global_gid] = v_opac;
-
-    // Scatter the xy gradients, as later operations need them to be global.
-    let v_xy_local = v_xy_local[compact_gid];
-    v_xy_global[global_gid] = v_xy_local;
 }

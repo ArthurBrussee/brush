@@ -33,7 +33,7 @@ pub struct LoadInitArgs {
 
 impl Default for LoadInitArgs {
     fn default() -> Self {
-        Self { sh_degree: 2 }
+        Self { sh_degree: 3 }
     }
 }
 

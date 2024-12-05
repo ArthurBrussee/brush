@@ -23,35 +23,15 @@ type OptimizerType<B> = OptimizerAdaptor<Adam, Splats<B>, B>;
 
 #[derive(Config)]
 pub struct TrainConfig {
-    // period of steps where refinement is turned off
-    #[config(default = 500)]
-    refine_start_iter: u32,
+    // Weight for SSIM loss
+    #[config(default = 0.2)]
+    ssim_weight: f32,
 
-    #[config(default = 15000)]
-    refine_stop_iter: u32,
-
-    // period of steps where gaussians are culled and densified
-    #[config(default = 100)]
-    refine_every: u32,
-
-    // threshold of opacity for culling gaussians. One can set it to a lower value (e.g. 0.005) for higher quality
+    // GSs with opacity below this value will be pruned
     #[config(default = 0.005)]
     cull_opacity: f32,
 
-    // threshold of scale for culling huge gaussians
-    #[config(default = 0.1)]
-    cull_scale3d_percentage_threshold: f32,
-
-    // threshold of scale for culling huge gaussians
-    #[config(default = 0.15)]
-    cull_scale2d_percentage_threshold: f32,
-
-    // Every this many refinement steps, reset the alpha
-    #[config(default = 30)]
-    reset_alpha_every_refine: u32,
-
     // threshold of positional gradient norm for densifying gaussians
-    // TODO: Abs grad.
     #[config(default = 0.0002)]
     densify_grad_thresh: f32,
 
@@ -59,33 +39,45 @@ pub struct TrainConfig {
     #[config(default = 0.01)]
     densify_size_threshold: f32,
 
+    // threshold of scale for culling huge gaussians
     #[config(default = 0.1)]
-    ssim_weight: f32,
+    cull_scale3d_percentage_threshold: f32,
+
+    // period of steps where refinement is turned off
+    #[config(default = 500)]
+    refine_start_iter: u32,
+
+    #[config(default = 15000)]
+    refine_stop_iter: u32,
+
+    // Every this many refinement steps, reset the alpha
+    #[config(default = 30)]
+    reset_alpha_every_refine: u32,
+    // period of steps where gaussians are culled and densified
+    #[config(default = 100)]
+    refine_every: u32,
 
     #[config(default = 11)]
     ssim_window_size: usize,
-
-    #[config(default = true)]
-    scale_mean_lr_by_extent: bool,
 
     // Learning rates.
     lr_mean: ExponentialLrSchedulerConfig,
 
     // Learning rate for the basic coefficients.
-    #[config(default = 0.004)]
+    #[config(default = 2.5e-3)]
     lr_coeffs_dc: f64,
 
     // How much to divide the learning rate by for higher SH orders.
-    #[config(default = 15.0)]
+    #[config(default = 20.0)]
     lr_coeffs_sh_scale: f64,
 
-    #[config(default = 0.02)]
+    #[config(default = 5e-2)]
     lr_opac: f64,
 
-    #[config(default = 0.005)]
+    #[config(default = 5e-3)]
     lr_scale: f64,
 
-    #[config(default = 0.001)]
+    #[config(default = 1e-3)]
     lr_rotation: f64,
 
     #[config(default = 42)]
@@ -95,7 +87,7 @@ pub struct TrainConfig {
 impl Default for TrainConfig {
     fn default() -> Self {
         let decay_steps = 30000;
-        let lr_max = 1.5e-4;
+        let lr_max = 1.6e-4;
         let decay = 1e-2f64.powf(1.0 / decay_steps as f64);
         TrainConfig::new(ExponentialLrSchedulerConfig::new(lr_max, decay))
     }
@@ -105,7 +97,7 @@ impl Default for TrainConfig {
 pub struct SceneBatch<B: Backend> {
     pub gt_images: Tensor<B, 4>,
     pub gt_views: Vec<SceneView>,
-    pub scene_extent: f64,
+    pub scene_extent: f32,
 }
 
 #[derive(Clone)]
@@ -275,8 +267,8 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
                         .clone()
                         .slice([0..batch_size, 0..img_h, 0..img_w, 0..3]);
 
-                let ssim_loss = self.ssim.ssim(pred_rgb, gt_rgb);
-                loss * (1.0 - self.config.ssim_weight) - ssim_loss * self.config.ssim_weight
+                let ssim_loss = -self.ssim.ssim(pred_rgb, gt_rgb) + 1.0;
+                loss * (1.0 - self.config.ssim_weight) + ssim_loss * self.config.ssim_weight
             } else {
                 loss
             };
@@ -288,7 +280,7 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
 
         // TODO: Should scale lr be scales by scene scale as well?
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
-            self.sched_mean.step() * batch.scene_extent,
+            self.sched_mean.step() * batch.scene_extent as f64,
             self.config.lr_rotation,
             self.config.lr_scale,
             self.config.lr_coeffs_dc,
@@ -320,12 +312,15 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
                 let num_vis = Tensor::from_primitive(aux.num_visible.clone());
                 let valid = Tensor::arange(0..splats.num_splats() as i64, &device).lower(num_vis);
 
+                self.grad_2d_accum =
+                    self.grad_2d_accum
+                        .clone()
+                        .select_assign(0, gs_ids.clone(), xys_grad_norm);
+
                 self.xy_grad_counts =
                     self.xy_grad_counts
                         .clone()
                         .select_assign(0, gs_ids.clone(), valid.int());
-
-                self.grad_2d_accum = self.grad_2d_accum.clone() + xys_grad_norm;
             }
         });
 
@@ -408,7 +403,7 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
     async fn refine_splats(
         &mut self,
         splats: Splats<B>,
-        scene_extent: f64,
+        scene_extent: f32,
     ) -> (Splats<B>, RefineStats) {
         let mut record = self.optim.to_record();
 
@@ -419,12 +414,12 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
         // Otherwise, do refinement, but do the split/clone on gaussians with no grads applied.
         let grads = self.grad_2d_accum.clone() / self.xy_grad_counts.clone().clamp_min(1).float();
 
-        let big_grad_mask = grads.greater_equal_elem(self.config.densify_grad_thresh);
+        let is_grad_high = grads.greater_equal_elem(self.config.densify_grad_thresh);
         let split_clone_size_mask = splats
             .scales()
             .max_dim(1)
             .squeeze(1)
-            .lower_elem(self.config.densify_size_threshold);
+            .lower_elem(self.config.densify_size_threshold * scene_extent);
 
         let mut append_means = vec![];
         let mut append_rots = vec![];
@@ -432,14 +427,12 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
         let mut append_opac = vec![];
         let mut append_scales = vec![];
 
-        let clone_inds = Tensor::stack::<2>(
-            vec![big_grad_mask.clone(), split_clone_size_mask.clone()],
-            1,
-        )
-        .all_dim(1)
-        .squeeze::<1>(1)
-        .argwhere_async()
-        .await;
+        let clone_inds =
+            Tensor::stack::<2>(vec![is_grad_high.clone(), split_clone_size_mask.clone()], 1)
+                .all_dim(1)
+                .squeeze::<1>(1)
+                .argwhere_async()
+                .await;
 
         // Clone splats
         let clone_count = clone_inds.dims()[0];
@@ -456,7 +449,7 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
 
         // Split splats.
         let split_mask =
-            Tensor::stack::<2>(vec![big_grad_mask, split_clone_size_mask.bool_not()], 1)
+            Tensor::stack::<2>(vec![is_grad_high, split_clone_size_mask.bool_not()], 1)
                 .all_dim(1)
                 .squeeze(1);
 
@@ -501,7 +494,7 @@ impl<B: AutodiffBackend> SplatTrainer<B> {
             .scales()
             .max_dim(1)
             .squeeze(1)
-            .greater_elem(self.config.cull_scale3d_percentage_threshold * scene_extent as f32);
+            .greater_elem(self.config.cull_scale3d_percentage_threshold * scene_extent);
         prune_points(&mut splats, &mut record, scale_mask).await;
         let scale_pruned = start_count - splats.num_splats();
 
