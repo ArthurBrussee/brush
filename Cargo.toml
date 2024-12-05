@@ -11,7 +11,7 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 glam = { version = "0.28", features = ["serde"] }
-bytemuck = "1.15"
+bytemuck = "1.20"
 byteorder = "1.5.0"
 image = { version = "0.25", default-features = false, features = [
     'png',
@@ -19,22 +19,22 @@ image = { version = "0.25", default-features = false, features = [
     "jpeg",
 ] }
 
-serde = { version = "1.0.210", default-features = false, features = [
+serde = { version = "1.0.215", default-features = false, features = [
     "derive",
     "alloc",
 ] }
-serde_json = { version = "1.0.128", default-features = false }
+serde_json = { version = "1.0.133", default-features = false }
 
 rand = "0.8.5"
-anyhow = "1.0.81"
-tracing = "0.1.30"
-tracing-tracy = "0.11.0"
-tracing-subscriber = "0.3.18"
+anyhow = "1.0.94"
+tracing = "0.1.41"
+tracing-tracy = "0.11.3"
+tracing-subscriber = "0.3.19"
 
-tokio = "1.41.1"
+tokio = "1.42.0"
 tokio_with_wasm = "0.7.4"
 tokio-stream = "0.1"
-tokio-util = { version = "0.7.12", features = ["io"] }
+tokio-util = { version = "0.7.13", features = ["io"] }
 
 reqwest = { version = "0.12.9", default-features = false, features = [
     "stream",
@@ -46,20 +46,20 @@ humantime = "2.1.0"
 
 tracing-wasm = "0.2.1"
 async-fn-stream = "0.2.2"
-miette = { version = "7.2.0", features = ["fancy"] }
+miette = { version = "7.4.0", features = ["fancy"] }
 cfg-if = "1.0.0"
 console_error_panic_hook = "0.1.7"
 
 assert_approx_eq = "1.1.0"
-safetensors = "0.4.3"
+safetensors = "0.4.5"
 log = "0.4.22"
-wasm-bindgen = "0.2.95"
+wasm-bindgen = "0.2.97"
 
 wgpu = "22.1.0"
 naga = "22.1.0"
 naga_oil = "0.15"
 
-env_logger = "0.10.2"
+env_logger = "0.11.5"
 parking_lot = { version = "0.12.3", features = ["arc_lock"] }
 
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
@@ -90,7 +90,7 @@ egui_extras = { git = "https://github.com/emilk/egui/", rev = "5bfff316c9818b3c1
     "all_loaders",
 ] }
 
-rerun = { version = "0.20.0", default-features = false, features = [
+rerun = { version = "0.20.3", default-features = false, features = [
     'sdk',
     'glam',
     'image',
@@ -100,13 +100,13 @@ kiddo = "4.2.1"
 
 # Build dependencies.
 thiserror = "*"
-web-sys = { version = "0.3.72", features = [
+web-sys = { version = "0.3.74", features = [
     "Window",
     "Location",
     "UrlSearchParams",
 ] }
 wasm-logger = "0.2.0"
-zip = { version = "2.1.3", default-features = false, features = ["deflate"] }
+zip = { version = "2.2.1", default-features = false, features = ["deflate"] }
 urlencoding = "2.1"
 hashbrown = "0.15"
 

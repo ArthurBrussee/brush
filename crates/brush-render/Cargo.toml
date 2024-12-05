@@ -38,7 +38,7 @@ miette.workspace = true
 rerun.workspace = true
 image.workspace = true
 brush-rerun.path = "../brush-rerun"
-divan = "0.1.14"
+divan = "0.1.17"
 
 [[bench]]
 name = "render_bench"

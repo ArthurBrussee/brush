@@ -11,7 +11,10 @@ lazy_static = "1.5.0"
 anyhow.workspace = true
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-rfd = "0.12.1"
+rfd = { version = "0.15.0", default-features = false, features = [
+    "xdg-portal",
+    "tokio",
+] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 tokio = { workspace = true, features = ["fs", "sync"] }
