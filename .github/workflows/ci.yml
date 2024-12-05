@@ -7,42 +7,41 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  RUSTFLAGS: "-C debuginfo=0"
-  CARGO_HOME: ~/.cargo
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      # Improved caching strategy
-      - name: Cache
-        uses: Swatinem/rust-cache@v2
-        
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libatk1.0-dev libgtk-3-dev build-essential
-          
+
+      # selecting a toolchain either by action or manual `rustup` calls should happen
+      # before the plugin, as the cache uses the current rustc version as its cache key
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown, aarch64-linux-android
           components: rustfmt, clippy
-          
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libatk1.0-dev libgtk-3-dev build-essential
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        
       # Split into separate jobs for parallelization
       - name: Build
         run: |
           cargo build --all-features --verbose
           cargo build --target wasm32-unknown-unknown --verbose
-          
+
       - name: Lint
         run: cargo clippy --all-targets --all-features -- -D warnings
         
       - name: Test
-        run: cargo test --all-features --verbose
+        run: cargo test --workspace --all-features --verbose
         
       - name: Check format
         run: cargo fmt -- --check
