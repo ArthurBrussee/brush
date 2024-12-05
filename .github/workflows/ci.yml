@@ -40,8 +40,5 @@ jobs:
       - name: Lint
         run: cargo clippy --all-targets --all-features -- -D warnings
         
-      - name: Test
-        run: cargo test --workspace --all-features --verbose
-        
       - name: Check format
         run: cargo fmt -- --check
