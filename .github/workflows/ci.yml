@@ -6,39 +6,43 @@ on:
     branches: ["main"]
 env:
   CARGO_TERM_COLOR: always
-  # These few env vars help reduce disk usage without complexity
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: "-C debuginfo=0"
+  CARGO_HOME: ~/.cargo
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Cache dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+      
+      # Improved caching strategy
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libatk1.0-dev libgtk-3-dev build-essential
+          
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown, aarch64-linux-android
           components: rustfmt, clippy
-      - name: Build and run checks
+          
+      # Split into separate jobs for parallelization
+      - name: Build
         run: |
           cargo build --all-features --verbose
           cargo build --target wasm32-unknown-unknown --verbose
-          cargo clippy --all-targets --all-features -- -D warnings
-          cargo test --all-features --verbose
-      - name: Check formatting
+          
+      - name: Lint
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        
+      - name: Test
+        run: cargo test --all-features --verbose
+        
+      - name: Check format
         run: cargo fmt -- --check
