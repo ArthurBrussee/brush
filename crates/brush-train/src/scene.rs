@@ -1,7 +1,6 @@
-use std::sync::Arc;
-
 use brush_render::{bounding_box::BoundingBox, camera::Camera};
 use glam::Vec3;
+use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ViewType {
