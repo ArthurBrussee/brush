@@ -22,7 +22,6 @@
 #endif
 
 
-const MIN_WG_SIZE: u32 = 8u;
 const BATCH_SIZE = helpers::TILE_SIZE;
 
 // Gaussians gathered in batch.

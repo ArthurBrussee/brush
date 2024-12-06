@@ -7,8 +7,6 @@
 // Actually writing a vec2 leads to torn writes.
 @group(0) @binding(2) var<storage, read_write> tile_bins: array<u32>;
 
-const THREAD_COUNT: u32 = 256;
-
 // kernel to map sorted intersection IDs to tile bins
 // expect that intersection IDs are sorted by increasing tile ID
 // i.e. intersections of a tile are in contiguous chunks

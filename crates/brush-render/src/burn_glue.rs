@@ -178,7 +178,6 @@ impl<B: Backend, C: CheckpointStrategy> Backend for Autodiff<B, C> {
             num_intersections: aux.num_intersections,
             num_visible: aux.num_visible,
             final_index: aux.final_index,
-            cum_tiles_hit: aux.cum_tiles_hit,
             tile_bins: aux.tile_bins,
             compact_gid_from_isect: aux.compact_gid_from_isect,
             global_from_compact_gid: aux.global_from_compact_gid,
@@ -237,7 +236,7 @@ impl Backend for Fusion<InnerWgpu> {
             fn execute(self: Box<Self>, h: &mut HandleContainer<JitFusionHandle<WgpuRuntime>>) {
                 let (
                     [means, log_scales, quats, sh_coeffs, raw_opacity],
-                    [projected_splats, uniforms_buffer, num_intersections, num_visible, final_index, cum_tiles_hit, tile_bins, compact_gid_from_isect, global_from_compact_gid, radii, out_img],
+                    [projected_splats, uniforms_buffer, num_intersections, num_visible, final_index, tile_bins, compact_gid_from_isect, global_from_compact_gid, radii, out_img],
                 ) = self.desc.consume();
 
                 let (img, aux) = render_forward(
@@ -258,7 +257,6 @@ impl Backend for Fusion<InnerWgpu> {
                 h.register_int_tensor::<InnerWgpu>(&num_intersections.id, aux.num_intersections);
                 h.register_int_tensor::<InnerWgpu>(&num_visible.id, aux.num_visible);
                 h.register_int_tensor::<InnerWgpu>(&final_index.id, aux.final_index);
-                h.register_int_tensor::<InnerWgpu>(&cum_tiles_hit.id, aux.cum_tiles_hit);
                 h.register_int_tensor::<InnerWgpu>(&tile_bins.id, aux.tile_bins);
                 h.register_int_tensor::<InnerWgpu>(
                     &compact_gid_from_isect.id,
@@ -298,7 +296,6 @@ impl Backend for Fusion<InnerWgpu> {
             num_visible: client.tensor_uninitialized(vec![1], DType::I32),
             final_index: client
                 .tensor_uninitialized(vec![img_size.y as usize, img_size.x as usize], DType::I32),
-            cum_tiles_hit: client.tensor_uninitialized(vec![num_points], DType::I32),
             tile_bins: client.tensor_uninitialized(
                 vec![tile_bounds.y as usize, tile_bounds.x as usize, 2],
                 DType::I32,
@@ -324,7 +321,6 @@ impl Backend for Fusion<InnerWgpu> {
                 aux.num_intersections.to_description_out(),
                 aux.num_visible.to_description_out(),
                 aux.final_index.to_description_out(),
-                aux.cum_tiles_hit.to_description_out(),
                 aux.tile_bins.to_description_out(),
                 aux.compact_gid_from_isect.to_description_out(),
                 aux.global_from_compact_gid.to_description_out(),

@@ -25,7 +25,6 @@ pub struct RenderAux<B: Backend> {
     pub num_intersections: B::IntTensorPrimitive,
     pub num_visible: B::IntTensorPrimitive,
     pub final_index: B::IntTensorPrimitive,
-    pub cum_tiles_hit: B::IntTensorPrimitive,
     pub tile_bins: B::IntTensorPrimitive,
     pub compact_gid_from_isect: B::IntTensorPrimitive,
     pub global_from_compact_gid: B::IntTensorPrimitive,

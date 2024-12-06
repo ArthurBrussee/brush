@@ -352,7 +352,6 @@ pub(crate) fn render_forward(
             num_visible,
             num_intersections,
             tile_bins,
-            cum_tiles_hit,
             projected_splats,
             final_index,
             compact_gid_from_isect,

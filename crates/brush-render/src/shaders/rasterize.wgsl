@@ -37,7 +37,7 @@ fn main(
     var done = !inside;
 
     // have all threads in tile process the same gaussians in batches
-    // first collect gaussians between range.x and range.y in batches
+    // first collect gaussians between the bin counts.
     let range = tile_bins[tile_id];
 
     let num_batches = helpers::ceil_div(range.y - range.x, helpers::TILE_SIZE);
