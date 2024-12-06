@@ -39,6 +39,23 @@ impl CameraModel {
         }
     }
 
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "SIMPLE_PINHOLE" => Some(CameraModel::SimplePinhole),
+            "PINHOLE" => Some(CameraModel::Pinhole),
+            "SIMPLE_RADIAL" => Some(CameraModel::SimpleRadial),
+            "RADIAL" => Some(CameraModel::Radial),
+            "OPENCV" => Some(CameraModel::OpenCV),
+            "OPENCV_FISHEYE" => Some(CameraModel::OpenCvFishEye),
+            "FULL_OPENCV" => Some(CameraModel::FullOpenCV),
+            "FOV" => Some(CameraModel::Fov),
+            "SIMPLE_RADIAL_FISHEYE" => Some(CameraModel::SimpleRadialFisheye),
+            "RADIAL_FISHEYE" => Some(CameraModel::RadialFisheye),
+            "THIN_PRISM_FISHEYE" => Some(CameraModel::ThinPrismFisheye),
+            _ => None,
+        }
+    }
+
     fn num_params(&self) -> usize {
         match self {
             CameraModel::SimplePinhole => 3,
@@ -159,8 +176,9 @@ fn read_cameras_text<R: Read>(reader: R) -> io::Result<HashMap<i32, Camera>> {
         }
 
         let id = parse(parts[0])?;
-        let model = CameraModel::from_id(parse(parts[1])?)
+        let model = CameraModel::from_name(parts[1])
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid camera model"))?;
+
         let width = parse(parts[2])?;
         let height = parse(parts[3])?;
         let params: Vec<f64> = parts[4..]
@@ -230,59 +248,52 @@ fn read_images_text<R: Read>(mut reader: R) -> io::Result<HashMap<i32, Image>> {
     let mut buf_reader = io::BufReader::new(reader);
     let mut line = String::new();
 
-    while buf_reader.read_line(&mut line)? > 0 {
-        if line.starts_with('#') {
-            line.clear();
-            continue;
-        }
+    let mut img_data = true;
 
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 9 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Invalid image data",
-            ));
-        }
-
-        let id: i32 = parse(parts[0])?;
-        let [w, x, y, z] = [
-            parse(parts[1])?,
-            parse(parts[2])?,
-            parse(parts[3])?,
-            parse(parts[4])?,
-        ];
-        let quat = glam::quat(x, y, z, w);
-        let tvec = glam::vec3(parse(parts[5])?, parse(parts[6])?, parse(parts[7])?);
-
-        let camera_id: i32 = parse(parts[8])?;
-        let name = parts[9].to_string();
-
-        let mut xys = Vec::new();
-        let mut point3d_ids = Vec::new();
-
-        for chunk in parts[10..].chunks(3) {
-            if chunk.len() < 3 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Invalid image point data",
-                ));
-            }
-            xys.push(glam::vec2(parse(chunk[0])?, parse(chunk[1])?));
-            point3d_ids.push(parse(chunk[2])?);
-        }
-
-        images.insert(
-            id,
-            Image {
-                quat,
-                tvec,
-                camera_id,
-                name,
-                xys,
-                point3d_ids,
-            },
-        );
+    loop {
         line.clear();
+        if buf_reader.read_line(&mut line)? == 0 {
+            break;
+        }
+
+        if !line.is_empty() && !line.starts_with('#') {
+            let elems: Vec<&str> = line.split_whitespace().collect();
+            let id: i32 = parse(elems[0])?;
+
+            let [w, x, y, z] = [
+                parse(elems[1])?,
+                parse(elems[2])?,
+                parse(elems[3])?,
+                parse(elems[4])?,
+            ];
+            let quat = glam::quat(x, y, z, w);
+            let tvec = glam::vec3(parse(elems[5])?, parse(elems[6])?, parse(elems[7])?);
+            let camera_id: i32 = parse(elems[8])?;
+            let name = elems[9].to_string();
+
+            line.clear();
+            buf_reader.read_line(&mut line)?;
+            let elems: Vec<&str> = line.split_whitespace().collect();
+            let mut xys = Vec::new();
+            let mut point3d_ids = Vec::new();
+
+            for chunk in elems.chunks(3) {
+                xys.push(glam::vec2(parse(chunk[0])?, parse(chunk[1])?));
+                point3d_ids.push(parse(chunk[2])?);
+            }
+
+            images.insert(
+                id,
+                Image {
+                    quat,
+                    tvec,
+                    camera_id,
+                    name,
+                    xys,
+                    point3d_ids,
+                },
+            );
+        }
     }
 
     Ok(images)
