@@ -6,8 +6,8 @@ use crate::{
     camera::Camera,
     dim_check::DimCheck,
     kernels::{
-        GatherGrads, GetTileBinEdges, MapGaussiansToIntersect, ProjectBackwards, ProjectSplats,
-        ProjectVisible, Rasterize, RasterizeBackwards,
+        GatherGrads, MapGaussiansToIntersect, ProjectBackwards, ProjectSplats, ProjectVisible,
+        Rasterize, RasterizeBackwards,
     },
     SplatGrads,
 };
@@ -248,6 +248,11 @@ pub(crate) fn render_forward(
         let compact_gid_from_isect =
             create_tensor::<1, _>([max_intersects as usize], device, client, DType::I32);
 
+        let tile_counts = InnerWgpu::int_zeros(
+            [(tile_bounds.y * tile_bounds.x) as usize + 1].into(),
+            device,
+        );
+
         tracing::trace_span!("MapGaussiansToIntersect", sync_burn = true).in_scope(|| unsafe {
             client.execute_unchecked(
                 MapGaussiansToIntersect::task(),
@@ -256,6 +261,7 @@ pub(crate) fn render_forward(
                     num_intersections.clone().handle.binding(),
                     isect_info.handle.clone().binding(),
                     cum_tiles_hit.handle.binding(),
+                    tile_counts.handle.clone().binding(),
                     tile_id_from_isect.handle.clone().binding(),
                     compact_gid_from_isect.handle.clone().binding(),
                 ],
@@ -266,8 +272,8 @@ pub(crate) fn render_forward(
         // can be. We don't need to sort all the leading 0 bits!
         let bits = u32::BITS - num_tiles.leading_zeros();
 
-        let (tile_id_from_isect, compact_gid_from_isect) =
-            tracing::trace_span!("Tile sort", sync_burn = true).in_scope(|| {
+        let (_, compact_gid_from_isect) = tracing::trace_span!("Tile sort", sync_burn = true)
+            .in_scope(|| {
                 radix_argsort(
                     tile_id_from_isect,
                     compact_gid_from_isect,
@@ -276,33 +282,10 @@ pub(crate) fn render_forward(
                 )
             });
 
-        let _span = tracing::trace_span!("GetTileBinEdges", sync_burn = true).entered();
+        let _span = tracing::trace_span!("PrefixSumTileCounts", sync_burn = true).entered();
+        let tile_offsets = prefix_sum(tile_counts);
 
-        let tile_bins = InnerWgpu::int_zeros(
-            [tile_bounds.y as usize, tile_bounds.x as usize, 2].into(),
-            device,
-        );
-
-        unsafe {
-            client.execute_unchecked(
-                GetTileBinEdges::task(),
-                CubeCount::Dynamic(
-                    create_dispatch_buffer(
-                        num_intersections.clone(),
-                        GetTileBinEdges::WORKGROUP_SIZE,
-                    )
-                    .handle
-                    .binding(),
-                ),
-                vec![
-                    tile_id_from_isect.handle.clone().binding(),
-                    num_intersections.handle.clone().binding(),
-                    tile_bins.handle.clone().binding(),
-                ],
-            );
-        }
-
-        (tile_bins, compact_gid_from_isect)
+        (tile_offsets, compact_gid_from_isect)
     };
 
     let _span = tracing::trace_span!("Rasterize", sync_burn = true).entered();
@@ -664,10 +647,10 @@ mod tests {
                     "img/dif",
                     &(img_ref.clone() - out.clone()).into_rerun().await,
                 )?;
-                rec.log(
-                    "images/tile depth",
-                    &aux.read_tile_depth().into_rerun().await,
-                )?;
+                // rec.log(
+                //     "images/tile depth",
+                //     &aux.read_tile_depth().into_rerun().await,
+                // )?;
             }
 
             // Check if images match.

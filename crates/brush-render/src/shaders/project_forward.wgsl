@@ -36,9 +36,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
         return;
     }
 
-    // compute the projected covariance
     let scale = exp(helpers::as_vec(log_scales[global_gid]));
     let quat = quats[global_gid];
+    let opac = helpers::sigmoid(raw_opacities[global_gid]);
 
     let cov3d = helpers::calc_cov3d(scale, quat);
     let cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
@@ -53,7 +53,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
 
     // compute the projected mean
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
-    let opac = helpers::sigmoid(raw_opacities[global_gid]);
 
     let radius = helpers::radius_from_cov(cov2d, opac);
 

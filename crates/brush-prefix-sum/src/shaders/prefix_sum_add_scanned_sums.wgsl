@@ -3,10 +3,10 @@
 @compute
 @workgroup_size(helpers::THREADS_PER_GROUP, 1, 1)
 fn main(
-    @builtin(global_invocation_id) id: vec3u, 
-    @builtin(workgroup_id) gid: vec3u
+    @builtin(global_invocation_id) id: vec3u,
+    @builtin(workgroup_id) wid: vec3u
 ) {
     if (id.x < arrayLength(&helpers::output)) {
-        helpers::output[id.x] += helpers::input[gid.x];
+        helpers::output[id.x] += helpers::input[wid.x];
     }
 }
