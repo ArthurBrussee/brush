@@ -136,9 +136,9 @@ pub(crate) fn render_forward(
             img_size: img_size.into(),
             tile_bounds: tile_bounds.into(),
             num_visible: 0,
+            num_intersections: 0,
             sh_degree,
             total_splats,
-            padding: 0,
         },
         device,
         &client,
@@ -148,11 +148,6 @@ pub(crate) fn render_forward(
 
     let num_points = means.shape.dims[0];
     let client = &means.client.clone();
-
-    // Number of tiles hit per splat. Has to be zerod as we later sum over this.
-    let num_tiles_scatter =
-        create_tensor::<1, WgpuRuntime>([num_points], device, client, DType::U32);
-    let num_tiles = InnerWgpu::int_zeros([num_points].into(), device);
 
     let radii = InnerWgpu::float_zeros([num_points].into(), device);
 
@@ -174,7 +169,6 @@ pub(crate) fn render_forward(
                     raw_opacities.clone().handle.binding(),
                     global_from_presort_gid.clone().handle.binding(),
                     depths.clone().handle.binding(),
-                    num_tiles_scatter.clone().handle.binding(),
                     radii.clone().handle.binding(),
                 ],
             );
@@ -203,6 +197,12 @@ pub(crate) fn render_forward(
 
     let num_vis_wg = create_dispatch_buffer(num_visible.clone(), [shaders::helpers::MAIN_WG, 1, 1]);
 
+    let max_intersects = max_intersections(img_size, num_points as u32);
+    // 1 extra length to make this an exclusive sum.
+    let num_tiles = InnerWgpu::int_zeros([num_points + 1].into(), device);
+    let isect_info =
+        create_tensor::<2, WgpuRuntime>([max_intersects as usize, 2], device, client, DType::I32);
+
     tracing::trace_span!("ProjectVisibile", sync_burn = true).in_scope(|| unsafe {
         client.execute_unchecked(
             ProjectVisible::task(),
@@ -214,10 +214,10 @@ pub(crate) fn render_forward(
                 quats.handle.binding(),
                 sh_coeffs.handle.binding(),
                 raw_opacities.handle.binding(),
-                num_tiles_scatter.handle.binding(),
                 global_from_compact_gid.handle.clone().binding(),
                 projected_splats.handle.clone().binding(),
                 num_tiles.handle.clone().binding(),
+                isect_info.handle.clone().binding(),
             ],
         );
     });
@@ -227,14 +227,22 @@ pub(crate) fn render_forward(
         prefix_sum(num_tiles)
     });
 
-    let num_intersections =
-        InnerWgpu::int_slice(cum_tiles_hit.clone(), &[num_points - 1..num_points]);
+    let num_intersections_offset =
+        offset_of!(shaders::helpers::RenderUniforms, num_intersections) / 4;
+    let num_intersections = InnerWgpu::int_slice(
+        uniforms_buffer.clone(),
+        &[num_intersections_offset..num_intersections_offset + 1],
+    );
 
-    let num_tiles = tile_bounds[0] * tile_bounds[1];
-    let max_intersects = max_intersections(img_size, num_points as u32);
+    let intersect_wg_buf = create_dispatch_buffer(
+        num_intersections.clone(),
+        MapGaussiansToIntersect::WORKGROUP_SIZE,
+    );
 
     // Each intersection maps to a gaussian.
     let (tile_bins, compact_gid_from_isect) = {
+        let num_tiles = tile_bounds.x * tile_bounds.y;
+
         let tile_id_from_isect =
             create_tensor::<1, _>([max_intersects as usize], device, client, DType::I32);
         let compact_gid_from_isect =
@@ -243,11 +251,11 @@ pub(crate) fn render_forward(
         tracing::trace_span!("MapGaussiansToIntersect", sync_burn = true).in_scope(|| unsafe {
             client.execute_unchecked(
                 MapGaussiansToIntersect::task(),
-                CubeCount::Dynamic(num_vis_wg.handle.binding()),
+                CubeCount::Dynamic(intersect_wg_buf.handle.clone().binding()),
                 vec![
-                    uniforms_buffer.clone().handle.binding(),
-                    projected_splats.handle.clone().binding(),
-                    cum_tiles_hit.handle.clone().binding(),
+                    num_intersections.clone().handle.binding(),
+                    isect_info.handle.clone().binding(),
+                    cum_tiles_hit.handle.binding(),
                     tile_id_from_isect.handle.clone().binding(),
                     compact_gid_from_isect.handle.clone().binding(),
                 ],
@@ -274,6 +282,7 @@ pub(crate) fn render_forward(
             [tile_bounds.y as usize, tile_bounds.x as usize, 2].into(),
             device,
         );
+
         unsafe {
             client.execute_unchecked(
                 GetTileBinEdges::task(),
@@ -431,12 +440,14 @@ pub(crate) fn render_backward(
 
         let _span = tracing::trace_span!("GatherGrads", sync_burn = true).entered();
 
-        let num_vis_wg = create_dispatch_buffer(num_visible.clone(), GatherGrads::WORKGROUP_SIZE);
-
         unsafe {
             client.execute_unchecked(
                 GatherGrads::task(),
-                CubeCount::Dynamic(num_vis_wg.handle.binding()),
+                CubeCount::Dynamic(
+                    create_dispatch_buffer(num_visible.clone(), GatherGrads::WORKGROUP_SIZE)
+                        .handle
+                        .binding(),
+                ),
                 vec![
                     uniforms_buffer.clone().handle.binding(),
                     global_from_compact_gid.clone().handle.binding(),
@@ -514,7 +525,7 @@ mod tests {
     use anyhow::{Context, Result};
     use safetensors::SafeTensors;
 
-    const USE_RERUN: bool = false;
+    const USE_RERUN: bool = true;
 
     #[tokio::test]
     async fn renders_at_all() {

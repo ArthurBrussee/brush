@@ -23,12 +23,13 @@ struct RenderUniforms {
     // This needs to be non-atomic for other kernels as you can't have
     // read-only atomic data.
     num_visible: atomic<u32>,
+    num_intersections: atomic<u32>,
 #else
     // Number of visible gaussians.
     num_visible: u32,
+    num_intersections: u32,
 #endif
     total_splats: u32,
-    padding: u32,
 }
 
 // nb: this struct has a bunch of padding but that's probably fine.

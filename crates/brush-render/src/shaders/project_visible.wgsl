@@ -1,18 +1,25 @@
+#define UNIFORM_WRITE
+
 #import helpers;
 
-@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
+struct IsectInfo {
+    compact_gid: u32,
+    tile_id: u32,
+}
+
+@group(0) @binding(0) var<storage, read_write> uniforms: helpers::RenderUniforms;
 
 @group(0) @binding(1) var<storage, read> means: array<helpers::PackedVec3>;
 @group(0) @binding(2) var<storage, read> log_scales: array<helpers::PackedVec3>;
 @group(0) @binding(3) var<storage, read> quats: array<vec4f>;
 @group(0) @binding(4) var<storage, read> coeffs: array<helpers::PackedVec3>;
 @group(0) @binding(5) var<storage, read> raw_opacities: array<f32>;
-@group(0) @binding(6) var<storage, read> num_tiles: array<u32>;
 
-@group(0) @binding(7) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(6) var<storage, read> global_from_compact_gid: array<u32>;
 
-@group(0) @binding(8) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
-@group(0) @binding(9) var<storage, read_write> num_tiles_sorted: array<u32>;
+@group(0) @binding(7) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(8) var<storage, read_write> num_tiles: array<u32>;
+@group(0) @binding(9) var<storage, read_write> isect_info: array<IsectInfo>;
 
 struct ShCoeffs {
     b0_c0: vec3f,
@@ -241,6 +248,25 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         vec4f(color, opac)
     );
 
-    // Write scattered num_tiles to compact buffer.
-    num_tiles_sorted[compact_gid] = num_tiles[global_gid];
+    let radius = helpers::radius_from_cov(cov2d, opac);
+    let tile_minmax = helpers::get_tile_bbox(mean2d, radius, uniforms.tile_bounds);
+    let tile_min = tile_minmax.xy;
+    let tile_max = tile_minmax.zw;
+
+    var num_tiles_hit = 0u;
+
+    for (var ty = tile_min.y; ty < tile_max.y; ty++) {
+        for (var tx = tile_min.x; tx < tile_max.x; tx++) {
+            if helpers::can_be_visible(vec2u(tx, ty), mean2d, conic, opac) {
+                // Add to the tile hit count.
+                num_tiles_hit += 1u;
+                let isect_id = atomicAdd(&uniforms.num_intersections, 1u);
+
+                let tile_id = tx + ty * uniforms.tile_bounds.x; // tile within image
+                isect_info[isect_id] = IsectInfo(compact_gid, tile_id);
+            }
+        }
+    }
+
+    num_tiles[compact_gid + 1u] = num_tiles_hit;
 }
