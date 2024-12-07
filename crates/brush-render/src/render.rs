@@ -508,7 +508,7 @@ mod tests {
     use anyhow::{Context, Result};
     use safetensors::SafeTensors;
 
-    const USE_RERUN: bool = true;
+    const USE_RERUN: bool = false;
 
     #[tokio::test]
     async fn renders_at_all() {
