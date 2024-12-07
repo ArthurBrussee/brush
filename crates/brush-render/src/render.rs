@@ -240,7 +240,7 @@ pub(crate) fn render_forward(
     );
 
     // Each intersection maps to a gaussian.
-    let (tile_bins, compact_gid_from_isect) = {
+    let (tile_offsets, compact_gid_from_isect) = {
         let num_tiles = tile_bounds.x * tile_bounds.y;
 
         let tile_id_from_isect =
@@ -312,7 +312,7 @@ pub(crate) fn render_forward(
     let mut handles = vec![
         uniforms_buffer.clone().handle.binding(),
         compact_gid_from_isect.handle.clone().binding(),
-        tile_bins.handle.clone().binding(),
+        tile_offsets.handle.clone().binding(),
         projected_splats.handle.clone().binding(),
         out_img.handle.clone().binding(),
     ];
@@ -343,7 +343,7 @@ pub(crate) fn render_forward(
             uniforms_buffer,
             num_visible,
             num_intersections,
-            tile_bins,
+            tile_offsets,
             projected_splats,
             final_index,
             compact_gid_from_isect,
@@ -366,7 +366,7 @@ pub(crate) fn render_backward(
     uniforms_buffer: JitTensor<WgpuRuntime>,
     compact_gid_from_isect: JitTensor<WgpuRuntime>,
     global_from_compact_gid: JitTensor<WgpuRuntime>,
-    tile_bins: JitTensor<WgpuRuntime>,
+    tile_offsets: JitTensor<WgpuRuntime>,
     final_index: JitTensor<WgpuRuntime>,
 
     sh_degree: u32,
@@ -405,7 +405,7 @@ pub(crate) fn render_backward(
                 vec![
                     uniforms_buffer.clone().handle.binding(),
                     compact_gid_from_isect.handle.binding(),
-                    tile_bins.handle.binding(),
+                    tile_offsets.handle.binding(),
                     projected_splats.handle.binding(),
                     final_index.handle.binding(),
                     out_img.handle.binding(),

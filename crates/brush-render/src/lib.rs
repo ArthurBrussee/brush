@@ -26,7 +26,7 @@ pub struct RenderAux<B: Backend> {
     pub num_intersections: B::IntTensorPrimitive,
     pub num_visible: B::IntTensorPrimitive,
     pub final_index: B::IntTensorPrimitive,
-    pub tile_bins: B::IntTensorPrimitive,
+    pub tile_offsets: B::IntTensorPrimitive,
     pub compact_gid_from_isect: B::IntTensorPrimitive,
     pub global_from_compact_gid: B::IntTensorPrimitive,
     pub radii: B::FloatTensorPrimitive,
@@ -54,7 +54,7 @@ impl<B: Backend> RenderAux<B> {
     }
 
     pub fn read_tile_depth(&self) -> Tensor<B, 2, Int> {
-        let bins = Tensor::<B, 1, Int>::from_primitive(self.tile_bins.clone());
+        let bins = Tensor::<B, 1, Int>::from_primitive(self.tile_offsets.clone());
 
         let n_bins = bins.dims()[0];
 
@@ -62,7 +62,10 @@ impl<B: Backend> RenderAux<B> {
         let min = bins.slice([0..n_bins - 1]);
 
         let [h, w] = self.final_index.shape().dims();
-        let [ty, tx] = [h / (TILE_WIDTH as usize), w / (TILE_WIDTH as usize)];
+        let [ty, tx] = [
+            h.div_ceil(TILE_WIDTH as usize),
+            w.div_ceil(TILE_WIDTH as usize),
+        ];
         (max - min).reshape([ty, tx])
     }
 }

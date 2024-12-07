@@ -3,7 +3,7 @@
 @group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
 
 @group(0) @binding(1) var<storage, read> compact_gid_from_isect: array<u32>;
-@group(0) @binding(2) var<storage, read> tile_bins: array<u32>;
+@group(0) @binding(2) var<storage, read> tile_offsets: array<u32>;
 
 @group(0) @binding(3) var<storage, read> projected_splats: array<helpers::ProjectedSplat>;
 
@@ -164,7 +164,7 @@ fn main(
     // Have all threads in tile process the same gaussians in batches
     // first collect gaussians between bin_start and bin_final in batches
     // which gaussians to look through in this tile
-    let range = vec2u(tile_bins[tile_id], tile_bins[tile_id + 1]);
+    let range = vec2u(tile_offsets[tile_id], tile_offsets[tile_id + 1]);
 
     let num_batches = helpers::ceil_div(range.y - range.x, BATCH_SIZE);
 

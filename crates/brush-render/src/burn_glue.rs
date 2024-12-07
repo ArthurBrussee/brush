@@ -67,7 +67,7 @@ impl Backend for InnerWgpu {
             state.aux.uniforms_buffer,
             state.aux.compact_gid_from_isect,
             state.aux.global_from_compact_gid,
-            state.aux.tile_bins,
+            state.aux.tile_offsets,
             state.aux.final_index,
             state.sh_degree,
         )
@@ -178,7 +178,7 @@ impl<B: Backend, C: CheckpointStrategy> Backend for Autodiff<B, C> {
             num_intersections: aux.num_intersections,
             num_visible: aux.num_visible,
             final_index: aux.final_index,
-            tile_bins: aux.tile_bins,
+            tile_offsets: aux.tile_offsets,
             compact_gid_from_isect: aux.compact_gid_from_isect,
             global_from_compact_gid: aux.global_from_compact_gid,
             uniforms_buffer: aux.uniforms_buffer,
@@ -236,7 +236,7 @@ impl Backend for Fusion<InnerWgpu> {
             fn execute(self: Box<Self>, h: &mut HandleContainer<JitFusionHandle<WgpuRuntime>>) {
                 let (
                     [means, log_scales, quats, sh_coeffs, raw_opacity],
-                    [projected_splats, uniforms_buffer, num_intersections, num_visible, final_index, tile_bins, compact_gid_from_isect, global_from_compact_gid, radii, out_img],
+                    [projected_splats, uniforms_buffer, num_intersections, num_visible, final_index, tile_offsets, compact_gid_from_isect, global_from_compact_gid, radii, out_img],
                 ) = self.desc.consume();
 
                 let (img, aux) = render_forward(
@@ -257,7 +257,7 @@ impl Backend for Fusion<InnerWgpu> {
                 h.register_int_tensor::<InnerWgpu>(&num_intersections.id, aux.num_intersections);
                 h.register_int_tensor::<InnerWgpu>(&num_visible.id, aux.num_visible);
                 h.register_int_tensor::<InnerWgpu>(&final_index.id, aux.final_index);
-                h.register_int_tensor::<InnerWgpu>(&tile_bins.id, aux.tile_bins);
+                h.register_int_tensor::<InnerWgpu>(&tile_offsets.id, aux.tile_offsets);
                 h.register_int_tensor::<InnerWgpu>(
                     &compact_gid_from_isect.id,
                     aux.compact_gid_from_isect,
@@ -296,8 +296,8 @@ impl Backend for Fusion<InnerWgpu> {
             num_visible: client.tensor_uninitialized(vec![1], DType::I32),
             final_index: client
                 .tensor_uninitialized(vec![img_size.y as usize, img_size.x as usize], DType::I32),
-            tile_bins: client.tensor_uninitialized(
-                vec![(tile_bounds.y * tile_bounds.x) as usize + 1, 2],
+            tile_offsets: client.tensor_uninitialized(
+                vec![(tile_bounds.y * tile_bounds.x) as usize + 1],
                 DType::I32,
             ),
             compact_gid_from_isect: client
@@ -321,7 +321,7 @@ impl Backend for Fusion<InnerWgpu> {
                 aux.num_intersections.to_description_out(),
                 aux.num_visible.to_description_out(),
                 aux.final_index.to_description_out(),
-                aux.tile_bins.to_description_out(),
+                aux.tile_offsets.to_description_out(),
                 aux.compact_gid_from_isect.to_description_out(),
                 aux.global_from_compact_gid.to_description_out(),
                 aux.radii.to_description_out(),
@@ -353,7 +353,7 @@ impl Backend for Fusion<InnerWgpu> {
         impl Operation<FusionJitRuntime<WgpuRuntime, u32>> for CustomOp {
             fn execute(self: Box<Self>, h: &mut HandleContainer<JitFusionHandle<WgpuRuntime>>) {
                 let (
-                    [v_output, means, log_scales, quats, raw_opac, out_img, projected_splats, num_visible, uniforms_buffer, compact_gid_from_isect, global_from_compact_gid, tile_bins, final_index],
+                    [v_output, means, log_scales, quats, raw_opac, out_img, projected_splats, num_visible, uniforms_buffer, compact_gid_from_isect, global_from_compact_gid, tile_offsets, final_index],
                     [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_xy],
                 ) = self.desc.consume();
 
@@ -369,7 +369,7 @@ impl Backend for Fusion<InnerWgpu> {
                     h.get_int_tensor::<InnerWgpu>(&uniforms_buffer),
                     h.get_int_tensor::<InnerWgpu>(&compact_gid_from_isect),
                     h.get_int_tensor::<InnerWgpu>(&global_from_compact_gid),
-                    h.get_int_tensor::<InnerWgpu>(&tile_bins),
+                    h.get_int_tensor::<InnerWgpu>(&tile_offsets),
                     h.get_int_tensor::<InnerWgpu>(&final_index),
                     self.sh_degree,
                 );
@@ -413,7 +413,7 @@ impl Backend for Fusion<InnerWgpu> {
                 state.aux.uniforms_buffer.into_description(),
                 state.aux.compact_gid_from_isect.into_description(),
                 state.aux.global_from_compact_gid.into_description(),
-                state.aux.tile_bins.into_description(),
+                state.aux.tile_offsets.into_description(),
                 state.aux.final_index.into_description(),
             ],
             &[
