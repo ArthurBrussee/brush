@@ -1,10 +1,11 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::single_range_in_vec_init)]
 use burn::prelude::Tensor;
-use burn::tensor::{ElementConversion, Int};
+use burn::tensor::{ElementConversion, Int, TensorMetadata};
 use burn_jit::JitBackend;
 use burn_wgpu::WgpuRuntime;
 use camera::Camera;
+use shaders::helpers::TILE_WIDTH;
 
 mod burn_glue;
 mod dim_check;
@@ -53,11 +54,16 @@ impl<B: Backend> RenderAux<B> {
     }
 
     pub fn read_tile_depth(&self) -> Tensor<B, 2, Int> {
-        let bins = Tensor::from_primitive(self.tile_bins.clone());
-        let [ty, tx, _] = bins.dims();
-        let max = bins.clone().slice([0..ty, 0..tx, 1..2]).squeeze(2);
-        let min = bins.clone().slice([0..ty, 0..tx, 0..1]).squeeze(2);
-        max - min
+        let bins = Tensor::<B, 1, Int>::from_primitive(self.tile_bins.clone());
+
+        let n_bins = bins.dims()[0];
+
+        let max = bins.clone().slice([1..n_bins]);
+        let min = bins.slice([0..n_bins - 1]);
+
+        let [h, w] = self.final_index.shape().dims();
+        let [ty, tx] = [h / (TILE_WIDTH as usize), w / (TILE_WIDTH as usize)];
+        (max - min).reshape([ty, tx])
     }
 }
 

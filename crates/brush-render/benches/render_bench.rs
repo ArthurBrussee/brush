@@ -199,15 +199,15 @@ fn bench_general(
 mod fwd {
     use super::*;
 
-    // #[divan::bench(args = BENCH_DENSITIES)]
-    // fn base(bencher: divan::Bencher, dens: f32) {
-    //     bench_general(bencher, dens, 1.0, LOW_RES, false);
-    // }
+    #[divan::bench(args = BENCH_DENSITIES)]
+    fn base(bencher: divan::Bencher, dens: f32) {
+        bench_general(bencher, dens, 1.0, LOW_RES, false);
+    }
 
-    // #[divan::bench(args = BENCH_DENSITIES)]
-    // fn dense(bencher: divan::Bencher, dens: f32) {
-    //     bench_general(bencher, dens, DENSE_MULT, LOW_RES, false);
-    // }
+    #[divan::bench(args = BENCH_DENSITIES)]
+    fn dense(bencher: divan::Bencher, dens: f32) {
+        bench_general(bencher, dens, DENSE_MULT, LOW_RES, false);
+    }
 
     #[divan::bench(args = BENCH_DENSITIES)]
     fn hd(bencher: divan::Bencher, dens: f32) {
@@ -215,22 +215,22 @@ mod fwd {
     }
 }
 
-// #[divan::bench_group(max_time = 20, sample_count = TARGET_SAMPLE_COUNT, sample_size = 1)]
-// mod bwd {
-//     use super::*;
+#[divan::bench_group(max_time = 20, sample_count = TARGET_SAMPLE_COUNT, sample_size = 1)]
+mod bwd {
+    use super::*;
 
-//     #[divan::bench(args = BENCH_DENSITIES)]
-//     fn base(bencher: divan::Bencher, dens: f32) {
-//         bench_general(bencher, dens, 1.0, LOW_RES, true);
-//     }
+    #[divan::bench(args = BENCH_DENSITIES)]
+    fn base(bencher: divan::Bencher, dens: f32) {
+        bench_general(bencher, dens, 1.0, LOW_RES, true);
+    }
 
-//     #[divan::bench(args = BENCH_DENSITIES)]
-//     fn dense(bencher: divan::Bencher, dens: f32) {
-//         bench_general(bencher, dens, DENSE_MULT, LOW_RES, true);
-//     }
+    #[divan::bench(args = BENCH_DENSITIES)]
+    fn dense(bencher: divan::Bencher, dens: f32) {
+        bench_general(bencher, dens, DENSE_MULT, LOW_RES, true);
+    }
 
-//     #[divan::bench(args = BENCH_DENSITIES)]
-//     fn hd(bencher: divan::Bencher, dens: f32) {
-//         bench_general(bencher, dens, 1.0, HIGH_RES, true);
-//     }
-// }
+    #[divan::bench(args = BENCH_DENSITIES)]
+    fn hd(bencher: divan::Bencher, dens: f32) {
+        bench_general(bencher, dens, 1.0, HIGH_RES, true);
+    }
+}
