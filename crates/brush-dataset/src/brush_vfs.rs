@@ -12,8 +12,8 @@ use std::{
 };
 
 use anyhow::Context;
-use tokio::io::AsyncReadExt;
-use tokio::{io::AsyncRead, sync::Mutex};
+use tokio::{io::AsyncRead, io::AsyncReadExt, sync::Mutex};
+
 use zip::{
     result::{ZipError, ZipResult},
     ZipArchive,
@@ -66,6 +66,7 @@ impl PathReader {
 pub enum BrushVfs {
     Zip(ZipArchive<Cursor<ZipData>>),
     Manual(PathReader),
+    #[cfg(not(target_family = "wasm"))]
     Directory(PathBuf, Vec<PathBuf>),
 }
 
@@ -87,6 +88,7 @@ impl BrushVfs {
         BrushVfs::Manual(paths)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn from_directory(dir: &Path) -> anyhow::Result<Self> {
         let mut read = ::tokio::fs::read_dir(dir).await?;
         let mut paths = vec![];
@@ -100,6 +102,7 @@ impl BrushVfs {
         let iterator: Box<dyn Iterator<Item = &Path>> = match self {
             BrushVfs::Zip(archive) => Box::new(archive.file_names().map(Path::new)),
             BrushVfs::Manual(map) => Box::new(map.paths().map(|p| p.as_path())),
+            #[cfg(not(target_family = "wasm"))]
             BrushVfs::Directory(_, paths) => Box::new(paths.iter().map(|p| p.as_path())),
         };
         // stupic macOS.
@@ -119,6 +122,7 @@ impl BrushVfs {
                 Ok(Box::new(Cursor::new(buffer)))
             }
             BrushVfs::Manual(map) => map.open(path).await,
+            #[cfg(not(target_family = "wasm"))]
             BrushVfs::Directory(path_buf, _) => {
                 let file = tokio::fs::File::open(path_buf).await?;
                 Ok(Box::new(file))

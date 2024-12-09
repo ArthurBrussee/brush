@@ -16,6 +16,9 @@ use burn_wgpu::{Wgpu, WgpuDevice};
 use eframe::egui;
 use egui_tiles::{Container, Tile, TileId, Tiles};
 use glam::{Affine3A, Quat, Vec3, Vec3A};
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::bytes::Bytes;
+use tokio_util::io::StreamReader;
 use tokio_with_wasm::alias as tokio;
 
 use ::tokio::io::AsyncReadExt;
@@ -145,7 +148,7 @@ fn process_loop(
 
         // Small hack to peek some bytes: Read them
         // and add them at the start again.
-        let data = source.read().await?;
+        let data = source.into_reader()?;
         let mut data = BufReader::new(data);
         let mut peek = [0; 128];
         data.read_exact(&mut peek).await?;
@@ -228,31 +231,53 @@ pub enum DataSource {
     Url(String),
 }
 
-#[cfg(target_family = "wasm")]
-type DataRead = Pin<Box<dyn AsyncRead>>;
-
-#[cfg(not(target_family = "wasm"))]
 type DataRead = Pin<Box<dyn AsyncRead + Send>>;
 
 impl DataSource {
-    async fn read(&self) -> anyhow::Result<DataRead> {
-        match self {
-            DataSource::PickFile => {
-                let picked = rrfd::pick_file().await?;
-                let data = picked.read().await;
-                Ok(Box::pin(std::io::Cursor::new(data)))
-            }
-            DataSource::Url(url) => {
-                let mut url = url.to_owned();
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    url = format!("https://{}", url);
+    fn into_reader(self) -> anyhow::Result<impl AsyncRead + Send> {
+        let (send, rec) = ::tokio::sync::mpsc::channel(16);
+
+        // Spawn the data reading.
+        tokio::spawn(async move {
+            let stream = try_fn_stream(|emitter| async move {
+                match self {
+                    DataSource::PickFile => {
+                        let picked = rrfd::pick_file()
+                            .await
+                            .map_err(|_| std::io::ErrorKind::NotFound)?;
+                        let data = picked.read().await;
+                        emitter.emit(Bytes::from_owner(data)).await;
+                    }
+                    DataSource::Url(url) => {
+                        let mut url = url.to_owned();
+                        if !url.starts_with("http://") && !url.starts_with("https://") {
+                            url = format!("https://{}", url);
+                        }
+                        let mut response = reqwest::get(url)
+                            .await
+                            .map_err(|_| std::io::ErrorKind::InvalidInput)?
+                            .bytes_stream();
+
+                        while let Some(bytes) = response.next().await {
+                            let bytes = bytes.map_err(|_| std::io::ErrorKind::ConnectionAborted)?;
+                            emitter.emit(bytes).await;
+                        }
+                    }
+                };
+                anyhow::Result::<(), std::io::Error>::Ok(())
+            });
+
+            let mut stream = std::pin::pin!(stream);
+
+            while let Some(data) = stream.next().await {
+                if send.send(data).await.is_err() {
+                    break;
                 }
-                let response = reqwest::get(url).await?.bytes_stream();
-                let mapped = response
-                    .map(|e| e.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
-                Ok(Box::pin(tokio_util::io::StreamReader::new(mapped)))
             }
-        }
+        });
+
+        let reader = StreamReader::new(ReceiverStream::new(rec));
+        Ok(reader)
     }
 }
 
