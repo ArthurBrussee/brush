@@ -1,9 +1,11 @@
 use core::f32;
 use std::ops::Range;
+use std::path::Path;
 use std::{pin::Pin, sync::Arc};
 
 use async_fn_stream::try_fn_stream;
 
+use brush_dataset::brush_vfs::{BrushVfs, PathReader};
 use brush_dataset::{self, splat_import, Dataset, LoadDatasetArgs, LoadInitArgs};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
@@ -147,19 +149,36 @@ fn process_loop(
         let mut data = BufReader::new(data);
         let mut peek = [0; 128];
         data.read_exact(&mut peek).await?;
-        let data = std::io::Cursor::new(peek).chain(data);
+        let reader = std::io::Cursor::new(peek).chain(data);
 
-        log::info!("{:?}", String::from_utf8(peek.to_vec()));
+        let mut vfs = if peek.starts_with("ply".as_bytes()) {
+            let mut path_reader = PathReader::default();
+            path_reader.add(Path::new("input.ply"), reader);
+            BrushVfs::from_paths(path_reader)
+        } else if peek.starts_with("PK".as_bytes()) {
+            BrushVfs::from_zip_reader(reader).await?
+        } else if peek.starts_with("<!DOCTYPE html>".as_bytes()) {
+            anyhow::bail!("Failed to download data (are you trying to download from Google Drive? You might have to use the proxy.")
+        } else {
+            anyhow::bail!("only zip and ply files are supported.");
+        };
 
-        if peek.starts_with("ply".as_bytes()) {
-            log::info!("Attempting to load data as .ply data");
+        let names: Vec<_> = vfs.file_names().map(|x| x.to_path_buf()).collect();
+        log::info!("Mounted VFS with {} files", names.len());
+
+        if names.len() == 1 && names[0].extension().is_some_and(|p| p == "ply") {
+            log::info!("Loading single ply file");
 
             let _ = emitter
                 .emit(ProcessMessage::StartLoading { training: false })
                 .await;
 
             let sub_sample = None; // Subsampling a trained ply doesn't really make sense.
-            let splat_stream = splat_import::load_splat_from_ply(data, sub_sample, device.clone());
+            let splat_stream = splat_import::load_splat_from_ply(
+                vfs.open_path(&names[0]).await?,
+                sub_sample,
+                device.clone(),
+            );
 
             let mut splat_stream = std::pin::pin!(splat_stream);
 
@@ -178,15 +197,13 @@ fn process_loop(
             emitter
                 .emit(ProcessMessage::DoneLoading { training: true })
                 .await;
-        } else if peek.starts_with("PK".as_bytes()) {
-            log::info!("Attempting to load data as .zip data");
-
+        } else {
             let _ = emitter
                 .emit(ProcessMessage::StartLoading { training: true })
                 .await;
 
             let stream = train_loop::train_loop(
-                data,
+                vfs,
                 device,
                 train_receiver,
                 load_data_args,
@@ -197,10 +214,6 @@ fn process_loop(
             while let Some(message) = stream.next().await {
                 emitter.emit(message?).await;
             }
-        } else if peek.starts_with("<!DOCTYPE html>".as_bytes()) {
-            anyhow::bail!("Failed to download data (are you trying to download from Google Drive? You might have to use the proxy.")
-        } else {
-            anyhow::bail!("only zip and ply files are supported.");
         }
 
         Ok(())

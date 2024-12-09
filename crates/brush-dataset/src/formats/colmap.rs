@@ -1,8 +1,16 @@
-use std::{future::Future, sync::Arc};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use super::{DataStream, LoadDatasetArgs};
-use crate::{brush_vfs::BrushVfs, splat_import::SplatMessage, stream_fut_parallel, Dataset};
-use anyhow::{Context, Result};
+use crate::{
+    brush_vfs::{normalized_path, BrushVfs},
+    splat_import::SplatMessage,
+    stream_fut_parallel, Dataset,
+};
+use anyhow::Result;
 use async_fn_stream::try_fn_stream;
 use brush_render::{
     camera::{self, Camera},
@@ -15,6 +23,19 @@ use glam::Vec3;
 use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
 
+fn find_base_path(archive: &BrushVfs, search_path: &str) -> Option<PathBuf> {
+    for file in archive.file_names() {
+        let path = normalized_path(Path::new(file));
+        if path.ends_with(search_path) {
+            return path
+                .ancestors()
+                .nth(Path::new(search_path).components().count())
+                .map(|x| x.to_owned());
+        }
+    }
+    None
+}
+
 async fn read_views(
     archive: BrushVfs,
     load_args: &LoadDatasetArgs,
@@ -22,14 +43,14 @@ async fn read_views(
     log::info!("Loading colmap dataset");
     let mut archive = archive;
 
-    let (is_binary, base_path) = if let Some(path) = archive.find_base_path("sparse/0/cameras.bin")
-    {
-        (true, path)
-    } else if let Some(path) = archive.find_base_path("sparse/0/cameras.txt") {
-        (false, path)
-    } else {
-        anyhow::bail!("No COLMAP data found (either text or binary.)")
-    };
+    let (is_binary, base_path) =
+        if let Some(path) = find_base_path(&archive, "sparse/0/cameras.bin") {
+            (true, path)
+        } else if let Some(path) = find_base_path(&archive, "sparse/0/cameras.txt") {
+            (false, path)
+        } else {
+            anyhow::bail!("No COLMAP data found (either text or binary.)")
+        };
 
     let (cam_path, img_path) = if is_binary {
         (
@@ -44,12 +65,12 @@ async fn read_views(
     };
 
     let cam_model_data = {
-        let mut cam_file = archive.open_reader_at_path(&cam_path).await?;
+        let mut cam_file = archive.open_path(&cam_path).await?;
         colmap_reader::read_cameras(&mut cam_file, is_binary).await?
     };
 
     let img_infos = {
-        let img_file = archive.open_reader_at_path(&img_path).await?;
+        let img_file = archive.open_path(&img_path).await?;
         let mut buf_reader = tokio::io::BufReader::new(img_file);
         colmap_reader::read_images(&mut buf_reader, is_binary).await?
     };
@@ -86,7 +107,7 @@ async fn read_views(
 
                 let mut img_bytes = vec![];
                 archive
-                    .open_reader_at_path(&img_path)
+                    .open_path(&img_path)
                     .await?
                     .read_to_end(&mut img_bytes)
                     .await?;
@@ -105,7 +126,7 @@ async fn read_views(
                 let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
 
                 let view = SceneView {
-                    name: img_path.to_str().context("Invalid file name")?.to_owned(),
+                    name: img_path.to_string_lossy().to_string(),
                     camera,
                     image: Arc::new(img),
                 };
@@ -156,9 +177,9 @@ pub(crate) async fn load_dataset<B: Backend>(
 
     let init_stream = try_fn_stream(|emitter| async move {
         let (is_binary, base_path) =
-            if let Some(path) = archive.find_base_path("sparse/0/cameras.bin") {
+            if let Some(path) = find_base_path(&archive, "sparse/0/cameras.bin") {
                 (true, path)
-            } else if let Some(path) = archive.find_base_path("sparse/0/cameras.txt") {
+            } else if let Some(path) = find_base_path(&archive, "sparse/0/cameras.txt") {
                 (false, path)
             } else {
                 anyhow::bail!("No COLMAP data found (either text or binary.")
@@ -172,7 +193,7 @@ pub(crate) async fn load_dataset<B: Backend>(
 
         // Extract COLMAP sfm points.
         let points_data = {
-            let mut points_file = archive.open_reader_at_path(&points_path).await?;
+            let mut points_file = archive.open_path(&points_path).await?;
             colmap_reader::read_points3d(&mut points_file, is_binary).await
         };
 

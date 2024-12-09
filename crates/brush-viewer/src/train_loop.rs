@@ -9,10 +9,7 @@ use burn::module::AutodiffModule;
 use burn_jit::cubecl::Runtime;
 use burn_wgpu::{Wgpu, WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
-use tokio::{
-    io::AsyncRead,
-    sync::mpsc::{error::TryRecvError, Receiver},
-};
+use tokio::sync::mpsc::{error::TryRecvError, Receiver};
 use tokio_stream::{Stream, StreamExt};
 use web_time::Instant;
 
@@ -26,8 +23,8 @@ pub enum TrainMessage {
     Eval { view_count: Option<usize> },
 }
 
-pub(crate) fn train_loop<T: AsyncRead + Unpin + 'static>(
-    data_reader: T,
+pub(crate) fn train_loop(
+    vfs: BrushVfs,
     device: WgpuDevice,
     mut receiver: Receiver<TrainMessage>,
     load_data_args: LoadDatasetArgs,
@@ -35,9 +32,6 @@ pub(crate) fn train_loop<T: AsyncRead + Unpin + 'static>(
     config: TrainConfig,
 ) -> impl Stream<Item = anyhow::Result<ProcessMessage>> {
     try_fn_stream(|emitter| async move {
-        // TODO: async zip ideally.
-        let zip_data = BrushVfs::from_zip_reader(data_reader).await?;
-
         let batch_size = 1;
 
         // Maybe good if the seed would be configurable.
@@ -50,7 +44,7 @@ pub(crate) fn train_loop<T: AsyncRead + Unpin + 'static>(
 
         let mut dataset = Dataset::empty();
         let (mut splat_stream, mut data_stream) =
-            brush_dataset::load_dataset(zip_data.clone(), &load_data_args, &device).await?;
+            brush_dataset::load_dataset(vfs.clone(), &load_data_args, &device).await?;
 
         // Read initial splats if any.
         while let Some(message) = splat_stream.next().await {
