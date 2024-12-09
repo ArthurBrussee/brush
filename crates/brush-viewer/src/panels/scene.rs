@@ -229,8 +229,10 @@ impl ViewerPanel for ScenePanel {
                 iter: _,
                 timestamp: _,
             } => {
+                let splats = *splats.clone();
+
                 if self.live_update {
-                    self.view_splats = vec![*splats.clone()];
+                    self.view_splats = vec![splats.clone()];
                 }
             }
             ProcessMessage::Error(e) => {

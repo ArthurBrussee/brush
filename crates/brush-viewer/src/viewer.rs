@@ -166,45 +166,55 @@ fn process_loop(
             anyhow::bail!("only zip and ply files are supported.");
         };
 
-        let names: Vec<_> = vfs.file_names().map(|x| x.to_path_buf()).collect();
-        log::info!("Mounted VFS with {} files", names.len());
+        let paths: Vec<_> = vfs.file_names().map(|x| x.to_path_buf()).collect();
+        log::info!("Mounted VFS with {} files", paths.len());
 
-        if names.len() == 1 && names[0].extension().is_some_and(|p| p == "ply") {
-            log::info!("Loading single ply file");
+        if paths
+            .iter()
+            .all(|p| p.extension().is_some_and(|p| p == "ply"))
+        {
+            for (i, path) in paths.iter().enumerate() {
+                log::info!("Loading single ply file");
 
-            let _ = emitter
-                .emit(ProcessMessage::StartLoading { training: false })
-                .await;
-
-            let sub_sample = None; // Subsampling a trained ply doesn't really make sense.
-            let splat_stream = splat_import::load_splat_from_ply(
-                vfs.open_path(&names[0]).await?,
-                sub_sample,
-                device.clone(),
-            );
-
-            let mut splat_stream = std::pin::pin!(splat_stream);
-
-            while let Some(message) = splat_stream.next().await {
-                let message = message?;
-                emitter
-                    .emit(ProcessMessage::ViewSplats {
-                        up_axis: message.meta.up_axis,
-                        splats: Box::new(message.splats),
-                        frame: message.meta.current_frame,
-                        total_frames: message.meta.frame_count,
-                    })
+                let _ = emitter
+                    .emit(ProcessMessage::StartLoading { training: false })
                     .await;
+
+                let sub_sample = None; // Subsampling a trained ply doesn't really make sense.
+                let splat_stream = splat_import::load_splat_from_ply(
+                    vfs.open_path(path).await?,
+                    sub_sample,
+                    device.clone(),
+                );
+
+                let mut splat_stream = std::pin::pin!(splat_stream);
+
+                while let Some(message) = splat_stream.next().await {
+                    let message = message?;
+
+                    // If there's multiple ply files in a zip, don't support animated plys, that would
+                    // get rather mind bending.
+                    let (frame, total_frames) = if paths.len() == 1 {
+                        (message.meta.current_frame, message.meta.frame_count)
+                    } else {
+                        (i, paths.len())
+                    };
+
+                    emitter
+                        .emit(ProcessMessage::ViewSplats {
+                            up_axis: message.meta.up_axis,
+                            splats: Box::new(message.splats),
+                            frame,
+                            total_frames,
+                        })
+                        .await;
+                }
             }
 
             emitter
-                .emit(ProcessMessage::DoneLoading { training: true })
+                .emit(ProcessMessage::DoneLoading { training: false })
                 .await;
         } else {
-            let _ = emitter
-                .emit(ProcessMessage::StartLoading { training: true })
-                .await;
-
             let stream = train_loop::train_loop(
                 vfs,
                 device,

@@ -32,6 +32,10 @@ pub(crate) fn train_loop(
     config: TrainConfig,
 ) -> impl Stream<Item = anyhow::Result<ProcessMessage>> {
     try_fn_stream(|emitter| async move {
+        let _ = emitter
+            .emit(ProcessMessage::StartLoading { training: true })
+            .await;
+
         let batch_size = 1;
 
         // Maybe good if the seed would be configurable.
