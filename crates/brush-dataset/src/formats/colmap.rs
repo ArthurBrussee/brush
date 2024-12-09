@@ -1,7 +1,7 @@
 use std::{future::Future, sync::Arc};
 
-use super::{DataStream, DatasetZip, LoadDatasetArgs};
-use crate::{splat_import::SplatMessage, stream_fut_parallel, Dataset};
+use super::{DataStream, LoadDatasetArgs};
+use crate::{brush_vfs::BrushVfs, splat_import::SplatMessage, stream_fut_parallel, Dataset};
 use anyhow::{Context, Result};
 use async_fn_stream::try_fn_stream;
 use brush_render::{
@@ -12,13 +12,15 @@ use brush_render::{
 };
 use brush_train::scene::SceneView;
 use glam::Vec3;
+use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
 
-fn read_views(
-    mut archive: DatasetZip,
+async fn read_views(
+    archive: BrushVfs,
     load_args: &LoadDatasetArgs,
 ) -> Result<Vec<impl Future<Output = Result<SceneView>>>> {
     log::info!("Loading colmap dataset");
+    let mut archive = archive;
 
     let (is_binary, base_path) = if let Some(path) = archive.find_base_path("sparse/0/cameras.bin")
     {
@@ -26,7 +28,7 @@ fn read_views(
     } else if let Some(path) = archive.find_base_path("sparse/0/cameras.txt") {
         (false, path)
     } else {
-        anyhow::bail!("No COLMAP data found (either text or binary.")
+        anyhow::bail!("No COLMAP data found (either text or binary.)")
     };
 
     let (cam_path, img_path) = if is_binary {
@@ -42,14 +44,14 @@ fn read_views(
     };
 
     let cam_model_data = {
-        let mut cam_file = archive.file_at_path(&cam_path)?;
-        colmap_reader::read_cameras(&mut cam_file, is_binary)?
+        let mut cam_file = archive.open_reader_at_path(&cam_path).await?;
+        colmap_reader::read_cameras(&mut cam_file, is_binary).await?
     };
 
     let img_infos = {
-        let img_file = archive.file_at_path(&img_path)?;
-        let mut buf_reader = std::io::BufReader::new(img_file);
-        colmap_reader::read_images(&mut buf_reader, is_binary)?
+        let img_file = archive.open_reader_at_path(&img_path).await?;
+        let mut buf_reader = tokio::io::BufReader::new(img_file);
+        colmap_reader::read_images(&mut buf_reader, is_binary).await?
     };
 
     let mut img_info_list = img_infos.into_iter().collect::<Vec<_>>();
@@ -82,7 +84,12 @@ fn read_views(
 
                 let img_path = base_path.join(format!("images/{}", img_info.name));
 
-                let img_bytes = archive.read_bytes_at_path(&img_path)?;
+                let mut img_bytes = vec![];
+                archive
+                    .open_reader_at_path(&img_path)
+                    .await?
+                    .read_to_end(&mut img_bytes)
+                    .await?;
                 let mut img = image::load_from_memory(&img_bytes)?;
 
                 if let Some(max) = load_args.max_resolution {
@@ -110,12 +117,12 @@ fn read_views(
     Ok(handles)
 }
 
-pub(crate) fn load_dataset<B: Backend>(
-    mut archive: DatasetZip,
+pub(crate) async fn load_dataset<B: Backend>(
+    mut archive: BrushVfs,
     load_args: &LoadDatasetArgs,
     device: &B::Device,
 ) -> Result<(DataStream<SplatMessage<B>>, DataStream<Dataset>)> {
-    let mut handles = read_views(archive.clone(), load_args)?;
+    let mut handles = read_views(archive.clone(), load_args).await?;
 
     if let Some(subsample) = load_args.subsample_frames {
         handles = handles.into_iter().step_by(subsample as usize).collect();
@@ -165,8 +172,8 @@ pub(crate) fn load_dataset<B: Backend>(
 
         // Extract COLMAP sfm points.
         let points_data = {
-            let mut points_file = archive.file_at_path(&points_path)?;
-            colmap_reader::read_points3d(&mut points_file, is_binary)
+            let mut points_file = archive.open_reader_at_path(&points_path).await?;
+            colmap_reader::read_points3d(&mut points_file, is_binary).await
         };
 
         // Ignore empty points data.

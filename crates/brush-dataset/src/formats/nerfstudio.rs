@@ -1,5 +1,5 @@
-use super::DatasetZip;
 use super::LoadDatasetArgs;
+use crate::brush_vfs::BrushVfs;
 use crate::splat_import::load_splat_from_ply;
 use crate::splat_import::SplatMessage;
 use crate::stream_fut_parallel;
@@ -11,9 +11,9 @@ use brush_render::camera::{focal_to_fov, fov_to_focal, Camera};
 use brush_render::Backend;
 use brush_train::scene::SceneView;
 use std::future::Future;
-use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
 
 #[derive(serde::Deserialize, Clone)]
@@ -95,7 +95,7 @@ struct FrameData {
 fn read_transforms_file(
     scene: JsonScene,
     transforms_path: PathBuf,
-    archive: DatasetZip,
+    vfs: BrushVfs,
     load_args: &LoadDatasetArgs,
 ) -> Result<Vec<impl Future<Output = anyhow::Result<SceneView>>>> {
     let iter = scene
@@ -103,7 +103,7 @@ fn read_transforms_file(
         .into_iter()
         .take(load_args.max_frames.unwrap_or(usize::MAX))
         .map(move |frame| {
-            let mut archive = archive.clone();
+            let mut archive = vfs.clone();
             let load_args = load_args.clone();
             let transforms_path = transforms_path.clone();
 
@@ -126,7 +126,13 @@ fn read_transforms_file(
                 if path.extension().is_none() {
                     path = path.with_extension("png");
                 }
-                let img_buffer = archive.read_bytes_at_path(&path)?;
+
+                let mut img_buffer = vec![];
+                archive
+                    .open_reader_at_path(&path)
+                    .await?
+                    .read_to_end(&mut img_buffer)
+                    .await?;
 
                 let comp_span = tracing::trace_span!("Decompress image").entered();
                 drop(comp_span);
@@ -171,19 +177,26 @@ fn read_transforms_file(
     Ok(iter.collect())
 }
 
-pub fn read_dataset<B: Backend>(
-    mut archive: DatasetZip,
+pub async fn read_dataset<B: Backend>(
+    mut vfs: BrushVfs,
     load_args: &LoadDatasetArgs,
     device: &B::Device,
 ) -> Result<(DataStream<SplatMessage<B>>, DataStream<Dataset>)> {
     log::info!("Loading nerfstudio dataset");
 
-    let transforms_path = archive.find_with_extension(".json", "_train")?;
-    let train_scene: JsonScene = serde_json::from_reader(archive.file_at_path(&transforms_path)?)?;
+    let transforms_path = vfs.find_with_extension(".json", "_train")?;
+
+    let mut buf = String::new();
+    vfs.open_reader_at_path(&transforms_path)
+        .await?
+        .read_to_string(&mut buf)
+        .await?;
+    let train_scene: JsonScene = serde_json::from_str(&buf)?;
+
     let mut train_handles = read_transforms_file(
         train_scene.clone(),
         transforms_path.clone(),
-        archive.clone(),
+        vfs.clone(),
         load_args,
     )?;
 
@@ -195,20 +208,26 @@ pub fn read_dataset<B: Backend>(
     }
 
     let load_args_clone = load_args.clone();
-    let mut archive_clone = archive.clone();
 
     let transforms_path_clone = transforms_path.clone();
+    let mut data_clone = vfs.clone();
 
     let dataset_stream = try_fn_stream(|emitter| async move {
         let mut train_views = vec![];
         let mut eval_views = vec![];
 
-        let eval_trans_path = archive_clone.find_with_extension(".json", "_val")?;
+        let eval_trans_path = data_clone.find_with_extension(".json", "_val")?;
 
         // If a seperate eval file is specified, read it.
         let val_stream = if eval_trans_path != transforms_path_clone {
-            let val_scene = serde_json::from_reader(archive_clone.file_at_path(&eval_trans_path)?)?;
-            read_transforms_file(val_scene, eval_trans_path, archive_clone, &load_args_clone).ok()
+            let mut json_str = String::new();
+            data_clone
+                .open_reader_at_path(&eval_trans_path)
+                .await?
+                .read_to_string(&mut json_str)
+                .await?;
+            let val_scene = serde_json::from_str(&json_str)?;
+            read_transforms_file(val_scene, eval_trans_path, data_clone, &load_args_clone).ok()
         } else {
             None
         };
@@ -260,14 +279,11 @@ pub fn read_dataset<B: Backend>(
     let splat_stream = try_fn_stream(|emitter| async move {
         if let Some(init) = train_scene.ply_file_path {
             let init_path = transforms_path.parent().unwrap().join(init);
-            let ply_data = archive.read_bytes_at_path(&init_path);
+            let ply_data = vfs.open_reader_at_path(&init_path).await;
 
             if let Ok(ply_data) = ply_data {
-                let splat_stream = load_splat_from_ply(
-                    Cursor::new(ply_data),
-                    load_args.subsample_points,
-                    device.clone(),
-                );
+                let splat_stream =
+                    load_splat_from_ply(ply_data, load_args.subsample_points, device.clone());
 
                 let mut splat_stream = std::pin::pin!(splat_stream);
 

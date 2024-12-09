@@ -1,8 +1,8 @@
+pub mod brush_vfs;
 mod formats;
 pub mod scene_loader;
 pub mod splat_export;
 pub mod splat_import;
-pub mod zip;
 
 pub use formats::load_dataset;
 
