@@ -224,7 +224,7 @@ impl App {
         }
 
         #[cfg(target_family = "wasm")]
-        let start_uri = start_uri.or(web_sys::window().and_then(|w| w.location().search().ok()));
+        let start_uri = web_sys::window().and_then(|w| w.location().search().ok());
         #[cfg(not(target_family = "wasm"))]
         let start_uri = "";
 
