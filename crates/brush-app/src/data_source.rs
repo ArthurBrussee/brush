@@ -6,7 +6,7 @@ use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tokio_util::{bytes::Bytes, io::StreamReader};
 use tokio_with_wasm::alias as tokio;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum DataSource {
     PickFile,
     PickDirectory,

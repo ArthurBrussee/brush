@@ -1,7 +1,7 @@
-mod data_source;
+pub mod data_source;
 mod orbit_controls;
 mod panels;
-mod process_loop;
+pub mod process_loop;
 
 #[cfg(not(target_family = "wasm"))]
 mod rerun_tools;

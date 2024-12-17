@@ -1,30 +1,22 @@
 use core::f32;
 use std::ops::Range;
-
-use brush_dataset::{self, Dataset, LoadDatasetArgs, LoadInitArgs};
-use brush_render::camera::Camera;
-use brush_train::train::TrainConfig;
-use brush_ui::channel::{reactive_receiver, reactive_receiver_unbounded};
-use burn_wgpu::WgpuDevice;
-use eframe::egui;
-use egui_tiles::{Container, Tile, TileId, Tiles};
-use glam::{Affine3A, Quat, Vec3, Vec3A};
-
-use ::tokio::sync::mpsc::channel;
-use ::tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use ::tokio::sync::mpsc::{Receiver, UnboundedReceiver};
-use std::collections::HashMap;
-use tokio::task;
-use tokio_with_wasm::alias as tokio;
+use std::sync::{Arc, RwLock};
 
 use crate::data_source::DataSource;
-use crate::process_loop::{self, ControlMessage, ProcessMessage};
+use crate::process_loop::{start_process, ProcessArgs, ProcessMessage, RunningProcess};
 use crate::{
     orbit_controls::OrbitControls,
     panels::{DatasetPanel, LoadDataPanel, PresetsPanel, ScenePanel, StatsPanel, TracingPanel},
 };
-
+use brush_dataset::{self, Dataset};
+use brush_render::camera::Camera;
+use brush_ui::channel::reactive_receiver;
+use burn_wgpu::WgpuDevice;
+use eframe::egui;
 use egui_tiles::SimplificationOptions;
+use egui_tiles::{Container, Tile, TileId, Tiles};
+use glam::{Affine3A, Quat, Vec3, Vec3A};
+use std::collections::HashMap;
 
 pub(crate) trait AppPanel {
     fn title(&self) -> String;
@@ -37,7 +29,7 @@ pub(crate) trait AppPanel {
 
 struct AppTree {
     zen: bool,
-    context: AppContext,
+    context: Arc<RwLock<AppContext>>,
 }
 
 type PaneType = Box<dyn AppPanel>;
@@ -53,7 +45,7 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
         _tile_id: egui_tiles::TileId,
         pane: &mut PaneType,
     ) -> egui_tiles::UiResponse {
-        pane.ui(ui, &mut self.context);
+        pane.ui(ui, &mut self.context.write().expect("Lock poisoned"));
         egui_tiles::UiResponse::None
     }
 
@@ -82,10 +74,6 @@ fn parse_search(search: &str) -> HashMap<String, String> {
     params
 }
 
-pub enum UiControlMessage {
-    LoadData(String),
-}
-
 pub struct App {
     tree: egui_tiles::Tree<PaneType>,
     datasets: Option<TileId>,
@@ -93,38 +81,26 @@ pub struct App {
 }
 
 // TODO: Bit too much random shared state here.
-pub(crate) struct AppContext {
+pub struct AppContext {
     pub dataset: Dataset,
     pub camera: Camera,
     pub controls: OrbitControls,
-
     pub model_transform: Affine3A,
-
-    device: WgpuDevice,
+    pub device: WgpuDevice,
     ctx: egui::Context,
-
-    rec_ui_control_msg: UnboundedReceiver<UiControlMessage>,
-    send_train_msg: Option<UnboundedSender<ControlMessage>>,
-
-    rec_process_msg: Option<Receiver<ProcessMessage>>,
+    running_process: Option<RunningProcess>,
 }
 
 struct CameraSettings {
     focal: f64,
     radius: f32,
-
     yaw_range: Range<f32>,
     pitch_range: Range<f32>,
     radius_range: Range<f32>,
 }
 
 impl AppContext {
-    fn new(
-        device: WgpuDevice,
-        ctx: egui::Context,
-        cam_settings: CameraSettings,
-        ui_receiver: UnboundedReceiver<UiControlMessage>,
-    ) -> Self {
+    fn new(device: WgpuDevice, ctx: egui::Context, cam_settings: CameraSettings) -> Self {
         let model_transform = Affine3A::IDENTITY;
 
         let controls = OrbitControls::new(
@@ -143,8 +119,6 @@ impl AppContext {
             glam::vec2(0.5, 0.5),
         );
 
-        let rec_ui_control_msg = reactive_receiver_unbounded(ui_receiver, ctx.clone());
-
         Self {
             camera,
             controls,
@@ -152,9 +126,7 @@ impl AppContext {
             device,
             ctx,
             dataset: Dataset::empty(),
-            rec_process_msg: None,
-            send_train_msg: None,
-            rec_ui_control_msg,
+            running_process: None,
         }
     }
 
@@ -179,54 +151,31 @@ impl AppContext {
         self.camera = cam.clone();
     }
 
-    pub(crate) fn start_data_load(
-        &mut self,
-        source: DataSource,
-        load_data_args: LoadDatasetArgs,
-        load_init_args: LoadInitArgs,
-        train_config: TrainConfig,
-    ) {
-        let device = self.device.clone();
-        log::info!("Start data load {source:?}");
-
-        // Create a small channel. We don't want 10 updated splats to be stuck in the queue eating up memory!
-        // Bigger channels could mean the train loop spends less time waiting for the UI though.
-        // create a channel for the train loop.
-        let (train_sender, train_receiver) = unbounded_channel();
-        let (sender, receiver) = channel(1);
-        let receiver = reactive_receiver(receiver, self.ctx.clone());
-
-        self.rec_process_msg = Some(receiver);
-        self.send_train_msg = Some(train_sender);
-
+    pub fn connect_to(&mut self, process: RunningProcess) {
         self.dataset = Dataset::empty();
-
-        task::spawn(async move {
-            process_loop::process_loop(
-                sender,
-                source,
-                device,
-                train_receiver,
-                load_data_args,
-                load_init_args,
-                train_config,
-            )
-            .await;
-        });
+        // Conver the receiver to a "reactive" receiver that wakes up the UI.
+        let process = RunningProcess {
+            messages: reactive_receiver(process.messages, self.ctx.clone()),
+            ..process
+        };
+        self.running_process = Some(process);
     }
 
-    pub fn control_message(&self, message: ControlMessage) {
-        self.send_train_msg.as_ref().inspect(|send| {
-            let _ = send.send(message);
-        });
+    pub(crate) fn control_message(&self, msg: crate::process_loop::ControlMessage) {
+        if let Some(process) = self.running_process.as_ref() {
+            let _ = process.control.send(msg);
+        }
     }
+}
+
+pub struct AppCreateCb {
+    pub context: Arc<RwLock<AppContext>>,
 }
 
 impl App {
     pub fn new(
         cc: &eframe::CreationContext,
-        start_uri: Option<String>,
-        controller: UnboundedReceiver<UiControlMessage>,
+        create_callback: tokio::sync::oneshot::Sender<AppCreateCb>,
     ) -> Self {
         // For now just assume we're running on the default
         let state = cc
@@ -276,8 +225,10 @@ impl App {
 
         #[cfg(target_family = "wasm")]
         let start_uri = start_uri.or(web_sys::window().and_then(|w| w.location().search().ok()));
+        #[cfg(not(target_family = "wasm"))]
+        let start_uri = "";
 
-        let search_params = parse_search(&start_uri.unwrap_or_default());
+        let search_params = parse_search(start_uri);
 
         let mut zen = false;
         if let Some(z) = search_params.get("zen") {
@@ -328,7 +279,7 @@ impl App {
             pitch_range: min_pitch..max_pitch,
         };
 
-        let context = AppContext::new(device.clone(), cc.egui_ctx.clone(), settings, controller);
+        let context = AppContext::new(device.clone(), cc.egui_ctx.clone(), settings);
 
         let mut tiles: Tiles<PaneType> = Tiles::default();
         let scene_pane = ScenePanel::new(
@@ -350,7 +301,7 @@ impl App {
             #[allow(unused_mut)]
             let mut sides = vec![
                 loading_pane,
-                tiles.insert_pane(Box::new(StatsPanel::new(device, &state.adapter))),
+                tiles.insert_pane(Box::new(StatsPanel::new(device.clone(), &state.adapter))),
             ];
 
             #[cfg(all(not(target_family = "wasm"), not(target_os = "android")))]
@@ -376,16 +327,28 @@ impl App {
 
         let tree = egui_tiles::Tree::new("brush_tree", root_container, tiles);
 
-        let mut tree_ctx = AppTree { zen, context };
+        let context = Arc::new(RwLock::new(context));
+        let _ = create_callback.send(AppCreateCb {
+            context: context.clone(),
+        });
+
+        let tree_ctx = AppTree { zen, context };
 
         let url = search_params.get("url");
         if let Some(url) = url {
-            tree_ctx.context.start_data_load(
-                DataSource::Url(url.to_owned()),
-                LoadDatasetArgs::default(),
-                LoadInitArgs::default(),
-                TrainConfig::default(),
-            );
+            let args = ProcessArgs {
+                source: DataSource::Url(url.to_owned()),
+                load_args: Default::default(),
+                init_args: Default::default(),
+                train_config: Default::default(),
+            };
+            let running = start_process(args, device);
+            tree_ctx
+                .context
+                .write()
+                .expect("Lock poisoned")
+                .connect_to(running);
+            // tree_ctx.context.start_data_load(args);
         }
 
         Self {
@@ -396,25 +359,14 @@ impl App {
     }
 }
 
-impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
-        while let Ok(m) = self.tree_ctx.context.rec_ui_control_msg.try_recv() {
-            match m {
-                UiControlMessage::LoadData(url) => {
-                    self.tree_ctx.context.start_data_load(
-                        DataSource::Url(url.clone()),
-                        LoadDatasetArgs::default(),
-                        LoadInitArgs::default(),
-                        TrainConfig::default(),
-                    );
-                }
-            }
-        }
+impl App {
+    fn receive_messages(&mut self) {
+        let mut context = self.tree_ctx.context.write().expect("Lock poisoned");
 
-        if let Some(rec) = self.tree_ctx.context.rec_process_msg.as_mut() {
+        if let Some(process) = context.running_process.as_mut() {
             let mut messages = vec![];
 
-            while let Ok(message) = rec.try_recv() {
+            while let Ok(message) = process.messages.try_recv() {
                 messages.push(message);
             }
 
@@ -437,16 +389,23 @@ impl eframe::App for App {
                 for (_, pane) in self.tree.tiles.iter_mut() {
                     match pane {
                         Tile::Pane(pane) => {
-                            pane.on_message(&message, &mut self.tree_ctx.context);
+                            pane.on_message(&message, &mut context);
                         }
                         Tile::Container(_) => {}
                     }
                 }
             }
         }
+    }
+}
+
+impl eframe::App for App {
+    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.receive_messages();
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Close when pressing escape (in a native viewer anyway).
+            #[cfg(not(target_family = "wasm"))]
             if ui.input(|r| r.key_pressed(egui::Key::Escape)) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }

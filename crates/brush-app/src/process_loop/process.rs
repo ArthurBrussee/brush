@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use crate::{data_source::DataSource, process_loop::train_stream};
+use crate::data_source::DataSource;
+use ::tokio::sync::mpsc::{channel, UnboundedSender};
 use brush_dataset::{
     brush_vfs::{BrushVfs, PathReader},
     splat_import, Dataset, LoadDatasetArgs, LoadInitArgs,
@@ -18,10 +19,20 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, BufReader},
     sync::mpsc::{Sender, UnboundedReceiver},
 };
+use tokio::{
+    sync::mpsc::{unbounded_channel, Receiver},
+    task,
+};
 use tokio_stream::StreamExt;
+use tokio_with_wasm::alias as tokio;
 use web_time::Instant;
 
-pub(crate) enum ProcessMessage {
+use super::{
+    train_stream::{self, train_stream},
+    ProcessArgs,
+};
+
+pub enum ProcessMessage {
     NewSource,
     StartLoading {
         training: bool,
@@ -112,20 +123,17 @@ async fn load_vfs(source: DataSource) -> anyhow::Result<BrushVfs> {
     }
 }
 
-pub async fn process_loop(
+async fn process_loop(
     output: Sender<ProcessMessage>,
-    source: DataSource,
+    args: ProcessArgs,
     device: WgpuDevice,
     control_receiver: UnboundedReceiver<ControlMessage>,
-    load_data_args: LoadDatasetArgs,
-    load_init_args: LoadInitArgs,
-    train_config: TrainConfig,
 ) {
     if output.send(ProcessMessage::NewSource).await.is_err() {
         return;
     }
 
-    let vfs = load_vfs(source).await;
+    let vfs = load_vfs(args.source).await;
 
     let vfs = match vfs {
         Ok(vfs) => vfs,
@@ -149,9 +157,9 @@ pub async fn process_loop(
             vfs,
             device,
             control_receiver,
-            load_data_args,
-            load_init_args,
-            train_config,
+            args.load_args,
+            args.init_args,
+            args.train_config,
         )
         .await
     };
@@ -294,7 +302,7 @@ async fn train_process_loop(
     let mut control_receiver = control_receiver;
 
     let eval_scene = dataset.eval.clone();
-    let stream = train_stream::train_stream(dataset, splats, train_config.clone(), device.clone());
+    let stream = train_stream(dataset, splats, train_config.clone(), device.clone());
     let mut stream = std::pin::pin!(stream);
 
     let mut train_paused = false;
@@ -381,4 +389,28 @@ async fn train_process_loop(
     }
 
     Ok(())
+}
+
+pub struct RunningProcess {
+    pub messages: Receiver<ProcessMessage>,
+    pub control: UnboundedSender<ControlMessage>,
+}
+
+pub fn start_process(args: ProcessArgs, device: WgpuDevice) -> RunningProcess {
+    log::info!("Starting process with source {:?}", args.source);
+
+    // Create a small channel. We don't want 10 updated splats to be stuck in the queue eating up memory!
+    // Bigger channels could mean the train loop spends less time waiting for the UI though.
+    // create a channel for the train loop.
+    let (sender, receiver) = channel(1);
+    let (train_sender, train_receiver) = unbounded_channel();
+
+    task::spawn(async move {
+        process_loop(sender, args, device, train_receiver).await;
+    });
+
+    RunningProcess {
+        messages: receiver,
+        control: train_sender,
+    }
 }

@@ -1,3 +1,4 @@
+/// A default training loop for Brush.
 use async_fn_stream::try_fn_stream;
 
 use brush_dataset::{scene_loader::SceneLoader, Dataset};
@@ -26,12 +27,12 @@ pub enum TrainMessage {
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn train_stream(
     dataset: Dataset,
-    splats: Splats<Autodiff<Wgpu>>,
+    initial_splats: Splats<Autodiff<Wgpu>>,
     config: TrainConfig,
     device: WgpuDevice,
 ) -> impl Stream<Item = anyhow::Result<TrainMessage>> {
     try_fn_stream(|emitter| async move {
-        let mut splats = splats;
+        let mut splats = initial_splats;
 
         let train_scene = dataset.train.clone();
 
