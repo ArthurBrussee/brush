@@ -1,7 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use brush_app::App;
-use tokio_with_wasm::alias as tokio;
 
 #[cfg(target_family = "wasm")]
 use wasm_bindgen::JsCast;
@@ -48,6 +47,8 @@ fn main() {
 
     #[cfg(target_family = "wasm")]
     {
+        use tokio_with_wasm::alias as tokio_wasm;
+
         if cfg!(debug_assertions) {
             eframe::WebLogger::init(log::LevelFilter::Debug).ok();
         }
@@ -62,7 +63,7 @@ fn main() {
             .and_then(|x| x.dyn_into::<web_sys::HtmlCanvasElement>().ok())
         {
             // On wasm, run as a local task.
-            tokio::spawn(async {
+            tokio_wasm::task::spawn(async {
                 let web_options = eframe::WebOptions {
                     wgpu_options,
                     ..Default::default()
@@ -86,7 +87,7 @@ mod embedded {
     use std::future::IntoFuture;
 
     use tokio::sync::mpsc::UnboundedSender;
-    use tokio_with_wasm::alias as tokio;
+    use tokio_with_wasm::alias as tokio_wasm;
 
     use brush_app::{
         data_source::DataSource,
@@ -103,7 +104,7 @@ mod embedded {
     #[wasm_bindgen]
     impl EmbeddedApp {
         #[wasm_bindgen(constructor)]
-        pub async fn new(canvas_name: &str, url: &str) -> Self {
+        pub fn new(canvas_name: &str, url: &str) -> Self {
             let wgpu_options = brush_ui::create_egui_options();
             let document = web_sys::window().unwrap().document().unwrap();
             let canvas = document
@@ -115,10 +116,10 @@ mod embedded {
             let url = url.to_owned();
             let (send, rec) = tokio::sync::oneshot::channel();
 
-            let (cmd_send, cmd_rec) = tokio::sync::mpsc::unbounded_channel();
+            let (cmd_send, mut cmd_rec) = tokio::sync::mpsc::unbounded_channel();
 
             // On wasm, run as a local task.
-            tokio::spawn(async {
+            tokio_wasm::spawn(async {
                 eframe::WebRunner::new()
                     .start(
                         canvas,
@@ -132,7 +133,7 @@ mod embedded {
                     .expect("failed to start eframe");
             });
 
-            tokio::spawn(async move {
+            tokio_wasm::spawn(async move {
                 let context = rec.into_future().await.unwrap().context;
 
                 while let Some(args) = cmd_rec.recv().await {
@@ -142,7 +143,7 @@ mod embedded {
                 }
             });
             // Load initial url.
-            cmd_send.send(ProcessArgs {
+            let _ = cmd_send.send(ProcessArgs {
                 source: DataSource::Url(url.to_owned()),
                 load_args: Default::default(),
                 init_args: Default::default(),
@@ -161,7 +162,7 @@ mod embedded {
                 init_args: Default::default(),
                 train_config: Default::default(),
             };
-            self.command_channel.send(args);
+            self.command_channel.send(args).expect("Viewer was closed?");
         }
     }
 }

@@ -3,16 +3,29 @@ use crate::{
     splat_import::{load_splat_from_ply, SplatMessage},
     Dataset, LoadDatasetArgs,
 };
-use anyhow::Result;
 use brush_render::Backend;
-use std::{path::Path, pin::Pin};
-use tokio_stream::Stream;
+use std::path::Path;
 
 pub mod colmap;
 pub mod nerfstudio;
 
-// A dynamic stream of datasets
-type DataStream<T> = Pin<Box<dyn Stream<Item = Result<T>> + Send + 'static>>;
+#[cfg(target_family = "wasm")]
+mod data_stream {
+    use anyhow::Result;
+    use std::pin::Pin;
+    use tokio_stream::Stream;
+    pub type DataStream<T> = Pin<Box<dyn Stream<Item = Result<T>> + 'static>>;
+}
+
+#[cfg(not(target_family = "wasm"))]
+mod data_stream {
+    use anyhow::Result;
+    use std::pin::Pin;
+    use tokio_stream::Stream;
+    pub type DataStream<T> = Pin<Box<dyn Stream<Item = Result<T>> + Send + 'static>>;
+}
+
+pub use data_stream::*;
 
 pub async fn load_dataset<B: Backend>(
     mut vfs: BrushVfs,

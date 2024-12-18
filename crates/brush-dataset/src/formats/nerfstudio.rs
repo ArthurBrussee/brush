@@ -1,9 +1,10 @@
+use super::DataStream;
 use super::LoadDatasetArgs;
 use crate::brush_vfs::BrushVfs;
 use crate::splat_import::load_splat_from_ply;
 use crate::splat_import::SplatMessage;
 use crate::stream_fut_parallel;
-use crate::{clamp_img_to_max_size, DataStream, Dataset};
+use crate::{clamp_img_to_max_size, Dataset};
 use anyhow::Context;
 use anyhow::Result;
 use async_fn_stream::try_fn_stream;

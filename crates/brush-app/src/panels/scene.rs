@@ -12,7 +12,7 @@ use brush_render::{
 use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect};
 use glam::{Quat, Vec2};
-use tokio_with_wasm::alias as tokio;
+use tokio_with_wasm::alias as tokio_wasm;
 use tracing::trace_span;
 use web_time::Instant;
 
@@ -378,7 +378,7 @@ For bigger training runs consider using the native app."#,
                             }
                         };
 
-                        tokio::task::spawn(fut);
+                        tokio_wasm::task::spawn(fut);
                     }
                 });
             }

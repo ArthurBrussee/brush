@@ -226,9 +226,9 @@ impl App {
         #[cfg(target_family = "wasm")]
         let start_uri = web_sys::window().and_then(|w| w.location().search().ok());
         #[cfg(not(target_family = "wasm"))]
-        let start_uri = "";
+        let start_uri: Option<String> = None;
 
-        let search_params = parse_search(start_uri);
+        let search_params = parse_search(start_uri.as_deref().unwrap_or(""));
 
         let mut zen = false;
         if let Some(z) = search_params.get("zen") {

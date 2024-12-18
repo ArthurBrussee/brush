@@ -1,12 +1,12 @@
-use ::tokio::sync::mpsc;
-use ::tokio::sync::mpsc::Receiver;
 use brush_render::Backend;
 use brush_train::image::image_to_tensor;
 use brush_train::scene::Scene;
 use brush_train::train::SceneBatch;
 use burn::tensor::Tensor;
 use rand::{seq::SliceRandom, SeedableRng};
-use tokio_with_wasm::alias as tokio;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Receiver;
+use tokio_with_wasm::alias as tokio_wasm;
 
 pub struct SceneLoader<B: Backend> {
     receiver: Receiver<SceneBatch<B>>,
@@ -63,7 +63,7 @@ impl<B: Backend> SceneLoader<B> {
             }
         };
 
-        tokio::task::spawn(fut);
+        tokio_wasm::spawn(fut);
         Self { receiver: rx }
     }
 

@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use crate::data_source::DataSource;
-use ::tokio::sync::mpsc::{channel, UnboundedSender};
 use brush_dataset::{
     brush_vfs::{BrushVfs, PathReader},
     splat_import, Dataset, LoadDatasetArgs, LoadInitArgs,
@@ -15,16 +14,13 @@ use burn::{backend::Autodiff, module::AutodiffModule, prelude::Backend};
 use burn_wgpu::{Wgpu, WgpuDevice};
 use glam::Vec3;
 use rand::SeedableRng;
+use tokio::sync::mpsc::{channel, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, Receiver};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, BufReader},
     sync::mpsc::{Sender, UnboundedReceiver},
 };
-use tokio::{
-    sync::mpsc::{unbounded_channel, Receiver},
-    task,
-};
 use tokio_stream::StreamExt;
-use tokio_with_wasm::alias as tokio;
 use web_time::Instant;
 
 use super::{
@@ -405,7 +401,7 @@ pub fn start_process(args: ProcessArgs, device: WgpuDevice) -> RunningProcess {
     let (sender, receiver) = channel(1);
     let (train_sender, train_receiver) = unbounded_channel();
 
-    task::spawn(async move {
+    tokio_with_wasm::alias::task::spawn(async move {
         process_loop(sender, args, device, train_receiver).await;
     });
 

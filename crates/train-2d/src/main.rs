@@ -38,7 +38,7 @@ fn spawn_train_loop(
     sender: Sender<TrainStep>,
 ) {
     // Spawn a task that iterates over the training stream.
-    tokio::task::spawn(async move {
+    tokio::spawn(async move {
         let seed = 42;
 
         <Wgpu as burn::prelude::Backend>::seed(seed);

@@ -1,5 +1,5 @@
-use ::tokio::sync::mpsc::{channel, Receiver};
-use tokio_with_wasm::alias as tokio;
+use tokio::sync::mpsc::{channel, Receiver};
+use tokio_with_wasm::alias as tokio_wasm;
 
 pub fn reactive_receiver<T: Send + 'static>(
     receiver: Receiver<T>,
@@ -7,7 +7,7 @@ pub fn reactive_receiver<T: Send + 'static>(
 ) -> Receiver<T> {
     let mut receiver = receiver;
     let (send_inner, receive) = channel(1);
-    tokio::spawn(async move {
+    tokio_wasm::spawn(async move {
         // Listen for inconimg messages.
         while let Some(m) = receiver.recv().await {
             // Mark egui as needing a repaint.
@@ -20,7 +20,7 @@ pub fn reactive_receiver<T: Send + 'static>(
             // This only really matters in the browser:
             // on native, receiving also yields. In the browser that doesn't yield
             // back control fully though whereas yield_now() does.
-            tokio::task::yield_now().await;
+            tokio_wasm::task::yield_now().await;
         }
     });
     receive

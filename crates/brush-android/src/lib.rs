@@ -3,7 +3,6 @@
 use jni::sys::{jint, JNI_VERSION_1_6};
 use std::os::raw::c_void;
 use std::sync::Arc;
-use tokio_with_wasm::alias as tokio;
 
 #[allow(non_snake_case)]
 #[no_mangle]
@@ -31,7 +30,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     .unwrap();
 
     // Unused.
-    let (_, rec) = ::tokio::sync::mpsc::unbounded_channel();
+    let (_, rec) = tokio::sync::mpsc::unbounded_channel();
 
     runtime.block_on(async {
         android_logger::init_once(

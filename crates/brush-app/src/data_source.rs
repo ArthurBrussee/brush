@@ -1,10 +1,10 @@
 use anyhow::Context;
 use async_fn_stream::try_fn_stream;
 
-use ::tokio::io::AsyncRead;
+use tokio::io::AsyncRead;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tokio_util::{bytes::Bytes, io::StreamReader};
-use tokio_with_wasm::alias as tokio;
+use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(Clone, Debug)]
 pub enum DataSource {
@@ -15,10 +15,10 @@ pub enum DataSource {
 
 impl DataSource {
     pub fn into_reader(self) -> impl AsyncRead + Send {
-        let (send, rec) = ::tokio::sync::mpsc::channel(16);
+        let (send, rec) = tokio::sync::mpsc::channel(16);
 
         // Spawn the data reading.
-        tokio::spawn(async move {
+        tokio_wasm::spawn(async move {
             let stream = try_fn_stream(|emitter| async move {
                 match self {
                     Self::PickFile => {

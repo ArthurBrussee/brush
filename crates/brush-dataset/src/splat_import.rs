@@ -10,6 +10,7 @@ use ply_rs::{
 };
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, BufReader};
 use tokio_stream::Stream;
+use tokio_with_wasm::alias as tokio_wasm;
 use tracing::trace_span;
 
 use anyhow::Result;
@@ -257,7 +258,7 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                 for i in 0..element.count {
                     // Ocassionally yield.
                     if i % 500 == 0 {
-                        tokio::task::yield_now().await;
+                        tokio_wasm::task::yield_now().await;
                     }
 
                     // Occasionally send some updated splats.
@@ -350,7 +351,7 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                 for i in 0..element.count {
                     // Ocassionally yield.
                     if i % 500 == 0 {
-                        tokio::task::yield_now().await;
+                        tokio_wasm::task::yield_now().await;
                     }
                     // The splat we decode is normed to 0-1 (if quantized), so rescale to
                     // actual values afterwards.

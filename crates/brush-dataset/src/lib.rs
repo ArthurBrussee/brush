@@ -6,15 +6,13 @@ pub mod splat_import;
 
 pub use formats::load_dataset;
 
-use anyhow::Result;
 use async_fn_stream::fn_stream;
 use brush_train::scene::{Scene, SceneView};
 use image::DynamicImage;
 use std::future::Future;
-use std::pin::Pin;
 
 use tokio_stream::Stream;
-use tokio_with_wasm::alias as tokio;
+use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(Clone, Default, Debug)]
 pub struct LoadDatasetArgs {
@@ -76,8 +74,6 @@ pub(crate) fn clamp_img_to_max_size(image: DynamicImage, max_size: u32) -> Dynam
     image.resize(new_width, new_height, image::imageops::FilterType::Lanczos3)
 }
 
-pub(crate) type DataStream<T> = Pin<Box<dyn Stream<Item = Result<T>> + Send + 'static>>;
-
 pub(crate) fn stream_fut_parallel<T: Send + 'static>(
     futures: Vec<impl Future<Output = T> + Send + 'static>,
 ) -> impl Stream<Item = T> {
@@ -97,7 +93,7 @@ pub(crate) fn stream_fut_parallel<T: Send + 'static>(
             // Spawn a batch of threads.
             let handles: Vec<_> = futures
                 .drain(..futures.len().min(parallel))
-                .map(|fut| tokio::task::spawn(fut))
+                .map(|fut| tokio_wasm::spawn(fut))
                 .collect();
             // Stream each of them.
             for handle in handles {
