@@ -3,7 +3,7 @@ use crate::{
     data_source::DataSource,
     process_loop::{start_process, ProcessArgs},
 };
-use brush_dataset::{LoadDatasetArgs, LoadInitArgs};
+use brush_dataset::{LoadDatasetArgs, ModelOptions};
 use brush_train::train::TrainConfig;
 use egui::Slider;
 
@@ -22,9 +22,8 @@ impl LoadDataPanel {
                     max_resolution: Some(1920),
                     ..Default::default()
                 },
-                train_config: TrainConfig::default(),
-                init_args: LoadInitArgs::default(),
-                source: DataSource::PickFile,
+                train_config: TrainConfig::new(),
+                init_args: ModelOptions::default(),
             },
             url: "splat.com/example.ply".to_owned(),
         }
@@ -53,14 +52,18 @@ impl AppPanel for LoadDataPanel {
             ui.add_space(10.0);
 
             if file || dir || url {
-                self.args.source = if file {
+                let source = if file {
                     DataSource::PickFile
                 } else if dir {
                     DataSource::PickDirectory
                 } else {
                     DataSource::Url(self.url.clone())
                 };
-                context.connect_to(start_process(self.args.clone(), context.device.clone()));
+                context.connect_to(start_process(
+                    source,
+                    self.args.clone(),
+                    context.device.clone(),
+                ));
             }
 
             ui.add_space(10.0);

@@ -108,6 +108,8 @@ wasm-logger = "0.2.0"
 zip = { version = "2.2.1", default-features = false, features = ["deflate"] }
 urlencoding = "2.1"
 hashbrown = "0.15"
+clap = { version = "4.5.23", features = ["derive"] }
+
 
 # [patch."https://github.com/tracel-ai/burn"]
 # # Uncomment this to use local burn.

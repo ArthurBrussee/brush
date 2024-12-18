@@ -1,10 +1,5 @@
-use std::path::Path;
-
 use crate::data_source::DataSource;
-use brush_dataset::{
-    brush_vfs::{BrushVfs, PathReader},
-    splat_import, Dataset, LoadDatasetArgs, LoadInitArgs,
-};
+use brush_dataset::{brush_vfs::BrushVfs, splat_import, Dataset, LoadDatasetArgs, ModelOptions};
 use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
 use brush_train::{
     eval::EvalStats,
@@ -16,10 +11,7 @@ use glam::Vec3;
 use rand::SeedableRng;
 use tokio::sync::mpsc::{channel, UnboundedSender};
 use tokio::sync::mpsc::{unbounded_channel, Receiver};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, BufReader},
-    sync::mpsc::{Sender, UnboundedReceiver},
-};
+use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 use tokio_stream::StreamExt;
 use web_time::Instant;
 
@@ -82,44 +74,8 @@ pub enum ControlMessage {
     Paused(bool),
 }
 
-async fn read_at_most<R: AsyncRead + Unpin>(
-    reader: &mut R,
-    limit: usize,
-) -> std::io::Result<Vec<u8>> {
-    let mut buffer = vec![0; limit];
-    let bytes_read = reader.read(&mut buffer).await?;
-    buffer.truncate(bytes_read);
-    Ok(buffer)
-}
-
-async fn load_vfs(source: DataSource) -> anyhow::Result<BrushVfs> {
-    // Small hack to peek some bytes: Read them
-    // and add them at the start again.
-    let data = source.into_reader();
-    let mut data = BufReader::new(data);
-    let peek = read_at_most(&mut data, 64).await?;
-    let reader = std::io::Cursor::new(peek.clone()).chain(data);
-
-    if peek.as_slice().starts_with(b"ply") {
-        let mut path_reader = PathReader::default();
-        path_reader.add(Path::new("input.ply"), reader);
-        Ok(BrushVfs::from_paths(path_reader))
-    } else if peek.starts_with(b"PK") {
-        BrushVfs::from_zip_reader(reader)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
-    } else if peek.starts_with(b"<!DOCTYPE html>") {
-        anyhow::bail!("Failed to download data (are you trying to download from Google Drive? You might have to use the proxy.")
-    } else if let Some(path_bytes) = peek.strip_prefix(b"BRUSH_PATH") {
-        let string = String::from_utf8(path_bytes.to_vec())?;
-        let path = Path::new(&string);
-        BrushVfs::from_directory(path).await
-    } else {
-        anyhow::bail!("only zip and ply files are supported.")
-    }
-}
-
 async fn process_loop(
+    source: DataSource,
     output: Sender<ProcessMessage>,
     args: ProcessArgs,
     device: WgpuDevice,
@@ -129,7 +85,7 @@ async fn process_loop(
         return;
     }
 
-    let vfs = load_vfs(args.source).await;
+    let vfs = source.into_vfs().await;
 
     let vfs = match vfs {
         Ok(vfs) => vfs,
@@ -231,7 +187,7 @@ async fn train_process_loop(
     device: WgpuDevice,
     control_receiver: UnboundedReceiver<ControlMessage>,
     load_data_args: LoadDatasetArgs,
-    load_init_args: LoadInitArgs,
+    load_init_args: ModelOptions,
     train_config: TrainConfig,
 ) -> Result<(), anyhow::Error> {
     let _ = output
@@ -392,8 +348,8 @@ pub struct RunningProcess {
     pub control: UnboundedSender<ControlMessage>,
 }
 
-pub fn start_process(args: ProcessArgs, device: WgpuDevice) -> RunningProcess {
-    log::info!("Starting process with source {:?}", args.source);
+pub fn start_process(source: DataSource, args: ProcessArgs, device: WgpuDevice) -> RunningProcess {
+    log::info!("Starting process with source {:?}", source);
 
     // Create a small channel. We don't want 10 updated splats to be stuck in the queue eating up memory!
     // Bigger channels could mean the train loop spends less time waiting for the UI though.
@@ -402,7 +358,7 @@ pub fn start_process(args: ProcessArgs, device: WgpuDevice) -> RunningProcess {
     let (train_sender, train_receiver) = unbounded_channel();
 
     tokio_with_wasm::alias::task::spawn(async move {
-        process_loop(sender, args, device, train_receiver).await;
+        process_loop(source, sender, args, device, train_receiver).await;
     });
 
     RunningProcess {

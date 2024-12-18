@@ -336,13 +336,11 @@ impl App {
 
         let url = search_params.get("url");
         if let Some(url) = url {
-            let args = ProcessArgs {
-                source: DataSource::Url(url.to_owned()),
-                load_args: Default::default(),
-                init_args: Default::default(),
-                train_config: Default::default(),
-            };
-            let running = start_process(args, device);
+            let running = start_process(
+                DataSource::Url(url.to_owned()),
+                ProcessArgs::default(),
+                device,
+            );
             tree_ctx
                 .context
                 .write()

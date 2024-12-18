@@ -8,6 +8,9 @@ mod rerun_tools;
 
 mod app;
 
+#[cfg(not(target_family = "wasm"))]
+pub mod cli;
+
 pub use app::*;
 use burn::backend::Autodiff;
 use burn_wgpu::Wgpu;

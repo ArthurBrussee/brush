@@ -1,11 +1,13 @@
-use crate::data_source::DataSource;
-use brush_dataset::{LoadDatasetArgs, LoadInitArgs};
+use brush_dataset::{LoadDatasetArgs, ModelOptions};
 use brush_train::train::TrainConfig;
+use clap::Args;
 
-#[derive(Clone)]
+#[derive(Clone, Default, Args)]
 pub struct ProcessArgs {
-    pub source: DataSource,
-    pub load_args: LoadDatasetArgs,
-    pub init_args: LoadInitArgs,
+    #[clap(flatten)]
     pub train_config: TrainConfig,
+    #[clap(flatten)]
+    pub init_args: ModelOptions,
+    #[clap(flatten)]
+    pub load_args: LoadDatasetArgs,
 }

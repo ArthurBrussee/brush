@@ -55,6 +55,7 @@ tokio-stream.workspace = true
 
 reqwest.workspace = true
 urlencoding.workspace = true
+clap.workspace = true
 
 # Default to wayland on linux. Change this to x11 if needed.
 # this perhaps could use a feature on our side as well,
