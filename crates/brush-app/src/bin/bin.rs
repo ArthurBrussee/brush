@@ -5,10 +5,11 @@
 use brush_app::{App, AppCreateCb};
 
 use brush_process::process_loop::start_process;
+use burn_wgpu::WgpuDevice;
 #[allow(unused)]
 use tokio::sync::oneshot::error::RecvError;
 
-fn main() {
+fn main() -> Result<(), clap::Error> {
     let wgpu_options = brush_ui::create_egui_options();
 
     #[allow(unused)]
@@ -19,7 +20,7 @@ fn main() {
         use brush_cli::Cli;
         use clap::Parser;
 
-        let args = Cli::parse();
+        let args = Cli::parse().validate()?;
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -29,39 +30,50 @@ fn main() {
         runtime.block_on(async {
             env_logger::init();
 
-            // NB: Load carrying icon. egui at head fails when no icon is included
-            // as the built-in one is git-lfs which cargo doesn't clone properly.
-            let icon =
-                eframe::icon_data::from_png_bytes(&include_bytes!("../../assets/icon-256.png")[..])
-                    .expect("Failed to load icon");
+            if args.with_viewer {
+                // NB: Load carrying icon. egui at head fails when no icon is included
+                // as the built-in one is git-lfs which cargo doesn't clone properly.
+                let icon = eframe::icon_data::from_png_bytes(
+                    &include_bytes!("../../assets/icon-256.png")[..],
+                )
+                .expect("Failed to load icon");
 
-            let native_options = eframe::NativeOptions {
-                // Build app display.
-                viewport: egui::ViewportBuilder::default()
-                    .with_inner_size(egui::Vec2::new(1450.0, 1200.0))
-                    .with_active(true)
-                    .with_icon(std::sync::Arc::new(icon)),
-                wgpu_options,
-                ..Default::default()
-            };
+                let native_options = eframe::NativeOptions {
+                    // Build app display.
+                    viewport: egui::ViewportBuilder::default()
+                        .with_inner_size(egui::Vec2::new(1450.0, 1200.0))
+                        .with_active(true)
+                        .with_icon(std::sync::Arc::new(icon)),
+                    wgpu_options,
+                    ..Default::default()
+                };
 
-            if let Some(source) = args.source {
-                tokio::spawn(async move {
-                    let context: Result<AppCreateCb, RecvError> = rec.await;
-                    if let Ok(context) = context {
-                        let mut context = context.context.write().expect("Lock poisoned");
-                        let process = start_process(source, args.process, context.device.clone());
-                        context.connect_to(process);
-                    }
-                });
+                if let Some(source) = args.source {
+                    tokio::spawn(async move {
+                        let context: Result<AppCreateCb, RecvError> = rec.await;
+                        if let Ok(context) = context {
+                            let mut context = context.context.write().expect("Lock poisoned");
+                            let process =
+                                start_process(source, args.process, context.device.clone());
+                            context.connect_to(process);
+                        }
+                    });
+                }
+
+                eframe::run_native(
+                    "Brush",
+                    native_options,
+                    Box::new(move |cc| Ok(Box::new(App::new(cc, send)))),
+                )
+                .expect("Failed to run egui app");
+            } else {
+                let Some(source) = args.source else {
+                    panic!("Validation of args failed?");
+                };
+
+                let process = start_process(source, args.process, WgpuDevice::DefaultDevice);
+                brush_cli::ui::process_ui(process).await;
             }
-
-            eframe::run_native(
-                "Brush",
-                native_options,
-                Box::new(move |cc| Ok(Box::new(App::new(cc, send)))),
-            )
-            .expect("Failed to run egui app");
         });
     }
 
@@ -101,6 +113,8 @@ fn main() {
             });
         }
     }
+
+    Ok(())
 }
 
 #[cfg(target_family = "wasm")]

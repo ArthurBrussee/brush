@@ -34,7 +34,7 @@ pub struct TrainConfig {
     /// Total number of steps to train for.
     #[config(default = 30000)]
     #[arg(long, help_heading = "Training options", default_value = "30000")]
-    total_steps: u32,
+    pub total_steps: u32,
 
     /// Weight of SSIM loss (compared to l1 loss)
     #[config(default = 0.2)]

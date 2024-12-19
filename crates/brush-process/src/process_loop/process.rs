@@ -345,6 +345,7 @@ async fn train_process_loop(
 }
 
 pub struct RunningProcess {
+    pub start_args: ProcessArgs,
     pub messages: Receiver<ProcessMessage>,
     pub control: UnboundedSender<ControlMessage>,
 }
@@ -358,11 +359,13 @@ pub fn start_process(source: DataSource, args: ProcessArgs, device: WgpuDevice) 
     let (sender, receiver) = channel(1);
     let (train_sender, train_receiver) = unbounded_channel();
 
+    let args_loop = args.clone();
     tokio_with_wasm::alias::task::spawn(async move {
-        process_loop(source, sender, args, device, train_receiver).await;
+        process_loop(source, sender, args_loop, device, train_receiver).await;
     });
 
     RunningProcess {
+        start_args: args,
         messages: receiver,
         control: train_sender,
     }

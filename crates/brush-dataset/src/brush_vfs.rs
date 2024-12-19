@@ -101,10 +101,15 @@ impl BrushVfs {
         #[cfg(not(target_family = "wasm"))]
         {
             if dir.is_file() {
-                // Make a VFS with just this file.
-                let mut paths = PathReader::default();
-                paths.add(dir, tokio::fs::File::open(dir).await?);
-                Ok(Self::from_paths(paths))
+                let file = tokio::fs::File::open(dir).await?;
+                if dir.extension().is_some_and(|e| e == "zip") {
+                    Ok(Self::from_zip_reader(file).await?)
+                } else {
+                    // Make a VFS with just this file.
+                    let mut paths = PathReader::default();
+                    paths.add(dir, file);
+                    Ok(Self::from_paths(paths))
+                }
             } else {
                 // Make a VFS with all files contained in the directory.
                 async fn walk_dir(dir: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
