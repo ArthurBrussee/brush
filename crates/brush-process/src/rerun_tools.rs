@@ -44,7 +44,7 @@ impl VisualizeTools {
         let _ = self.task_queue.send(Box::pin(fut));
     }
 
-    pub(crate) fn log_splats<B: Backend>(self: Arc<Self>, splats: Splats<B>) {
+    pub fn log_splats<B: Backend>(self: Arc<Self>, splats: Splats<B>) {
         let Some(rec) = self.rec.clone() else {
             return;
         };
@@ -117,7 +117,7 @@ impl VisualizeTools {
         });
     }
 
-    pub(crate) fn log_scene(self: Arc<Self>, scene: Scene) {
+    pub fn log_scene(self: Arc<Self>, scene: Scene) {
         let Some(rec) = self.rec.clone() else {
             return;
         };

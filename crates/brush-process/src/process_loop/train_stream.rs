@@ -6,9 +6,8 @@ use brush_render::gaussian_splats::Splats;
 use brush_train::train::{RefineStats, SplatTrainer, TrainConfig, TrainStepStats};
 use burn::{backend::Autodiff, module::AutodiffModule};
 use burn_wgpu::{Wgpu, WgpuDevice};
+use std::time::Instant;
 use tokio_stream::Stream;
-use tracing::Instrument;
-use web_time::Instant;
 
 pub enum TrainMessage {
     TrainStep {
@@ -49,10 +48,7 @@ pub(crate) fn train_stream(
             let batch = dataloader.next_batch().await;
             let extent = batch.scene_extent;
 
-            let (new_splats, stats) = trainer
-                .step(iter, batch, splats)
-                .instrument(tracing::info_span!("Train step"))
-                .await;
+            let (new_splats, stats) = trainer.step(iter, batch, splats).await;
             let (new_splats, refine) = trainer.refine_if_needed(iter, new_splats, extent).await;
             iter += 1;
             splats = new_splats;

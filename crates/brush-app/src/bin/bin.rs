@@ -1,10 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 // hide console window on Windows in release
-use brush_app::process_loop::start_process;
 
 #[allow(unused)]
 use brush_app::{App, AppCreateCb};
 
+use brush_process::process_loop::start_process;
 #[allow(unused)]
 use tokio::sync::oneshot::error::RecvError;
 
@@ -16,7 +16,7 @@ fn main() {
 
     #[cfg(not(target_family = "wasm"))]
     {
-        use brush_app::cli::Cli;
+        use brush_cli::Cli;
         use clap::Parser;
 
         let args = Cli::parse();

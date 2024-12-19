@@ -2,13 +2,15 @@ use core::f32;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 
-use crate::data_source::DataSource;
-use crate::process_loop::{start_process, ProcessArgs, ProcessMessage, RunningProcess};
 use crate::{
     orbit_controls::OrbitControls,
     panels::{DatasetPanel, LoadDataPanel, PresetsPanel, ScenePanel, StatsPanel, TracingPanel},
 };
-use brush_dataset::{self, Dataset};
+use brush_dataset::Dataset;
+use brush_process::data_source::DataSource;
+use brush_process::process_loop::{
+    start_process, ControlMessage, ProcessArgs, ProcessMessage, RunningProcess,
+};
 use brush_render::camera::Camera;
 use brush_ui::channel::reactive_receiver;
 use burn_wgpu::WgpuDevice;
@@ -161,7 +163,7 @@ impl AppContext {
         self.running_process = Some(process);
     }
 
-    pub(crate) fn control_message(&self, msg: crate::process_loop::ControlMessage) {
+    pub(crate) fn control_message(&self, msg: ControlMessage) {
         if let Some(process) = self.running_process.as_ref() {
             let _ = process.control.send(msg);
         }

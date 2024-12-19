@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::data_source::DataSource;
 use brush_dataset::{brush_vfs::BrushVfs, splat_import, Dataset, LoadDatasetArgs, ModelOptions};
 use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
@@ -13,7 +15,6 @@ use tokio::sync::mpsc::{channel, UnboundedSender};
 use tokio::sync::mpsc::{unbounded_channel, Receiver};
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 use tokio_stream::StreamExt;
-use web_time::Instant;
 
 use super::{
     train_stream::{self, train_stream},

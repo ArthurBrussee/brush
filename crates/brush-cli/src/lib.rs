@@ -1,4 +1,6 @@
-use crate::{data_source::DataSource, process_loop::ProcessArgs};
+mod ui;
+
+use brush_process::{data_source::DataSource, process_loop::ProcessArgs};
 use clap::Parser;
 
 #[derive(Parser)]

@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use crate::{
-    app::{AppContext, AppPanel},
-    process_loop::ProcessMessage,
-    rerun_tools::VisualizeTools,
-};
+use brush_process::{process_loop::ProcessMessage, rerun_tools::VisualizeTools};
+
+use crate::app::{AppContext, AppPanel};
 
 pub(crate) struct RerunPanel {
     visualize: Option<Arc<VisualizeTools>>,

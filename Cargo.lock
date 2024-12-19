@@ -746,17 +746,15 @@ dependencies = [
 name = "brush-app"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-fn-stream",
+ "brush-cli",
  "brush-dataset",
+ "brush-process",
  "brush-render",
- "brush-rerun",
  "brush-train",
  "brush-ui",
  "burn",
  "burn-jit",
  "burn-wgpu",
- "cfg-if",
  "clap",
  "console_error_panic_hook",
  "eframe",
@@ -765,16 +763,10 @@ dependencies = [
  "env_logger 0.11.5",
  "glam",
  "humantime",
- "image",
  "log",
- "rand",
- "reqwest",
- "rerun",
  "rrfd",
  "sync-span",
  "tokio",
- "tokio-stream",
- "tokio-util",
  "tokio_with_wasm",
  "tracing",
  "tracing-subscriber",
@@ -787,7 +779,15 @@ dependencies = [
  "web-time",
  "wgpu",
  "winit",
- "zip 2.2.2",
+]
+
+[[package]]
+name = "brush-cli"
+version = "0.1.0"
+dependencies = [
+ "brush-process",
+ "clap",
+ "indicatif",
 ]
 
 [[package]]
@@ -840,6 +840,35 @@ dependencies = [
  "miette",
  "naga",
  "naga_oil",
+]
+
+[[package]]
+name = "brush-process"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-fn-stream",
+ "brush-dataset",
+ "brush-render",
+ "brush-rerun",
+ "brush-train",
+ "burn",
+ "burn-jit",
+ "burn-wgpu",
+ "cfg-if",
+ "clap",
+ "glam",
+ "image",
+ "log",
+ "rand",
+ "reqwest",
+ "rerun",
+ "rrfd",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tokio_with_wasm",
+ "zip 2.2.2",
 ]
 
 [[package]]
@@ -1679,6 +1708,7 @@ dependencies = [
  "encode_unicode",
  "libc",
  "once_cell",
+ "unicode-width 0.2.0",
  "windows-sys 0.59.0",
 ]
 
@@ -3805,6 +3835,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "indicatif"
+version = "0.17.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbf675b85ed934d3c67b5c5469701eec7db22689d0a2139d856e0925fa28b281"
+dependencies = [
+ "console",
+ "number_prefix",
+ "portable-atomic",
+ "unicode-width 0.2.0",
+ "web-time",
+]
+
+[[package]]
 name = "indoc"
 version = "2.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4713,6 +4756,12 @@ checksum = "5c7398b9c8b70908f6371f47ed36737907c87c52af34c268fed0bf0ceb92ead9"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "number_prefix"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "nvml-wrapper"

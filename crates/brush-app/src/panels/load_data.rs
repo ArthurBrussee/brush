@@ -1,9 +1,9 @@
-use crate::{
-    app::{AppContext, AppPanel},
+use crate::app::{AppContext, AppPanel};
+use brush_dataset::{LoadDatasetArgs, ModelOptions};
+use brush_process::{
     data_source::DataSource,
     process_loop::{start_process, ProcessArgs},
 };
-use brush_dataset::{LoadDatasetArgs, ModelOptions};
 use brush_train::train::TrainConfig;
 use egui::Slider;
 

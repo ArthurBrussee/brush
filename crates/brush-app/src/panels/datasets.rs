@@ -1,7 +1,5 @@
-use crate::{
-    app::{AppContext, AppPanel},
-    process_loop::ProcessMessage,
-};
+use crate::app::{AppContext, AppPanel};
+use brush_process::process_loop::ProcessMessage;
 use brush_train::scene::{Scene, ViewType};
 use egui::{pos2, Slider, TextureHandle, TextureOptions};
 
