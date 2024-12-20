@@ -1,7 +1,7 @@
 use crate::{
     brush_vfs::BrushVfs,
     splat_import::{load_splat_from_ply, SplatMessage},
-    Dataset, LoadDatasetArgs, WasmNotSend,
+    Dataset, LoadDataseConfig, WasmNotSend,
 };
 use brush_render::Backend;
 use std::{path::Path, pin::Pin};
@@ -16,7 +16,7 @@ pub type DataStream<T> = Pin<Box<dyn DynStream<anyhow::Result<T>> + 'static>>;
 
 pub async fn load_dataset<B: Backend>(
     mut vfs: BrushVfs,
-    load_args: &LoadDatasetArgs,
+    load_args: &LoadDataseConfig,
     device: &B::Device,
 ) -> anyhow::Result<(DataStream<SplatMessage<B>>, DataStream<Dataset>)> {
     let stream = nerfstudio::read_dataset(vfs.clone(), load_args, device).await;

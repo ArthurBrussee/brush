@@ -23,14 +23,6 @@ use clap::Args;
 
 #[derive(Config, Args)]
 pub struct TrainConfig {
-    /// Random seed.
-    #[config(default = 42)]
-    #[arg(long, help_heading = "Training options", default_value = "42")]
-    pub seed: u64,
-    /// Eval every this many steps.
-    #[config(default = 1000)]
-    #[arg(long, help_heading = "Training options", default_value = "1000")]
-    pub eval_every: u32,
     /// Total number of steps to train for.
     #[config(default = 30000)]
     #[arg(long, help_heading = "Training options", default_value = "30000")]

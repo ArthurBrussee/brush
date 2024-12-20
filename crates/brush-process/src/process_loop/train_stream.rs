@@ -38,7 +38,7 @@ pub(crate) fn train_stream(
         // TODO: Not really supported atm.
         let batch_size = 1;
 
-        let mut dataloader = SceneLoader::new(&train_scene, batch_size, config.seed, &device);
+        let mut dataloader = SceneLoader::new(&train_scene, batch_size, 42, &device);
         let mut trainer = SplatTrainer::new(&splats, &config, &device);
 
         let mut iter = 0;

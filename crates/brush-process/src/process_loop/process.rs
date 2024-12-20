@@ -1,7 +1,9 @@
 use std::time::Instant;
 
 use crate::data_source::DataSource;
-use brush_dataset::{brush_vfs::BrushVfs, splat_import, Dataset, LoadDatasetArgs, ModelOptions};
+use brush_dataset::{
+    brush_vfs::BrushVfs, splat_export, splat_import, Dataset, LoadDataseConfig, ModelConfig,
+};
 use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
 use brush_train::{
     eval::EvalStats,
@@ -15,10 +17,11 @@ use tokio::sync::mpsc::{channel, UnboundedSender};
 use tokio::sync::mpsc::{unbounded_channel, Receiver};
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 use tokio_stream::StreamExt;
+use tokio_with_wasm::alias as tokio_wasm;
 
 use super::{
     train_stream::{self, train_stream},
-    ProcessArgs,
+    ProcessArgs, ProcessConfig,
 };
 
 pub enum ProcessMessage {
@@ -110,8 +113,9 @@ async fn process_loop(
             vfs,
             device,
             control_receiver,
-            args.load_args,
-            args.init_args,
+            args.load_config,
+            args.init_config,
+            args.process_config,
             args.train_config,
         )
         .await
@@ -187,16 +191,17 @@ async fn train_process_loop(
     vfs: BrushVfs,
     device: WgpuDevice,
     control_receiver: UnboundedReceiver<ControlMessage>,
-    load_data_args: LoadDatasetArgs,
-    load_init_args: ModelOptions,
+    load_data_args: LoadDataseConfig,
+    load_init_args: ModelConfig,
+    process_config: ProcessConfig,
     train_config: TrainConfig,
 ) -> Result<(), anyhow::Error> {
     let _ = output
         .send(ProcessMessage::StartLoading { training: true })
         .await;
 
-    <Autodiff<Wgpu> as Backend>::seed(train_config.seed);
-    let mut rng = rand::rngs::StdRng::from_seed([train_config.seed as u8; 32]);
+    <Autodiff<Wgpu> as Backend>::seed(process_config.seed);
+    let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     // Load initial splats if included
     let mut initial_splats = None;
@@ -291,7 +296,7 @@ async fn train_process_loop(
                 iter,
                 timestamp,
             } => {
-                if iter % train_config.eval_every == 0 {
+                if iter % process_config.eval_every == 0 {
                     if let Some(eval_scene) = eval_scene.as_ref() {
                         let eval = brush_train::eval::eval_stats(
                             *splats.clone(),
@@ -310,6 +315,36 @@ async fn train_process_loop(
                             break;
                         }
                     }
+                }
+
+                if iter % process_config.export_every == 0 {
+                    let splats = *splats.clone();
+                    let output_send = output.clone();
+
+                    tokio_wasm::task::spawn(async move {
+                        let data = splat_export::splat_to_ply(splats).await;
+
+                        let data = match data {
+                            Ok(data) => data,
+                            Err(e) => {
+                                let _ = output_send
+                                    .send(ProcessMessage::Error(anyhow::anyhow!(
+                                        "Failed to export ply: {e}"
+                                    )))
+                                    .await;
+                                return;
+                            }
+                        };
+
+                        // TODO: Wasm
+                        if let Err(e) = tokio::fs::write(format!("export_{iter}.ply"), data).await {
+                            let _ = output_send
+                                .send(ProcessMessage::Error(anyhow::anyhow!(
+                                    "Failed to export ply: {e}"
+                                )))
+                                .await;
+                        }
+                    });
                 }
 
                 // How frequently to update the UI after a training step.

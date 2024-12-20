@@ -1,8 +1,8 @@
 use crate::app::{AppContext, AppPanel};
-use brush_dataset::{LoadDatasetArgs, ModelOptions};
+use brush_dataset::{LoadDataseConfig, ModelConfig};
 use brush_process::{
     data_source::DataSource,
-    process_loop::{start_process, ProcessArgs},
+    process_loop::{start_process, ProcessArgs, ProcessConfig},
 };
 use brush_train::train::TrainConfig;
 use egui::Slider;
@@ -18,12 +18,13 @@ impl LoadDataPanel {
             args: ProcessArgs {
                 // Super high resolutions are a bit sketchy. Limit to at least
                 // some size.
-                load_args: LoadDatasetArgs {
+                load_config: LoadDataseConfig {
                     max_resolution: Some(1920),
                     ..Default::default()
                 },
                 train_config: TrainConfig::new(),
-                init_args: ModelOptions::default(),
+                init_config: ModelConfig::default(),
+                process_config: ProcessConfig::new(),
             },
             url: "splat.com/example.ply".to_owned(),
         }
@@ -70,38 +71,39 @@ impl AppPanel for LoadDataPanel {
             ui.heading("Train settings");
 
             ui.label("Spherical Harmonics Degree:");
-            ui.add(Slider::new(&mut self.args.init_args.sh_degree, 0..=4));
+            ui.add(Slider::new(&mut self.args.init_config.sh_degree, 0..=4));
 
-            let mut limit_res = self.args.load_args.max_resolution.is_some();
+            let mut limit_res = self.args.load_config.max_resolution.is_some();
             if ui
                 .checkbox(&mut limit_res, "Limit training resolution")
                 .clicked()
             {
-                self.args.load_args.max_resolution = if limit_res { Some(800) } else { None };
+                self.args.load_config.max_resolution = if limit_res { Some(800) } else { None };
             }
 
-            if let Some(target_res) = self.args.load_args.max_resolution.as_mut() {
+            if let Some(target_res) = self.args.load_config.max_resolution.as_mut() {
                 ui.add(Slider::new(target_res, 32..=2048));
             }
 
-            let mut limit_frames = self.args.load_args.max_frames.is_some();
+            let mut limit_frames = self.args.load_config.max_frames.is_some();
             if ui.checkbox(&mut limit_frames, "Limit max frames").clicked() {
-                self.args.load_args.max_frames = if limit_frames { Some(32) } else { None };
+                self.args.load_config.max_frames = if limit_frames { Some(32) } else { None };
             }
 
-            if let Some(max_frames) = self.args.load_args.max_frames.as_mut() {
+            if let Some(max_frames) = self.args.load_config.max_frames.as_mut() {
                 ui.add(Slider::new(max_frames, 1..=256));
             }
 
-            let mut use_eval_split = self.args.load_args.eval_split_every.is_some();
+            let mut use_eval_split = self.args.load_config.eval_split_every.is_some();
             if ui
                 .checkbox(&mut use_eval_split, "Split dataset for evaluation")
                 .clicked()
             {
-                self.args.load_args.eval_split_every = if use_eval_split { Some(8) } else { None };
+                self.args.load_config.eval_split_every =
+                    if use_eval_split { Some(8) } else { None };
             }
 
-            if let Some(eval_split) = self.args.load_args.eval_split_every.as_mut() {
+            if let Some(eval_split) = self.args.load_config.eval_split_every.as_mut() {
                 ui.add(
                     Slider::new(eval_split, 2..=32)
                         .prefix("1 out of ")
@@ -112,22 +114,22 @@ impl AppPanel for LoadDataPanel {
             ui.horizontal(|ui| {
                 ui.label("Evaluate");
                 ui.add(
-                    egui::Slider::new(&mut self.args.train_config.eval_every, 1..=5000)
+                    egui::Slider::new(&mut self.args.process_config.eval_every, 1..=5000)
                         .prefix("every ")
                         .suffix(" steps"),
                 );
             });
 
-            let mut use_frame_subsample = self.args.load_args.subsample_frames.is_some();
+            let mut use_frame_subsample = self.args.load_config.subsample_frames.is_some();
             if ui
                 .checkbox(&mut use_frame_subsample, "Subsample frames")
                 .clicked()
             {
-                self.args.load_args.subsample_frames =
+                self.args.load_config.subsample_frames =
                     if use_frame_subsample { Some(2) } else { None };
             }
 
-            if let Some(subsample_frames) = self.args.load_args.subsample_frames.as_mut() {
+            if let Some(subsample_frames) = self.args.load_config.subsample_frames.as_mut() {
                 ui.add(
                     Slider::new(subsample_frames, 2..=32)
                         .prefix("Keep 1 out of ")
@@ -135,16 +137,16 @@ impl AppPanel for LoadDataPanel {
                 );
             }
 
-            let mut use_point_subsample = self.args.load_args.subsample_points.is_some();
+            let mut use_point_subsample = self.args.load_config.subsample_points.is_some();
             if ui
                 .checkbox(&mut use_point_subsample, "Subsample points")
                 .clicked()
             {
-                self.args.load_args.subsample_points =
+                self.args.load_config.subsample_points =
                     if use_point_subsample { Some(2) } else { None };
             }
 
-            if let Some(subsample_points) = self.args.load_args.subsample_points.as_mut() {
+            if let Some(subsample_points) = self.args.load_config.subsample_points.as_mut() {
                 ui.add(
                     Slider::new(subsample_points, 2..=32)
                         .prefix("Keep 1 out of ")

@@ -4,6 +4,7 @@ pub mod scene_loader;
 pub mod splat_export;
 pub mod splat_import;
 
+use burn::config::Config;
 pub use formats::load_dataset;
 
 use async_fn_stream::fn_stream;
@@ -15,8 +16,8 @@ use clap::Args;
 use tokio_stream::Stream;
 use tokio_with_wasm::alias as tokio_wasm;
 
-#[derive(Clone, Default, Debug, Args)]
-pub struct LoadDatasetArgs {
+#[derive(Config, Default, Debug, Args)]
+pub struct LoadDataseConfig {
     /// Max nr. of frames of dataset to load
     #[arg(long, help_heading = "Dataset Options")]
     pub max_frames: Option<usize>,
@@ -34,18 +35,19 @@ pub struct LoadDatasetArgs {
     pub subsample_points: Option<u32>,
 }
 
-#[derive(Clone, Debug, Args)]
-pub struct ModelOptions {
+#[derive(Config, Debug, Args)]
+pub struct ModelConfig {
     #[arg(
         long,
         help = "SH degree of splats",
         help_heading = "Model Options",
         default_value = "3"
     )]
+    #[config(default = 3)]
     pub sh_degree: u32,
 }
 
-impl Default for ModelOptions {
+impl Default for ModelConfig {
     fn default() -> Self {
         Self { sh_degree: 3 }
     }

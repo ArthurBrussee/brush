@@ -58,7 +58,7 @@ pub async fn process_ui(process: RunningProcess) {
 
     eval_spinner.set_message(format!(
         "evaluating every {} steps",
-        process.start_args.train_config.eval_every,
+        process.start_args.process_config.eval_every,
     ));
 
     while let Some(msg) = process.messages.recv().await {
@@ -92,7 +92,7 @@ pub async fn process_ui(process: RunningProcess) {
                     eval_spinner.set_message(format!(
                         "evaluating {} views every {} steps",
                         val.views.len(),
-                        process.start_args.train_config.eval_every,
+                        process.start_args.process_config.eval_every,
                     ));
                 }
             }
