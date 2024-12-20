@@ -248,21 +248,6 @@ async fn train_process_loop(
     let (mut splat_stream, mut data_stream) =
         brush_dataset::load_dataset(vfs.clone(), &load_data_args, &device).await?;
 
-    // Read initial splats if any.
-    while let Some(message) = splat_stream.next().await {
-        let message = message?;
-        let msg = ProcessMessage::ViewSplats {
-            up_axis: message.meta.up_axis,
-            splats: Box::new(message.splats.valid()),
-            frame: 0,
-            total_frames: 0,
-        };
-        if output.send(msg).await.is_err() {
-            return Ok(());
-        }
-        initial_splats = Some(message.splats);
-    }
-
     // Read dataset stream.
     while let Some(d) = data_stream.next().await {
         dataset = d?;
@@ -271,6 +256,23 @@ async fn train_process_loop(
                 data: dataset.clone(),
             })
             .await;
+    }
+
+    let estimated_up = dataset.estimate_up();
+
+    // Read initial splats if any.
+    while let Some(message) = splat_stream.next().await {
+        let message = message?;
+        let msg = ProcessMessage::ViewSplats {
+            up_axis: estimated_up,  // message.meta.up_axis
+            splats: Box::new(message.splats.valid()),
+            frame: 0,
+            total_frames: 0,
+        };
+        if output.send(msg).await.is_err() {
+            return Ok(());
+        }
+        initial_splats = Some(message.splats);
     }
 
     let _ = output
