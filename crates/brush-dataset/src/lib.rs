@@ -12,6 +12,9 @@ use brush_train::scene::{Scene, SceneView};
 use image::DynamicImage;
 use std::future::Future;
 
+use glam::Vec3;
+use ndarray::{arr2, concatenate, s, Array2, Array3, Axis};
+use ndarray_linalg::{Determinant, Eig};
 use clap::Args;
 use tokio_stream::Stream;
 use tokio_with_wasm::alias as tokio_wasm;
@@ -70,6 +73,54 @@ impl Dataset {
                 Some(Scene::new(eval_views))
             },
         }
+    }
+
+    pub fn estimate_up(&self) -> Vec3 {
+        // based on https://github.com/jonbarron/camp_zipnerf/blob/8e6d57e3aee34235faf3ef99decca0994efe66c9/camp_zipnerf/internal/camera_utils.py#L233
+        let mut c2ws_all = vec![];
+        for view in self.train.views.iter() {
+            let c2w = view.camera.local_to_world().transpose().to_cols_array();
+            c2ws_all.push(c2w);
+        }
+        if let Some(eval_scene) = &self.eval {
+            for view in eval_scene.views.iter() {
+                let c2w = view.camera.local_to_world().transpose().to_cols_array();
+                c2ws_all.push(c2w);
+            }
+        }
+        let c2ws: Array3<f32> = arr2(&c2ws_all).into_shape((c2ws_all.len(), 4, 4)).unwrap().to_owned();
+        let mut t: Array2<f32> = c2ws.slice(s![.., ..3, 3]).to_owned();
+        let mean_t = t.mean_axis(Axis(0)).unwrap();
+        t -= &mean_t;
+        let t_cov = t.t().dot(&t);
+        let (eigvals, eigvecs) = t_cov.eig().unwrap();
+        let eigvals = eigvals.mapv(|x| x.re);
+        let mut eigvecs = eigvecs.mapv(|x| x.re);
+        // Sort eigenvectors in order of largest to smallest eigenvalue.
+        let mut inds: Vec<usize> = (0..eigvals.len()).collect();
+        inds.sort_by(|&i, &j| eigvals[j].partial_cmp(&eigvals[i]).unwrap());
+        eigvecs.assign(&eigvecs.select(Axis(1), &inds));
+        let mut rot = eigvecs.t().to_owned();
+        if rot.det().unwrap() < 0.0 {
+            let diag = arr2(&[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]]);
+            rot = diag.dot(&rot);
+        }
+        let mut transform = concatenate![
+            Axis(1),
+            rot.to_owned(),
+            rot.dot(&-mean_t.insert_axis(Axis(1)))
+        ];
+        let mut y_axis_z = 0.0;
+        for i in 0..c2ws.len_of(Axis(0)) {
+            let c2w = c2ws.slice(s![i, .., ..]).to_owned();
+            y_axis_z += transform.dot(&c2w)[(2, 1)];
+        }
+        // Flip coordinate system if z component of y-axis is negative
+        if y_axis_z < 0.0 {
+            let flip_diag = arr2(&[[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, -1.0]]);
+            transform = flip_diag.dot(&transform);
+        }
+        Vec3::new(transform[(2, 0)], transform[(2, 1)], -transform[(2, 2)])
     }
 }
 
