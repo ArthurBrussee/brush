@@ -211,7 +211,7 @@ impl SplatTrainer {
         let ssim = Ssim::new(config.ssim_window_size, 3, device);
 
         let decay = config.lr_mean_decay.powf(1.0 / config.total_steps as f64);
-        let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean_decay, decay);
+        let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean, decay);
 
         Self {
             config: config.clone(),

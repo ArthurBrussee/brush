@@ -35,14 +35,14 @@ pub fn module_to_compiled<C: Compiler>(
         naga::back::wgsl::write_string(module, &info, naga::back::wgsl::WriterFlags::empty())
             .expect("failed to convert naga module to source");
 
-    // // Dawn annoyingly wants some extra syntax to enable subgroups,
-    // // so just hack this in when running on wasm.
-    // #[cfg(target_family = "wasm")]
-    // let shader_string = if shader_string.contains("subgroupAdd") {
-    //     "enable subgroups;\n".to_owned() + &shader_string
-    // } else {
-    //     shader_string
-    // };
+    // Dawn annoyingly wants some extra syntax to enable subgroups,
+    // so just hack this in when running on wasm.
+    #[cfg(target_family = "wasm")]
+    let shader_string = if shader_string.contains("subgroupAdd") {
+        "enable subgroups;\n".to_owned() + &shader_string
+    } else {
+        shader_string
+    };
 
     CompiledKernel {
         entrypoint_name: "main".to_owned(),
