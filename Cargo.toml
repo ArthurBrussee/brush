@@ -31,6 +31,9 @@ tracing = "0.1.41"
 tracing-tracy = "0.11.3"
 tracing-subscriber = "0.3.19"
 
+ndarray = "0.14"
+ndarray-linalg = { version = "0.13", features = ["openblas-static"] }
+
 tokio = "1.42.0"
 tokio_with_wasm = "0.7.4"
 tokio-stream = "0.1"
