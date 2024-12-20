@@ -6,9 +6,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 pub async fn process_ui(process: RunningProcess) {
     let mut process = process;
 
-    let main_spinner = ProgressBar::new_spinner();
-    main_spinner.enable_steady_tick(Duration::from_millis(120));
-    main_spinner.set_style(
+    let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
             .unwrap()
             .tick_strings(&[
@@ -55,6 +53,8 @@ pub async fn process_ui(process: RunningProcess) {
     let main_spinner = sp.add(main_spinner);
     let train_progress = sp.add(train_progress);
     let eval_spinner = sp.add(eval_spinner);
+
+    main_spinner.enable_steady_tick(Duration::from_millis(120));
 
     eval_spinner.set_message(format!(
         "evaluating every {} steps",
