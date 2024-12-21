@@ -2,7 +2,6 @@
 use brush_app::{App, AppCreateCb};
 
 use brush_process::process_loop::start_process;
-use burn_wgpu::WgpuDevice;
 #[allow(unused)]
 use tokio::sync::oneshot::error::RecvError;
 
@@ -68,7 +67,8 @@ fn main() -> Result<(), clap::Error> {
                     panic!("Validation of args failed?");
                 };
 
-                let process = start_process(source, args.process, WgpuDevice::DefaultDevice);
+                let process =
+                    start_process(source, args.process, burn_wgpu::WgpuDevice::DefaultDevice);
                 brush_cli::ui::process_ui(process).await;
             }
         });
@@ -117,8 +117,8 @@ fn main() -> Result<(), clap::Error> {
 #[cfg(target_family = "wasm")]
 mod embedded {
     use super::*;
-    use brush_app::process_loop::ProcessArgs;
-    use brush_app::{data_source::DataSource, App};
+    use brush_app::App;
+    use brush_process::{data_source::DataSource, process_loop::ProcessArgs};
     use std::future::IntoFuture;
     use tokio::sync::mpsc::UnboundedSender;
     use tokio_with_wasm::alias as tokio_wasm;

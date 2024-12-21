@@ -931,6 +931,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tokio_with_wasm",
+ "web-time",
  "zip 2.2.2",
 ]
 

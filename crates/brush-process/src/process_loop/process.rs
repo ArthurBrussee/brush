@@ -1,9 +1,7 @@
-use std::time::Instant;
+use web_time::Instant;
 
 use crate::{data_source::DataSource, rerun_tools::VisualizeTools};
-use brush_dataset::{
-    brush_vfs::BrushVfs, splat_export, splat_import, Dataset, LoadDataseConfig, ModelConfig,
-};
+use brush_dataset::{brush_vfs::BrushVfs, splat_import, Dataset, LoadDataseConfig, ModelConfig};
 use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
 use brush_train::{
     eval::EvalStats,
@@ -17,7 +15,9 @@ use tokio::sync::mpsc::{channel, UnboundedSender};
 use tokio::sync::mpsc::{unbounded_channel, Receiver};
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 use tokio_stream::StreamExt;
-use tokio_with_wasm::alias as tokio_wasm;
+
+#[allow(unused)]
+use brush_dataset::splat_export;
 
 use super::{
     train_stream::{self, train_stream},
@@ -325,11 +325,14 @@ async fn train_process_loop(
                     }
                 }
 
+                // TODO: Support this on WASM somehow. Maybe have user pick a file once,
+                // and write to it repeatedly?
+                #[cfg(not(target_family = "wasm"))]
                 if iter % process_config.export_every == 0 {
                     let splats = *splats.clone();
                     let output_send = output.clone();
 
-                    tokio_wasm::task::spawn(async move {
+                    tokio::task::spawn(async move {
                         let data = splat_export::splat_to_ply(splats).await;
 
                         let data = match data {

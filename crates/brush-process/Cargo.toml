@@ -20,6 +20,8 @@ glam.workspace = true
 burn.workspace = true
 burn-jit.workspace = true
 
+web-time.workspace = true
+
 image.workspace = true
 anyhow.workspace = true
 rand.workspace = true

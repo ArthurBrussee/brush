@@ -6,8 +6,8 @@ use brush_render::gaussian_splats::Splats;
 use brush_train::train::{RefineStats, SplatTrainer, TrainConfig, TrainStepStats};
 use burn::{backend::Autodiff, module::AutodiffModule};
 use burn_wgpu::{Wgpu, WgpuDevice};
-use std::time::Instant;
 use tokio_stream::Stream;
+use web_time::Instant;
 
 pub enum TrainMessage {
     TrainStep {
