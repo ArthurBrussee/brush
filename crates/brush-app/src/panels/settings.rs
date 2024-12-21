@@ -42,9 +42,11 @@ impl AppPanel for SettingsPanel {
 
     fn ui(&mut self, ui: &mut egui::Ui, context: &mut AppContext) {
         egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.heading("Model Settings");
             ui.label("Spherical Harmonics Degree:");
             ui.add(Slider::new(&mut self.args.model_config.sh_degree, 0..=4));
 
+            ui.heading("Dataset Settings");
             let mut limit_res = self.args.load_config.max_resolution.is_some();
             if ui
                 .checkbox(&mut limit_res, "Limit training resolution")
@@ -83,15 +85,6 @@ impl AppPanel for SettingsPanel {
                 );
             }
 
-            ui.horizontal(|ui| {
-                ui.label("Evaluate");
-                ui.add(
-                    egui::Slider::new(&mut self.args.process_config.eval_every, 1..=5000)
-                        .prefix("every ")
-                        .suffix(" steps"),
-                );
-            });
-
             let mut use_frame_subsample = self.args.load_config.subsample_frames.is_some();
             if ui
                 .checkbox(&mut use_frame_subsample, "Subsample frames")
@@ -126,8 +119,29 @@ impl AppPanel for SettingsPanel {
                 );
             }
 
+            ui.heading("Process Settings");
+            ui.horizontal(|ui| {
+                ui.label("Evaluate");
+                ui.add(
+                    egui::Slider::new(&mut self.args.process_config.eval_every, 1..=5000)
+                        .prefix("every ")
+                        .suffix(" steps"),
+                );
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Export");
+                ui.add(
+                    egui::Slider::new(&mut self.args.process_config.export_every, 1..=15000)
+                        .prefix("every ")
+                        .suffix(" steps"),
+                );
+            });
+
             #[cfg(all(not(target_family = "wasm"), not(target_os = "android")))]
             {
+                ui.heading("Rerun Settings");
+
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     ui.hyperlink_to("Rerun.io", "https://rerun.io");
