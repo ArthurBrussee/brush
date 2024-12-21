@@ -16,7 +16,7 @@ use clap::Args;
 use tokio_stream::Stream;
 use tokio_with_wasm::alias as tokio_wasm;
 
-#[derive(Config, Default, Debug, Args)]
+#[derive(Config, Debug, Args)]
 pub struct LoadDataseConfig {
     /// Max nr. of frames of dataset to load
     #[arg(long, help_heading = "Dataset Options")]
@@ -45,12 +45,6 @@ pub struct ModelConfig {
     )]
     #[config(default = 3)]
     pub sh_degree: u32,
-}
-
-impl Default for ModelConfig {
-    fn default() -> Self {
-        Self { sh_degree: 3 }
-    }
 }
 
 #[derive(Clone)]

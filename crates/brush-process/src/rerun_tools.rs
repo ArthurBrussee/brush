@@ -1,59 +1,38 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
-
 use brush_rerun::BurnToRerun;
 
 use brush_render::{gaussian_splats::Splats, AutodiffBackend, Backend};
+use brush_train::eval::EvalStats;
 use brush_train::{image::tensor_into_image, scene::Scene, train::RefineStats};
 use brush_train::{ssim::Ssim, train::TrainStepStats};
 use burn::tensor::{activation::sigmoid, ElementConversion};
+
+use anyhow::Result;
 use rerun::{Color, FillMode, RecordingStream};
-use tokio::{sync::mpsc::UnboundedSender, task};
 
 pub struct VisualizeTools {
     rec: Option<RecordingStream>,
-    task_queue: UnboundedSender<Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>>,
 }
 
 impl VisualizeTools {
-    pub fn new() -> Self {
+    pub fn new(enabled: bool) -> Self {
         // Spawn rerun - creating this is already explicitly done by a user.
-        let rec = rerun::RecordingStreamBuilder::new("Brush").spawn().ok();
-
-        let (queue_send, mut queue_receive) = tokio::sync::mpsc::unbounded_channel();
-
-        // Spawn a task to handle futures one by one as they come in.
-        task::spawn(async move {
-            while let Some(fut) = queue_receive.recv().await {
-                if let Err(e) = fut.await {
-                    log::error!("Error logging to rerun: {}", e);
-                }
-            }
-        });
-
-        Self {
-            rec,
-            task_queue: queue_send,
-        }
-    }
-
-    fn queue_task(&self, fut: impl Future<Output = anyhow::Result<()>> + Send + 'static) {
-        // Ignore this error - if the channel is closed we just don't do anything and drop
-        // the future.
-        let _ = self.task_queue.send(Box::pin(fut));
-    }
-
-    pub fn log_splats<B: Backend>(self: Arc<Self>, splats: Splats<B>) {
-        let Some(rec) = self.rec.clone() else {
-            return;
+        let rec = if enabled {
+            rerun::RecordingStreamBuilder::new("Brush")
+                .connect_tcp()
+                .ok()
+        } else {
+            None
         };
 
-        if !rec.is_enabled() {
-            return;
-        }
+        Self { rec }
+    }
 
-        self.queue_task(async move {
+    pub async fn log_splats<B: Backend>(&self, splats: Splats<B>) -> Result<()> {
+        let Some(rec) = self.rec.as_ref() else {
+            return Ok(());
+        };
+
+        if rec.is_enabled() {
             let means = splats
                 .means
                 .val()
@@ -113,20 +92,16 @@ impl VisualizeTools {
                     .with_colors(colors)
                     .with_fill_mode(FillMode::Solid),
             )?;
-            Ok(())
-        });
+        }
+        Ok(())
     }
 
-    pub fn log_scene(self: Arc<Self>, scene: Scene) {
-        let Some(rec) = self.rec.clone() else {
-            return;
+    pub fn log_scene(&self, scene: &Scene) -> Result<()> {
+        let Some(rec) = self.rec.as_ref() else {
+            return Ok(());
         };
 
-        if !rec.is_enabled() {
-            return;
-        }
-
-        self.queue_task(async move {
+        if rec.is_enabled() {
             rec.log_static("world", &rerun::ViewCoordinates::RIGHT_HAND_Y_DOWN)?;
 
             for (i, view) in scene.views.iter().enumerate() {
@@ -152,37 +127,27 @@ impl VisualizeTools {
                     &rerun::Image::from_dynamic_image(view.image.as_ref().clone())?,
                 )?;
             }
-
-            Ok(())
-        });
-    }
-
-    pub fn log_eval_stats<B: Backend>(
-        self: Arc<Self>,
-        iter: u32,
-        stats: brush_train::eval::EvalStats<B>,
-    ) {
-        let Some(rec) = self.rec.clone() else {
-            return;
-        };
-
-        if !rec.is_enabled() {
-            return;
         }
 
-        self.queue_task(async move {
+        Ok(())
+    }
+
+    pub async fn log_eval_stats<B: Backend>(&self, iter: u32, stats: &EvalStats<B>) -> Result<()> {
+        let Some(rec) = self.rec.as_ref() else {
+            return Ok(());
+        };
+
+        if rec.is_enabled() {
             rec.set_time_sequence("iterations", iter);
 
-            let avg_psnr =
-                stats.samples.iter().map(|s| s.psnr).sum::<f32>() / (stats.samples.len() as f32);
-            let avg_ssim =
-                stats.samples.iter().map(|s| s.ssim).sum::<f32>() / (stats.samples.len() as f32);
+            let avg_psnr = stats.avg_psnr();
+            let avg_ssim = stats.avg_ssim();
 
             rec.log("psnr/eval", &rerun::Scalar::new(avg_psnr as f64))?;
             rec.log("ssim/eval", &rerun::Scalar::new(avg_ssim as f64))?;
 
-            for (i, samp) in stats.samples.into_iter().enumerate() {
-                let eval_render = tensor_into_image(samp.rendered.into_data_async().await);
+            for (i, samp) in stats.samples.iter().enumerate() {
+                let eval_render = tensor_into_image(samp.rendered.clone().into_data_async().await);
 
                 let rendered = eval_render.to_rgb8();
 
@@ -202,7 +167,7 @@ impl VisualizeTools {
                     ),
                 )?;
 
-                let gt_img = samp.view.image;
+                let gt_img = &samp.view.image;
                 let gt_rerun_img = if gt_img.color().has_alpha() {
                     rerun::Image::from_rgba32(gt_img.to_rgba8().into_vec(), [w, h])
                 } else {
@@ -220,41 +185,32 @@ impl VisualizeTools {
                     &samp.aux.calc_tile_depth().into_rerun().await,
                 )?;
             }
-
-            Ok(())
-        });
-    }
-
-    pub fn log_splat_stats<B: Backend>(&self, splats: &Splats<B>) {
-        let Some(rec) = self.rec.clone() else {
-            return;
-        };
-
-        if !rec.is_enabled() {
-            return;
         }
-        let num = splats.num_splats();
 
-        self.queue_task(async move {
-            rec.log("splats/num_splats", &rerun::Scalar::new(num as f64))?;
-            Ok(())
-        });
+        Ok(())
     }
 
-    pub fn log_train_stats<B: AutodiffBackend>(
-        self: Arc<Self>,
+    pub fn log_splat_stats<B: Backend>(&self, splats: &Splats<B>) -> Result<()> {
+        let Some(rec) = self.rec.clone() else {
+            return Ok(());
+        };
+        if rec.is_enabled() {
+            let num = splats.num_splats();
+            rec.log("splats/num_splats", &rerun::Scalar::new(num as f64))?;
+        }
+        Ok(())
+    }
+
+    pub async fn log_train_stats<B: AutodiffBackend>(
+        &self,
         iter: u32,
         stats: TrainStepStats<B>,
-    ) {
-        let Some(rec) = self.rec.clone() else {
-            return;
+    ) -> Result<()> {
+        let Some(rec) = self.rec.as_ref() else {
+            return Ok(());
         };
 
-        if !rec.is_enabled() {
-            return;
-        }
-
-        self.queue_task(async move {
+        if rec.is_enabled() {
             rec.set_time_sequence("iterations", iter);
             rec.log("lr/mean", &rerun::Scalar::new(stats.lr_mean))?;
             rec.log("lr/rotation", &rerun::Scalar::new(stats.lr_rotation))?;
@@ -311,37 +267,37 @@ impl VisualizeTools {
                 "splats/splats_visible",
                 &rerun::Scalar::new(main_aux.num_visible.into_scalar_async().await.elem::<f64>()),
             )?;
-
-            Ok(())
-        });
-    }
-
-    pub fn log_refine_stats(self: Arc<Self>, iter: u32, refine: &RefineStats) {
-        let Some(rec) = self.rec.clone() else {
-            return;
-        };
-
-        if !rec.is_enabled() {
-            return;
         }
 
-        rec.set_time_sequence("iterations", iter);
+        Ok(())
+    }
 
-        let _ = rec.log(
-            "refine/num_split",
-            &rerun::Scalar::new(refine.num_split as f64),
-        );
-        let _ = rec.log(
-            "refine/num_cloned",
-            &rerun::Scalar::new(refine.num_cloned as f64),
-        );
-        let _ = rec.log(
-            "refine/num_transparent_pruned",
-            &rerun::Scalar::new(refine.num_transparent_pruned as f64),
-        );
-        let _ = rec.log(
-            "refine/num_scale_pruned",
-            &rerun::Scalar::new(refine.num_scale_pruned as f64),
-        );
+    pub fn log_refine_stats(&self, iter: u32, refine: &RefineStats) -> Result<()> {
+        let Some(rec) = self.rec.as_ref() else {
+            return Ok(());
+        };
+
+        if rec.is_enabled() {
+            rec.set_time_sequence("iterations", iter);
+
+            let _ = rec.log(
+                "refine/num_split",
+                &rerun::Scalar::new(refine.num_split as f64),
+            );
+            let _ = rec.log(
+                "refine/num_cloned",
+                &rerun::Scalar::new(refine.num_cloned as f64),
+            );
+            let _ = rec.log(
+                "refine/num_transparent_pruned",
+                &rerun::Scalar::new(refine.num_transparent_pruned as f64),
+            );
+            let _ = rec.log(
+                "refine/num_scale_pruned",
+                &rerun::Scalar::new(refine.num_scale_pruned as f64),
+            );
+        }
+
+        Ok(())
     }
 }

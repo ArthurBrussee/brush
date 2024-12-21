@@ -90,7 +90,7 @@ eframe = { version = "0.30.0", default-features = false, features = [
 egui_tiles = "0.11.0"
 egui_extras = { version = "0.30.0", features = ["all_loaders"] }
 
-rerun = { version = "0.20.3", default-features = false, features = [
+rerun = { version = "0.21.0", default-features = false, features = [
     'sdk',
     'glam',
     'image',

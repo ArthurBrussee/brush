@@ -8,7 +8,6 @@ use crate::image::image_to_tensor;
 use crate::scene::{Scene, SceneView};
 use crate::ssim::Ssim;
 
-#[derive(Clone)]
 pub struct EvalView<B: Backend> {
     pub view: SceneView,
     pub rendered: Tensor<B, 3>,
@@ -19,7 +18,6 @@ pub struct EvalView<B: Backend> {
     pub aux: RenderAux<B>,
 }
 
-#[derive(Clone)]
 pub struct EvalStats<B: Backend> {
     pub samples: Vec<EvalView<B>>,
 }

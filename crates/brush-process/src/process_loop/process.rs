@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::data_source::DataSource;
+use crate::{data_source::DataSource, rerun_tools::VisualizeTools};
 use brush_dataset::{
     brush_vfs::BrushVfs, splat_export, splat_import, Dataset, LoadDataseConfig, ModelConfig,
 };
@@ -21,7 +21,7 @@ use tokio_with_wasm::alias as tokio_wasm;
 
 use super::{
     train_stream::{self, train_stream},
-    ProcessArgs, ProcessConfig,
+    ProcessArgs, ProcessConfig, RerunConfig,
 };
 
 pub enum ProcessMessage {
@@ -114,8 +114,9 @@ async fn process_loop(
             device,
             control_receiver,
             args.load_config,
-            args.init_config,
+            args.model_config,
             args.process_config,
+            args.rerun_config,
             args.train_config,
         )
         .await
@@ -194,6 +195,7 @@ async fn train_process_loop(
     load_data_args: LoadDataseConfig,
     load_init_args: ModelConfig,
     process_config: ProcessConfig,
+    rerun_config: RerunConfig,
     train_config: TrainConfig,
 ) -> Result<(), anyhow::Error> {
     let _ = output
@@ -225,6 +227,8 @@ async fn train_process_loop(
         initial_splats = Some(message.splats);
     }
 
+    let visualize = VisualizeTools::new(rerun_config.rerun_enabled);
+
     // Read dataset stream.
     while let Some(d) = data_stream.next().await {
         dataset = d?;
@@ -234,6 +238,8 @@ async fn train_process_loop(
             })
             .await;
     }
+
+    visualize.log_scene(&dataset.train)?;
 
     let _ = output
         .send(ProcessMessage::DoneLoading { training: true })
@@ -307,6 +313,8 @@ async fn train_process_loop(
                         )
                         .await;
 
+                        visualize.log_eval_stats(iter, &eval).await?;
+
                         if output
                             .send(ProcessMessage::EvalResult { iter, eval })
                             .await
@@ -347,6 +355,19 @@ async fn train_process_loop(
                     });
                 }
 
+                if let Some(every) = rerun_config.rerun_log_splats_every {
+                    if iter % every == 0 {
+                        visualize.log_splats(*splats.clone()).await?;
+                    }
+                }
+
+                visualize.log_splat_stats(&splats)?;
+
+                // Log out train stats.
+                if iter % rerun_config.rerun_log_train_stats_every == 0 {
+                    visualize.log_train_stats(iter, *stats.clone()).await?;
+                }
+
                 // How frequently to update the UI after a training step.
                 const UPDATE_EVERY: u32 = 5;
 
@@ -365,6 +386,8 @@ async fn train_process_loop(
                 }
             }
             train_stream::TrainMessage::RefineStep { stats, iter } => {
+                visualize.log_refine_stats(iter, &stats)?;
+
                 if output
                     .send(ProcessMessage::RefineStep { stats, iter })
                     .await

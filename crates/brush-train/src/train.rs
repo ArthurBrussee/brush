@@ -104,12 +104,6 @@ pub struct TrainConfig {
     refine_every: u32,
 }
 
-impl Default for TrainConfig {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 type B = Autodiff<Wgpu>;
 
 #[derive(Clone, Debug)]

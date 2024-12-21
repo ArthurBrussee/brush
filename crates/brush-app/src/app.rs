@@ -2,9 +2,10 @@ use core::f32;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 
+use crate::panels::SettingsPanel;
 use crate::{
     orbit_controls::OrbitControls,
-    panels::{DatasetPanel, LoadDataPanel, PresetsPanel, ScenePanel, StatsPanel, TracingPanel},
+    panels::{DatasetPanel, PresetsPanel, ScenePanel, StatsPanel, TracingPanel},
 };
 use brush_dataset::Dataset;
 use brush_process::data_source::DataSource;
@@ -295,7 +296,7 @@ impl App {
 
         let root_container = if !zen {
             let loading_subs = vec![
-                tiles.insert_pane(Box::new(LoadDataPanel::new())),
+                tiles.insert_pane(Box::new(SettingsPanel::new())),
                 tiles.insert_pane(Box::new(PresetsPanel::new())),
             ];
             let loading_pane = tiles.insert_tab_tile(loading_subs);
@@ -305,11 +306,6 @@ impl App {
                 loading_pane,
                 tiles.insert_pane(Box::new(StatsPanel::new(device.clone(), &state.adapter))),
             ];
-
-            #[cfg(all(not(target_family = "wasm"), not(target_os = "android")))]
-            {
-                sides.push(tiles.insert_pane(Box::new(crate::panels::RerunPanel::new())));
-            }
 
             if cfg!(feature = "tracing") {
                 sides.push(tiles.insert_pane(Box::new(TracingPanel::default())));
