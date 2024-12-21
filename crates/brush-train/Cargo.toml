@@ -20,7 +20,8 @@ hashbrown.workspace = true
 burn.workspace = true
 burn-fusion.workspace = true
 cubecl.workspace = true
-derive-new = { version = "0.7.0", default-features = false }
+
+clap.workspace = true
 
 [lints]
 workspace = true

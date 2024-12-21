@@ -4,6 +4,7 @@ pub mod scene_loader;
 pub mod splat_export;
 pub mod splat_import;
 
+use burn::config::Config;
 pub use formats::load_dataset;
 
 use async_fn_stream::fn_stream;
@@ -11,27 +12,39 @@ use brush_train::scene::{Scene, SceneView};
 use image::DynamicImage;
 use std::future::Future;
 
+use clap::Args;
 use tokio_stream::Stream;
 use tokio_with_wasm::alias as tokio_wasm;
 
-#[derive(Clone, Default, Debug)]
-pub struct LoadDatasetArgs {
+#[derive(Config, Debug, Args)]
+pub struct LoadDataseConfig {
+    /// Max nr. of frames of dataset to load
+    #[arg(long, help_heading = "Dataset Options")]
     pub max_frames: Option<usize>,
+    /// Max resolution of images to load
+    #[arg(long, help_heading = "Dataset Options")]
     pub max_resolution: Option<u32>,
+    /// Create an eval dataset by selecting every nth image
+    #[arg(long, help_heading = "Dataset Options")]
     pub eval_split_every: Option<usize>,
+    /// Load only every nth frame
+    #[arg(long, help_heading = "Dataset Options")]
     pub subsample_frames: Option<u32>,
+    /// Load only every nth point from the initial sfm data
+    #[arg(long, help_heading = "Dataset Options")]
     pub subsample_points: Option<u32>,
 }
 
-#[derive(Clone, Debug)]
-pub struct LoadInitArgs {
+#[derive(Config, Debug, Args)]
+pub struct ModelConfig {
+    #[arg(
+        long,
+        help = "SH degree of splats",
+        help_heading = "Model Options",
+        default_value = "3"
+    )]
+    #[config(default = 3)]
     pub sh_degree: u32,
-}
-
-impl Default for LoadInitArgs {
-    fn default() -> Self {
-        Self { sh_degree: 3 }
-    }
 }
 
 #[derive(Clone)]
@@ -75,7 +88,7 @@ pub(crate) fn clamp_img_to_max_size(image: DynamicImage, max_size: u32) -> Dynam
 }
 
 pub(crate) fn stream_fut_parallel<T: Send + 'static>(
-    futures: Vec<impl Future<Output = T> + Send + 'static>,
+    futures: Vec<impl Future<Output = T> + WasmNotSend + 'static>,
 ) -> impl Stream<Item = T> {
     let parallel = if cfg!(target_family = "wasm") {
         1
@@ -104,3 +117,20 @@ pub(crate) fn stream_fut_parallel<T: Send + 'static>(
         }
     })
 }
+
+// On wasm, lots of things aren't Send that are send on non-wasm.
+// Non-wasm tokio requires :Send for futures, tokio_with_wasm doesn't.
+// So, it can help to annotate futures/objects as send only on not-wasm.
+#[cfg(target_family = "wasm")]
+mod wasm_send {
+    pub trait WasmNotSend {}
+    impl<T> WasmNotSend for T {}
+}
+
+#[cfg(not(target_family = "wasm"))]
+mod wasm_send {
+    pub trait WasmNotSend: Send {}
+    impl<T: Send> WasmNotSend for T {}
+}
+
+pub use wasm_send::*;

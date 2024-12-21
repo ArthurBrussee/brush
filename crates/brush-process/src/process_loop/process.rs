@@ -1,10 +1,7 @@
-use std::path::Path;
+use web_time::Instant;
 
-use crate::data_source::DataSource;
-use brush_dataset::{
-    brush_vfs::{BrushVfs, PathReader},
-    splat_import, Dataset, LoadDatasetArgs, LoadInitArgs,
-};
+use crate::{data_source::DataSource, rerun_tools::VisualizeTools};
+use brush_dataset::{brush_vfs::BrushVfs, splat_import, Dataset, LoadDataseConfig, ModelConfig};
 use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
 use brush_train::{
     eval::EvalStats,
@@ -16,16 +13,15 @@ use glam::Vec3;
 use rand::SeedableRng;
 use tokio::sync::mpsc::{channel, UnboundedSender};
 use tokio::sync::mpsc::{unbounded_channel, Receiver};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, BufReader},
-    sync::mpsc::{Sender, UnboundedReceiver},
-};
+use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 use tokio_stream::StreamExt;
-use web_time::Instant;
+
+#[allow(unused)]
+use brush_dataset::splat_export;
 
 use super::{
     train_stream::{self, train_stream},
-    ProcessArgs,
+    ProcessArgs, ProcessConfig, RerunConfig,
 };
 
 pub enum ProcessMessage {
@@ -82,44 +78,8 @@ pub enum ControlMessage {
     Paused(bool),
 }
 
-async fn read_at_most<R: AsyncRead + Unpin>(
-    reader: &mut R,
-    limit: usize,
-) -> std::io::Result<Vec<u8>> {
-    let mut buffer = vec![0; limit];
-    let bytes_read = reader.read(&mut buffer).await?;
-    buffer.truncate(bytes_read);
-    Ok(buffer)
-}
-
-async fn load_vfs(source: DataSource) -> anyhow::Result<BrushVfs> {
-    // Small hack to peek some bytes: Read them
-    // and add them at the start again.
-    let data = source.into_reader();
-    let mut data = BufReader::new(data);
-    let peek = read_at_most(&mut data, 64).await?;
-    let reader = std::io::Cursor::new(peek.clone()).chain(data);
-
-    if peek.as_slice().starts_with(b"ply") {
-        let mut path_reader = PathReader::default();
-        path_reader.add(Path::new("input.ply"), reader);
-        Ok(BrushVfs::from_paths(path_reader))
-    } else if peek.starts_with(b"PK") {
-        BrushVfs::from_zip_reader(reader)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
-    } else if peek.starts_with(b"<!DOCTYPE html>") {
-        anyhow::bail!("Failed to download data (are you trying to download from Google Drive? You might have to use the proxy.")
-    } else if let Some(path_bytes) = peek.strip_prefix(b"BRUSH_PATH") {
-        let string = String::from_utf8(path_bytes.to_vec())?;
-        let path = Path::new(&string);
-        BrushVfs::from_directory(path).await
-    } else {
-        anyhow::bail!("only zip and ply files are supported.")
-    }
-}
-
 async fn process_loop(
+    source: DataSource,
     output: Sender<ProcessMessage>,
     args: ProcessArgs,
     device: WgpuDevice,
@@ -129,7 +89,7 @@ async fn process_loop(
         return;
     }
 
-    let vfs = load_vfs(args.source).await;
+    let vfs = source.into_vfs().await;
 
     let vfs = match vfs {
         Ok(vfs) => vfs,
@@ -153,8 +113,10 @@ async fn process_loop(
             vfs,
             device,
             control_receiver,
-            args.load_args,
-            args.init_args,
+            args.load_config,
+            args.model_config,
+            args.process_config,
+            args.rerun_config,
             args.train_config,
         )
         .await
@@ -230,16 +192,18 @@ async fn train_process_loop(
     vfs: BrushVfs,
     device: WgpuDevice,
     control_receiver: UnboundedReceiver<ControlMessage>,
-    load_data_args: LoadDatasetArgs,
-    load_init_args: LoadInitArgs,
+    load_data_args: LoadDataseConfig,
+    load_init_args: ModelConfig,
+    process_config: ProcessConfig,
+    rerun_config: RerunConfig,
     train_config: TrainConfig,
 ) -> Result<(), anyhow::Error> {
     let _ = output
         .send(ProcessMessage::StartLoading { training: true })
         .await;
 
-    <Autodiff<Wgpu> as Backend>::seed(train_config.seed);
-    let mut rng = rand::rngs::StdRng::from_seed([train_config.seed as u8; 32]);
+    <Autodiff<Wgpu> as Backend>::seed(process_config.seed);
+    let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     // Load initial splats if included
     let mut initial_splats = None;
@@ -263,6 +227,8 @@ async fn train_process_loop(
         initial_splats = Some(message.splats);
     }
 
+    let visualize = VisualizeTools::new(rerun_config.rerun_enabled);
+
     // Read dataset stream.
     while let Some(d) = data_stream.next().await {
         dataset = d?;
@@ -272,6 +238,8 @@ async fn train_process_loop(
             })
             .await;
     }
+
+    visualize.log_scene(&dataset.train)?;
 
     let _ = output
         .send(ProcessMessage::DoneLoading { training: true })
@@ -334,7 +302,7 @@ async fn train_process_loop(
                 iter,
                 timestamp,
             } => {
-                if iter % train_config.eval_every == 0 {
+                if iter % process_config.eval_every == 0 {
                     if let Some(eval_scene) = eval_scene.as_ref() {
                         let eval = brush_train::eval::eval_stats(
                             *splats.clone(),
@@ -345,6 +313,8 @@ async fn train_process_loop(
                         )
                         .await;
 
+                        visualize.log_eval_stats(iter, &eval).await?;
+
                         if output
                             .send(ProcessMessage::EvalResult { iter, eval })
                             .await
@@ -353,6 +323,52 @@ async fn train_process_loop(
                             break;
                         }
                     }
+                }
+
+                // TODO: Support this on WASM somehow. Maybe have user pick a file once,
+                // and write to it repeatedly?
+                #[cfg(not(target_family = "wasm"))]
+                if iter % process_config.export_every == 0 {
+                    let splats = *splats.clone();
+                    let output_send = output.clone();
+
+                    tokio::task::spawn(async move {
+                        let data = splat_export::splat_to_ply(splats).await;
+
+                        let data = match data {
+                            Ok(data) => data,
+                            Err(e) => {
+                                let _ = output_send
+                                    .send(ProcessMessage::Error(anyhow::anyhow!(
+                                        "Failed to export ply: {e}"
+                                    )))
+                                    .await;
+                                return;
+                            }
+                        };
+
+                        // TODO: Wasm
+                        if let Err(e) = tokio::fs::write(format!("export_{iter}.ply"), data).await {
+                            let _ = output_send
+                                .send(ProcessMessage::Error(anyhow::anyhow!(
+                                    "Failed to export ply: {e}"
+                                )))
+                                .await;
+                        }
+                    });
+                }
+
+                if let Some(every) = rerun_config.rerun_log_splats_every {
+                    if iter % every == 0 {
+                        visualize.log_splats(*splats.clone()).await?;
+                    }
+                }
+
+                visualize.log_splat_stats(&splats)?;
+
+                // Log out train stats.
+                if iter % rerun_config.rerun_log_train_stats_every == 0 {
+                    visualize.log_train_stats(iter, *stats.clone()).await?;
                 }
 
                 // How frequently to update the UI after a training step.
@@ -373,6 +389,8 @@ async fn train_process_loop(
                 }
             }
             train_stream::TrainMessage::RefineStep { stats, iter } => {
+                visualize.log_refine_stats(iter, &stats)?;
+
                 if output
                     .send(ProcessMessage::RefineStep { stats, iter })
                     .await
@@ -388,12 +406,13 @@ async fn train_process_loop(
 }
 
 pub struct RunningProcess {
+    pub start_args: ProcessArgs,
     pub messages: Receiver<ProcessMessage>,
     pub control: UnboundedSender<ControlMessage>,
 }
 
-pub fn start_process(args: ProcessArgs, device: WgpuDevice) -> RunningProcess {
-    log::info!("Starting process with source {:?}", args.source);
+pub fn start_process(source: DataSource, args: ProcessArgs, device: WgpuDevice) -> RunningProcess {
+    log::info!("Starting process with source {:?}", source);
 
     // Create a small channel. We don't want 10 updated splats to be stuck in the queue eating up memory!
     // Bigger channels could mean the train loop spends less time waiting for the UI though.
@@ -401,11 +420,13 @@ pub fn start_process(args: ProcessArgs, device: WgpuDevice) -> RunningProcess {
     let (sender, receiver) = channel(1);
     let (train_sender, train_receiver) = unbounded_channel();
 
+    let args_loop = args.clone();
     tokio_with_wasm::alias::task::spawn(async move {
-        process_loop(sender, args, device, train_receiver).await;
+        process_loop(source, sender, args_loop, device, train_receiver).await;
     });
 
     RunningProcess {
+        start_args: args,
         messages: receiver,
         control: train_sender,
     }

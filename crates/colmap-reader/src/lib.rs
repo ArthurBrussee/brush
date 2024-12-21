@@ -159,9 +159,7 @@ fn parse<T: std::str::FromStr>(s: &str) -> io::Result<T> {
         .map_err(|_e| io::Error::new(io::ErrorKind::InvalidData, "Parse error"))
 }
 
-async fn read_cameras_text<R: AsyncRead + Unpin + Send>(
-    reader: R,
-) -> io::Result<HashMap<i32, Camera>> {
+async fn read_cameras_text<R: AsyncRead + Unpin>(reader: R) -> io::Result<HashMap<i32, Camera>> {
     let mut cameras = HashMap::new();
     let mut buf_reader = tokio::io::BufReader::new(reader);
     let mut line = String::new();
@@ -214,7 +212,7 @@ async fn read_cameras_text<R: AsyncRead + Unpin + Send>(
     Ok(cameras)
 }
 
-async fn read_cameras_binary<R: AsyncRead + Unpin + Send>(
+async fn read_cameras_binary<R: AsyncRead + Unpin>(
     mut reader: R,
 ) -> io::Result<HashMap<i32, Camera>> {
     let mut cameras = HashMap::new();
@@ -250,9 +248,7 @@ async fn read_cameras_binary<R: AsyncRead + Unpin + Send>(
     Ok(cameras)
 }
 
-async fn read_images_text<R: AsyncRead + Unpin + Send>(
-    mut reader: R,
-) -> io::Result<HashMap<i32, Image>> {
+async fn read_images_text<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<HashMap<i32, Image>> {
     let mut images = HashMap::new();
     let mut buf_reader = tokio::io::BufReader::new(reader);
     let mut line = String::new();
@@ -308,7 +304,7 @@ async fn read_images_text<R: AsyncRead + Unpin + Send>(
     Ok(images)
 }
 
-async fn read_images_binary<R: AsyncBufRead + Unpin + Send>(
+async fn read_images_binary<R: AsyncBufRead + Unpin>(
     mut reader: R,
 ) -> io::Result<HashMap<i32, Image>> {
     let mut images = HashMap::new();
@@ -366,7 +362,7 @@ async fn read_images_binary<R: AsyncBufRead + Unpin + Send>(
     Ok(images)
 }
 
-async fn read_points3d_text<R: AsyncRead + Unpin + Send>(
+async fn read_points3d_text<R: AsyncRead + Unpin>(
     mut reader: R,
 ) -> io::Result<HashMap<i64, Point3D>> {
     let mut points3d = HashMap::new();
@@ -426,7 +422,7 @@ async fn read_points3d_text<R: AsyncRead + Unpin + Send>(
     Ok(points3d)
 }
 
-async fn read_points3d_binary<R: AsyncRead + Unpin + Send>(
+async fn read_points3d_binary<R: AsyncRead + Unpin>(
     mut reader: R,
 ) -> io::Result<HashMap<i64, Point3D>> {
     let mut points3d = HashMap::new();
@@ -470,7 +466,7 @@ async fn read_points3d_binary<R: AsyncRead + Unpin + Send>(
     Ok(points3d)
 }
 
-pub async fn read_cameras<R: AsyncRead + Unpin + Send>(
+pub async fn read_cameras<R: AsyncRead + Unpin>(
     mut reader: R,
     binary: bool,
 ) -> io::Result<HashMap<i32, Camera>> {
@@ -481,7 +477,7 @@ pub async fn read_cameras<R: AsyncRead + Unpin + Send>(
     }
 }
 
-pub async fn read_images<R: AsyncBufRead + Unpin + Send>(
+pub async fn read_images<R: AsyncBufRead + Unpin>(
     reader: R,
     binary: bool,
 ) -> io::Result<HashMap<i32, Image>> {
@@ -492,7 +488,7 @@ pub async fn read_images<R: AsyncBufRead + Unpin + Send>(
     }
 }
 
-pub async fn read_points3d<R: AsyncRead + Unpin + Send>(
+pub async fn read_points3d<R: AsyncRead + Unpin>(
     reader: R,
     binary: bool,
 ) -> io::Result<HashMap<i64, Point3D>> {

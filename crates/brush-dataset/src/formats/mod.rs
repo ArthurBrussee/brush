@@ -1,35 +1,22 @@
 use crate::{
     brush_vfs::BrushVfs,
     splat_import::{load_splat_from_ply, SplatMessage},
-    Dataset, LoadDatasetArgs,
+    Dataset, LoadDataseConfig, WasmNotSend,
 };
 use brush_render::Backend;
-use std::path::Path;
+use std::{path::Path, pin::Pin};
+use tokio_stream::Stream;
 
 pub mod colmap;
 pub mod nerfstudio;
 
-#[cfg(target_family = "wasm")]
-mod data_stream {
-    use anyhow::Result;
-    use std::pin::Pin;
-    use tokio_stream::Stream;
-    pub type DataStream<T> = Pin<Box<dyn Stream<Item = Result<T>> + 'static>>;
-}
-
-#[cfg(not(target_family = "wasm"))]
-mod data_stream {
-    use anyhow::Result;
-    use std::pin::Pin;
-    use tokio_stream::Stream;
-    pub type DataStream<T> = Pin<Box<dyn Stream<Item = Result<T>> + Send + 'static>>;
-}
-
-pub use data_stream::*;
+pub trait DynStream<Item>: Stream<Item = Item> + WasmNotSend {}
+impl<Item, T: Stream<Item = Item> + WasmNotSend> DynStream<Item> for T {}
+pub type DataStream<T> = Pin<Box<dyn DynStream<anyhow::Result<T>> + 'static>>;
 
 pub async fn load_dataset<B: Backend>(
     mut vfs: BrushVfs,
-    load_args: &LoadDatasetArgs,
+    load_args: &LoadDataseConfig,
     device: &B::Device,
 ) -> anyhow::Result<(DataStream<SplatMessage<B>>, DataStream<Dataset>)> {
     let stream = nerfstudio::read_dataset(vfs.clone(), load_args, device).await;

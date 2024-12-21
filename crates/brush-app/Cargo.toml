@@ -15,53 +15,44 @@ path = "src/bin/bin.rs"
 
 [dependencies]
 # Brush deps.
-brush-render.path = "../brush-render"
-brush-train.path = "../brush-train"
-brush-dataset.path = "../brush-dataset"
+brush-process.path = "../brush-process"
 brush-ui.path = "../brush-ui"
+brush-render.path = "../brush-render"
+brush-dataset.path = "../brush-dataset"
+brush-train.path = "../brush-train"
 
-# Workspace deps.
-glam.workspace = true
-burn.workspace = true
+sync-span.path = "../sync-span"
+rrfd.path = "../rrfd"
+
 burn-wgpu.workspace = true
+burn.workspace = true
 burn-jit.workspace = true
 
-image.workspace = true
-anyhow.workspace = true
-eframe.workspace = true
-web-sys.workspace = true
+glam.workspace = true
+
 egui.workspace = true
 egui_tiles.workspace = true
-tracing.workspace = true
-wgpu.workspace = true
-rand.workspace = true
+eframe.workspace = true
 
-web-time.workspace = true
+wgpu.workspace = true
+
+urlencoding.workspace = true
 humantime.workspace = true
+web-time.workspace = true
 
 log.workspace = true
 
-rrfd.path = "../rrfd"
-sync-span.path = "../sync-span"
-tracing-subscriber.workspace = true
-
-zip.workspace = true
-async-fn-stream.workspace = true
-
-tokio_with_wasm = { workspace = true, features = ["rt"] }
-tokio = { workspace = true, features = ["io-util", "rt"] }
-tokio-util.workspace = true
-tokio-stream.workspace = true
-
-reqwest.workspace = true
-urlencoding.workspace = true
+clap.workspace = true
 
 # Default to wayland on linux. Change this to x11 if needed.
 # this perhaps could use a feature on our side as well,
 # so you could run with cargo run --no-default-features --features=11
 winit = { version = "0.30", features = ["default"] }
+tokio_with_wasm = { workspace = true, features = ["rt"] }
 
-cfg-if.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
@@ -74,10 +65,8 @@ console_error_panic_hook.workspace = true
 web-sys.workspace = true
 wasm-logger.workspace = true
 
-
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-rerun.workspace = true
-brush-rerun.path = "../brush-rerun"
+brush-cli.path = "../brush-cli"
 tracing-tracy = { workspace = true, optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]

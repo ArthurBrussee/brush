@@ -2,13 +2,16 @@ use core::f32;
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 
-use crate::data_source::DataSource;
-use crate::process_loop::{start_process, ProcessArgs, ProcessMessage, RunningProcess};
+use crate::panels::SettingsPanel;
 use crate::{
     orbit_controls::OrbitControls,
-    panels::{DatasetPanel, LoadDataPanel, PresetsPanel, ScenePanel, StatsPanel, TracingPanel},
+    panels::{DatasetPanel, PresetsPanel, ScenePanel, StatsPanel, TracingPanel},
 };
-use brush_dataset::{self, Dataset};
+use brush_dataset::Dataset;
+use brush_process::data_source::DataSource;
+use brush_process::process_loop::{
+    start_process, ControlMessage, ProcessArgs, ProcessMessage, RunningProcess,
+};
 use brush_render::camera::Camera;
 use brush_ui::channel::reactive_receiver;
 use burn_wgpu::WgpuDevice;
@@ -161,7 +164,7 @@ impl AppContext {
         self.running_process = Some(process);
     }
 
-    pub(crate) fn control_message(&self, msg: crate::process_loop::ControlMessage) {
+    pub(crate) fn control_message(&self, msg: ControlMessage) {
         if let Some(process) = self.running_process.as_ref() {
             let _ = process.control.send(msg);
         }
@@ -293,7 +296,7 @@ impl App {
 
         let root_container = if !zen {
             let loading_subs = vec![
-                tiles.insert_pane(Box::new(LoadDataPanel::new())),
+                tiles.insert_pane(Box::new(SettingsPanel::new())),
                 tiles.insert_pane(Box::new(PresetsPanel::new())),
             ];
             let loading_pane = tiles.insert_tab_tile(loading_subs);
@@ -303,11 +306,6 @@ impl App {
                 loading_pane,
                 tiles.insert_pane(Box::new(StatsPanel::new(device.clone(), &state.adapter))),
             ];
-
-            #[cfg(all(not(target_family = "wasm"), not(target_os = "android")))]
-            {
-                sides.push(tiles.insert_pane(Box::new(crate::panels::RerunPanel::new())));
-            }
 
             if cfg!(feature = "tracing") {
                 sides.push(tiles.insert_pane(Box::new(TracingPanel::default())));
@@ -336,13 +334,11 @@ impl App {
 
         let url = search_params.get("url");
         if let Some(url) = url {
-            let args = ProcessArgs {
-                source: DataSource::Url(url.to_owned()),
-                load_args: Default::default(),
-                init_args: Default::default(),
-                train_config: Default::default(),
-            };
-            let running = start_process(args, device);
+            let running = start_process(
+                DataSource::Url(url.to_owned()),
+                ProcessArgs::default(),
+                device,
+            );
             tree_ctx
                 .context
                 .write()

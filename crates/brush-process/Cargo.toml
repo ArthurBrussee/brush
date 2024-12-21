@@ -1,0 +1,47 @@
+
+[package]
+name = "brush-process"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+
+[dependencies]
+brush-render.path = "../brush-render"
+brush-train.path = "../brush-train"
+brush-dataset.path = "../brush-dataset"
+
+rrfd.path = "../rrfd"
+
+burn-wgpu.workspace = true
+
+# Workspace deps.
+glam.workspace = true
+burn.workspace = true
+burn-jit.workspace = true
+
+web-time.workspace = true
+
+image.workspace = true
+anyhow.workspace = true
+rand.workspace = true
+log.workspace = true
+
+zip.workspace = true
+async-fn-stream.workspace = true
+
+tokio_with_wasm = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["io-util", "rt"] }
+tokio-util.workspace = true
+tokio-stream.workspace = true
+
+reqwest.workspace = true
+clap.workspace = true
+cfg-if.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+rerun.workspace = true
+brush-rerun.path = "../brush-rerun"
+
+[lints]
+workspace = true

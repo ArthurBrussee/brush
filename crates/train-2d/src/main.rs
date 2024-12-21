@@ -15,7 +15,6 @@ use brush_train::{
 use brush_ui::burn_texture::BurnTexture;
 use burn::{
     backend::{wgpu::WgpuDevice, Autodiff, Wgpu},
-    lr_scheduler::exponential::ExponentialLrSchedulerConfig,
     module::AutodiffModule,
 };
 use egui::{load::SizedTexture, ImageSource, TextureHandle, TextureOptions};
@@ -108,9 +107,6 @@ impl App {
             state.queue.clone(),
         );
 
-        let lr_max = 1.5e-4;
-        let decay = 1.0;
-
         let image = image::open("./crab.jpg").expect("Failed to open image");
 
         let fov_x = 0.5 * std::f64::consts::PI;
@@ -141,7 +137,7 @@ impl App {
             cc.egui_ctx
                 .load_texture("nearest_view_tex", color_img, TextureOptions::default());
 
-        let config = TrainConfig::new(ExponentialLrSchedulerConfig::new(lr_max, decay))
+        let config = TrainConfig::new()
             .with_refine_start_iter(100) // Don't really need a warmup for simple 2D
             .with_refine_stop_iter(u32::MAX) // Just keep refining
             .with_reset_alpha_every_refine(u32::MAX); // Don't use alpha reset.
