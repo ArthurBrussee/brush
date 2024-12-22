@@ -332,9 +332,12 @@ async fn train_process_loop(
                     let splats = *splats.clone();
                     let output_send = output.clone();
 
+                    let path = &process_config.export_path;
+                    // Ad-hoc format string.
                     let digits = (train_config.total_steps as f64).log10().ceil() as usize;
-                    let export_name = format!("export_{iter:0digits$}.ply");
-                    log::info!("Exporting to {export_name}");
+                    let export_path = path.replace("{iter}", &format!("{iter:0digits$}"));
+
+                    log::info!("Exporting to {export_path}");
 
                     // Nb: this COULD easily be done in the spawned future as well,
                     // but for memory reasons it's not great to keep another copy of the
@@ -342,7 +345,7 @@ async fn train_process_loop(
                     let splat_data = splat_export::splat_to_ply(splats).await?;
 
                     tokio::task::spawn(async move {
-                        if let Err(e) = tokio::fs::write(export_name, splat_data).await {
+                        if let Err(e) = tokio::fs::write(export_path, splat_data).await {
                             let _ = output_send
                                 .send(ProcessMessage::Error(anyhow::anyhow!(
                                     "Failed to export ply: {e}"

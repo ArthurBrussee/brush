@@ -13,10 +13,18 @@ pub struct ProcessConfig {
     #[arg(long, help_heading = "Process options", default_value = "1000")]
     #[config(default = 1000)]
     pub eval_every: u32,
-    /// Eval every this many steps.
+    /// Export every this many steps.
     #[arg(long, help_heading = "Process options", default_value = "5000")]
     #[config(default = 5000)]
     pub export_every: u32,
+    /// Export path
+    #[arg(
+        long,
+        help_heading = "Process options",
+        default_value = "./export_{iter}.ply"
+    )]
+    #[config(default = "String::from(\"./export_{iter}.ply\")")]
+    pub export_path: String,
 }
 
 #[derive(Config, Args)]

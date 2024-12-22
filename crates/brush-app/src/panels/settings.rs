@@ -65,7 +65,7 @@ impl AppPanel for SettingsPanel {
             }
 
             if let Some(max_frames) = self.args.load_config.max_frames.as_mut() {
-                ui.add(Slider::new(max_frames, 1..=256));
+                ui.add(Slider::new(max_frames, 1..=256).clamping(egui::SliderClamping::Never));
             }
 
             let mut use_eval_split = self.args.load_config.eval_split_every.is_some();
@@ -80,6 +80,7 @@ impl AppPanel for SettingsPanel {
             if let Some(eval_split) = self.args.load_config.eval_split_every.as_mut() {
                 ui.add(
                     Slider::new(eval_split, 2..=32)
+                        .clamping(egui::SliderClamping::Never)
                         .prefix("1 out of ")
                         .suffix(" frames"),
                 );
@@ -97,6 +98,7 @@ impl AppPanel for SettingsPanel {
             if let Some(subsample_frames) = self.args.load_config.subsample_frames.as_mut() {
                 ui.add(
                     Slider::new(subsample_frames, 2..=32)
+                        .clamping(egui::SliderClamping::Never)
                         .prefix("Keep 1 out of ")
                         .suffix(" frames"),
                 );
@@ -114,29 +116,44 @@ impl AppPanel for SettingsPanel {
             if let Some(subsample_points) = self.args.load_config.subsample_points.as_mut() {
                 ui.add(
                     Slider::new(subsample_points, 2..=32)
+                        .clamping(egui::SliderClamping::Never)
                         .prefix("Keep 1 out of ")
                         .suffix(" points"),
                 );
             }
 
+            ui.heading("Training Settings");
+
+            ui.add(
+                egui::Slider::new(&mut self.args.train_config.total_steps, 1..=50000)
+                    .clamping(egui::SliderClamping::Never)
+                    .suffix(" steps"),
+            );
+
             ui.heading("Process Settings");
+
             ui.horizontal(|ui| {
                 ui.label("Evaluate");
                 ui.add(
                     egui::Slider::new(&mut self.args.process_config.eval_every, 1..=5000)
+                        .clamping(egui::SliderClamping::Never)
                         .prefix("every ")
                         .suffix(" steps"),
                 );
             });
 
-            ui.horizontal(|ui| {
-                ui.label("Export");
-                ui.add(
-                    egui::Slider::new(&mut self.args.process_config.export_every, 1..=15000)
-                        .prefix("every ")
-                        .suffix(" steps"),
-                );
-            });
+            #[cfg(not(target_family = "wasm"))]
+            {
+                ui.horizontal(|ui| {
+                    ui.label("Export");
+                    ui.add(
+                        egui::Slider::new(&mut self.args.process_config.export_every, 1..=15000)
+                            .clamping(egui::SliderClamping::Never)
+                            .prefix("every ")
+                            .suffix(" steps"),
+                    );
+                });
+            }
 
             #[cfg(all(not(target_family = "wasm"), not(target_os = "android")))]
             {
@@ -162,6 +179,7 @@ impl AppPanel for SettingsPanel {
                                 &mut rerun_config.rerun_log_train_stats_every,
                                 1..=1000,
                             )
+                            .clamping(egui::SliderClamping::Never)
                             .prefix("every ")
                             .suffix(" steps"),
                         );
@@ -175,7 +193,11 @@ impl AppPanel for SettingsPanel {
                     }
 
                     if let Some(every) = rerun_config.rerun_log_splats_every.as_mut() {
-                        ui.add(egui::Slider::new(every, 1..=5000).text("Visualize splats every"));
+                        ui.add(
+                            egui::Slider::new(every, 1..=5000)
+                                .clamping(egui::SliderClamping::Never)
+                                .text("Visualize splats every"),
+                        );
                     }
                 }
             }
