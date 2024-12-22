@@ -1,4 +1,5 @@
 use brush_dataset::splat_export;
+use brush_process::process_loop::{ControlMessage, ProcessMessage};
 use brush_ui::burn_texture::BurnTexture;
 use burn_wgpu::Wgpu;
 use core::f32;
@@ -16,10 +17,7 @@ use tokio_with_wasm::alias as tokio_wasm;
 use tracing::trace_span;
 use web_time::Instant;
 
-use crate::{
-    app::{AppContext, AppPanel},
-    process_loop::{ControlMessage, ProcessMessage},
-};
+use crate::app::{AppContext, AppPanel};
 
 pub(crate) struct ScenePanel {
     pub(crate) backbuffer: BurnTexture,

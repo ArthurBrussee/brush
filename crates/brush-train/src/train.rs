@@ -19,88 +19,92 @@ use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
 use crate::scene::SceneView;
 use crate::ssim::Ssim;
 use crate::stats::RefineRecord;
+use clap::Args;
 
-#[derive(Config)]
+#[derive(Config, Args)]
 pub struct TrainConfig {
-    // Weight for SSIM loss
+    /// Total number of steps to train for.
+    #[config(default = 30000)]
+    #[arg(long, help_heading = "Training options", default_value = "30000")]
+    pub total_steps: u32,
+
+    /// Weight of SSIM loss (compared to l1 loss)
     #[config(default = 0.2)]
+    #[clap(long, help_heading = "Training options", default_value = "0.2")]
     ssim_weight: f32,
-
-    // GSs with opacity below this value will be pruned
-    #[config(default = 0.005)]
-    cull_opacity: f32,
-
-    // threshold of positional gradient norm for densifying gaussians
-    #[config(default = 0.0002)]
-    densify_grad_thresh: f32,
-
-    // Gaussians bigger than this size in screenspace radius are split.
-    // Set to 1.0 to disable.
-    #[config(default = 0.1)]
-    densify_radius_threshold: f32,
-
-    // below this size, gaussians are *duplicated*, otherwise split.
-    #[config(default = 0.01)]
-    densify_size_threshold: f32,
-
-    // threshold of scale for culling huge gaussians
-    #[config(default = 0.5)]
-    cull_scale3d_percentage_threshold: f32,
-
-    // period of steps where refinement is turned off
-    #[config(default = 500)]
-    refine_start_iter: u32,
-
-    #[config(default = 15000)]
-    refine_stop_iter: u32,
-
-    // Every this many refinement steps, reset the alpha
-    #[config(default = 30)]
-    reset_alpha_every_refine: u32,
-    // period of steps where gaussians are culled and densified
-    #[config(default = 100)]
-    refine_every: u32,
-
+    /// SSIM window size
     #[config(default = 11)]
+    #[clap(long, help_heading = "Training options", default_value = "11")]
     ssim_window_size: usize,
+    /// Start learning rate for the mean.
+    #[config(default = 1.6e-4)]
+    #[arg(long, help_heading = "Training options", default_value = "1.6e-4")]
+    lr_mean: f64,
+    /// Learning rate decay for the mean lr.
+    #[config(default = 1e-2)]
+    #[arg(long, help_heading = "Training options", default_value = "1e-2")]
+    lr_mean_decay: f64,
 
-    // Learning rates.
-    lr_mean: ExponentialLrSchedulerConfig,
-
-    // Learning rate for the basic coefficients.
+    /// Learning rate for the basic coefficients.
     #[config(default = 2.5e-3)]
+    #[arg(long, help_heading = "Training options", default_value = "2.5e-3")]
     lr_coeffs_dc: f64,
-
-    // How much to divide the learning rate by for higher SH orders.
+    /// How much to divide the learning rate by for higher SH orders.
     #[config(default = 20.0)]
+    #[arg(long, help_heading = "Training options", default_value = "20.0")]
     lr_coeffs_sh_scale: f32,
-
+    /// Learning rate for the opacity.
     #[config(default = 5e-2)]
+    #[arg(long, help_heading = "Training options", default_value = "5e-2")]
     lr_opac: f64,
-
+    /// Learning rate for the scale.
     #[config(default = 5e-3)]
+    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
     lr_scale: f64,
-
+    /// Learning rate for the rotation.
     #[config(default = 1e-3)]
+    #[arg(long, help_heading = "Training options", default_value = "1e-3")]
     lr_rotation: f64,
 
-    #[config(default = 42)]
-    pub seed: u64,
-
-    #[config(default = 1000)]
-    pub eval_every: u32,
+    /// GSs with opacity below this value will be pruned
+    #[config(default = 0.005)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.005")]
+    cull_opacity: f32,
+    /// Threshold for positional gradient norm
+    #[config(default = 0.0002)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0002")]
+    densify_grad_thresh: f32,
+    /// Gaussians bigger than this size in screenspace radius are split
+    #[config(default = 0.1)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.1")]
+    densify_radius_threshold: f32,
+    /// Below this size, gaussians are *duplicated*, otherwise split
+    #[config(default = 0.01)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.01")]
+    densify_size_threshold: f32,
+    /// Gaussians bigger than this size in percent of the scene extent are culled
+    #[config(default = 0.5)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.5")]
+    cull_scale3d_percentage_threshold: f32,
+    /// Period before refinement starts.
+    #[config(default = 500)]
+    #[arg(long, help_heading = "Refine options", default_value = "500")]
+    refine_start_iter: u32,
+    /// Period after which refinement stops.
+    #[config(default = 15000)]
+    #[arg(long, help_heading = "Refine options", default_value = "15000")]
+    refine_stop_iter: u32,
+    /// Every this many refinement steps, reset the alpha
+    #[config(default = 30)]
+    #[arg(long, help_heading = "Refine options", default_value = "30")]
+    reset_alpha_every_refine: u32,
+    /// Period of steps where gaussians are culled and densified
+    #[config(default = 100)]
+    #[arg(long, help_heading = "Refine options", default_value = "100")]
+    refine_every: u32,
 }
 
 type B = Autodiff<Wgpu>;
-
-impl Default for TrainConfig {
-    fn default() -> Self {
-        let decay_steps = 30000;
-        let lr_max = 1.6e-4;
-        let decay = 1e-2f64.powf(1.0 / decay_steps as f64);
-        Self::new(ExponentialLrSchedulerConfig::new(lr_max, decay))
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct SceneBatch<B: Backend> {
@@ -192,9 +196,12 @@ impl SplatTrainer {
         let optim = AdamScaledConfig::new().with_epsilon(1e-15).init();
         let ssim = Ssim::new(config.ssim_window_size, 3, device);
 
+        let decay = config.lr_mean_decay.powf(1.0 / config.total_steps as f64);
+        let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean, decay);
+
         Self {
             config: config.clone(),
-            sched_mean: config.lr_mean.init().expect("Lr schedule must be valid."),
+            sched_mean: lr_mean.init().expect("Lr schedule must be valid."),
             optim,
             refine_record: RefineRecord::new(splats.num_splats(), device),
             ssim,

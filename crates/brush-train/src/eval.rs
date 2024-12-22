@@ -8,7 +8,6 @@ use crate::image::image_to_tensor;
 use crate::scene::{Scene, SceneView};
 use crate::ssim::Ssim;
 
-#[derive(Clone)]
 pub struct EvalView<B: Backend> {
     pub view: SceneView,
     pub rendered: Tensor<B, 3>,
@@ -19,9 +18,20 @@ pub struct EvalView<B: Backend> {
     pub aux: RenderAux<B>,
 }
 
-#[derive(Clone)]
 pub struct EvalStats<B: Backend> {
     pub samples: Vec<EvalView<B>>,
+}
+
+impl<B: Backend> EvalStats<B> {
+    /// Calculate the average PSNR of all samples.
+    pub fn avg_psnr(&self) -> f32 {
+        self.samples.iter().map(|s| s.psnr).sum::<f32>() / (self.samples.len() as f32)
+    }
+
+    /// Calculate the average PSNR of all samples.
+    pub fn avg_ssim(&self) -> f32 {
+        self.samples.iter().map(|s| s.ssim).sum::<f32>() / (self.samples.len() as f32)
+    }
 }
 
 pub async fn eval_stats<B: Backend>(

@@ -4,11 +4,11 @@ use std::{
     sync::Arc,
 };
 
-use super::{DataStream, LoadDatasetArgs};
+use super::DataStream;
 use crate::{
     brush_vfs::{normalized_path, BrushVfs},
     splat_import::SplatMessage,
-    stream_fut_parallel, Dataset,
+    stream_fut_parallel, Dataset, LoadDataseConfig,
 };
 use anyhow::Result;
 use async_fn_stream::try_fn_stream;
@@ -38,7 +38,7 @@ fn find_base_path(archive: &BrushVfs, search_path: &str) -> Option<PathBuf> {
 
 async fn read_views(
     archive: BrushVfs,
-    load_args: &LoadDatasetArgs,
+    load_args: &LoadDataseConfig,
 ) -> Result<Vec<impl Future<Output = Result<SceneView>>>> {
     log::info!("Loading colmap dataset");
     let mut archive = archive;
@@ -140,7 +140,7 @@ async fn read_views(
 
 pub(crate) async fn load_dataset<B: Backend>(
     mut archive: BrushVfs,
-    load_args: &LoadDatasetArgs,
+    load_args: &LoadDataseConfig,
     device: &B::Device,
 ) -> Result<(DataStream<SplatMessage<B>>, DataStream<Dataset>)> {
     let mut handles = read_views(archive.clone(), load_args).await?;

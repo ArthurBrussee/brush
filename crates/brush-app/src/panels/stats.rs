@@ -1,7 +1,5 @@
-use crate::{
-    app::{AppContext, AppPanel},
-    process_loop::ProcessMessage,
-};
+use crate::app::{AppContext, AppPanel};
+use brush_process::process_loop::ProcessMessage;
 use burn_jit::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use std::time::Duration;
@@ -102,9 +100,7 @@ impl AppPanel for StatsPanel {
                 self.last_train_step = (*timestamp, *iter);
             }
             ProcessMessage::EvalResult { iter: _, eval } => {
-                let avg_psnr =
-                    eval.samples.iter().map(|s| s.psnr).sum::<f32>() / (eval.samples.len() as f32);
-                self.last_eval_psnr = Some(avg_psnr);
+                self.last_eval_psnr = Some(eval.avg_psnr());
             }
             _ => {}
         }

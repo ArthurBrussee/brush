@@ -50,7 +50,6 @@ pub async fn pick_file() -> Result<FileHandle> {
             .pick_file()
             .await
             .context("No file selected")?;
-
         Ok(FileHandle::Rfd(file))
     }
 

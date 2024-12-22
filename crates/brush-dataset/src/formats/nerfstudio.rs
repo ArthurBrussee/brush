@@ -1,9 +1,9 @@
 use super::DataStream;
-use super::LoadDatasetArgs;
 use crate::brush_vfs::BrushVfs;
 use crate::splat_import::load_splat_from_ply;
 use crate::splat_import::SplatMessage;
 use crate::stream_fut_parallel;
+use crate::LoadDataseConfig;
 use crate::{clamp_img_to_max_size, Dataset};
 use anyhow::Context;
 use anyhow::Result;
@@ -97,7 +97,7 @@ fn read_transforms_file(
     scene: JsonScene,
     transforms_path: PathBuf,
     vfs: BrushVfs,
-    load_args: &LoadDatasetArgs,
+    load_args: &LoadDataseConfig,
 ) -> Vec<impl Future<Output = anyhow::Result<SceneView>>> {
     let iter = scene
         .frames
@@ -180,7 +180,7 @@ fn read_transforms_file(
 
 pub async fn read_dataset<B: Backend>(
     mut vfs: BrushVfs,
-    load_args: &LoadDatasetArgs,
+    load_args: &LoadDataseConfig,
     device: &B::Device,
 ) -> Result<(DataStream<SplatMessage<B>>, DataStream<Dataset>)> {
     log::info!("Loading nerfstudio dataset");
