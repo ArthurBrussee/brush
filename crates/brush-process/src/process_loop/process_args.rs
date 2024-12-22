@@ -55,7 +55,7 @@ pub struct ProcessArgs {
 
 impl Default for ProcessArgs {
     fn default() -> Self {
-        ProcessArgs {
+        Self {
             train_config: TrainConfig::new(),
             model_config: ModelConfig::new(),
             load_config: LoadDataseConfig::new(),

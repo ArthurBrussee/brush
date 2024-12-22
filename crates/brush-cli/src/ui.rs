@@ -8,7 +8,7 @@ pub async fn process_ui(process: RunningProcess) {
 
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
-            .unwrap()
+            .expect("Invalid indacitif config")
             .tick_strings(&[
                 "🖌️      ",
                 "█🖌️     ",
@@ -36,7 +36,7 @@ pub async fn process_ui(process: RunningProcess) {
 
     let eval_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
-            .unwrap()
+            .expect("Invalid indicatif config")
             .tick_strings(&["✅", "✅"]),
     );
 
@@ -45,7 +45,7 @@ pub async fn process_ui(process: RunningProcess) {
             ProgressStyle::with_template(
                 "[{elapsed}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} ({per_sec}, {eta} remaining)",
             )
-            .unwrap().progress_chars("◍○○"),
+            .expect("Invalid indicatif config").progress_chars("◍○○"),
         )
         .with_message("Steps");
 
@@ -75,7 +75,7 @@ pub async fn process_ui(process: RunningProcess) {
                 main_spinner.set_message("Loading data...");
             }
             ProcessMessage::Error(error) => {
-                let _ = sp.println(format!("❌ Error: {}", error.to_string()));
+                let _ = sp.println(format!("❌ Error: {error}"));
                 break;
             }
             ProcessMessage::ViewSplats { .. } => {
@@ -85,7 +85,7 @@ pub async fn process_ui(process: RunningProcess) {
                 main_spinner.set_message(format!(
                     "Loading data... {} training, {} eval views",
                     data.train.views.len(),
-                    data.eval.as_ref().map(|v| v.views.len()).unwrap_or(0),
+                    data.eval.as_ref().map_or(0, |v| v.views.len()),
                 ));
 
                 if let Some(val) = data.eval.as_ref() {
@@ -96,8 +96,7 @@ pub async fn process_ui(process: RunningProcess) {
                     ));
                 }
             }
-            ProcessMessage::DoneLoading { training } => {
-                if training {}
+            ProcessMessage::DoneLoading { .. } => {
                 main_spinner.set_message("Dataset loaded");
             }
             ProcessMessage::TrainStep {

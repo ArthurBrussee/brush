@@ -1,11 +1,11 @@
 use web_time::Instant;
 
 use crate::{data_source::DataSource, rerun_tools::VisualizeTools};
-use brush_dataset::{brush_vfs::BrushVfs, splat_import, Dataset, LoadDataseConfig, ModelConfig};
+use brush_dataset::{brush_vfs::BrushVfs, splat_import, Dataset};
 use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
 use brush_train::{
     eval::EvalStats,
-    train::{RefineStats, TrainConfig, TrainStepStats},
+    train::{RefineStats, TrainStepStats},
 };
 use burn::{backend::Autodiff, module::AutodiffModule, prelude::Backend};
 use burn_wgpu::{Wgpu, WgpuDevice};
@@ -21,7 +21,7 @@ use brush_dataset::splat_export;
 
 use super::{
     train_stream::{self, train_stream},
-    ProcessArgs, ProcessConfig, RerunConfig,
+    ProcessArgs,
 };
 
 pub enum ProcessMessage {
@@ -108,18 +108,7 @@ async fn process_loop(
     {
         view_process_loop(paths, output.clone(), vfs, device).await
     } else {
-        train_process_loop(
-            output.clone(),
-            vfs,
-            device,
-            control_receiver,
-            args.load_config,
-            args.model_config,
-            args.process_config,
-            args.rerun_config,
-            args.train_config,
-        )
-        .await
+        train_process_loop(output.clone(), vfs, device, control_receiver, &args).await
     };
 
     if let Err(e) = result {
@@ -192,12 +181,10 @@ async fn train_process_loop(
     vfs: BrushVfs,
     device: WgpuDevice,
     control_receiver: UnboundedReceiver<ControlMessage>,
-    load_data_args: LoadDataseConfig,
-    load_init_args: ModelConfig,
-    process_config: ProcessConfig,
-    rerun_config: RerunConfig,
-    train_config: TrainConfig,
+    process_args: &ProcessArgs,
 ) -> Result<(), anyhow::Error> {
+    let process_config = &process_args.process_config;
+
     let _ = output
         .send(ProcessMessage::StartLoading { training: true })
         .await;
@@ -210,7 +197,7 @@ async fn train_process_loop(
 
     let mut dataset = Dataset::empty();
     let (mut splat_stream, mut data_stream) =
-        brush_dataset::load_dataset(vfs.clone(), &load_data_args, &device).await?;
+        brush_dataset::load_dataset(vfs.clone(), &process_args.load_config, &device).await?;
 
     // Read initial splats if any.
     while let Some(message) = splat_stream.next().await {
@@ -227,7 +214,7 @@ async fn train_process_loop(
         initial_splats = Some(message.splats);
     }
 
-    let visualize = VisualizeTools::new(rerun_config.rerun_enabled);
+    let visualize = VisualizeTools::new(process_args.rerun_config.rerun_enabled);
 
     // Read dataset stream.
     while let Some(d) = data_stream.next().await {
@@ -261,12 +248,17 @@ async fn train_process_loop(
         Splats::from_random_config(&config, adjusted_bounds, &mut rng, &device)
     };
 
-    let splats = splats.with_sh_degree(load_init_args.sh_degree);
+    let splats = splats.with_sh_degree(process_args.model_config.sh_degree);
 
     let mut control_receiver = control_receiver;
 
     let eval_scene = dataset.eval.clone();
-    let stream = train_stream(dataset, splats, train_config.clone(), device.clone());
+    let stream = train_stream(
+        dataset,
+        splats,
+        process_args.train_config.clone(),
+        device.clone(),
+    );
     let mut stream = std::pin::pin!(stream);
 
     let mut train_paused = false;
@@ -334,7 +326,9 @@ async fn train_process_loop(
 
                     let path = &process_config.export_path;
                     // Ad-hoc format string.
-                    let digits = (train_config.total_steps as f64).log10().ceil() as usize;
+                    let digits = (process_args.train_config.total_steps as f64)
+                        .log10()
+                        .ceil() as usize;
                     let export_path = path.replace("{iter}", &format!("{iter:0digits$}"));
 
                     log::info!("Exporting to {export_path}");
@@ -355,7 +349,7 @@ async fn train_process_loop(
                     });
                 }
 
-                if let Some(every) = rerun_config.rerun_log_splats_every {
+                if let Some(every) = process_args.rerun_config.rerun_log_splats_every {
                     if iter % every == 0 {
                         visualize.log_splats(*splats.clone()).await?;
                     }
@@ -364,7 +358,7 @@ async fn train_process_loop(
                 visualize.log_splat_stats(&splats)?;
 
                 // Log out train stats.
-                if iter % rerun_config.rerun_log_train_stats_every == 0 {
+                if iter % process_args.rerun_config.rerun_log_train_stats_every == 0 {
                     visualize.log_train_stats(iter, *stats.clone()).await?;
                 }
 
