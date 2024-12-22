@@ -317,18 +317,18 @@ async fn train_process_loop(
                     }
                 }
 
+                let total_steps = process_args.train_config.total_steps;
+
                 // TODO: Support this on WASM somehow. Maybe have user pick a file once,
                 // and write to it repeatedly?
                 #[cfg(not(target_family = "wasm"))]
-                if iter % process_config.export_every == 0 {
+                if iter % process_config.export_every == 0 || iter == total_steps - 1 {
                     let splats = *splats.clone();
                     let output_send = output.clone();
 
                     let path = &process_config.export_path;
                     // Ad-hoc format string.
-                    let digits = (process_args.train_config.total_steps as f64)
-                        .log10()
-                        .ceil() as usize;
+                    let digits = (total_steps as f64).log10().ceil() as usize;
                     let export_path = path.replace("{iter}", &format!("{iter:0digits$}"));
 
                     log::info!("Exporting to {export_path}");
@@ -376,6 +376,10 @@ async fn train_process_loop(
                         .await
                         .is_err()
                 {
+                    break;
+                }
+
+                if iter > total_steps {
                     break;
                 }
             }
