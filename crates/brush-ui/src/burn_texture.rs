@@ -15,57 +15,6 @@ use wgpu::{CommandEncoderDescriptor, ImageDataLayout, TextureViewDescriptor};
 
 type InnerWgpu = JitBackend<WgpuRuntime, f32, i32, u32>;
 
-fn copy_buffer_to_texture(
-    img: Tensor<InnerWgpu, 3>,
-    texture: &wgpu::Texture,
-    encoder: &mut wgpu::CommandEncoder,
-) {
-    let [height, width, c] = img.dims();
-
-    let padded_shape = vec![height, width.div_ceil(64) * 64, c];
-
-    // Create padded tensor if needed. The bytes_per_row needs to be divisible
-    // by 256 in WebGPU, so 4 bytes per pixel means width needs to be disible by 64.
-    let padded = if width % 64 != 0 {
-        let padded = Tensor::zeros(&padded_shape, &img.device());
-        padded.slice_assign([0..height, 0..width], img)
-    } else {
-        img
-    };
-
-    let prim = padded.into_primitive().tensor();
-
-    let client = &prim.client;
-    client.flush();
-    let img_res = client.get_resource(prim.handle.clone().binding());
-
-    // Put compute passes in encoder before copying the buffer.
-    let bytes_per_row = Some(4 * padded_shape[1] as u32);
-
-    // Now copy the buffer to the texture.
-    encoder.copy_buffer_to_texture(
-        wgpu::ImageCopyBuffer {
-            buffer: img_res.resource().buffer.as_ref(),
-            layout: ImageDataLayout {
-                offset: img_res.resource().offset(),
-                bytes_per_row,
-                rows_per_image: None,
-            },
-        },
-        wgpu::ImageCopyTexture {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::Extent3d {
-            width: width as u32,
-            height: height as u32,
-            depth_or_array_layers: 1,
-        },
-    );
-}
-
 struct TextureState {
     texture: wgpu::Texture,
     id: TextureId,
@@ -150,11 +99,57 @@ impl BurnTexture {
             unreachable!("Somehow failed to initialize")
         };
 
-        let img = img.into_primitive().tensor();
-        let client = img.client.clone();
-        let img = client.resolve_tensor_float::<InnerWgpu>(img);
-        let img = Tensor::from_primitive(TensorPrimitive::Float(img));
-        copy_buffer_to_texture(img, &s.texture, &mut encoder);
+        let img_prim = img.into_primitive().tensor();
+        let fusion_client = img_prim.client.clone();
+        let img = fusion_client.resolve_tensor_float::<InnerWgpu>(img_prim);
+        let texture: &wgpu::Texture = &s.texture;
+        let [height, width, c] = img.shape.dims();
+
+        let padded_shape = vec![height, width.div_ceil(64) * 64, c];
+
+        // Create padded tensor if needed. The bytes_per_row needs to be divisible
+        // by 256 in WebGPU, so 4 bytes per pixel means width needs to be disible by 64.
+        let img = if width % 64 != 0 {
+            let padded: Tensor<InnerWgpu, 3> = Tensor::zeros(&padded_shape, &img.device);
+            let img = Tensor::from_primitive(TensorPrimitive::Float(img));
+            let padded = padded.slice_assign([0..height, 0..width], img);
+            padded.into_primitive().tensor()
+        } else {
+            img
+        };
+
+        // Get a hold of the Burn resource.
+        let client = &img.client;
+        let img_res_handle = client.get_resource(img.handle.clone().binding());
+
+        // Now flush commands to make sure the resource is fully ready.
+        client.flush();
+
+        // Put compute passes in encoder before copying the buffer.
+        let bytes_per_row = Some(4 * padded_shape[1] as u32);
+
+        // Now copy the buffer to the texture.
+        encoder.copy_buffer_to_texture(
+            wgpu::ImageCopyBuffer {
+                buffer: img_res_handle.resource().buffer.as_ref(),
+                layout: ImageDataLayout {
+                    offset: img_res_handle.resource().offset(),
+                    bytes_per_row,
+                    rows_per_image: None,
+                },
+            },
+            wgpu::ImageCopyTexture {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: width as u32,
+                height: height as u32,
+                depth_or_array_layers: 1,
+            },
+        );
 
         self.queue.submit([encoder.finish()]);
 
