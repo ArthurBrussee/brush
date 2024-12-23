@@ -56,7 +56,7 @@ impl AppPanel for SettingsPanel {
             }
 
             if let Some(target_res) = self.args.load_config.max_resolution.as_mut() {
-                ui.add(Slider::new(target_res, 32..=2048));
+                ui.add(Slider::new(target_res, 32..=2048).clamping(egui::SliderClamping::Never));
             }
 
             let mut limit_frames = self.args.load_config.max_frames.is_some();
