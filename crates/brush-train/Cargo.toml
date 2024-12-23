@@ -18,8 +18,8 @@ log.workspace = true
 hashbrown.workspace = true
 
 burn.workspace = true
+burn-jit.workspace = true
 burn-fusion.workspace = true
-cubecl.workspace = true
 
 clap.workspace = true
 

@@ -4,8 +4,9 @@ use burn::backend::wgpu::JitBackend;
 use burn::backend::{Autodiff, Wgpu};
 use burn::prelude::*;
 use burn_fusion::client::FusionClient;
-use cubecl::wgpu::WgpuRuntime;
-use cubecl::CubeDim;
+use burn_jit::cubecl;
+use burn_jit::cubecl::wgpu::WgpuRuntime;
+use burn_jit::cubecl::CubeDim;
 use tracing::trace_span;
 
 use crate::stats_kernel::stats_gather_kernel;

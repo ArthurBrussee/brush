@@ -85,22 +85,22 @@ fn generate_bench_data() -> anyhow::Result<()> {
         &device,
     );
 
-    let bytes = means.to_data().bytes;
+    let bytes = means.to_data().as_bytes().to_vec();
     let means =
         safetensors::tensor::TensorView::new(safetensors::Dtype::F32, means.shape().dims, &bytes)?;
-    let bytes = log_scales.to_data().bytes;
+    let bytes = log_scales.to_data().as_bytes().to_vec();
     let log_scales = safetensors::tensor::TensorView::new(
         safetensors::Dtype::F32,
         log_scales.shape().dims,
         &bytes,
     )?;
-    let bytes = quats.to_data().bytes;
+    let bytes = quats.to_data().as_bytes().to_vec();
     let quats =
         safetensors::tensor::TensorView::new(safetensors::Dtype::F32, quats.shape().dims, &bytes)?;
-    let bytes = coeffs.to_data().bytes;
+    let bytes = coeffs.to_data().as_bytes().to_vec();
     let coeffs =
         safetensors::tensor::TensorView::new(safetensors::Dtype::F32, coeffs.shape().dims, &bytes)?;
-    let bytes = opacities.to_data().bytes;
+    let bytes = opacities.to_data().as_bytes().to_vec();
     let opacities = safetensors::tensor::TensorView::new(
         safetensors::Dtype::F32,
         opacities.shape().dims,

@@ -66,18 +66,15 @@ parking_lot = { version = "0.12.3", features = ["arc_lock"] }
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
 ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 
-burn = { git = "https://github.com/ArthurBrussee/burn", branch = "temp-update", features = [
+burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',
-    'template',
 ] } # Various burn packages. Currently need to use burn at head.
-burn-jit = { git = "https://github.com/ArthurBrussee/burn", branch = "temp-update" }
-burn-wgpu = { git = "https://github.com/ArthurBrussee/burn", branch = "temp-update", features = [
+burn-jit = { git = "https://github.com/tracel-ai/burn" }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
 ] }
-burn-fusion = { git = "https://github.com/ArthurBrussee/burn", branch = "temp-update" }
-
-cubecl = { git = "https://github.com/ArthurBrussee/cubecl", default-features = false, branch = "temp-update" }
+burn-fusion = { git = "https://github.com/tracel-ai/burn" }
 
 egui = "0.30.0"
 eframe = { version = "0.30.0", default-features = false, features = [
@@ -132,7 +129,7 @@ clap = { version = "4.5.23", features = ["derive"] }
 # ecolor = { git = "https://github.com/emilk/egui/", rev = "5bfff316c9818b3c140d02bb6cdc488556d46ab7" }
 
 [profile.dev]
-opt-level = 1
+opt-level = 0
 debug = true
 
 # Optimize dependencies even in debug builds (does not affect workspace packages):

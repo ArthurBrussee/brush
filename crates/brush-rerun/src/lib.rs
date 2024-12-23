@@ -88,7 +88,7 @@ impl<B: Backend> BurnToImage for Tensor<B, 3> {
             ColorModel::RGBA
         };
         rerun::Image::from_color_model_and_bytes(
-            self.into_data_async().await.bytes,
+            self.into_data_async().await.as_bytes().to_vec(),
             [w as u32, h as u32],
             color_model,
             ChannelDatatype::F32,
@@ -106,7 +106,7 @@ impl<B: Backend> BurnToImage for Tensor<B, 3, Int> {
             ColorModel::RGBA
         };
         rerun::Image::from_color_model_and_bytes(
-            self.into_data_async().await.bytes,
+            self.into_data_async().await.as_bytes().to_vec(),
             [w as u32, h as u32],
             color_model,
             ChannelDatatype::U8,
