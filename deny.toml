@@ -68,7 +68,7 @@ skip = [
 
     { name = 'indexmap' },
 
-    # { name = 'miniz_oxide' },         # Rerun & burn
+    { name = 'ndk-sys' },
 ]
 
 [licenses]
