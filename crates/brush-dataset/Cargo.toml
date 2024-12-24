@@ -20,8 +20,6 @@ tracing.workspace = true
 log.workspace = true
 ply-rs.workspace = true
 rand.workspace = true
-ndarray.workspace = true
-ndarray-linalg.workspace = true
 
 tokio = { workspace = true, features = ["io-util"] }
 tokio_with_wasm.workspace = true
