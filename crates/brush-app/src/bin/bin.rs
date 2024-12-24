@@ -21,7 +21,7 @@ fn main() -> Result<(), clap::Error> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .expect("Failed to intitialize tokio runtime");
+            .expect("Failed to initialize tokio runtime");
 
         runtime.block_on(async {
             env_logger::init();

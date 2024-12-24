@@ -18,7 +18,7 @@ cargo install cargo-ndk
 cd ./crates/brush-android # Make sure to run this in the android crate path.
 cargo ndk -t arm64-v8a -o app/src/main/jniLibs/  build
 
-# Nb, for best performance, build in release mode. This is seperate
+# Nb, for best performance, build in release mode. This is separate
 # from the Android Studio app build configuration.
 cargo ndk -t arm64-v8a -o app/src/main/jniLibs/  build --release
 

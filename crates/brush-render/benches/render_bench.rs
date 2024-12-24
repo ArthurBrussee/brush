@@ -30,7 +30,7 @@ const INTERNAL_ITERS: u32 = 5;
 
 fn generate_bench_data() -> anyhow::Result<()> {
     <DiffBack as burn::prelude::Backend>::seed(4);
-    let num_points = 2usize.pow(21); //  Maxmimum number of splats to bench.
+    let num_points = 2usize.pow(21); //  Maximum number of splats to bench.
 
     let device = WgpuDevice::DefaultDevice;
 

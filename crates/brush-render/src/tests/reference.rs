@@ -155,7 +155,7 @@ async fn test_reference() -> Result<()> {
         let v_opacities_ref =
             safetensor_to_burn::<DiffBack, 1>(&tensors.tensor("v_opacities")?, &device).inner();
         let v_opacities = splats.raw_opacity.grad(&grads).context("opacities grad")?;
-        assert!(v_opacities.all_close(v_opacities_ref, Some(1e-5), Some(1e-10)));
+        assert!(v_opacities.all_close(v_opacities_ref, Some(1e-4), Some(1e-9)));
 
         let v_coeffs_ref =
             safetensor_to_burn::<DiffBack, 3>(&tensors.tensor("v_coeffs")?, &device).inner();

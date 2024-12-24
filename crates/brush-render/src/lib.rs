@@ -275,7 +275,7 @@ pub trait Backend: burn::tensor::backend::Backend {
     /// The arguments are all passed as raw tensors. See [`Splats`] for a convenient Module that wraps this fun
     /// The [`xy_grad_dummy`] variable is only used to carry screenspace xy gradients.
     /// This function can optionally render a "u32" buffer, which is a packed RGBA (8 bits per channel)
-    /// buffer. This is useful when the results need to be displayed immediatly.
+    /// buffer. This is useful when the results need to be displayed immediately.
     fn render_splats(
         camera: &Camera,
         img_size: glam::UVec2,

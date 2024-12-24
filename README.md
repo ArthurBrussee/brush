@@ -40,7 +40,7 @@ Training on a pixel 7
 
 # Why
 
-Machine learning for real time rendering has a lot of potential, but most popular ML tools don't align well with it. Rendering requires low latency, usually involve dynamic shapes, and it's not pleasant to attempt to ship apps with large PyTorch/Jax/CUDA deps calling out to python in a rendering loop. The usual fix is to write a seperate training and inference application. Brush on the other hand, written in rust using `wgpu` and `burn`, can produce simple dependency free binaries, and can run on nearly all devices.
+Machine learning for real time rendering has a lot of potential, but most popular ML tools don't align well with it. Rendering requires low latency, usually involve dynamic shapes, and it's not pleasant to attempt to ship apps with large PyTorch/Jax/CUDA deps calling out to python in a rendering loop. The usual fix is to write a separate training and inference application. Brush on the other hand, written in rust using `wgpu` and `burn`, can produce simple dependency free binaries, and can run on nearly all devices.
 
 # Getting started
 Install rust 1.81+ and run `cargo run` or `cargo run --release`. You can run tests with `cargo test --all`. Brush uses the wonderful [rerun](https://rerun.io/) for additional visualizations while training.
@@ -96,7 +96,7 @@ For additional profiling, you can use [tracy](https://github.com/wolfpld/tracy) 
 
 ### Quality
 
-Quality is similair, but for now still somewhat lagging behind the original GS implementation. This is likely due to some suboptimal splitting/cloning heuristics.
+Quality is similar, but for now still somewhat lagging behind the original GS implementation. This is likely due to some suboptimal splitting/cloning heuristics.
 
 | Scene      | Brush   | GS paper|
 |------------|---------|---------|

@@ -160,7 +160,7 @@ impl AppContext {
 
     pub fn connect_to(&mut self, process: RunningProcess) {
         self.dataset = Dataset::empty();
-        // Conver the receiver to a "reactive" receiver that wakes up the UI.
+        // Convert the receiver to a "reactive" receiver that wakes up the UI.
         let process = RunningProcess {
             messages: reactive_receiver(process.messages, self.ctx.clone()),
             ..process

@@ -64,7 +64,7 @@ pub(crate) fn max_intersections(img_size: glam::UVec2, num_splats: u32) -> u32 {
 
     // On wasm, we cannot do a sync readback at all.
     // Instead, can just estimate a max number of intersects. All the kernels only handle the actual
-    // cound of intersects, and spin up empty threads for the rest atm. In the future, could use indirect
+    // number of intersects, and spin up empty threads for the rest atm. In the future, could use indirect
     // dispatch to avoid this.
     // Estimating the max number of intersects can be a bad hack though... The worst case sceneario is so massive
     // that it's easy to run out of memory... How do we actually properly deal with this :/
@@ -102,7 +102,7 @@ pub(crate) fn render_forward(
 
     let _span = tracing::trace_span!("render_forward", sync_burn = true).entered();
 
-    // Check whether dimesions are valid.
+    // Check whether dimensions are valid.
     DimCheck::new()
         .check_dims(&means, &["D".into(), 3.into()])
         .check_dims(&log_scales, &["D".into(), 3.into()])
@@ -117,7 +117,7 @@ pub(crate) fn render_forward(
     );
 
     // A note on some confusing naming that'll be used throughout this function:
-    // Gaussians are stored in various states of buffers, eg. at the start they're all in one big bufffer,
+    // Gaussians are stored in various states of buffers, eg. at the start they're all in one big buffer,
     // then we sparsely store some results, then sort gaussian based on depths, etc.
     // Overall this means there's lots of indices flying all over the place, and it's hard to keep track
     // what is indexing what. So, for some sanity, try to match a few "gaussian ids" (gid) variable names.
@@ -208,7 +208,7 @@ pub(crate) fn render_forward(
     let isect_info =
         create_tensor::<2, WgpuRuntime>([max_intersects as usize, 2], device, client, DType::I32);
 
-    tracing::trace_span!("ProjectVisibile", sync_burn = true).in_scope(|| 
+    tracing::trace_span!("ProjectVisible", sync_burn = true).in_scope(||
         // SAFETY: Kernel has to contain no OOB indexing.
         unsafe {
         client.execute_unchecked(
@@ -260,7 +260,7 @@ pub(crate) fn render_forward(
             prefix_sum(tiles_hit_per_splat)
         });
 
-        tracing::trace_span!("MapGaussiansToIntersect", sync_burn = true).in_scope(|| 
+        tracing::trace_span!("MapGaussiansToIntersect", sync_burn = true).in_scope(||
         // SAFETY: Kernel has to contain no OOB indexing.
         unsafe {
             client.execute_unchecked(
@@ -417,7 +417,7 @@ pub(crate) fn render_backward(
 
         let hard_floats = has_hard_floats();
 
-        tracing::trace_span!("RasterizeBackwards", sync_burn = true).in_scope(|| 
+        tracing::trace_span!("RasterizeBackwards", sync_burn = true).in_scope(||
         // SAFETY: Kernel has to contain no OOB indexing.
         unsafe {
             client.execute_unchecked(
@@ -474,7 +474,7 @@ pub(crate) fn render_backward(
     let v_scales = InnerWgpu::float_zeros([num_points, 3].into(), device);
     let v_quats = InnerWgpu::float_zeros([num_points, 4].into(), device);
 
-    tracing::trace_span!("ProjectBackwards", sync_burn = true).in_scope(|| 
+    tracing::trace_span!("ProjectBackwards", sync_burn = true).in_scope(||
         // SAFETY: Kernel has to contain no OOB indexing.
         unsafe {
         client.execute_unchecked(

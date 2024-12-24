@@ -238,7 +238,7 @@ pub async fn read_dataset<B: Backend>(
                 .is_some_and(|p| p.to_string_lossy().contains("_val"))
         });
 
-        // If a seperate eval file is specified, read it.
+        // If a separate eval file is specified, read it.
         let val_stream = if let Some(eval_trans_path) = eval_trans_path {
             let mut json_str = String::new();
             data_clone
@@ -315,7 +315,7 @@ pub async fn read_dataset<B: Backend>(
 
                 let mut splat_stream = std::pin::pin!(splat_stream);
 
-                // If sucesfully extracted, sent this splat as an initial splat.
+                // If successfully extracted, sent this splat as an initial splat.
                 while let Some(Ok(splat)) = splat_stream.next().await {
                     emitter.emit(splat).await;
                 }

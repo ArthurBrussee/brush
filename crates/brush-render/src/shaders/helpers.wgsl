@@ -1,5 +1,5 @@
 const TILE_WIDTH: u32 = 16u;
-// Nb: TILE_SIZE should be <= 512 for max compatibilty.
+// Nb: TILE_SIZE should be <= 512 for max compatibility.
 const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 
 const MAIN_WG: u32 = 256u;

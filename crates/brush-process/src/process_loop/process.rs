@@ -242,7 +242,7 @@ async fn train_process_loop(
         // By default, spawn the splats in bounds.
         let bounds = dataset.train.bounds();
         let bounds_extent = bounds.extent.length();
-        // Arbitrarly assume area of interest is 0.2 - 0.75 of scene bounds.
+        // Arbitrarily assume area of interest is 0.2 - 0.75 of scene bounds.
         // Somewhat specific to the blender scenes
         let adjusted_bounds = dataset
             .train

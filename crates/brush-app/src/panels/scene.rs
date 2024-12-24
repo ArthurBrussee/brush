@@ -91,7 +91,7 @@ impl ScenePanel {
             let focal_y = fov_to_focal(context.camera.fov_y, size.y as u32) as f32;
             context.camera.fov_x = focal_to_fov(focal_y as f64, size.x as u32);
         }
-        // Round to 64 pixels. Necesarry for buffer sizes to align.
+        // Round to 64 pixels. Necessary for buffer sizes to align.
         let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
 
         let (rect, response) = ui.allocate_exact_size(
