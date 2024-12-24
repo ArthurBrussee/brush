@@ -14,7 +14,7 @@ fn gaussian<B: Backend>(window_size: usize, sigma: f32, device: &B::Device) -> T
 }
 
 impl<B: Backend> Ssim<B> {
-    // TODO: Try a seperable convolution.
+    // TODO: Try a separable convolution.
     // fn gaussian_blur<B: Backend>(img: Tensor<B, 4>, window: Tensor<B, 4>) -> Tensor<B, 4> {
     //     let [_, channel, _, _] = img.dims();
     //     let window_size = window.dims()[2];
