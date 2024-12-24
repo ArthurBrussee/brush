@@ -56,9 +56,9 @@ safetensors = "0.4.5"
 log = "0.4.22"
 wasm-bindgen = "0.2.97"
 
-wgpu = "23.0.0"
-naga = "23.0.0"
 naga_oil = "0.16"
+wgpu = { version = "23.0.0", features = ["naga-ir"] }
+naga = "23.1.0"
 
 env_logger = "0.11.5"
 parking_lot = { version = "0.12.3", features = ["arc_lock"] }
@@ -87,7 +87,7 @@ eframe = { version = "0.30.0", default-features = false, features = [
 egui_tiles = "0.11.0"
 egui_extras = { version = "0.30.0", features = ["all_loaders"] }
 
-rerun = { version = "0.21.0", default-features = false, features = [
+rerun = { version = "0.21", default-features = false, features = [
     'sdk',
     'glam',
     'image',
@@ -121,10 +121,8 @@ clap = { version = "4.5.23", features = ["derive"] }
 # cubecl-common = { path = "../cubecl/crates/cubecl-common" }
 
 [patch.crates-io]
-# Override wgpu branch to force branch that includes float atomics.
-# wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "flt-atom" }
-# naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "flt-atom" }
-
+wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "sg" }
+naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "sg" }
 # emath = { git = "https://github.com/emilk/egui/", rev = "5bfff316c9818b3c140d02bb6cdc488556d46ab7" }
 # ecolor = { git = "https://github.com/emilk/egui/", rev = "5bfff316c9818b3c140d02bb6cdc488556d46ab7" }
 

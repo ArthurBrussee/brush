@@ -13,7 +13,7 @@ burn-jit.workspace = true
 tracing.workspace = true
 naga_oil.workspace = true
 bytemuck.workspace = true
-naga.workspace = true
+wgpu.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

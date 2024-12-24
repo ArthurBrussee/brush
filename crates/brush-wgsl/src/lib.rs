@@ -1,15 +1,15 @@
 #![allow(clippy::unwrap_used)]
 mod codewriter;
 
-use std::{borrow::Cow, collections::HashMap, io, sync::OnceLock};
-
 use anyhow::Result;
 use naga::{proc::GlobalCtx, valid::Capabilities, Handle, Type};
 use naga_oil::compose::{
     ComposableModuleDescriptor, Composer, ComposerError, NagaModuleDescriptor,
 };
 use regex::Regex;
+use std::{borrow::Cow, collections::HashMap, io, sync::OnceLock};
 use thiserror::Error;
+use wgpu::naga;
 
 const DECORATION_PRE: &str = "X_naga_oil_mod_X";
 const DECORATION_POST: &str = "X";
@@ -136,11 +136,11 @@ pub fn build_modules(
         "#[rustfmt::skip]",
         "fn create_composer() -> naga_oil::compose::Composer {",
         "let mut composer = naga_oil::compose::Composer::default().with_capabilities(
-            naga::valid::Capabilities::SUBGROUP
+            wgpu::naga::valid::Capabilities::all()
         );",
     ]);
 
-    let mut composer = Composer::default().with_capabilities(Capabilities::SUBGROUP);
+    let mut composer = Composer::default().with_capabilities(Capabilities::all());
     let mut modules = HashMap::new();
 
     for include in includes {
@@ -354,7 +354,7 @@ pub fn build_modules(
                     "",
                     "pub(crate) fn create_shader_source(",
                     "   shader_defs: std::collections::HashMap<String, naga_oil::compose::ShaderDefValue>",
-                    ") -> naga::Module {",
+                    ") -> wgpu::naga::Module {",
                     "super::create_composer().make_naga_module(naga_oil::compose::NagaModuleDescriptor {",
                     &format!("source: include_str!(\"{rel_path}\"),"),
                     &format!("file_path: \"{path}\","),

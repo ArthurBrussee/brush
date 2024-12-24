@@ -15,6 +15,7 @@ egui.workspace = true
 wgpu.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"] }
 tokio_with_wasm = { workspace = true, features = ["rt"] }
+log.workspace = true
 
 [lints]
 workspace = true

@@ -11,7 +11,7 @@ burn.workspace = true
 burn-jit.workspace = true
 burn-wgpu.workspace = true
 naga_oil.workspace = true
-naga.workspace = true
+wgpu.workspace = true
 
 [build-dependencies]
 brush-wgsl.path = "../brush-wgsl"

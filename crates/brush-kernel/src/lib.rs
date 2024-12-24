@@ -10,6 +10,7 @@ pub use burn_jit::cubecl::{
 };
 use burn_jit::{cubecl::Compiler, tensor::JitTensor, JitRuntime};
 use bytemuck::Pod;
+use wgpu::naga;
 
 pub fn calc_cube_count<const D: usize>(sizes: [u32; D], workgroup_size: [u32; 3]) -> CubeCount {
     CubeCount::Static(
@@ -101,7 +102,7 @@ macro_rules! kernel_source_gen {
 
             pub const WORKGROUP_SIZE: [u32; 3] = $module::WORKGROUP_SIZE;
 
-            fn source(&self) -> naga::Module {
+            fn source(&self) -> wgpu::naga::Module {
                 let shader_defs = self.create_shader_hashmap();
                 $module::create_shader_source(shader_defs)
             }

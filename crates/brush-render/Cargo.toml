@@ -23,12 +23,12 @@ glam.workspace = true
 naga_oil.workspace = true
 safetensors.workspace = true
 tracing.workspace = true
-naga.workspace = true
 log.workspace = true
 serde.workspace = true
 kiddo.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 rand.workspace = true
+wgpu.workspace = true
 
 [features]
 debug_validation = []
