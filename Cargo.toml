@@ -60,7 +60,7 @@ naga_oil = "0.16"
 wgpu = { version = "23.0.0", features = ["naga-ir"] }
 naga = "23.1.0"
 
-env_logger = "0.11.5"
+env_logger = "0.10.2"
 parking_lot = { version = "0.12.3", features = ["arc_lock"] }
 
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.

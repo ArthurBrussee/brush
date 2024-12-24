@@ -823,7 +823,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_tiles",
- "env_logger 0.11.5",
+ "env_logger",
  "glam",
  "humantime",
  "log",
@@ -2692,20 +2692,8 @@ dependencies = [
  "humantime",
  "is-terminal",
  "log",
+ "regex",
  "termcolor",
-]
-
-[[package]]
-name = "env_logger"
-version = "0.11.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13fa619b91fb2381732789fc5de83b45675e882f66623b7d8cb4f643017018d"
-dependencies = [
- "anstream",
- "anstyle",
- "env_filter",
- "humantime",
- "log",
 ]
 
 [[package]]
@@ -6058,7 +6046,7 @@ version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdd546fa37286a0114641cf7b271eca4bce3b4a20041ca378fb3530b8dc947b8"
 dependencies = [
- "env_logger 0.10.2",
+ "env_logger",
  "js-sys",
  "log",
  "log-once",
@@ -8025,7 +8013,7 @@ dependencies = [
  "burn",
  "eframe",
  "egui",
- "env_logger 0.11.5",
+ "env_logger",
  "glam",
  "image",
  "rand",

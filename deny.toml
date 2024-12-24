@@ -66,6 +66,8 @@ skip = [
     { name = 'tower' },
     { name = 'pollster' },
 
+    { name = 'indexmap' },
+
     # { name = 'miniz_oxide' },         # Rerun & burn
 ]
 
