@@ -112,6 +112,10 @@ jobs:
           toolchain: 1.82.0
           targets: aarch64-linux-android
 
+      - uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
 
