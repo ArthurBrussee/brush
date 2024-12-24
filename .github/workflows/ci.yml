@@ -31,9 +31,6 @@ jobs:
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Rustfmt
-        run: cargo fmt --all -- --check
-
       - name: check --all-features
         run: cargo check --locked --all-features --all-targets
 
@@ -42,6 +39,9 @@ jobs:
 
       - name: check --no-default-features
         run: cargo check --locked --no-default-features --lib --all-targets
+
+      - name: Rustfmt
+        run: cargo fmt --all -- --check
 
       - name: cargo doc --lib
         run: cargo doc --lib --no-deps --all-features
