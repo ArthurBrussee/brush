@@ -5,9 +5,9 @@ use crate::splat_import::SplatMessage;
 use crate::stream_fut_parallel;
 use crate::LoadDataseConfig;
 use crate::{clamp_img_to_max_size, Dataset};
-use anyhow::Context;
 use anyhow::Result;
 use async_fn_stream::try_fn_stream;
+use brush_render::camera::fov_to_focal;
 use brush_render::camera::{focal_to_fov, Camera};
 use brush_render::Backend;
 use brush_train::scene::SceneView;
@@ -169,15 +169,26 @@ fn read_transforms_file(
                     .camera_angle_x
                     .or(frame.fl_x.map(|fx| focal_to_fov(fx, w)))
                     .or(scene.camera_angle_x)
-                    .or(scene.fl_x.map(|fx| focal_to_fov(fx, w)))
-                    .context("Must have a focal length of some kind.")?;
+                    .or(scene.fl_x.map(|fx| focal_to_fov(fx, w)));
 
                 let fovy = frame
                     .camera_angle_y
                     .or(frame.fl_y.map(|fy| focal_to_fov(fy, h)))
                     .or(scene.camera_angle_y)
-                    .or(scene.fl_y.map(|fy| focal_to_fov(fy, h)))
-                    .context("Must have a focal length of some kind.")?;
+                    .or(scene.fl_y.map(|fy| focal_to_fov(fy, h)));
+
+                let (fovx, fovy) = match (fovx, fovy) {
+                    (None, None) => anyhow::bail!("Must have some kind of focal length"),
+                    (None, Some(fovy)) => {
+                        let fovx = focal_to_fov(fov_to_focal(fovy, h), w);
+                        (fovx, fovy)
+                    }
+                    (Some(fovx), None) => {
+                        let fovy = focal_to_fov(fov_to_focal(fovx, w), h);
+                        (fovx, fovy)
+                    }
+                    (Some(fovx), Some(fovy)) => (fovx, fovy),
+                };
 
                 let cx = frame.cx.or(scene.cx).unwrap_or(w as f64 / 2.0);
                 let cy = frame.cy.or(scene.cy).unwrap_or(h as f64 / 2.0);
