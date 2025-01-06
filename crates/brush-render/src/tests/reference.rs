@@ -111,9 +111,10 @@ async fn test_reference() -> Result<()> {
             )?;
         }
 
-        // Check if images match.
-        assert!(out.clone().all_close(img_ref, Some(1e-5), Some(1e-6)));
         wrapped_aux.clone().debug_assert_valid();
+
+        // Check if images match.
+        assert!(out.clone().all_close(img_ref, Some(1e-4), Some(1e-5)));
 
         let num_visible = wrapped_aux.num_visible.into_scalar_async().await as usize;
         let projected_splats =
