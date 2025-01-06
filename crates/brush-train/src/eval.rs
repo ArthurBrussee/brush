@@ -62,9 +62,7 @@ pub async fn eval_stats<B: Backend>(
         let gt_tensor = image_to_tensor::<B>(&ground_truth, device);
         let (rendered, aux) = splats.render(&view.camera, res, false);
 
-        let render_rgb = rendered
-            .slice([0..res.y as usize, 0..res.x as usize, 0..3])
-            .clamp_min(0.0);
+        let render_rgb = rendered.slice([0..res.y as usize, 0..res.x as usize, 0..3]);
         let mse = (render_rgb.clone() - gt_tensor.clone())
             .powf_scalar(2.0)
             .mean();

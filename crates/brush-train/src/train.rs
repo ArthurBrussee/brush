@@ -256,11 +256,9 @@ impl SplatTrainer {
 
             let _span = trace_span!("Calculate losses", sync_burn = true).entered();
 
-            // Convert to srgb space.
             let pred_rgb = pred_images
                 .clone()
-                .slice([0..batch_size, 0..img_h, 0..img_w, 0..3])
-                .clamp_min(0.0);
+                .slice([0..batch_size, 0..img_h, 0..img_w, 0..3]);
 
             // This is wrong if the batch has mixed transparent and non-transparent images,
             // but that's ok for now.
