@@ -92,7 +92,8 @@ fn main(
                 }
 
                 let fac = alpha * T;
-                pix_out += vec3f(color.r, color.g, color.b) * fac;
+                let clamped_rgb = max(color.rgb, vec3f(0.0));
+                pix_out += clamped_rgb * fac;
                 T = next_T;
 
                 let isect_id = batch_start + t;

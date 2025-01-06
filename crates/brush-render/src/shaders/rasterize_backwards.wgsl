@@ -252,11 +252,12 @@ fn main(
                         let fac = alpha * T;
 
                         // contribution from this pixel
-                        var v_alpha = dot(color.rgb * T - buffer * ra, v_out.rgb);
+                        let clamped_rgb = max(color.rgb, vec3f(0.0));
+                        var v_alpha = dot(clamped_rgb * T - buffer * ra, v_out.rgb);
                         v_alpha += T_final * ra * v_out.a;
 
                         // update the running sum
-                        buffer += color.xyz * fac;
+                        buffer += clamped_rgb * fac;
 
                         let v_sigma = -color.a * vis * v_alpha;
 
@@ -269,7 +270,8 @@ fn main(
                                                v_sigma * delta.x * delta.y,
                                         0.5f * v_sigma * delta.y * delta.y);
 
-                        v_colors = vec4f(fac * v_out.rgb, vis * v_alpha);
+                        v_colors = vec4f(select(fac * v_out.rgb, vec3f(0.0), color.rgb < vec3f(0.0)),
+                                         vis * v_alpha);
                     }
                 }
 

@@ -239,8 +239,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
 
     var color = sh_coeffs_to_color(sh_degree, viewdir, sh) + vec3f(0.5);
-    // TODO: This would be good but need to update backwards gradient as well.
-    // color = max(color, vec3f(0.0));
 
     projected[compact_gid] = helpers::create_projected_splat(
         mean2d,
