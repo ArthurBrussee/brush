@@ -39,7 +39,7 @@ pub fn tensor_into_image(data: TensorData) -> DynamicImage {
                 panic!("Unsupported number of channels: {c}");
             }
         }
-        _ => panic!("unsopported dtype {:?}", data.dtype),
+        _ => panic!("unsupported dtype {:?}", data.dtype),
     };
 
     img

@@ -108,7 +108,7 @@ impl BurnTexture {
         let padded_shape = vec![height, width.div_ceil(64) * 64, c];
 
         // Create padded tensor if needed. The bytes_per_row needs to be divisible
-        // by 256 in WebGPU, so 4 bytes per pixel means width needs to be disible by 64.
+        // by 256 in WebGPU, so 4 bytes per pixel means width needs to be divisible by 64.
         let img = if width % 64 != 0 {
             let padded: Tensor<InnerWgpu, 3> = Tensor::zeros(&padded_shape, &img.device);
             let img = Tensor::from_primitive(TensorPrimitive::Float(img));
