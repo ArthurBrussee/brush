@@ -1,0 +1,32 @@
+[project]
+name = "test-cases"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9, <3.13"
+dependencies = [
+    "gsplat>=1.4.0",
+    "matplotlib>=3.9.4",
+    "mediapy>=1.2.2",
+    "numpy>=2.0.2",
+    "pillow>=11.1.0",
+    "safetensors>=0.5.0",
+    "torch>=2.5.1",
+    "torchvision>=0.20.1",
+    "setuptools<=72.1.0",
+    "ipywidgets>=8.1.5",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu124", marker = "platform_system != 'Darwin'" }]
+torchvision = [
+    { index = "pytorch-cu124", marker = "platform_system != 'Darwin'" },
+]
+
+[dependency-groups]
+dev = ["ipykernel>=6.29.5"]

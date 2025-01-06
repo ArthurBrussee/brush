@@ -75,7 +75,7 @@ async fn test_reference() -> Result<()> {
         let fov_y = focal_to_fov(focal, h as u32);
 
         let cam = Camera::new(
-            glam::vec3(0.123, -0.123, -8.0),
+            glam::vec3(0.0, 0.0, -8.0),
             glam::Quat::IDENTITY,
             fov_x,
             fov_y,
