@@ -134,7 +134,7 @@ pub(crate) fn render_forward(
 
     let uniforms_buffer = create_uniform_buffer(
         shaders::helpers::RenderUniforms {
-            viewmat: camera.world_to_local().to_cols_array_2d(),
+            viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
             camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
             focal: camera.focal(img_size).into(),
             pixel_center: camera.center(img_size).into(),

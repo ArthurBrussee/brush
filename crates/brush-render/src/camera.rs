@@ -1,3 +1,5 @@
+use glam::Affine3A;
+
 #[derive(Debug, Default, Clone)]
 pub struct Camera {
     pub fov_x: f64,
@@ -38,11 +40,11 @@ impl Camera {
         )
     }
 
-    pub fn local_to_world(&self) -> glam::Mat4 {
-        glam::Mat4::from_rotation_translation(self.rotation, self.position)
+    pub fn local_to_world(&self) -> Affine3A {
+        Affine3A::from_rotation_translation(self.rotation, self.position)
     }
 
-    pub fn world_to_local(&self) -> glam::Mat4 {
+    pub fn world_to_local(&self) -> Affine3A {
         self.local_to_world().inverse()
     }
 }

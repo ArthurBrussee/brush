@@ -41,9 +41,9 @@ SH_COUNT = (SH_DEGREE + 1) ** 2
 @dataclasses.dataclass(frozen=True)
 class Camera:
     viewmat: torch.Tensor
-    focal: float
-    w: int
-    h: int
+    focal: np.ndarray
+    w: np.ndarray
+    h: np.ndarray
     background: torch.Tensor
 
 def image_path_to_tensor(image_path: Path):
@@ -53,15 +53,14 @@ def image_path_to_tensor(image_path: Path):
     img_tensor = transform(img).permute(1, 2, 0)[..., :3]
     return img_tensor.to("cuda:0")
 
-def fov_to_focal(fov: float, img_size: int) -> float: 
-    return 0.5 * float(img_size) / math.tan(0.5 * fov)
+def fov_to_focal(fov: np.ndarray, img_size: np.ndarray) -> np.ndarray: 
+    return 0.5 * np.array(img_size, dtype=np.float32) / np.tan(0.5 * fov).astype(np.float32)
 
 def basic_camera(w: int, h: int) -> Camera:
     background = torch.zeros(3, device=g_device)
-    fov_x = math.pi / 2.0
+    fov_x = np.array(math.pi / 2.0, dtype=np.float32)
 
-
-    pos = torch.tensor([0.123, 0.456, -8.0], device=g_device)
+    pos = torch.tensor([0.123, 0.456, -8.0], dtype=torch.float32, device=g_device)
 
     viewmat = torch.tensor(
         [
@@ -71,9 +70,16 @@ def basic_camera(w: int, h: int) -> Camera:
             [0.0, 0.0, 0.0, 1.0],
         ],
         device=g_device,
+        dtype=torch.float32,
     )
+    w = np.array(w, dtype=np.float32)
+    h = np.array(h, dtype=np.float32)
     focal = fov_to_focal(fov_x, w)
-    return Camera(viewmat=viewmat, w=w, h=h, focal=focal, background=background)
+    return Camera(viewmat=viewmat, 
+                  w=np.array(w, dtype=np.float32), 
+                  h=np.array(h, dtype=np.float32), 
+                  focal=focal, 
+                  background=background)
 
 # %%
 def execute_test(means, log_scales, quats, coeffs, opacities, name: str):
@@ -89,8 +95,9 @@ def execute_test(means, log_scales, quats, coeffs, opacities, name: str):
     H, W, _ = crab_img.shape
     cam = basic_camera(W, H)
 
-    fx, fy, cx, cy = cam.focal, cam.focal, W / 2.0, H / 2.0
-    K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
+    fx, fy = cam.focal, cam.focal
+    cx, cy = np.array(W, dtype=np.float32) / 2.0, np.array(H, dtype=np.float32) / 2.0
+    K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]]).astype(np.float32)
     viewmats = cam.viewmat[None, ...]
     K = K[None, ...]
     K = torch.tensor(K, device=g_device).float().detach()
@@ -102,11 +109,13 @@ def execute_test(means, log_scales, quats, coeffs, opacities, name: str):
     
     colors = spherical_harmonics(3, dirs, coeffs[None], masks=None)  # [C, N, 3]
     colors = colors + 0.5
-    colors = colors.clamp(min=0.0)
+    # colors = colors.clamp(min=0.0)
+
+    quat_norms = torch.nn.functional.normalize(quats, dim=1)
 
     render_colors, render_alphas, info = rasterization(
         means=means,
-        quats=quats,
+        quats=quat_norms,
         scales=log_scales.exp(),
         opacities=torch.sigmoid(opacities),
         colors=colors,
@@ -222,7 +231,7 @@ gen_basic_case()
 
 # Bigger test case: Lots of splats saturaing the image.
 def gen_mix_case():
-    torch.manual_seed(4)
+    torch.manual_seed(6)
     num_points = 76873
     means = 2000.0 * (torch.rand(num_points, 3, device=g_device) - 0.5)
     log_scales = (torch.rand(num_points, 3, device=g_device) * 15.0 + 0.05).log()

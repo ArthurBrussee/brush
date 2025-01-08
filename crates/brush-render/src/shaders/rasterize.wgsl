@@ -44,7 +44,6 @@ fn main(
     let num_batches = helpers::ceil_div(range.y - range.x, i32(helpers::TILE_SIZE));
     // current visibility left to render
     var T = 1.0;
-
     var pix_out = vec3f(0.0);
 
     // collect and process batches of gaussians
@@ -80,25 +79,26 @@ fn main(
 
             let delta = xy - pixel_coord;
             let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
-            let vis = exp(-sigma);
-            let alpha = min(0.999f, color.a * vis);
+            let alpha = min(0.999f, color.a * exp(-sigma));
 
-            if sigma >= 0.0 && alpha >= 1.0 / 255.0 {
-                let next_T = T * (1.0 - alpha);
-
-                if next_T <= 1e-4f {
-                    done = true;
-                    break;
-                }
-
-                let fac = alpha * T;
-                let clamped_rgb = max(color.rgb, vec3f(0.0));
-                pix_out += clamped_rgb * fac;
-                T = next_T;
-
-                let isect_id = batch_start + t;
-                final_idx = isect_id + 1;
+            if (sigma < 0.0f || alpha < 1.0f / 255.0f) {
+                continue;
             }
+
+            let next_T = T * (1.0 - alpha);
+
+            if next_T <= 1e-4f {
+                done = true;
+                break;
+            }
+
+            let vis = alpha * T;
+            // let clamped_rgb = max(color.rgb, vec3f(0.0));
+            pix_out += color.rgb * vis;
+            T = next_T;
+
+            let isect_id = batch_start + t;
+            final_idx = isect_id + 1;
         }
     }
 

@@ -181,9 +181,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     let covar = M * transpose(M);
     let cov2d = helpers::calc_cov2d(covar, mean_c, focal, img_size, pixel_center, viewmat);
-    let conics = helpers::inverse_symmetric(cov2d);
+    let covar2d_inv = helpers::inverse(cov2d);
 
-    let covar2d_inv = mat2x2f(vec2f(conics.x, conics.y), vec2f(conics.y, conics.z));
     let v_covar2d_inv = mat2x2f(vec2f(v_conics.x, v_conics.y * 0.5f), vec2f(v_conics.y * 0.5f, v_conics.z));
 
     let v_covar2d = inverse_vjp(covar2d_inv, v_covar2d_inv);

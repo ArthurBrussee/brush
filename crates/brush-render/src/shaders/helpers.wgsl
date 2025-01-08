@@ -144,25 +144,27 @@ fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2i, pixel_center: vec2f)
     return J;
 }
 
-fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2i, pixel_center: vec2f, viewmat: mat4x4f) -> vec3f {
+fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2i, pixel_center: vec2f, viewmat: mat4x4f) -> mat2x2f {
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let covar_cam = R * cov3d * transpose(R);
 
     let J = calc_cam_J(mean_c, focal, img_size, pixel_center);
 
-    let cov2d = J * covar_cam * transpose(J);
+    var cov2d = J * covar_cam * transpose(J);
 
     // add a little blur along axes and save upper triangular elements
-    let c00 = cov2d[0][0] + COV_BLUR;
-    let c11 = cov2d[1][1] + COV_BLUR;
-    let c01 = cov2d[0][1];
-    return vec3f(c00, c01, c11);
+    cov2d[0][0] += COV_BLUR;
+    cov2d[1][1] += COV_BLUR;
+    return cov2d;
 }
 
-fn inverse_symmetric(mat: vec3f) -> vec3f {
-    let det = mat.x * mat.z - mat.y * mat.y;
-    let inv_det = 1.0 / det;
-    return vec3f(mat.z, -mat.y, mat.x) * inv_det;
+fn inverse(m: mat2x2f) -> mat2x2f {
+    let det = determinant(m);
+    if (det <= 0.0f) {
+        return mat2x2f(vec2f(0.0), vec2f(0.0));
+    }
+    let inv_det = 1.0f / det;
+    return mat2x2f(vec2f(m[1][1] * inv_det, -m[0][1] * inv_det), vec2f(-m[0][1] * inv_det, m[0][0] * inv_det));
 }
 
 const COV_BLUR: f32 = 0.3;
@@ -183,17 +185,9 @@ fn calc_vis(pixel_coord: vec2f, conic: vec3f, xy: vec2f) -> f32 {
     return exp(-calc_sigma(pixel_coord, conic, xy));
 }
 
-fn inverse(m: mat2x2f) -> mat2x2f {
-    let det = determinant(m);
-    return mat2x2f(
-        m[1][1] / det, -m[1][0] / det,
-        -m[0][1] / det, m[0][0] / det
-    );
-}
-
-fn radius_from_cov(cov2d: vec3f, opac: f32) -> f32 {
-    let det = (cov2d.x * cov2d.z - cov2d.y * cov2d.y);
-    let b = 0.5f * (cov2d.x + cov2d.z);
+fn radius_from_cov(cov2d: mat2x2f, opac: f32) -> f32 {
+    let det = determinant(cov2d);
+    let b = 0.5f * (cov2d[0][0] + cov2d[1][1]);
     let v1 = b + sqrt(max(0.01f, b * b - det));
     let radius = ceil(3.f * sqrt(v1));
     return radius;
@@ -259,9 +253,7 @@ fn ellipse_intersects_aabb(box_pos: vec2f, box_extent: vec2f, ellipse_center: ve
            check_edge(nearest_corner, edge2_end, ellipse_center, ellipse_conic);
 }
 
-fn can_be_visible(tile: vec2i, xy: vec2f, conic: vec3f, opac: f32) -> bool {
-    // return true;
-
+fn can_be_visible(tile: vec2i, xy: vec2f, conic: mat2x2f, opac: f32) -> bool {
     // opac * exp(-sigma) == 1.0 / 255.0
     // exp(-sigma) == 1.0 / (opac * 255.0)
     // -sigma == log(1.0 / (opac * 255.0))
@@ -270,10 +262,13 @@ fn can_be_visible(tile: vec2i, xy: vec2f, conic: vec3f, opac: f32) -> bool {
     if sigma <= 0.0 {
         return false;
     }
-    let conic_scaled = conic / (2.0 * sigma);
+    let conic_scale = 1.0 / (2.0 * sigma);
+
+    let conic_scaled = conic * conic_scale;
+
     let tile_extent = vec2f(f32(TILE_WIDTH) / 2.0);
     let tile_center = vec2f(tile) * f32(TILE_WIDTH) + tile_extent;
-    return ellipse_intersects_aabb(tile_center, tile_extent, xy, mat2x2f(conic_scaled.x, conic_scaled.y, conic_scaled.y, conic_scaled.z));
+    return ellipse_intersects_aabb(tile_center, tile_extent, xy, conic_scaled);
 }
 
 fn ceil_div(a: i32, b: i32) -> i32 {

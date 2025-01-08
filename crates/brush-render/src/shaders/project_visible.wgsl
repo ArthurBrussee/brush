@@ -187,7 +187,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     let covar = helpers::calc_cov3d(scale, quat);
     let cov2d = helpers::calc_cov2d(covar, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
-    let conic = helpers::inverse_symmetric(cov2d);
+    let conic = helpers::inverse(cov2d);
 
     // compute the projected mean
     let rz = 1.0 / mean_c.z;
@@ -242,7 +242,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     projected[compact_gid] = helpers::create_projected_splat(
         mean2d,
-        conic,
+        vec3f(conic[0][0], conic[0][1], conic[1][1]),
         vec4f(color, opac)
     );
 

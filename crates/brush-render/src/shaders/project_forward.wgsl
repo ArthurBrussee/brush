@@ -45,22 +45,21 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
         return;
     }
 
-    let opac = helpers::sigmoid(raw_opac);
-
     let cov3d = helpers::calc_cov3d(scale, quat);
     let cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
-    let det = cov2d.x * cov2d.z - cov2d.y * cov2d.y;
+    let det = determinant(cov2d);
 
     if det <= 0.0 {
         return;
     }
 
     // Calculate ellipse conic.
-    let conic = helpers::inverse_symmetric(cov2d);
+    let conic = helpers::inverse(cov2d);
 
     // compute the projected mean
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
 
+    let opac = helpers::sigmoid(raw_opac);
     let radius = helpers::radius_from_cov(cov2d, opac);
 
     if radius <= 0 {
