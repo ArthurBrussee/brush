@@ -215,8 +215,8 @@ impl Dataset {
             rot.mul_vec3(-mean_t).extend(1.0),
         );
         let mut y_axis_z = 0.0;
-        for c2w in &c2ws {
-            y_axis_z += transform.mul_mat4(c2w).col(1).z;
+        for c2w in c2ws {
+            y_axis_z += transform.mul_mat4(&Mat4::from(c2w)).col(1).z;
         }
         // Flip coordinate system if z component of y-axis is negative
         if y_axis_z < 0.0 {
