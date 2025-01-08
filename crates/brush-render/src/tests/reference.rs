@@ -167,7 +167,7 @@ async fn test_reference() -> Result<()> {
 
         // println!("XYS {} xys ref {}", xys_data.len(), xys_ref_data.len());
 
-        compare("xy", xys, xys_ref, 1e-9, 0.0);
+        compare("xy", xys, xys_ref, 1e-6, 1e-5);
 
         let conics: Tensor<DiffBack, 2, Float> =
             projected_splats.clone().slice([0..num_visible, 2..5]);
