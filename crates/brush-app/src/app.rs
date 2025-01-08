@@ -64,6 +64,7 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
 fn parse_search(search: &str) -> HashMap<String, String> {
     let mut params = HashMap::new();
     let search = search.trim_start_matches('?');
+
     for pair in search.split('&') {
         // Split each pair on '=' to separate key and value
         if let Some((key, value)) = pair.split_once('=') {

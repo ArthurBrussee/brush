@@ -3,4 +3,7 @@ Python project to generate reference gradients with gSplat.
 
 To use this, please install `uv`. Then:
 - To generate new samples, use `uv run generate_reference.py`.
-- To interact with the notebook, use `uv run --with juypter jupyter-lab` to start a kernel, and open the py file as a notebook.
+- To run the benchmarks, use `uv run bench.py`.
+
+The py files can also be used like a notebook in VS Code's interactive window. Just run
+the file with uv beforehand so the environment is set up.

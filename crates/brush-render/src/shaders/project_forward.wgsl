@@ -63,6 +63,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
 
     let radius = helpers::radius_from_cov(cov2d, opac);
 
+    if radius <= 0 {
+        return;
+    }
+
     // mask out gaussians outside the image region
     if (mean2d.x + radius <= 0 || mean2d.x - radius >= f32(uniforms.img_size.x) ||
         mean2d.y + radius <= 0 || mean2d.y - radius >= f32(uniforms.img_size.y)) {
