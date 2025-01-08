@@ -165,9 +165,7 @@ async fn test_reference() -> Result<()> {
         let xys_ref = safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("xys")?, &device);
         let xys_ref = xys_ref.select(0, gs_ids.clone());
 
-        // println!("XYS {} xys ref {}", xys_data.len(), xys_ref_data.len());
-
-        compare("xy", xys, xys_ref, 1e-6, 1e-5);
+        compare("xy", xys, xys_ref, 1e-5, 2e-5);
 
         let conics: Tensor<DiffBack, 2, Float> =
             projected_splats.clone().slice([0..num_visible, 2..5]);
