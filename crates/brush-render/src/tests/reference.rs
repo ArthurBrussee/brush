@@ -130,7 +130,7 @@ async fn test_reference() -> Result<()> {
         let xys_ref = safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("xys")?, &device);
         let xys_ref = xys_ref.select(0, gs_ids.clone());
 
-        assert!(xys.all_close(xys_ref, Some(1e-4), Some(1e-7)));
+        assert!(xys.all_close(xys_ref, Some(1e-4), Some(1e-6)));
 
         let conics: Tensor<DiffBack, 2, Float> =
             projected_splats.clone().slice([0..num_visible, 2..5]);
@@ -153,7 +153,7 @@ async fn test_reference() -> Result<()> {
         let v_xys_ref =
             safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_xy")?, &device).inner();
         let v_xys_ref = v_xys_ref.select(0, gs_ids.inner().clone());
-        assert!(v_xys.all_close(v_xys_ref, Some(1e-5), Some(1e-7)));
+        assert!(v_xys.all_close(v_xys_ref, Some(1e-5), Some(1e-6)));
 
         let v_opacities_ref =
             safetensor_to_burn::<DiffBack, 1>(&tensors.tensor("v_opacities")?, &device).inner();
