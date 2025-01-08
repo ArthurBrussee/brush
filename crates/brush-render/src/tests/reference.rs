@@ -17,7 +17,7 @@ use std::{fs::File, io::Read};
 
 type DiffBack = Autodiff<Wgpu>;
 
-const USE_RERUN: bool = true;
+const USE_RERUN: bool = false;
 
 #[tokio::test]
 async fn test_reference() -> Result<()> {
