@@ -11,7 +11,7 @@ pub fn image_to_sample<B: Backend>(image: &DynamicImage, device: &B::Device) -> 
     let (w, h) = (image.width(), image.height());
 
     let tensor_data = if image.color().has_alpha() {
-        // Assume image has un-multiplied alpha and conver it to pre-mutliplied.
+        // Assume image has un-multiplied alpha and convert it to pre-multiplied.
         let mut rgba = image.to_rgba32f();
         for pixel in rgba.pixels_mut() {
             let a = pixel[3];
