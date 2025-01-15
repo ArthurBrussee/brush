@@ -4511,7 +4511,7 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "23.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=sg#b381d0071687a3b5d21911c119622ddfe86efb9d"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=sg#a5d2fd9f45c0be3e863039c78c4c22164509360b"
 dependencies = [
  "arrayvec",
  "bit-set 0.8.0",
@@ -8485,7 +8485,7 @@ checksum = "53a85b86a771b1c87058196170769dd264f66c0782acf1ae6cc51bfd64b39082"
 [[package]]
 name = "wgpu"
 version = "23.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=sg#b381d0071687a3b5d21911c119622ddfe86efb9d"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=sg#a5d2fd9f45c0be3e863039c78c4c22164509360b"
 dependencies = [
  "arrayvec",
  "bitflags 2.8.0",
@@ -8510,7 +8510,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "23.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=sg#b381d0071687a3b5d21911c119622ddfe86efb9d"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=sg#a5d2fd9f45c0be3e863039c78c4c22164509360b"
 dependencies = [
  "arrayvec",
  "bit-vec 0.8.0",
@@ -8534,7 +8534,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "23.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=sg#b381d0071687a3b5d21911c119622ddfe86efb9d"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=sg#a5d2fd9f45c0be3e863039c78c4c22164509360b"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -8579,7 +8579,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "23.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=sg#b381d0071687a3b5d21911c119622ddfe86efb9d"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=sg#a5d2fd9f45c0be3e863039c78c4c22164509360b"
 dependencies = [
  "bitflags 2.8.0",
  "js-sys",
