@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 pub mod ui;
 
 use brush_process::{data_source::DataSource, process_loop::ProcessArgs};
