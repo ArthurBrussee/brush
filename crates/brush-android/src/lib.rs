@@ -30,7 +30,8 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     .unwrap();
 
     // Unused.
-    let (_, rec) = tokio::sync::mpsc::unbounded_channel();
+    #[allow(unused)]
+    let (send, rec) = tokio::sync::oneshot::channel();
 
     runtime.block_on(async {
         android_logger::init_once(
@@ -42,13 +43,14 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
             eframe::NativeOptions {
                 // Build app display.
                 viewport: egui::ViewportBuilder::default().with_icon(std::sync::Arc::new(icon)),
-                event_loop_builder: Some(Box::new(|builder| {
-                    builder.with_android_app(app);
-                })),
+                android_app: Some(app),
                 wgpu_options,
                 ..Default::default()
             },
-            Box::new(|cc| Ok(Box::new(brush_app::App::new(cc, None, rec)))),
+            Box::new(|cc| {
+                egui_extras::install_image_loaders(&cc.egui_ctx);
+                Ok(Box::new(brush_app::App::new(cc, send)))
+            }),
         )
         .unwrap();
     });

@@ -13,6 +13,7 @@ brush-app.path = "../brush-app"
 brush-ui.path = "../brush-ui"
 tokio_with_wasm = { workspace = true, features = ["rt"] }
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
+egui_extras = { workspace = true, features = ["default", "image"] }
 
 rrfd.path = "../rrfd"
 
