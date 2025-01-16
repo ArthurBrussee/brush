@@ -13,12 +13,19 @@ use brush_render::{
 };
 use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect};
-use glam::{Quat, Vec2};
+use glam::{Quat, UVec2, Vec3};
 use tokio_with_wasm::alias as tokio_wasm;
 use tracing::trace_span;
 use web_time::Instant;
 
 use crate::app::{AppContext, AppPanel};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RenderState {
+    size: UVec2,
+    cam_pos: Vec3,
+    cam_rot: Quat,
+}
 
 pub(crate) struct ScenePanel {
     pub(crate) backbuffer: BurnTexture,
@@ -36,7 +43,8 @@ pub(crate) struct ScenePanel {
     live_update: bool,
     paused: bool,
 
-    last_size: glam::UVec2,
+    last_state: Option<RenderState>,
+
     dirty: bool,
     renderer: Arc<EguiRwLock<Renderer>>,
     zen: bool,
@@ -58,7 +66,7 @@ impl ScenePanel {
             live_update: true,
             paused: false,
             dirty: true,
-            last_size: glam::UVec2::ZERO,
+            last_state: None,
             is_loading: false,
             is_training: false,
             renderer,
@@ -100,56 +108,34 @@ impl ScenePanel {
             egui::Sense::drag(),
         );
 
-        let mouse_delta = glam::vec2(response.drag_delta().x, response.drag_delta().y);
-
-        let (pan, rotate) = if response.dragged_by(egui::PointerButton::Primary) {
-            (Vec2::ZERO, mouse_delta)
-        } else if response.dragged_by(egui::PointerButton::Secondary)
-            || response.dragged_by(egui::PointerButton::Middle)
-        {
-            (mouse_delta, Vec2::ZERO)
-        } else {
-            (Vec2::ZERO, Vec2::ZERO)
-        };
-
-        // let scrolled = ui.input(|r| {
-        //     r.smooth_scroll_delta.y
-        //         + r.multi_touch().map_or(0.0, |t| {
-        //             (t.zoom_delta - 1.0) * context.controls.radius() * 5.0
-        //         })
-        // });
-
-        // ui.input(reader)
         context.controls.tick(delta_time, &response, ui);
 
-        // self.dirty |= context.controls.pan_orbit_camera(
-        //     pan * 5.0,
-        //     rotate * 5.0,
-        //     scrolled * 0.01,
-        //     glam::vec2(rect.size().x, rect.size().y),
-        //     delta_time.as_secs_f32(),
-        // );
+        let camera = &mut context.camera;
 
-        //context.controls.dirty = false;
+        // Create a camera that incorporates the model transform.
+        let total_transform =
+            context.model_local_to_world.inverse() * context.controls.local_to_world();
+        camera.position = total_transform.translation.into();
+        camera.rotation = Quat::from_mat3a(&total_transform.matrix3);
 
-        // Just animate for now.
-        self.dirty |= true;
+        let state = RenderState {
+            size: glam::uvec2(size.x, size.y),
+            cam_pos: camera.position,
+            cam_rot: camera.rotation,
+        };
 
-        self.dirty |= self.last_size != size;
+        if self.last_state != Some(state) {
+            self.dirty = true;
+            self.last_state = Some(state);
+        }
 
         // If this viewport is re-rendering.
         if ui.ctx().has_requested_repaint() && size.x > 0 && size.y > 0 && self.dirty {
             let _span = trace_span!("Render splats").entered();
 
-            // Create a camera that incorporates the model transform.
-            let total_transform = context.model_transform * context.controls.local_to_world();
-            context.camera.position = total_transform.translation.into();
-            context.camera.rotation = Quat::from_mat3a(&total_transform.matrix3);
-
             let (img, _) = splats.render(&context.camera, size, true);
             self.backbuffer.update_texture(img, &self.renderer);
             self.dirty = false;
-            self.last_size = size;
         }
 
         if let Some(id) = self.backbuffer.id() {
@@ -189,17 +175,15 @@ impl AppPanel for ScenePanel {
     }
 
     fn on_message(&mut self, message: &ProcessMessage, context: &mut AppContext) {
-        if self.live_update {
-            self.dirty = true;
-        }
-
         match message {
             ProcessMessage::NewSource => {
                 self.view_splats = vec![];
                 self.paused = false;
                 self.is_loading = false;
                 self.is_training = false;
+                self.live_update = true;
                 self.err = None;
+                self.dirty = true;
             }
             ProcessMessage::DoneLoading { training: _ } => {
                 self.is_loading = false;
@@ -215,7 +199,7 @@ impl AppPanel for ScenePanel {
                 total_frames,
             } => {
                 if let Some(up_axis) = up_axis {
-                    context.set_up_axis(*up_axis);
+                    context.set_model_up(*up_axis);
                 }
 
                 if self.live_update {
@@ -223,6 +207,7 @@ impl AppPanel for ScenePanel {
                     self.view_splats.push(*splats.clone());
                 }
                 self.frame_count = *total_frames;
+                self.dirty = true;
             }
             ProcessMessage::TrainStep {
                 splats,
@@ -230,6 +215,10 @@ impl AppPanel for ScenePanel {
                 iter: _,
                 timestamp: _,
             } => {
+                if self.live_update {
+                    self.dirty = true;
+                }
+
                 let splats = *splats.clone();
 
                 if self.live_update {

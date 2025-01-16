@@ -1,47 +1,87 @@
 use core::f32;
-use std::ops::Range;
 use web_time::Duration;
 
 use egui::Response;
-use glam::{Affine3A, Quat, Vec2, Vec3, Vec3A};
+use glam::{Quat, Vec3};
 
-pub struct PlayerController {
-    position: Vec3,
-    rotation: Quat,
+pub struct CameraController {
+    pub position: Vec3,
+    pub rotation: Quat,
+
+    focus_distance: f32,
 }
 
-impl PlayerController {
-    pub fn new() -> Self {
-        PlayerController {
-            position: Vec3::ZERO,
+pub fn smooth_orbit(
+    position: Vec3,
+    rotation: Quat,
+    delta_pitch: f32,
+    delta_yaw: f32,
+    distance: f32,
+) -> (Vec3, Quat) {
+    // Calculate focal point (where we're looking at)
+    let focal_point = position + rotation * Vec3::Z * distance;
+
+    // Create rotation quaternions in camera's local space
+    let pitch = Quat::from_axis_angle(rotation * Vec3::X, delta_pitch);
+    let yaw = Quat::from_axis_angle(Vec3::Y, delta_yaw);
+
+    // Apply yaw in world space, pitch in local space
+    let new_rotation = yaw * pitch * rotation;
+
+    // Calculate new position by backing up from focal point
+    let new_position = focal_point - new_rotation * Vec3::Z * distance;
+
+    (new_position, new_rotation)
+}
+
+impl CameraController {
+    pub fn new(start_focus_distance: f32) -> Self {
+        Self {
+            position: -Vec3::Z * start_focus_distance,
             rotation: Quat::IDENTITY,
+            focus_distance: start_focus_distance,
         }
     }
 
-    pub fn tick(&mut self, dt: Duration, controls: &Response, ui: &egui::Ui) {
-        if controls.dragged_by(egui::PointerButton::Secondary)
-            || controls.dragged_by(egui::PointerButton::Primary) && ui.input(|r| r.modifiers.alt)
-        {
-        } else if controls.dragged_by(egui::PointerButton::Primary) {
-            let axis = controls.drag_delta();
-
-            let mouselook_speed = 0.0025;
-            // First, handle yaw (left/right rotation around Y axis)
-            let yaw = Quat::from_rotation_y(axis.x * mouselook_speed);
-            // Then handle pitch (up/down rotation around X axis)
-            let pitch = Quat::from_rotation_x(-axis.y * mouselook_speed);
-
-            // Apply yaw to the current rotation
-            self.rotation = yaw * self.rotation * pitch;
-        }
-
-        let move_speed = 0.05
+    pub fn tick(&mut self, dt: Duration, response: &Response, ui: &egui::Ui) {
+        let move_speed = 5.0
+            * dt.as_secs_f32()
             * if ui.input(|r| r.modifiers.shift) {
                 4.0
             } else {
                 1.0
             };
 
+        let lmb = response.dragged_by(egui::PointerButton::Primary);
+        let rmb = response.dragged_by(egui::PointerButton::Secondary);
+
+        let is_panning = lmb;
+        let is_flythrough = rmb || ui.input(|r| r.modifiers.ctrl);
+        let is_orbiting = lmb && ui.input(|r| r.modifiers.alt);
+
+        let mouselook_speed = 0.0025;
+
+        if is_orbiting {
+            let dx = response.drag_delta().x * mouselook_speed;
+            let dy = -response.drag_delta().y * mouselook_speed;
+
+            (self.position, self.rotation) =
+                smooth_orbit(self.position, self.rotation, dy, dx, self.focus_distance);
+        } else if is_flythrough {
+            let axis = response.drag_delta();
+            let yaw = Quat::from_rotation_y(axis.x * mouselook_speed);
+            let pitch = Quat::from_rotation_x(-axis.y * mouselook_speed);
+            self.rotation = yaw * self.rotation * pitch;
+        } else if is_panning {
+            let drag_mult = 0.1;
+            self.position -=
+                self.rotation * Vec3::X * response.drag_delta().x * drag_mult * move_speed;
+            self.position -=
+                self.rotation * Vec3::Y * response.drag_delta().y * drag_mult * move_speed;
+        }
+
+        // In Unity, this is only enabled when the camera is in flythrough mode.
+        // for our purposes... just enable it.
         if ui.input(|r| r.key_down(egui::Key::W)) {
             self.position += self.rotation * Vec3::Z * move_speed;
         }
@@ -54,118 +94,27 @@ impl PlayerController {
         if ui.input(|r| r.key_down(egui::Key::D)) {
             self.position += self.rotation * Vec3::X * move_speed;
         }
+        if ui.input(|r| r.key_down(egui::Key::Q)) {
+            self.position += Vec3::Y * move_speed;
+        }
+        if ui.input(|r| r.key_down(egui::Key::E)) {
+            self.position -= Vec3::Y * move_speed;
+        }
+
+        // Handle scroll wheel: move back, and adjust focus distance.
+        let scrolled = ui.input(|r| r.smooth_scroll_delta.y);
+        let scroll_speed = 0.001;
+
+        let old_pivot = self.position + self.rotation * Vec3::Z * self.focus_distance;
+
+        // Scroll speed depends on how far zoomed out we are.
+        self.focus_distance -= scrolled * scroll_speed * self.focus_distance;
+        self.focus_distance = self.focus_distance.max(0.01);
+
+        self.position = old_pivot - (self.rotation * Vec3::Z * self.focus_distance);
     }
 
     pub fn local_to_world(&self) -> glam::Affine3A {
         glam::Affine3A::from_rotation_translation(self.rotation, self.position)
-    }
-}
-
-pub struct OrbitControls {
-    pub position: Vec3A,
-    pub rotation: Quat,
-
-    pub focus: Vec3A,
-    pub dirty: bool,
-
-    pan_momentum: Vec2,
-    rotate_momentum: Vec2,
-
-    radius_range: Range<f32>,
-    yaw_range: Range<f32>,
-    pitch_range: Range<f32>,
-}
-
-impl OrbitControls {
-    pub fn new(
-        radius: f32,
-        radius_range: Range<f32>,
-        yaw_range: Range<f32>,
-        pitch_range: Range<f32>,
-    ) -> Self {
-        Self {
-            position: -Vec3A::Z * radius,
-            rotation: Quat::IDENTITY,
-            focus: Vec3A::ZERO,
-            pan_momentum: Vec2::ZERO,
-            rotate_momentum: Vec2::ZERO,
-            dirty: false,
-            radius_range,
-            yaw_range,
-            pitch_range,
-        }
-    }
-
-    pub fn radius(&self) -> f32 {
-        (self.position - self.focus).length()
-    }
-
-    fn clamp_smooth(val: f32, range: Range<f32>) -> f32 {
-        let mut val = val;
-        if val < range.start {
-            val = val * 0.5 + range.start * 0.5;
-        }
-
-        if val > range.end {
-            val = val * 0.5 + range.end * 0.5;
-        }
-        val
-    }
-
-    pub fn pan_orbit_camera(
-        &mut self,
-        pan: Vec2,
-        rotate: Vec2,
-        scroll: f32,
-        window: Vec2,
-        delta_time: f32,
-    ) -> bool {
-        let (yaw, pitch, roll) = self.rotation.to_euler(glam::EulerRot::YXZ);
-
-        let mut radius = self.radius();
-
-        // Adjust momentum with the new input
-        self.pan_momentum += pan;
-        self.rotate_momentum += rotate;
-
-        // Apply damping to the momentum
-        let damping = 0.0005f32.powf(delta_time);
-        self.pan_momentum *= damping;
-        self.rotate_momentum *= damping;
-
-        // Update velocities based on momentum
-        let pan_velocity = self.pan_momentum * delta_time;
-        let rotate_velocity = self.rotate_momentum * delta_time;
-
-        let delta_x = rotate_velocity.x * std::f32::consts::PI * 2.0 / window.x;
-        let delta_y = rotate_velocity.y * std::f32::consts::PI / window.y;
-
-        let yaw = Self::clamp_smooth(yaw + delta_x, self.yaw_range.clone());
-        let pitch = Self::clamp_smooth(pitch - delta_y, self.pitch_range.clone());
-
-        self.rotation =
-            Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch) * Quat::from_rotation_z(roll);
-
-        let scaled_pan = pan_velocity * Vec2::new(1.0 / window.x, 1.0 / window.y);
-
-        let right = self.rotation * Vec3A::X * -scaled_pan.x;
-        let up = self.rotation * Vec3A::Y * -scaled_pan.y;
-        let translation = (right + up) * radius;
-
-        self.focus += translation;
-        radius -= scroll * radius * 0.2;
-        radius = Self::clamp_smooth(radius, self.radius_range.clone());
-        self.position = self.focus + self.rotation * Vec3A::new(0.0, 0.0, -radius);
-
-        scroll.abs() > 0.0
-            || pan.length_squared() > 0.0
-            || rotate.length_squared() > 0.0
-            || self.pan_momentum.length_squared() > 0.001
-            || self.rotate_momentum.length_squared() > 0.001
-            || self.dirty
-    }
-
-    pub(crate) fn transform(&self) -> Affine3A {
-        Affine3A::from_rotation_translation(self.rotation, self.position.into())
     }
 }
