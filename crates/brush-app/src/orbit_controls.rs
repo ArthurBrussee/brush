@@ -1,7 +1,65 @@
 use core::f32;
 use std::ops::Range;
+use web_time::Duration;
 
-use glam::{Affine3A, Quat, Vec2, Vec3A};
+use egui::Response;
+use glam::{Affine3A, Quat, Vec2, Vec3, Vec3A};
+
+pub struct PlayerController {
+    position: Vec3,
+    rotation: Quat,
+}
+
+impl PlayerController {
+    pub fn new() -> Self {
+        PlayerController {
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+        }
+    }
+
+    pub fn tick(&mut self, dt: Duration, controls: &Response, ui: &egui::Ui) {
+        if controls.dragged_by(egui::PointerButton::Secondary)
+            || controls.dragged_by(egui::PointerButton::Primary) && ui.input(|r| r.modifiers.alt)
+        {
+        } else if controls.dragged_by(egui::PointerButton::Primary) {
+            let axis = controls.drag_delta();
+
+            let mouselook_speed = 0.0025;
+            // First, handle yaw (left/right rotation around Y axis)
+            let yaw = Quat::from_rotation_y(axis.x * mouselook_speed);
+            // Then handle pitch (up/down rotation around X axis)
+            let pitch = Quat::from_rotation_x(-axis.y * mouselook_speed);
+
+            // Apply yaw to the current rotation
+            self.rotation = yaw * self.rotation * pitch;
+        }
+
+        let move_speed = 0.05
+            * if ui.input(|r| r.modifiers.shift) {
+                4.0
+            } else {
+                1.0
+            };
+
+        if ui.input(|r| r.key_down(egui::Key::W)) {
+            self.position += self.rotation * Vec3::Z * move_speed;
+        }
+        if ui.input(|r| r.key_down(egui::Key::A)) {
+            self.position -= self.rotation * Vec3::X * move_speed;
+        }
+        if ui.input(|r| r.key_down(egui::Key::S)) {
+            self.position -= self.rotation * Vec3::Z * move_speed;
+        }
+        if ui.input(|r| r.key_down(egui::Key::D)) {
+            self.position += self.rotation * Vec3::X * move_speed;
+        }
+    }
+
+    pub fn local_to_world(&self) -> glam::Affine3A {
+        glam::Affine3A::from_rotation_translation(self.rotation, self.position)
+    }
+}
 
 pub struct OrbitControls {
     pub position: Vec3A,

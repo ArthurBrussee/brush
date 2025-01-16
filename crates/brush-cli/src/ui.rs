@@ -69,7 +69,7 @@ pub async fn process_ui(process: RunningProcess) {
             ProcessMessage::StartLoading { training } => {
                 if !training {
                     // Display a big warning saying viewing splats from the CLI doesn't make sense.
-                    let _ = sp.println("❌ Only training is supported in the CLI");
+                    let _ = sp.println("❌ Only training is supported in the CLI (try passing --with-viewer to view a splat)");
                     break;
                 }
                 main_spinner.set_message("Loading data...");

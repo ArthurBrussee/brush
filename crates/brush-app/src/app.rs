@@ -1,11 +1,9 @@
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 
+use crate::orbit_controls::PlayerController;
 use crate::panels::SettingsPanel;
-use crate::{
-    orbit_controls::OrbitControls,
-    panels::{DatasetPanel, PresetsPanel, ScenePanel, StatsPanel, TracingPanel},
-};
+use crate::panels::{DatasetPanel, PresetsPanel, ScenePanel, StatsPanel, TracingPanel};
 use brush_dataset::Dataset;
 use brush_process::data_source::DataSource;
 use brush_process::process_loop::{
@@ -17,7 +15,7 @@ use burn_wgpu::WgpuDevice;
 use eframe::egui;
 use egui_tiles::SimplificationOptions;
 use egui_tiles::{Container, Tile, TileId, Tiles};
-use glam::{Affine3A, Quat, Vec3, Vec3A};
+use glam::{Affine3A, Quat, Vec3};
 use std::collections::HashMap;
 
 pub(crate) trait AppPanel {
@@ -87,7 +85,7 @@ pub struct App {
 pub struct AppContext {
     pub dataset: Dataset,
     pub camera: Camera,
-    pub controls: OrbitControls,
+    pub controls: PlayerController,
     pub model_transform: Affine3A,
     pub device: WgpuDevice,
     ctx: egui::Context,
@@ -106,12 +104,14 @@ impl AppContext {
     fn new(device: WgpuDevice, ctx: egui::Context, cam_settings: CameraSettings) -> Self {
         let model_transform = Affine3A::IDENTITY;
 
-        let controls = OrbitControls::new(
-            cam_settings.radius,
-            cam_settings.radius_range,
-            cam_settings.yaw_range,
-            cam_settings.pitch_range,
-        );
+        let controls = PlayerController::new();
+
+        // let controls = PlayerController::new(
+        //     cam_settings.radius,
+        //     cam_settings.radius_range,
+        //     cam_settings.yaw_range,
+        //     cam_settings.pitch_range,
+        // );
 
         // Camera position will be controlled by the orbit controls.
         let camera = Camera::new(
@@ -133,29 +133,25 @@ impl AppContext {
         }
     }
 
-    fn update_control_positions(&mut self) {
-        // set the controls transform.
-        let cam_transform =
-            Affine3A::from_rotation_translation(self.camera.rotation, self.camera.position);
-        let transform = self.model_transform.inverse() * cam_transform;
-        let (_, rotation, position) = transform.to_scale_rotation_translation();
-        self.controls.position = position.into();
-        self.controls.rotation = rotation;
-        self.controls.dirty = true;
-    }
+    // fn update_control_positions(&mut self) {
+    //     // set the controls transform.
+    //     let cam_transform =
+    //         Affine3A::from_rotation_translation(self.camera.rotation, self.camera.position);
+    //     let transform = self.model_transform.inverse() * cam_transform;
+    //     let (_, rotation, position) = transform.to_scale_rotation_translation();
+    //     self.controls.position = position.into();
+    //     self.controls.rotation = rotation;
+    //     self.controls.dirty = true;
+    // }
 
     pub fn set_up_axis(&mut self, up_axis: Vec3) {
         let rotation = Quat::from_rotation_arc(Vec3::Y, up_axis);
-        let model_transform = Affine3A::from_rotation_translation(rotation, Vec3::ZERO).inverse();
-        self.model_transform = model_transform;
-        self.update_control_positions();
+        self.model_transform = Affine3A::from_rotation_translation(rotation, Vec3::ZERO).inverse();
     }
 
-    pub fn focus_view(&mut self, cam: &Camera) {
-        self.camera = cam.clone();
-        self.update_control_positions();
-        self.controls.focus = self.controls.position
-            + self.controls.rotation * Vec3A::Z * self.dataset.train.bounds().extent.length() * 0.5;
+    pub fn focus_view(&mut self, view_cam: &Camera) {
+        // TODO: Compensate for model_transform.
+        self.camera = view_cam.clone();
     }
 
     pub fn connect_to(&mut self, process: RunningProcess) {
@@ -238,7 +234,7 @@ impl App {
         let focal = search_params
             .get("focal")
             .and_then(|f| f.parse().ok())
-            .unwrap_or(0.5);
+            .unwrap_or(0.8);
         let radius = search_params
             .get("radius")
             .and_then(|f| f.parse().ok())

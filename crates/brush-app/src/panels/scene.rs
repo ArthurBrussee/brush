@@ -112,32 +112,40 @@ impl ScenePanel {
             (Vec2::ZERO, Vec2::ZERO)
         };
 
-        let scrolled = ui.input(|r| {
-            r.smooth_scroll_delta.y
-                + r.multi_touch().map_or(0.0, |t| {
-                    (t.zoom_delta - 1.0) * context.controls.radius() * 5.0
-                })
-        });
+        // let scrolled = ui.input(|r| {
+        //     r.smooth_scroll_delta.y
+        //         + r.multi_touch().map_or(0.0, |t| {
+        //             (t.zoom_delta - 1.0) * context.controls.radius() * 5.0
+        //         })
+        // });
 
-        self.dirty |= context.controls.pan_orbit_camera(
-            pan * 5.0,
-            rotate * 5.0,
-            scrolled * 0.01,
-            glam::vec2(rect.size().x, rect.size().y),
-            delta_time.as_secs_f32(),
-        );
+        // ui.input(reader)
+        context.controls.tick(delta_time, &response, ui);
 
-        let total_transform = context.model_transform * context.controls.transform();
-        context.camera.position = total_transform.translation.into();
-        context.camera.rotation = Quat::from_mat3a(&total_transform.matrix3);
+        // self.dirty |= context.controls.pan_orbit_camera(
+        //     pan * 5.0,
+        //     rotate * 5.0,
+        //     scrolled * 0.01,
+        //     glam::vec2(rect.size().x, rect.size().y),
+        //     delta_time.as_secs_f32(),
+        // );
 
-        context.controls.dirty = false;
+        //context.controls.dirty = false;
+
+        // Just animate for now.
+        self.dirty |= true;
 
         self.dirty |= self.last_size != size;
 
         // If this viewport is re-rendering.
         if ui.ctx().has_requested_repaint() && size.x > 0 && size.y > 0 && self.dirty {
             let _span = trace_span!("Render splats").entered();
+
+            // Create a camera that incorporates the model transform.
+            let total_transform = context.model_transform * context.controls.local_to_world();
+            context.camera.position = total_transform.translation.into();
+            context.camera.rotation = Quat::from_mat3a(&total_transform.matrix3);
+
             let (img, _) = splats.render(&context.camera, size, true);
             self.backbuffer.update_texture(img, &self.renderer);
             self.dirty = false;
