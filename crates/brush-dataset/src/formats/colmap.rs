@@ -6,8 +6,8 @@ use std::{
 
 use super::DataStream;
 use crate::{
-    brush_vfs::{normalized_path, BrushVfs},
-    formats::{clamp_img_to_max_size, load_image, looks_like_mask_image},
+    brush_vfs::BrushVfs,
+    formats::{clamp_img_to_max_size, find_mask_path, load_image},
     splat_import::SplatMessage,
     stream_fut_parallel, Dataset, LoadDataseConfig,
 };
@@ -24,8 +24,7 @@ use glam::Vec3;
 use tokio_stream::StreamExt;
 
 fn find_base_path(archive: &BrushVfs, search_path: &str) -> Option<PathBuf> {
-    for file in archive.file_names() {
-        let path = normalized_path(Path::new(file));
+    for path in archive.file_names() {
         if let Some(str) = path.to_str() {
             if str.to_lowercase().ends_with(search_path) {
                 return path
@@ -36,6 +35,34 @@ fn find_base_path(archive: &BrushVfs, search_path: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn mask_and_img(vfs: &BrushVfs, paths: &[PathBuf]) -> Result<(PathBuf, Option<PathBuf>)> {
+    match paths {
+        // One path found - use it.
+        [path] => Ok((path.clone(), find_mask_path(vfs, path))),
+        // two paths found - check if one of them is a mask for another.
+        [path1, path2] => {
+            if let Some(mask) = find_mask_path(vfs, path1) {
+                if mask == *path2 {
+                    return Ok((path1.clone(), Some(mask)));
+                }
+            }
+
+            if let Some(mask) = find_mask_path(vfs, path2) {
+                if mask == *path1 {
+                    return Ok((path2.clone(), Some(mask)));
+                }
+            }
+            anyhow::bail!("Couldn't decide which image is a view and which is a mask.")
+        }
+        _ => {
+            anyhow::bail!(
+                "Expected 1 or 2 canditate images for colmap, got {}",
+                paths.len()
+            )
+        }
+    }
 }
 
 async fn read_views(
@@ -104,33 +131,7 @@ async fn read_views(
                     .filter(|p| p.ends_with(&img_info.name))
                     .collect();
 
-                log::info!("Load {}", img_info.name);
-
-                let (path, mask_path) = match img_paths.as_slice() {
-                    // One path found - use it.
-                    [path] => (path.to_path_buf(), None),
-                    // two paths found - check if any is a mask.
-                    [path1, path2] => {
-                        let mask1 = looks_like_mask_image(path1);
-                        let mask2 = looks_like_mask_image(path2);
-
-                        if mask1 && !mask2 {
-                            (path1.to_path_buf(), Some(path2.to_path_buf()))
-                        } else if !mask1 && mask2 {
-                            (path2.to_path_buf(), Some(path1.to_path_buf()))
-                        } else {
-                            anyhow::bail!(
-                                "Couldn't decide which image is a view and which is a mask."
-                            )
-                        }
-                    }
-                    _ => {
-                        anyhow::bail!(
-                            "Expected 1 or 2 canditate images for colmap, got {}",
-                            img_paths.len()
-                        )
-                    }
-                };
+                let (path, mask_path) = mask_and_img(&vfs, &img_paths)?;
 
                 let mut image = load_image(&mut vfs, &path, mask_path.as_deref()).await?;
                 if let Some(max) = load_args.max_resolution {
@@ -205,8 +206,6 @@ pub(crate) async fn load_dataset<B: Backend>(
         let Some(points_path) = points_path else {
             return Ok(());
         };
-
-        let points_path = points_path.to_owned();
 
         let is_binary = matches!(
             points_path.extension().and_then(|p| p.to_str()),

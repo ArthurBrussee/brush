@@ -1,6 +1,6 @@
 use super::clamp_img_to_max_size;
+use super::find_mask_path;
 use super::load_image;
-use super::looks_like_mask_image;
 use super::DataStream;
 use crate::brush_vfs::BrushVfs;
 use crate::splat_import::load_splat_from_ply;
@@ -8,7 +8,6 @@ use crate::splat_import::SplatMessage;
 use crate::stream_fut_parallel;
 use crate::Dataset;
 use crate::LoadDataseConfig;
-use anyhow::Context;
 use anyhow::Result;
 use async_fn_stream::try_fn_stream;
 use brush_render::camera::fov_to_focal;
@@ -16,7 +15,7 @@ use brush_render::camera::{focal_to_fov, Camera};
 use brush_render::Backend;
 use brush_train::scene::SceneView;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
@@ -106,7 +105,7 @@ struct FrameData {
 
 fn read_transforms_file(
     scene: JsonScene,
-    transforms_path: PathBuf,
+    transforms_path: &Path,
     vfs: BrushVfs,
     load_args: &LoadDataseConfig,
 ) -> Vec<impl Future<Output = anyhow::Result<SceneView>>> {
@@ -117,7 +116,7 @@ fn read_transforms_file(
         .map(move |frame| {
             let mut archive = vfs.clone();
             let load_args = load_args.clone();
-            let transforms_path = transforms_path.clone();
+            let transforms_path = transforms_path.to_path_buf();
 
             async move {
                 // NeRF 'transform_matrix' is a camera-to-world transform
@@ -141,14 +140,7 @@ fn read_transforms_file(
                     path = path.with_extension("png");
                 }
 
-                let path_stem = path.file_stem().context("Unreadable file name")?;
-                let mask_path = archive
-                    .file_names()
-                    .find(|p| {
-                        p.file_stem().is_some_and(|p| p == path_stem) && looks_like_mask_image(p)
-                    })
-                    .map(|p| p.to_owned());
-
+                let mask_path = find_mask_path(&archive, &path);
                 let mut image = load_image(&mut archive, &path, mask_path.as_deref()).await?;
 
                 let w = frame.w.or(scene.w).unwrap_or(image.width() as f64) as u32;
@@ -209,8 +201,7 @@ pub async fn read_dataset<B: Backend>(
 
     let json_files: Vec<_> = vfs
         .file_names()
-        .filter(|&n| n.extension().is_some_and(|p| p == "json"))
-        .map(|x| x.to_path_buf())
+        .filter(|n| n.extension().is_some_and(|p| p == "json"))
         .collect();
 
     let transforms_path = if json_files.len() == 1 {
@@ -235,7 +226,7 @@ pub async fn read_dataset<B: Backend>(
 
     let mut train_handles = read_transforms_file(
         train_scene.clone(),
-        transforms_path.clone(),
+        &transforms_path,
         vfs.clone(),
         load_args,
     );
@@ -280,7 +271,7 @@ pub async fn read_dataset<B: Backend>(
             let val_scene = serde_json::from_str(&json_str)?;
             Some(read_transforms_file(
                 val_scene,
-                eval_trans_path.clone(),
+                eval_trans_path,
                 data_clone,
                 &load_args_clone,
             ))
@@ -338,6 +329,7 @@ pub async fn read_dataset<B: Backend>(
                 .parent()
                 .expect("Transforms path must be a filename")
                 .join(init);
+
             let ply_data = vfs.open_path(&init_path).await;
 
             if let Ok(ply_data) = ply_data {

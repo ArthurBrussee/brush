@@ -7,11 +7,12 @@
 use std::{
     collections::HashMap,
     io::{Cursor, Read},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
 use anyhow::Context;
+use path_clean::PathClean;
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     sync::Mutex,
@@ -39,12 +40,6 @@ impl AsRef<[u8]> for ZipData {
     fn as_ref(&self) -> &[u8] {
         &self.data
     }
-}
-
-pub(crate) fn normalized_path(path: &Path) -> PathBuf {
-    path.components()
-        .filter(|c| !matches!(c, Component::CurDir | Component::ParentDir))
-        .collect()
 }
 
 #[derive(Clone, Default)]
@@ -97,12 +92,6 @@ impl BrushVfs {
         Self::Manual(paths)
     }
 
-    pub fn exists(&self, path: &Path) -> bool {
-        let canonical = path.canonicalize();
-
-        self.file_names().any(|f| f == &canonical)
-    }
-
     pub async fn from_directory(dir: &Path) -> anyhow::Result<Self> {
         #[cfg(not(target_family = "wasm"))]
         {
@@ -153,15 +142,21 @@ impl BrushVfs {
         }
     }
 
-    pub fn file_names(&self) -> impl Iterator<Item = &Path> + '_ {
+    pub fn file_names(&self) -> impl Iterator<Item = PathBuf> + '_ {
         let iterator: Box<dyn Iterator<Item = &Path>> = match self {
             Self::Zip(archive) => Box::new(archive.file_names().map(Path::new)),
             Self::Manual(map) => Box::new(map.paths().map(|p| p.as_path())),
             #[cfg(not(target_family = "wasm"))]
             Self::Directory(_, paths) => Box::new(paths.iter().map(|p| p.as_path())),
         };
-        // stupic macOS.
-        iterator.filter(|p| !p.starts_with("__MACOSX"))
+        iterator.filter_map(|p| {
+            // stupic macOS.
+            if !p.starts_with("__MACOSX") {
+                Some(p.clean())
+            } else {
+                None
+            }
+        })
     }
 
     pub async fn open_path(&mut self, path: &Path) -> anyhow::Result<Box<dyn DynRead>> {

@@ -99,7 +99,7 @@ async fn process_loop(
         }
     };
 
-    let paths: Vec<_> = vfs.file_names().map(|x| x.to_path_buf()).collect();
+    let paths: Vec<_> = vfs.file_names().collect();
     log::info!("Mounted VFS with {} files", paths.len());
 
     let result = if paths

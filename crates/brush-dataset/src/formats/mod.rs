@@ -5,7 +5,11 @@ use crate::{
 };
 use brush_render::Backend;
 use image::DynamicImage;
-use std::{path::Path, pin::Pin};
+use path_clean::PathClean;
+use std::{
+    path::{Path, PathBuf},
+    pin::Pin,
+};
 use tokio::io::AsyncReadExt;
 use tokio_stream::Stream;
 
@@ -42,10 +46,10 @@ pub async fn load_dataset<B: Backend>(
         .collect();
 
     let init_stream = if path.len() == 1 {
-        let main_path = path.first().expect("unreachable").to_path_buf();
+        let main_path = path.first().expect("unreachable");
         log::info!("Using ply {main_path:?} as initial point cloud.");
 
-        let reader = vfs.open_path(&main_path).await?;
+        let reader = vfs.open_path(main_path).await?;
         Box::pin(load_splat_from_ply(
             reader,
             load_args.subsample_points,
@@ -58,17 +62,39 @@ pub async fn load_dataset<B: Backend>(
     Ok((init_stream, stream.1))
 }
 
-// Any image like */masks/image.ext is considered a mask.
-fn looks_like_mask_image(path: &Path) -> bool {
-    // If this is called on a directory instead of a file name something might be wrong,
-    // just bail.
-    let Some(parent) = path.parent() else {
-        panic!("Path must have a parent");
-    };
+fn find_mask_path(vfs: &BrushVfs, path: &Path) -> Option<PathBuf> {
+    // Get the file stem (filename without extension)
+    let file_stem = path.file_stem()?.to_str()?;
 
-    parent
-        .to_str()
-        .is_some_and(|p| p.eq_ignore_ascii_case("masks"))
+    // Get parent directory
+    let parent = path.parent()?.clean();
+
+    // First try the masks directory variant
+    let masks_dir = parent.parent()?.join("masks").clean();
+
+    log::info!("Looking for mask in {file_stem} parent {parent:?} masks dir {masks_dir:?}");
+
+    // Look through all files in VFS
+    for file in vfs.file_names() {
+        if let Some(file_parent) = file.parent() {
+            if file_parent.clean() == masks_dir {
+                log::info!("In masks dir!!");
+
+                // Check if file stem matches
+                if file.file_stem()?.to_str()? == file_stem {
+                    return Some(file);
+                }
+            }
+        }
+        // Also check for _mask suffix variants in same directory
+        if file.parent() == Some(&parent)
+            && file.file_stem()?.to_str()? == (format!("{file_stem}_mask"))
+        {
+            return Some(file);
+        }
+    }
+
+    None
 }
 
 pub(crate) fn clamp_img_to_max_size(image: DynamicImage, max_size: u32) -> DynamicImage {
@@ -123,7 +149,7 @@ pub(crate) async fn load_image(
                 buf[3] = mask[0];
             }
         } else {
-            let mask_img = mask_img.to_rgb8();
+            let mask_img = mask_img.grayscale().to_rgb8();
             for (buf, mask) in img_masked.pixels_mut().zip(mask_img.pixels()) {
                 buf[3] = mask[0];
             }

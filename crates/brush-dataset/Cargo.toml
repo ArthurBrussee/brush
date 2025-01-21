@@ -26,6 +26,7 @@ tokio_with_wasm.workspace = true
 tokio-stream.workspace = true
 async-fn-stream.workspace = true
 clap.workspace = true
+path-clean = "1.0.1"
 
 [lints]
 workspace = true
