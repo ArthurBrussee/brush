@@ -5,7 +5,7 @@ use brush_ui::burn_texture::BurnTexture;
 use burn_wgpu::Wgpu;
 use core::f32;
 use egui::epaint::mutex::RwLock as EguiRwLock;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use brush_render::{
     camera::{focal_to_fov, fov_to_focal},
@@ -80,7 +80,6 @@ impl ScenePanel {
         ui: &mut egui::Ui,
         context: &mut AppContext,
         splats: &Splats<Wgpu>,
-        delta_time: web_time::Duration,
     ) {
         let mut size = brush_ui::size_for_splat_view(ui);
 
@@ -108,7 +107,7 @@ impl ScenePanel {
             egui::Sense::drag(),
         );
 
-        context.controls.tick(delta_time, &response, ui);
+        context.controls.tick(&response, ui);
 
         let camera = &mut context.camera;
 
@@ -234,9 +233,6 @@ impl AppPanel for ScenePanel {
 
     fn ui(&mut self, ui: &mut egui::Ui, context: &mut AppContext) {
         let cur_time = Instant::now();
-        let delta_time = self
-            .last_draw
-            .map_or(Duration::from_millis(10), |last| cur_time - last);
 
         self.last_draw = Some(cur_time);
 
@@ -277,7 +273,7 @@ For bigger training runs consider using the native app."#,
             const FPS: f32 = 24.0;
 
             if !self.paused {
-                self.frame += delta_time.as_secs_f32();
+                self.frame += ui.input(|r| r.predicted_dt);
             }
 
             if self.view_splats.len() != self.frame_count {
@@ -290,7 +286,7 @@ For bigger training runs consider using the native app."#,
                 .floor() as usize;
             let splats = self.view_splats[frame].clone();
 
-            self.draw_splats(ui, context, &splats, delta_time);
+            self.draw_splats(ui, context, &splats);
 
             if self.is_loading {
                 ui.horizontal(|ui| {
