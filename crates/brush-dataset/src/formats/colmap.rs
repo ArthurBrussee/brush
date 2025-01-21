@@ -7,10 +7,11 @@ use std::{
 use super::DataStream;
 use crate::{
     brush_vfs::{normalized_path, BrushVfs},
+    formats::{clamp_img_to_max_size, load_image, looks_like_mask_image},
     splat_import::SplatMessage,
     stream_fut_parallel, Dataset, LoadDataseConfig,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_fn_stream::try_fn_stream;
 use brush_render::{
     camera::{self, Camera},
@@ -20,7 +21,6 @@ use brush_render::{
 };
 use brush_train::scene::SceneView;
 use glam::Vec3;
-use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
 
 fn find_base_path(archive: &BrushVfs, search_path: &str) -> Option<PathBuf> {
@@ -97,21 +97,44 @@ async fn read_views(
                 let center = cam_data.principal_point();
                 let center_uv = center / glam::vec2(cam_data.width as f32, cam_data.height as f32);
 
-                let img_path = vfs
+                // Colmap only specifies an image name, not a full path. We brute force
+                // search for the image in the archive.
+                let img_paths: Vec<_> = vfs
                     .file_names()
-                    .find(|p| p.ends_with(&img_info.name))
-                    .context("Failed to find img.")?
-                    .to_owned();
+                    .filter(|p| p.ends_with(&img_info.name))
+                    .collect();
 
-                let mut img_bytes = vec![];
-                vfs.open_path(&img_path)
-                    .await?
-                    .read_to_end(&mut img_bytes)
-                    .await?;
-                let mut img = image::load_from_memory(&img_bytes)?;
+                log::info!("Load {}", img_info.name);
 
+                let (path, mask_path) = match img_paths.as_slice() {
+                    // One path found - use it.
+                    [path] => (path.to_path_buf(), None),
+                    // two paths found - check if any is a mask.
+                    [path1, path2] => {
+                        let mask1 = looks_like_mask_image(path1);
+                        let mask2 = looks_like_mask_image(path2);
+
+                        if mask1 && !mask2 {
+                            (path1.to_path_buf(), Some(path2.to_path_buf()))
+                        } else if !mask1 && mask2 {
+                            (path2.to_path_buf(), Some(path1.to_path_buf()))
+                        } else {
+                            anyhow::bail!(
+                                "Couldn't decide which image is a view and which is a mask."
+                            )
+                        }
+                    }
+                    _ => {
+                        anyhow::bail!(
+                            "Expected 1 or 2 canditate images for colmap, got {}",
+                            img_paths.len()
+                        )
+                    }
+                };
+
+                let mut image = load_image(&mut vfs, &path, mask_path.as_deref()).await?;
                 if let Some(max) = load_args.max_resolution {
-                    img = crate::clamp_img_to_max_size(img, max);
+                    image = clamp_img_to_max_size(image, max);
                 }
 
                 // Convert w2c to c2w.
@@ -123,9 +146,9 @@ async fn read_views(
                 let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
 
                 let view = SceneView {
-                    name: img_path.to_string_lossy().to_string(),
+                    name: path.to_string_lossy().to_string(),
                     camera,
-                    image: Arc::new(img),
+                    image: Arc::new(image),
                 };
                 Ok(view)
             }
@@ -154,18 +177,16 @@ pub(crate) async fn load_dataset<B: Backend>(
 
     let mut i = 0;
     let stream = stream_fut_parallel(handles).map(move |view| {
-        if let Ok(view) = view {
-            // I cannot wait for let chains.
-            if let Some(eval_period) = load_args.eval_split_every {
-                if i % eval_period == 0 {
-                    log::info!("Adding split eval view");
-                    eval_views.push(view);
-                } else {
-                    train_views.push(view);
-                }
+        // I cannot wait for let chains.
+        if let Some(eval_period) = load_args.eval_split_every {
+            if i % eval_period == 0 {
+                log::info!("Adding split eval view");
+                eval_views.push(view?);
             } else {
-                train_views.push(view);
+                train_views.push(view?);
             }
+        } else {
+            train_views.push(view?);
         }
 
         i += 1;

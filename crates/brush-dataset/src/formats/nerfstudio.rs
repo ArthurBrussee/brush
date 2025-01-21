@@ -1,10 +1,14 @@
+use super::clamp_img_to_max_size;
+use super::load_image;
+use super::looks_like_mask_image;
 use super::DataStream;
 use crate::brush_vfs::BrushVfs;
 use crate::splat_import::load_splat_from_ply;
 use crate::splat_import::SplatMessage;
 use crate::stream_fut_parallel;
+use crate::Dataset;
 use crate::LoadDataseConfig;
-use crate::{clamp_img_to_max_size, Dataset};
+use anyhow::Context;
 use anyhow::Result;
 use async_fn_stream::try_fn_stream;
 use brush_render::camera::fov_to_focal;
@@ -131,39 +135,28 @@ fn read_transforms_file(
                     .parent()
                     .expect("Transforms path must be a filename")
                     .join(&frame.file_path);
+
+                // Assume a default extension if none is specified.
                 if path.extension().is_none() {
                     path = path.with_extension("png");
                 }
 
-                let mut img_buffer = vec![];
-                archive
-                    .open_path(&path)
-                    .await?
-                    .read_to_end(&mut img_buffer)
-                    .await?;
+                let path_stem = path.file_stem().context("Unreadable file name")?;
+                let mask_path = archive
+                    .file_names()
+                    .find(|p| {
+                        p.file_stem().is_some_and(|p| p == path_stem) && looks_like_mask_image(p)
+                    })
+                    .map(|p| p.to_owned());
 
-                let comp_span = tracing::trace_span!("Decompress image").entered();
-                drop(comp_span);
-
-                // Create a cursor from the buffer
-                let mut image = tracing::trace_span!("Decode image")
-                    .in_scope(|| image::load_from_memory(&img_buffer))?;
+                let mut image = load_image(&mut archive, &path, mask_path.as_deref()).await?;
 
                 let w = frame.w.or(scene.w).unwrap_or(image.width() as f64) as u32;
                 let h = frame.h.or(scene.h).unwrap_or(image.height() as f64) as u32;
 
-                if let Some(max_resolution) = load_args.max_resolution {
-                    image = clamp_img_to_max_size(image, max_resolution);
+                if let Some(max) = load_args.max_resolution {
+                    image = clamp_img_to_max_size(image, max);
                 }
-
-                // let focal_x = frame
-                //     .fl_x
-                //     .or(scene.fl_x)
-                //     .or(scene.camera_angle_x.map(|fx| fov_to_focal(fx, w)))
-                //     .context("Must have a focal length of some kind.")?;
-
-                // // Read fov y or derive it from the input.
-                // let focal_y = frame.fl_y.or(scene.fl_y).unwrap_or(focal_x);
 
                 let fovx = frame
                     .camera_angle_x

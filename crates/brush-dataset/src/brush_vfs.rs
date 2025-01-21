@@ -97,6 +97,12 @@ impl BrushVfs {
         Self::Manual(paths)
     }
 
+    pub fn exists(&self, path: &Path) -> bool {
+        let canonical = path.canonicalize();
+
+        self.file_names().any(|f| f == &canonical)
+    }
+
     pub async fn from_directory(dir: &Path) -> anyhow::Result<Self> {
         #[cfg(not(target_family = "wasm"))]
         {

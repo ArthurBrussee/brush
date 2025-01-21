@@ -9,7 +9,6 @@ pub use formats::load_dataset;
 
 use async_fn_stream::fn_stream;
 use brush_train::scene::{Scene, SceneView};
-use image::DynamicImage;
 use std::future::Future;
 
 use clap::Args;
@@ -225,20 +224,6 @@ impl Dataset {
         }
         Vec3::new(transform.col(0).z, transform.col(1).z, -transform.col(2).z)
     }
-}
-
-pub(crate) fn clamp_img_to_max_size(image: DynamicImage, max_size: u32) -> DynamicImage {
-    if image.width() <= max_size && image.height() <= max_size {
-        return image;
-    }
-
-    let aspect_ratio = image.width() as f32 / image.height() as f32;
-    let (new_width, new_height) = if image.width() > image.height() {
-        (max_size, (max_size as f32 / aspect_ratio) as u32)
-    } else {
-        ((max_size as f32 * aspect_ratio) as u32, max_size)
-    };
-    image.resize(new_width, new_height, image::imageops::FilterType::Lanczos3)
 }
 
 pub(crate) fn stream_fut_parallel<T: Send + 'static>(

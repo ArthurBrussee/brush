@@ -4,7 +4,9 @@ use crate::{
     Dataset, LoadDataseConfig, WasmNotSend,
 };
 use brush_render::Backend;
-use std::pin::Pin;
+use image::DynamicImage;
+use std::{path::Path, pin::Pin};
+use tokio::io::AsyncReadExt;
 use tokio_stream::Stream;
 
 pub mod colmap;
@@ -54,4 +56,81 @@ pub async fn load_dataset<B: Backend>(
     };
 
     Ok((init_stream, stream.1))
+}
+
+// Any image like */masks/image.ext is considered a mask.
+fn looks_like_mask_image(path: &Path) -> bool {
+    // If this is called on a directory instead of a file name something might be wrong,
+    // just bail.
+    let Some(parent) = path.parent() else {
+        panic!("Path must have a parent");
+    };
+
+    parent
+        .to_str()
+        .is_some_and(|p| p.eq_ignore_ascii_case("masks"))
+}
+
+pub(crate) fn clamp_img_to_max_size(image: DynamicImage, max_size: u32) -> DynamicImage {
+    if image.width() <= max_size && image.height() <= max_size {
+        return image;
+    }
+
+    let aspect_ratio = image.width() as f32 / image.height() as f32;
+    let (new_width, new_height) = if image.width() > image.height() {
+        (max_size, (max_size as f32 / aspect_ratio) as u32)
+    } else {
+        ((max_size as f32 * aspect_ratio) as u32, max_size)
+    };
+    image.resize(new_width, new_height, image::imageops::FilterType::Lanczos3)
+}
+
+pub(crate) async fn load_image(
+    vfs: &mut BrushVfs,
+    img_path: &Path,
+    mask_path: Option<&Path>,
+) -> anyhow::Result<DynamicImage> {
+    log::info!("Loading image at {img_path:?}, with a mask {mask_path:?}");
+
+    let mut img_bytes = vec![];
+
+    vfs.open_path(img_path)
+        .await?
+        .read_to_end(&mut img_bytes)
+        .await?;
+    let mut img = image::load_from_memory(&img_bytes)?;
+
+    // Copy over mask
+    if let Some(mask_path) = mask_path {
+        // if img.color().has_alpha() {
+        //     anyhow::bail!("Image has both an alpha channel and mask specified, bailing.");
+        // }
+
+        let mut mask_bytes = vec![];
+
+        vfs.open_path(mask_path)
+            .await?
+            .read_to_end(&mut mask_bytes)
+            .await?;
+
+        let mask_img = image::load_from_memory(&mask_bytes)?;
+
+        let mut img_masked = img.to_rgba8();
+
+        if mask_img.color().has_alpha() {
+            let mask_img = mask_img.to_rgba8();
+            for (buf, mask) in img_masked.pixels_mut().zip(mask_img.pixels()) {
+                buf[3] = mask[0];
+            }
+        } else {
+            let mask_img = mask_img.to_rgb8();
+            for (buf, mask) in img_masked.pixels_mut().zip(mask_img.pixels()) {
+                buf[3] = mask[0];
+            }
+        }
+
+        img = img_masked.into();
+    }
+
+    Ok(img)
 }
