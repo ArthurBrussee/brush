@@ -63,38 +63,23 @@ pub async fn load_dataset<B: Backend>(
 }
 
 fn find_mask_path(vfs: &BrushVfs, path: &Path) -> Option<PathBuf> {
-    // Get the file stem (filename without extension)
-    let file_stem = path.file_stem()?.to_str()?;
-
-    // Get parent directory
     let parent = path.parent()?.clean();
-
-    // First try the masks directory variant
+    let file_stem = path.file_stem()?.to_str()?;
+    let masked_name = format!("{file_stem}_mask");
     let masks_dir = parent.parent()?.join("masks").clean();
 
-    log::info!("Looking for mask in {file_stem} parent {parent:?} masks dir {masks_dir:?}");
+    vfs.file_names().find(|file| {
+        let Some(file_parent) = file.parent() else {
+            return false;
+        };
 
-    // Look through all files in VFS
-    for file in vfs.file_names() {
-        if let Some(file_parent) = file.parent() {
-            if file_parent.clean() == masks_dir {
-                log::info!("In masks dir!!");
+        let Some(stem) = file.file_stem().and_then(|p| p.to_str()) else {
+            return false;
+        };
 
-                // Check if file stem matches
-                if file.file_stem()?.to_str()? == file_stem {
-                    return Some(file);
-                }
-            }
-        }
-        // Also check for _mask suffix variants in same directory
-        if file.parent() == Some(&parent)
-            && file.file_stem()?.to_str()? == (format!("{file_stem}_mask"))
-        {
-            return Some(file);
-        }
-    }
-
-    None
+        file_parent == parent && stem == masked_name
+            || file_parent == masks_dir && stem == file_stem
+    })
 }
 
 pub(crate) fn clamp_img_to_max_size(image: DynamicImage, max_size: u32) -> DynamicImage {

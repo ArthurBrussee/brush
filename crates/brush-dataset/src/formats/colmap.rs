@@ -37,7 +37,7 @@ fn find_base_path(archive: &BrushVfs, search_path: &str) -> Option<PathBuf> {
     None
 }
 
-fn mask_and_img(vfs: &BrushVfs, paths: &[PathBuf]) -> Result<(PathBuf, Option<PathBuf>)> {
+fn find_mask_and_img(vfs: &BrushVfs, paths: &[PathBuf]) -> Result<(PathBuf, Option<PathBuf>)> {
     match paths {
         // One path found - use it.
         [path] => Ok((path.clone(), find_mask_path(vfs, path))),
@@ -58,7 +58,7 @@ fn mask_and_img(vfs: &BrushVfs, paths: &[PathBuf]) -> Result<(PathBuf, Option<Pa
         }
         _ => {
             anyhow::bail!(
-                "Expected 1 or 2 canditate images for colmap, got {}",
+                "Expected 1 or 2 candidate images, got {} {paths:?}",
                 paths.len()
             )
         }
@@ -131,7 +131,7 @@ async fn read_views(
                     .filter(|p| p.ends_with(&img_info.name))
                     .collect();
 
-                let (path, mask_path) = mask_and_img(&vfs, &img_paths)?;
+                let (path, mask_path) = find_mask_and_img(&vfs, &img_paths)?;
 
                 let mut image = load_image(&mut vfs, &path, mask_path.as_deref()).await?;
                 if let Some(max) = load_args.max_resolution {
