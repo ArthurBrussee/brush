@@ -288,7 +288,9 @@ impl SplatTrainer {
                         .slice([0..batch_size, 0..img_h, 0..img_w, 3..4]);
 
                 match batch.gt_views[0].img_type {
+                    // In masked mode, weigh the errors by the alpha channel.
                     ViewImageType::Masked => (total_err * alpha_input).mean(),
+                    // In alpha mode, add the l1 error of the alpha channel to the total error.
                     ViewImageType::Alpha => {
                         let pred_alpha = pred_rgb.slice([0..batch_size, 0..img_h, 0..img_w, 3..4]);
                         total_err.mean() + (alpha_input - pred_alpha).abs().mean()
