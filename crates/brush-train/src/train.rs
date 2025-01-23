@@ -274,7 +274,7 @@ impl SplatTrainer {
                         .clone()
                         .slice([0..batch_size, 0..img_h, 0..img_w, 0..3]);
 
-                let ssim_err = -self.ssim.ssim(pred_rgb.clone(), gt_rgb);
+                let ssim_err = -self.ssim.ssim(pred_rgb, gt_rgb);
                 l1_rgb * (1.0 - self.config.ssim_weight) + ssim_err * self.config.ssim_weight
             } else {
                 l1_rgb
