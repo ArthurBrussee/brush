@@ -1,6 +1,6 @@
 use brush_render::Backend;
 use brush_train::image::view_to_sample;
-use brush_train::scene::{Scene, ViewImageType};
+use brush_train::scene::Scene;
 use brush_train::train::SceneBatch;
 use burn::tensor::Tensor;
 use rand::{seq::SliceRandom, SeedableRng};
