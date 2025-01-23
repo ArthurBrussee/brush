@@ -39,13 +39,13 @@ impl<B: Backend> Ssim<B> {
         Self { weights }
     }
 
-    pub fn ssim(&self, img1: Tensor<B, 4>, img2: Tensor<B, 4>) -> Tensor<B, 1> {
+    pub fn ssim(&self, img1: Tensor<B, 4>, img2: Tensor<B, 4>) -> Tensor<B, 4> {
         // Images are [N, H, W, C], need them as [N, C, H, W].
         let img1 = img1.permute([0, 3, 1, 2]);
         let img2 = img2.permute([0, 3, 1, 2]);
 
         let [channels, _, _, window_size] = self.weights.dims();
-        let padding = window_size.div_ceil(2);
+        let padding = window_size / 2;
         let conv_options = ConvOptions::new([1, 1], [padding, padding], [1, 1], channels);
         let mu_x = conv2d(
             img1.clone(),
@@ -92,8 +92,9 @@ impl<B: Backend> Ssim<B> {
         let c1 = 0.01f32.powf(2.0);
         let c2 = 0.03f32.powf(2.0);
 
-        let ssim_map = ((mu_xy * 2.0 + c1) * (sigma_xy * 2.0 + c2))
+        let ssim = ((mu_xy * 2.0 + c1) * (sigma_xy * 2.0 + c2))
             / ((mu_xx + mu_yy + c1) * (sigma_xx + sigma_yy + c2));
-        ssim_map.mean()
+
+        ssim.permute([0, 2, 3, 1])
     }
 }

@@ -131,7 +131,8 @@ async fn read_views(
 
                 let (path, mask_path) = find_mask_and_img(&vfs, &img_paths)?;
 
-                let mut image = load_image(&mut vfs, &path, mask_path.as_deref()).await?;
+                let (mut image, img_type) =
+                    load_image(&mut vfs, &path, mask_path.as_deref()).await?;
                 if let Some(max) = load_args.max_resolution {
                     image = clamp_img_to_max_size(image, max);
                 }
@@ -148,6 +149,7 @@ async fn read_views(
                     name: path.to_string_lossy().to_string(),
                     camera,
                     image: Arc::new(image),
+                    img_type,
                 };
                 Ok(view)
             }

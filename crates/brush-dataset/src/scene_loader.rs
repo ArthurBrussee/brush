@@ -1,6 +1,6 @@
 use brush_render::Backend;
-use brush_train::image::image_to_sample;
-use brush_train::scene::Scene;
+use brush_train::image::view_to_sample;
+use brush_train::scene::{Scene, ViewImageType};
 use brush_train::train::SceneBatch;
 use burn::tensor::Tensor;
 use rand::{seq::SliceRandom, SeedableRng};
@@ -51,7 +51,8 @@ impl<B: Backend> SceneLoader<B> {
                                 .expect("Need at least one view in dataset")
                         });
                         let view = scene.views[index].clone();
-                        (image_to_sample(&view.image, &device), view)
+
+                        (view_to_sample(&view, &device), view)
                     })
                     .unzip();
 

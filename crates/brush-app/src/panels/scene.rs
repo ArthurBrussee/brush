@@ -1,5 +1,6 @@
 use brush_dataset::splat_export;
 use brush_process::process_loop::{ControlMessage, ProcessMessage};
+use brush_train::scene::ViewImageType;
 use brush_ui::burn_texture::BurnTexture;
 use burn_wgpu::Wgpu;
 use core::f32;
@@ -145,19 +146,20 @@ impl ScenePanel {
 
         if let Some(id) = self.backbuffer.id() {
             ui.scope(|ui| {
-                if context
-                    .dataset
-                    .train
-                    .views
-                    .first()
-                    .is_some_and(|view| view.image.color().has_alpha())
-                {
-                    // if training views have alpha, show a background checker.
-                    brush_ui::draw_checkerboard(ui, rect);
-                } else {
-                    // If a scene is opaque, it assumes a black background.
+                let mut background = false;
+                if let Some(view) = context.dataset.train.views.first() {
+                    if view.image.color().has_alpha() && view.img_type == ViewImageType::Alpha {
+                        background = true;
+                        // if training views have alpha, show a background checker. Masked images
+                        // should still use a black background.
+                        brush_ui::draw_checkerboard(ui, rect, Color32::WHITE);
+                    }
+                }
+
+                // If a scene is opaque, it assumes a black background.
+                if !background {
                     ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
-                };
+                }
 
                 ui.painter().image(
                     id,

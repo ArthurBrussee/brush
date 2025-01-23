@@ -9,8 +9,8 @@ use brush_render::{
     gaussian_splats::{RandomSplatsConfig, Splats},
 };
 use brush_train::{
-    image::image_to_sample,
-    scene::SceneView,
+    image::view_to_sample,
+    scene::{SceneView, ViewImageType},
     train::{SceneBatch, SplatTrainer, TrainConfig},
 };
 use brush_ui::burn_texture::BurnTexture;
@@ -57,7 +57,7 @@ fn spawn_train_loop(
 
         // One batch of training data, it's the same every step so can just cosntruct it once.
         let batch = SceneBatch {
-            gt_images: image_to_sample(&view.image, &device).unsqueeze(),
+            gt_images: view_to_sample(&view, &device).unsqueeze(),
             gt_views: vec![view],
             scene_extent: 1.0,
         };
@@ -127,7 +127,9 @@ impl App {
             name: "crabby".to_owned(),
             camera,
             image: Arc::new(image),
+            img_type: ViewImageType::Alpha,
         };
+
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
 
         let color_img = egui::ColorImage::from_rgb(

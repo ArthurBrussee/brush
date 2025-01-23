@@ -16,7 +16,7 @@ use hashbrown::HashMap;
 use tracing::trace_span;
 
 use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
-use crate::scene::SceneView;
+use crate::scene::{SceneView, ViewImageType};
 use crate::ssim::Ssim;
 use crate::stats::RefineRecord;
 use clap::Args;
@@ -249,8 +249,6 @@ impl SplatTrainer {
                 let (pred_image, aux) =
                     splats.render(camera, glam::uvec2(img_w as u32, img_h as u32), false);
 
-                // aux.clone().debug_assert_valid();
-
                 renders.push(pred_image);
                 auxes.push(aux);
             }
@@ -262,28 +260,42 @@ impl SplatTrainer {
             let pred_rgb = pred_images
                 .clone()
                 .slice([0..batch_size, 0..img_h, 0..img_w, 0..3]);
+            let gt_rgb = batch
+                .gt_images
+                .clone()
+                .slice([0..batch_size, 0..img_h, 0..img_w, 0..3]);
 
-            // This is wrong if the batch has mixed transparent and non-transparent images,
-            // but that's ok for now.
-            let pred_compare = if batch.gt_views[0].image.color().has_alpha() {
-                pred_images.clone()
-            } else {
-                pred_rgb.clone()
-            };
+            let l1_rgb = (pred_rgb.clone() - gt_rgb).abs();
 
-            let mut loss = (pred_compare - batch.gt_images.clone()).abs().mean();
-
-            if self.config.ssim_weight > 0.0 {
+            let total_err = if self.config.ssim_weight > 0.0 {
                 let gt_rgb =
                     batch
                         .gt_images
                         .clone()
                         .slice([0..batch_size, 0..img_h, 0..img_w, 0..3]);
 
-                let ssim_loss = -self.ssim.ssim(pred_rgb, gt_rgb) + 1.0;
-                loss = loss * (1.0 - self.config.ssim_weight) + ssim_loss * self.config.ssim_weight;
-            }
+                let ssim_err = -self.ssim.ssim(pred_rgb.clone(), gt_rgb);
+                l1_rgb * (1.0 - self.config.ssim_weight) + ssim_err * self.config.ssim_weight
+            } else {
+                l1_rgb
+            };
 
+            let alpha_input =
+                batch
+                    .gt_images
+                    .clone()
+                    .slice([0..batch_size, 0..img_h, 0..img_w, 3..4]);
+
+            let mut loss = match batch.gt_views[0].img_type {
+                ViewImageType::Masked => (total_err * alpha_input).mean(),
+                ViewImageType::Alpha if batch.gt_views[0].image.color().has_alpha() => {
+                    let pred_alpha = pred_rgb.slice([0..batch_size, 0..img_h, 0..img_w, 3..4]);
+                    total_err.mean() + (alpha_input - pred_alpha).abs().mean()
+                }
+                ViewImageType::Alpha => total_err.mean(),
+            };
+
+            // Add in opacity loss if enabled.
             if self.config.opac_loss_weight > 0.0 {
                 let opac_loss = splats.opacity().mean();
                 loss = loss + opac_loss * self.config.opac_loss_weight;

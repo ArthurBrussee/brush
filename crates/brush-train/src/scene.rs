@@ -9,11 +9,18 @@ pub enum ViewType {
     Test,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ViewImageType {
+    Alpha,
+    Masked,
+}
+
 #[derive(Debug, Clone)]
 pub struct SceneView {
     pub name: String,
     pub camera: Camera,
     pub image: Arc<image::DynamicImage>,
+    pub img_type: ViewImageType,
 }
 
 // Encapsulates a multi-view scene including cameras and the splats.

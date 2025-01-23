@@ -141,7 +141,8 @@ fn read_transforms_file(
                 }
 
                 let mask_path = find_mask_path(&archive, &path);
-                let mut image = load_image(&mut archive, &path, mask_path.as_deref()).await?;
+                let (mut image, img_type) =
+                    load_image(&mut archive, &path, mask_path.as_deref()).await?;
 
                 let w = frame.w.or(scene.w).unwrap_or(image.width() as f64) as u32;
                 let h = frame.h.or(scene.h).unwrap_or(image.height() as f64) as u32;
@@ -184,6 +185,7 @@ fn read_transforms_file(
                     name: frame.file_path.clone(),
                     camera: Camera::new(translation, rotation, fovx, fovy, cuv),
                     image: Arc::new(image),
+                    img_type,
                 };
                 anyhow::Result::<SceneView>::Ok(view)
             }

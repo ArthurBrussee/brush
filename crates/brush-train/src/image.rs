@@ -4,20 +4,25 @@ use burn::{
 };
 use image::{DynamicImage, Rgb32FImage, Rgba32FImage};
 
+use crate::scene::{SceneView, ViewImageType};
+
 // Converts an image to a train sample. The tensor will be a floating point image with a [0, 1] image.
 //
 // This assume the input image has un-premultiplied alpha, whereas the output has pre-multiplied alpha.
-pub fn image_to_sample<B: Backend>(image: &DynamicImage, device: &B::Device) -> Tensor<B, 3> {
+pub fn view_to_sample<B: Backend>(view: &SceneView, device: &B::Device) -> Tensor<B, 3> {
+    let image = &view.image;
     let (w, h) = (image.width(), image.height());
 
     let tensor_data = if image.color().has_alpha() {
         // Assume image has un-multiplied alpha and convert it to pre-multiplied.
         let mut rgba = image.to_rgba32f();
-        for pixel in rgba.pixels_mut() {
-            let a = pixel[3];
-            pixel[0] *= a;
-            pixel[1] *= a;
-            pixel[2] *= a;
+        if view.img_type == ViewImageType::Alpha {
+            for pixel in rgba.pixels_mut() {
+                let a = pixel[3];
+                pixel[0] *= a;
+                pixel[1] *= a;
+                pixel[2] *= a;
+            }
         }
         TensorData::new(rgba.into_vec(), [h as usize, w as usize, 4])
     } else {

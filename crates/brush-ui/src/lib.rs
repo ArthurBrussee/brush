@@ -26,7 +26,7 @@ pub fn create_egui_options() -> WgpuConfiguration {
     }
 }
 
-pub fn draw_checkerboard(ui: &mut egui::Ui, rect: egui::Rect) {
+pub fn draw_checkerboard(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) {
     let id = egui::Id::new("checkerboard");
     let handle = ui
         .ctx()
@@ -62,8 +62,7 @@ pub fn draw_checkerboard(ui: &mut egui::Ui, rect: egui::Rect) {
         egui::pos2(rect.width() / 24.0, rect.height() / 24.0),
     );
 
-    ui.painter()
-        .image(handle.id(), rect, uv, egui::Color32::WHITE);
+    ui.painter().image(handle.id(), rect, uv, color);
 }
 
 pub fn size_for_splat_view(ui: &mut egui::Ui) -> egui::Vec2 {

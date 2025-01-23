@@ -4,6 +4,7 @@ use crate::{
     Dataset, LoadDataseConfig, WasmNotSend,
 };
 use brush_render::Backend;
+use brush_train::scene::ViewImageType;
 use image::DynamicImage;
 use path_clean::PathClean;
 use std::{
@@ -100,7 +101,7 @@ pub(crate) async fn load_image(
     vfs: &mut BrushVfs,
     img_path: &Path,
     mask_path: Option<&Path>,
-) -> anyhow::Result<DynamicImage> {
+) -> anyhow::Result<(DynamicImage, ViewImageType)> {
     log::info!("Loading image at {img_path:?}, with a mask {mask_path:?}");
 
     let mut img_bytes = vec![];
@@ -113,10 +114,6 @@ pub(crate) async fn load_image(
 
     // Copy over mask
     if let Some(mask_path) = mask_path {
-        // if img.color().has_alpha() {
-        //     anyhow::bail!("Image has both an alpha channel and mask specified, bailing.");
-        // }
-
         let mut mask_bytes = vec![];
 
         vfs.open_path(mask_path)
@@ -141,7 +138,9 @@ pub(crate) async fn load_image(
         }
 
         img = img_masked.into();
-    }
 
-    Ok(img)
+        Ok((img, ViewImageType::Masked))
+    } else {
+        Ok((img, ViewImageType::Alpha))
+    }
 }

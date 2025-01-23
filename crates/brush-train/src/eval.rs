@@ -1,10 +1,9 @@
 use brush_render::RenderAux;
 use brush_render::{gaussian_splats::Splats, Backend};
 use burn::tensor::{ElementConversion, Tensor};
-use image::DynamicImage;
 use rand::seq::IteratorRandom;
 
-use crate::image::image_to_sample;
+use crate::image::view_to_sample;
 use crate::scene::{Scene, SceneView};
 use crate::ssim::Ssim;
 
@@ -56,14 +55,15 @@ pub async fn eval_stats<B: Backend>(
 
     for view in eval_views {
         // Compare MSE in RGB only, not sure if this should include alpha.
-        let ground_truth: DynamicImage = view.image.clone().to_rgb8().into();
-        let res = glam::uvec2(ground_truth.width(), ground_truth.height());
+        let res = glam::uvec2(view.image.width(), view.image.height());
 
-        let gt_tensor = image_to_sample::<B>(&ground_truth, device);
+        let gt_tensor = view_to_sample::<B>(&view, device);
+        let gt_rgb = gt_tensor.slice([0..res.y as usize, 0..res.x as usize, 0..3]);
+
         let (rendered, aux) = splats.render(&view.camera, res, false);
 
         let render_rgb = rendered.slice([0..res.y as usize, 0..res.x as usize, 0..3]);
-        let mse = (render_rgb.clone() - gt_tensor.clone())
+        let mse = (render_rgb.clone() - gt_rgb.clone())
             .powf_scalar(2.0)
             .mean();
 
@@ -71,7 +71,7 @@ pub async fn eval_stats<B: Backend>(
         let psnr = psnr.into_scalar_async().await.elem::<f32>();
 
         let ssim_measure = Ssim::new(11, 3, device);
-        let ssim = ssim_measure.ssim(render_rgb.clone().unsqueeze(), gt_tensor.unsqueeze());
+        let ssim = ssim_measure.ssim(render_rgb.clone().unsqueeze(), gt_rgb.unsqueeze());
         let ssim = ssim.into_scalar_async().await.elem::<f32>();
 
         ret.push(EvalView {
