@@ -280,19 +280,22 @@ impl SplatTrainer {
                 l1_rgb
             };
 
-            let alpha_input =
-                batch
-                    .gt_images
-                    .clone()
-                    .slice([0..batch_size, 0..img_h, 0..img_w, 3..4]);
+            let mut loss = if batch.gt_views[0].image.color().has_alpha() {
+                let alpha_input =
+                    batch
+                        .gt_images
+                        .clone()
+                        .slice([0..batch_size, 0..img_h, 0..img_w, 3..4]);
 
-            let mut loss = match batch.gt_views[0].img_type {
-                ViewImageType::Masked => (total_err * alpha_input).mean(),
-                ViewImageType::Alpha if batch.gt_views[0].image.color().has_alpha() => {
-                    let pred_alpha = pred_rgb.slice([0..batch_size, 0..img_h, 0..img_w, 3..4]);
-                    total_err.mean() + (alpha_input - pred_alpha).abs().mean()
+                match batch.gt_views[0].img_type {
+                    ViewImageType::Masked => (total_err * alpha_input).mean(),
+                    ViewImageType::Alpha => {
+                        let pred_alpha = pred_rgb.slice([0..batch_size, 0..img_h, 0..img_w, 3..4]);
+                        total_err.mean() + (alpha_input - pred_alpha).abs().mean()
+                    }
                 }
-                ViewImageType::Alpha => total_err.mean(),
+            } else {
+                total_err.mean()
             };
 
             // Add in opacity loss if enabled.
