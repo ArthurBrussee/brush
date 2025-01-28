@@ -1,9 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context;
-use brush_train::image::tensor_into_image;
 use burn_jit::cubecl::Runtime;
-use image::DynamicImage;
 use web_time::Instant;
 
 use crate::{data_source::DataSource, rerun_tools::VisualizeTools};
@@ -303,6 +301,7 @@ async fn train_process_loop(
                 iter,
                 timestamp,
             } => {
+                #[allow(unused)]
                 let export_path =
                     Path::new(process_config.export_path.as_deref().unwrap_or(".")).to_owned();
 
@@ -336,10 +335,10 @@ async fn train_process_loop(
                             if process_args.process_config.eval_save_to_disk {
                                 log::info!("Saving eval image to disk.");
 
-                                let eval_render = tensor_into_image(
+                                let eval_render = brush_train::image::tensor_into_image(
                                     sample.rendered.clone().into_data_async().await,
                                 );
-                                let rendered: DynamicImage = eval_render.to_rgb8().into();
+                                let rendered: image::DynamicImage = eval_render.to_rgb8().into();
 
                                 let img_name = Path::new(&sample.view.path)
                                     .file_stem()
@@ -381,8 +380,6 @@ async fn train_process_loop(
                 let client = WgpuRuntime::client(&device);
                 visualize.log_memory(iter, &client.memory_usage())?;
 
-                let total_steps = process_args.train_config.total_steps;
-
                 // TODO: Support this on WASM somehow. Maybe have user pick a file once,
                 // and write to it repeatedly?
                 #[cfg(not(target_family = "wasm"))]
@@ -390,13 +387,14 @@ async fn train_process_loop(
                     let splats = *splats.clone();
                     let output_send = output.clone();
 
+                    let total_steps = process_args.train_config.total_steps;
+
                     // Ad-hoc format string.
                     let digits = (total_steps as f64).log10().ceil() as usize;
                     let export_name = process_config
                         .export_name
                         .replace("{iter}", &format!("{iter:0digits$}"));
 
-                    println!("Exporting to {export_path:?}");
                     tokio::fs::create_dir_all(&export_path).await?;
 
                     // Nb: this COULD easily be done in the spawned future as well,
