@@ -2,7 +2,6 @@ use brush_dataset::splat_export;
 use brush_process::process_loop::{ControlMessage, ProcessMessage};
 use brush_train::scene::ViewImageType;
 use brush_ui::burn_texture::BurnTexture;
-use burn_wgpu::Wgpu;
 use core::f32;
 use egui::epaint::mutex::RwLock as EguiRwLock;
 use std::sync::Arc;
@@ -10,6 +9,7 @@ use std::sync::Arc;
 use brush_render::{
     camera::{focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
+    BInner,
 };
 use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect};
@@ -38,7 +38,7 @@ pub(crate) struct ScenePanel {
     pub(crate) backbuffer: BurnTexture,
     pub(crate) last_draw: Option<Instant>,
 
-    view_splats: Vec<Splats<Wgpu>>,
+    view_splats: Vec<Splats<BInner>>,
     frame_count: usize,
     frame: f32,
 
@@ -77,7 +77,7 @@ impl ScenePanel {
         &mut self,
         ui: &mut egui::Ui,
         context: &mut AppContext,
-        splats: &Splats<Wgpu>,
+        splats: &Splats<BInner>,
     ) {
         let size = brush_ui::size_for_splat_view(ui);
 

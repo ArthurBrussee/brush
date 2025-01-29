@@ -1,6 +1,8 @@
 use std::path::Path;
 
 use anyhow::Context;
+use brush_render::BInner;
+use burn_jit::cubecl::wgpu::WgslCompiler;
 use burn_jit::cubecl::Runtime;
 use web_time::Instant;
 
@@ -39,7 +41,7 @@ pub enum ProcessMessage {
     /// Nb: Animated splats will have the 'frame' number set.
     ViewSplats {
         up_axis: Option<Vec3>,
-        splats: Box<Splats<Wgpu>>,
+        splats: Box<Splats<BInner>>,
         frame: usize,
         total_frames: usize,
     },
@@ -55,8 +57,8 @@ pub enum ProcessMessage {
     /// Some number of training steps are done.
     #[allow(unused)]
     TrainStep {
-        splats: Box<Splats<Wgpu>>,
-        stats: Box<TrainStepStats<Autodiff<Wgpu>>>,
+        splats: Box<Splats<BInner>>,
+        stats: Box<TrainStepStats<Autodiff<BInner>>>,
         iter: u32,
         timestamp: Instant,
     },
@@ -377,7 +379,8 @@ async fn train_process_loop(
                     }
                 }
 
-                let client = WgpuRuntime::client(&device);
+                // TODO: Should depend on the current compiler... ?
+                let client = WgpuRuntime::<WgslCompiler>::client(&device);
                 visualize.log_memory(iter, &client.memory_usage())?;
 
                 // TODO: Support this on WASM somehow. Maybe have user pick a file once,

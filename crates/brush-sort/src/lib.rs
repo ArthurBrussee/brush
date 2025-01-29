@@ -6,7 +6,9 @@ use burn::tensor::DType;
 use burn::tensor::Int;
 use burn::tensor::Tensor;
 use burn::tensor::TensorMetadata;
+use burn_jit::cubecl::wgpu::WgpuCompiler;
 use burn_jit::JitBackend;
+use burn_jit::JitRuntime;
 use burn_wgpu::JitTensor;
 use burn_wgpu::WgpuRuntime;
 use shaders::sort_count;
@@ -30,12 +32,15 @@ kernel_source_gen!(SortScanAdd {}, sort_scan_add);
 kernel_source_gen!(SortScan {}, sort_scan);
 kernel_source_gen!(SortScatter {}, sort_scatter);
 
-pub fn radix_argsort(
-    input_keys: JitTensor<WgpuRuntime>,
-    input_values: JitTensor<WgpuRuntime>,
-    n_sort: &JitTensor<WgpuRuntime>,
+pub fn radix_argsort<C: WgpuCompiler>(
+    input_keys: JitTensor<WgpuRuntime<C>>,
+    input_values: JitTensor<WgpuRuntime<C>>,
+    n_sort: &JitTensor<WgpuRuntime<C>>,
     sorting_bits: u32,
-) -> (JitTensor<WgpuRuntime>, JitTensor<WgpuRuntime>) {
+) -> (JitTensor<WgpuRuntime<C>>, JitTensor<WgpuRuntime<C>>)
+where
+    WgpuRuntime<C>: JitRuntime,
+{
     assert_eq!(
         input_keys.shape.dims[0], input_values.shape.dims[0],
         "Input keys and values must have the same number of elements"
@@ -54,22 +59,22 @@ pub fn radix_argsort(
     let max_needed_wgs = max_n.div_ceil(BLOCK_SIZE);
 
     let num_wgs = create_dispatch_buffer(n_sort.clone(), [BLOCK_SIZE, 1, 1]);
-    let num_reduce_wgs: Tensor<JitBackend<WgpuRuntime, f32, i32, u32>, 1, Int> =
+    let num_reduce_wgs: Tensor<JitBackend<WgpuRuntime<C>, f32, i32, u32>, 1, Int> =
         Tensor::from_primitive(create_dispatch_buffer(num_wgs.clone(), [BLOCK_SIZE, 1, 1]))
             * Tensor::from_ints([BIN_COUNT, 1, 1], device);
-    let num_reduce_wgs: JitTensor<WgpuRuntime> = num_reduce_wgs.into_primitive();
+    let num_reduce_wgs: JitTensor<WgpuRuntime<C>> = num_reduce_wgs.into_primitive();
 
     let mut cur_keys = input_keys;
     let mut cur_vals = input_values;
 
     for pass in 0..sorting_bits.div_ceil(4) {
-        let uniforms_buffer: JitTensor<WgpuRuntime> = create_uniform_buffer(
+        let uniforms_buffer: JitTensor<WgpuRuntime<C>> = create_uniform_buffer(
             shaders::sort_count::Uniforms { shift: pass * 4 },
             device,
             client,
         );
 
-        let count_buf = create_tensor::<1, WgpuRuntime>(
+        let count_buf = create_tensor::<1, WgpuRuntime<C>>(
             [(max_needed_wgs as usize) * 16],
             device,
             client,
@@ -91,8 +96,12 @@ pub fn radix_argsort(
         }
 
         {
-            let reduced_buf =
-                create_tensor::<1, WgpuRuntime>([BLOCK_SIZE as usize], device, client, DType::I32);
+            let reduced_buf = create_tensor::<1, WgpuRuntime<C>>(
+                [BLOCK_SIZE as usize],
+                device,
+                client,
+                DType::I32,
+            );
 
             // SAFETY: Kernel has to contain no OOB indexing.
             unsafe {

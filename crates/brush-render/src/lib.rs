@@ -2,12 +2,14 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::single_range_in_vec_init)]
 
+use burn::backend::Autodiff;
 use burn::prelude::Tensor;
 use burn::tensor::ops::{FloatTensor, IntTensor};
 use burn::tensor::{ElementConversion, Int, TensorPrimitive};
+use burn_fusion::Fusion;
 use burn_jit::JitBackend;
 use burn_wgpu::graphics::AutoGraphicsApi;
-use burn_wgpu::{RuntimeOptions, WgpuDevice, WgpuRuntime};
+use burn_wgpu::{RuntimeOptions, SpirvCompiler, WgpuDevice, WgpuRuntime};
 use camera::Camera;
 use shaders::helpers::TILE_WIDTH;
 use wgpu::{Adapter, Device, Queue};
@@ -25,6 +27,14 @@ pub mod bounding_box;
 pub mod camera;
 pub mod gaussian_splats;
 pub mod render;
+
+type InnerWgpu<C, F, I, B> = JitBackend<WgpuRuntime<C>, F, I, B>;
+
+// Currently active backends.
+pub type Compiler = SpirvCompiler;
+pub type BJit = JitBackend<WgpuRuntime<SpirvCompiler>, f32, i32, u8>;
+pub type BInner = Fusion<BJit>;
+pub type BDiff = Autodiff<BInner>;
 
 #[derive(Debug, Clone)]
 pub struct RenderAuxPrimitive<B: Backend> {
@@ -55,7 +65,7 @@ impl<B: Backend> RenderAuxPrimitive<B> {
 }
 
 #[derive(Debug, Clone)]
-pub struct RenderAux<B: Backend> {
+pub struct RenderAux<B: burn::prelude::Backend> {
     /// The packed projected splat information, see `ProjectedSplat` in helpers.wgsl
     pub num_intersections: Tensor<B, 1, Int>,
     pub num_visible: Tensor<B, 1, Int>,
@@ -257,8 +267,6 @@ pub trait AutodiffBackend:
     Backend + burn::tensor::backend::AutodiffBackend<InnerBackend: Backend>
 {
 }
-
-type BBase = JitBackend<WgpuRuntime, f32, i32, u32>;
 
 fn burn_options() -> RuntimeOptions {
     RuntimeOptions {

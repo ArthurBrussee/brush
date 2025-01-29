@@ -1,5 +1,6 @@
 use crate::app::{AppContext, AppPanel};
 use brush_process::process_loop::ProcessMessage;
+use brush_render::Compiler;
 use burn_jit::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use std::time::Duration;
@@ -156,7 +157,7 @@ impl AppPanel for StatsPanel {
                     ui.end_row();
                 }
 
-                let client = WgpuRuntime::client(&self.device);
+                let client = WgpuRuntime::<Compiler>::client(&self.device);
                 let memory = client.memory_usage();
 
                 ui.label("GPU memory");

@@ -4,6 +4,8 @@ use brush_kernel::calc_cube_count;
 use brush_kernel::create_tensor;
 use brush_kernel::kernel_source_gen;
 use burn::tensor::DType;
+use burn_jit::cubecl::wgpu::WgpuCompiler;
+use burn_jit::JitRuntime;
 use burn_wgpu::WgpuRuntime;
 use shaders::prefix_sum_add_scanned_sums;
 use shaders::prefix_sum_scan;
@@ -15,7 +17,10 @@ kernel_source_gen!(PrefixSumAddScannedSums {}, prefix_sum_add_scanned_sums);
 
 use burn_wgpu::JitTensor;
 
-pub fn prefix_sum(input: JitTensor<WgpuRuntime>) -> JitTensor<WgpuRuntime> {
+pub fn prefix_sum<C: WgpuCompiler>(input: JitTensor<WgpuRuntime<C>>) -> JitTensor<WgpuRuntime<C>>
+where
+    WgpuRuntime<C>: JitRuntime,
+{
     let threads_per_group = shaders::prefix_sum_helpers::THREADS_PER_GROUP as usize;
     let num = input.shape.dims[0];
     let client = &input.client;
@@ -39,7 +44,7 @@ pub fn prefix_sum(input: JitTensor<WgpuRuntime>) -> JitTensor<WgpuRuntime> {
     let mut work_sz = num;
     while work_sz > threads_per_group {
         work_sz = work_sz.div_ceil(threads_per_group);
-        group_buffer.push(create_tensor::<1, WgpuRuntime>(
+        group_buffer.push(create_tensor::<1, WgpuRuntime<C>>(
             [work_sz],
             &input.device,
             client,

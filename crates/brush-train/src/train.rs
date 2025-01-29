@@ -1,9 +1,8 @@
 use anyhow::Result;
 use brush_render::gaussian_splats::{inverse_sigmoid, Splats};
 use brush_render::render::sh_coeffs_for_degree;
-use brush_render::{AutodiffBackend, Backend};
+use brush_render::{AutodiffBackend, BDiff, BInner, Backend};
 use burn::backend::wgpu::WgpuDevice;
-use burn::backend::{Autodiff, Wgpu};
 use burn::lr_scheduler::exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig};
 use burn::lr_scheduler::LrScheduler;
 use burn::module::{Param, ParamId};
@@ -131,8 +130,6 @@ pub struct TrainConfig {
     alpha_loss_weight: f32,
 }
 
-type B = Autodiff<Wgpu>;
-
 #[derive(Clone, Debug)]
 pub struct SceneBatch<B: Backend> {
     pub gt_image: Tensor<B, 3>,
@@ -166,14 +163,14 @@ pub struct TrainStepStats<B: AutodiffBackend> {
     pub lr_opac: f64,
 }
 
-type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<B>, B>;
+type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<BDiff>, BDiff>;
 
 pub struct SplatTrainer {
     config: TrainConfig,
     sched_mean: ExponentialLrScheduler,
     optim: OptimizerType,
-    ssim: Ssim<B>,
-    refine_record: RefineRecord,
+    ssim: Ssim<BDiff>,
+    refine_record: RefineRecord<BInner>,
 }
 
 fn quaternion_vec_multiply<B: Backend>(
@@ -227,7 +224,7 @@ pub fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
 }
 
 impl SplatTrainer {
-    pub fn new(splats: &Splats<B>, config: &TrainConfig, device: &WgpuDevice) -> Self {
+    pub fn new(splats: &Splats<BDiff>, config: &TrainConfig, device: &WgpuDevice) -> Self {
         let optim = AdamScaledConfig::new().with_epsilon(1e-15).init();
 
         let ssim = Ssim::new(config.ssim_window_size, 3, device);
@@ -247,9 +244,9 @@ impl SplatTrainer {
     pub fn step(
         &mut self,
         iter: u32,
-        batch: SceneBatch<B>,
-        splats: Splats<B>,
-    ) -> (Splats<B>, TrainStepStats<B>) {
+        batch: SceneBatch<BDiff>,
+        splats: Splats<BDiff>,
+    ) -> (Splats<BDiff>, TrainStepStats<BDiff>) {
         let mut splats = splats;
 
         let [img_h, img_w, _] = batch.gt_image.dims();
@@ -413,9 +410,9 @@ impl SplatTrainer {
     pub async fn refine_if_needed(
         &mut self,
         iter: u32,
-        splats: Splats<B>,
+        splats: Splats<BDiff>,
         scene_extent: f32,
-    ) -> (Splats<B>, Option<RefineStats>) {
+    ) -> (Splats<BDiff>, Option<RefineStats>) {
         let do_refine = iter < self.config.refine_stop_iter
             && iter >= self.config.refine_start_iter
             && iter % self.config.refine_every == 0;
@@ -432,9 +429,9 @@ impl SplatTrainer {
     async fn refine_splats(
         &mut self,
         iter: u32,
-        splats: Splats<B>,
+        splats: Splats<BDiff>,
         scene_extent: f32,
-    ) -> (Splats<B>, RefineStats) {
+    ) -> (Splats<BDiff>, RefineStats) {
         let mut record = self.optim.to_record();
 
         let mut splats = splats;
@@ -447,6 +444,7 @@ impl SplatTrainer {
         let is_grad_high = avg_grad.greater_equal_elem(self.config.densify_grad_thresh);
         let split_clone_size_mask = splats
             .scales()
+            .inner()
             .max_dim(1)
             .squeeze(1)
             .lower_elem(self.config.densify_size_threshold * scene_extent);
@@ -468,12 +466,19 @@ impl SplatTrainer {
         let clone_count = clone_inds.dims()[0];
         if clone_count > 0 {
             let clone_inds = clone_inds.squeeze(1);
-            let cur_means = splats.means.val().select(0, clone_inds.clone());
-            let cur_rots = splats.rotations_normed().select(0, clone_inds.clone());
-            let cur_scale = splats.log_scales.val().select(0, clone_inds.clone());
+            let cur_means = splats.means.val().inner().select(0, clone_inds.clone());
+            let cur_rots = splats
+                .rotations_normed()
+                .inner()
+                .select(0, clone_inds.clone());
+            let cur_scale = splats
+                .log_scales
+                .val()
+                .inner()
+                .select(0, clone_inds.clone());
 
-            let cur_coeff = splats.sh_coeffs.val().select(0, clone_inds.clone());
-            let cur_raw_opac = splats.raw_opacity.val().select(0, clone_inds);
+            let cur_coeff = splats.sh_coeffs.val().inner().select(0, clone_inds.clone());
+            let cur_raw_opac = splats.raw_opacity.val().inner().select(0, clone_inds);
 
             let samples = quaternion_vec_multiply(
                 cur_rots.clone(),
@@ -511,11 +516,18 @@ impl SplatTrainer {
             let split_inds = split_inds.squeeze(1);
 
             // Some parts can be straightforwardly copied to the new splats.
-            let cur_means = splats.means.val().select(0, split_inds.clone());
-            let cur_coeff = splats.sh_coeffs.val().select(0, split_inds.clone());
-            let cur_raw_opac = splats.raw_opacity.val().select(0, split_inds.clone());
-            let cur_rots = splats.rotations_normed().select(0, split_inds.clone());
-            let cur_scale = splats.log_scales.val().select(0, split_inds);
+            let cur_means = splats.means.val().inner().select(0, split_inds.clone());
+            let cur_coeff = splats.sh_coeffs.val().inner().select(0, split_inds.clone());
+            let cur_raw_opac = splats
+                .raw_opacity
+                .val()
+                .inner()
+                .select(0, split_inds.clone());
+            let cur_rots = splats
+                .rotations_normed()
+                .inner()
+                .select(0, split_inds.clone());
+            let cur_scale = splats.log_scales.val().inner().select(0, split_inds);
 
             let samples = quaternion_vec_multiply(
                 cur_rots.clone(),
@@ -545,7 +557,10 @@ impl SplatTrainer {
 
         // Remove barely visible gaussians.
         let start_count = splats.num_splats();
-        let alpha_mask = splats.opacity().lower_elem(self.config.cull_opacity);
+        let alpha_mask = splats
+            .opacity()
+            .inner()
+            .lower_elem(self.config.cull_opacity);
         prune_points(&mut splats, &mut record, alpha_mask).await;
         let alpha_pruned = start_count - splats.num_splats();
 
@@ -563,10 +578,11 @@ impl SplatTrainer {
         let scale_big = splats
             .log_scales
             .val()
+            .inner()
             .greater_elem((self.config.cull_scale3d_percentage_threshold * scene_extent).ln());
 
         // less than e^-10, too small to care about.
-        let scale_small = splats.log_scales.val().lower_elem(-10.0);
+        let scale_small = splats.log_scales.val().inner().lower_elem(-10.0);
 
         let scale_mask =
             Tensor::any_dim(Tensor::cat(vec![scale_small, scale_big], 1), 1).squeeze(1);
@@ -636,7 +652,7 @@ fn map_param<B: AutodiffBackend, const D: usize>(
 pub async fn prune_points<B: AutodiffBackend>(
     splats: &mut Splats<B>,
     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, B>>,
-    prune: Tensor<B, 1, Bool>,
+    prune: Tensor<B::InnerBackend, 1, Bool>,
 ) {
     assert_eq!(
         prune.dims()[0],
@@ -663,6 +679,8 @@ pub async fn prune_points<B: AutodiffBackend>(
 
     if new_points < start_splats {
         let valid_inds = valid_inds.squeeze(1);
+        let valid_inds = Tensor::from_inner(valid_inds);
+
         map_param(
             &mut splats.means,
             record,
@@ -699,11 +717,11 @@ pub async fn prune_points<B: AutodiffBackend>(
 pub fn concat_splats<B: AutodiffBackend>(
     splats: &mut Splats<B>,
     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, B>>,
-    means: Tensor<B, 2>,
-    rotations: Tensor<B, 2>,
-    sh_coeffs: Tensor<B, 3>,
-    raw_opac: Tensor<B, 1>,
-    log_scales: Tensor<B, 2>,
+    means: Tensor<B::InnerBackend, 2>,
+    rotations: Tensor<B::InnerBackend, 2>,
+    sh_coeffs: Tensor<B::InnerBackend, 3>,
+    raw_opac: Tensor<B::InnerBackend, 1>,
+    log_scales: Tensor<B::InnerBackend, 2>,
 ) {
     // Concat
     let means_shape = means.shape();
@@ -711,7 +729,7 @@ pub fn concat_splats<B: AutodiffBackend>(
     map_param(
         &mut splats.means,
         record,
-        move |x| Tensor::cat(vec![x, means], 0),
+        move |x| Tensor::cat(vec![x, Tensor::from_inner(means)], 0),
         |x| Tensor::cat(vec![x, Tensor::zeros(means_shape.clone(), &device)], 0),
     );
 
@@ -719,7 +737,7 @@ pub fn concat_splats<B: AutodiffBackend>(
     map_param(
         &mut splats.rotation,
         record,
-        move |x| Tensor::cat(vec![x, rotations], 0),
+        move |x| Tensor::cat(vec![x, Tensor::from_inner(rotations)], 0),
         |x| Tensor::cat(vec![x, Tensor::zeros(rotations_shape.clone(), &device)], 0),
     );
 
@@ -727,21 +745,21 @@ pub fn concat_splats<B: AutodiffBackend>(
     map_param(
         &mut splats.sh_coeffs,
         record,
-        move |x| Tensor::cat(vec![x, sh_coeffs], 0),
+        move |x| Tensor::cat(vec![x, Tensor::from_inner(sh_coeffs)], 0),
         |x| Tensor::cat(vec![x, Tensor::zeros(sh_coeffs_shape.clone(), &device)], 0),
     );
     let raw_opac_shape = raw_opac.shape();
     map_param(
         &mut splats.raw_opacity,
         record,
-        move |x| Tensor::cat(vec![x, raw_opac], 0),
+        move |x| Tensor::cat(vec![x, Tensor::from_inner(raw_opac)], 0),
         |x| Tensor::cat(vec![x, Tensor::zeros(raw_opac_shape.clone(), &device)], 0),
     );
     let log_scales_shape = log_scales.shape();
     map_param(
         &mut splats.log_scales,
         record,
-        move |x| Tensor::cat(vec![x, log_scales], 0),
+        move |x| Tensor::cat(vec![x, Tensor::from_inner(log_scales)], 0),
         |x| Tensor::cat(vec![x, Tensor::zeros(log_scales_shape.clone(), &device)], 0),
     );
 }

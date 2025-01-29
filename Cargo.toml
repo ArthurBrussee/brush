@@ -67,6 +67,7 @@ ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 
 burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
+    'vulkan',
     'autodiff',
 ] } # Various burn packages. Currently need to use burn at head.
 burn-jit = { git = "https://github.com/tracel-ai/burn" }
@@ -127,12 +128,12 @@ ecolor = { git = "https://github.com/emilk/egui", rev = "5b740f97acc3e0c24023609
 
 [patch."https://github.com/tracel-ai/cubecl"]
 # Uncomment this to use local burn.
-# cubecl = { path = "../cubecl/crates/cubecl" }
-# cubecl-common = { path = "../cubecl/crates/cubecl-common" }
+cubecl = { path = "../cubecl/crates/cubecl" }
+cubecl-common = { path = "../cubecl/crates/cubecl-common" }
 
 # Temporary until Brun updates cube.
-cubecl = { git = "https://github.com/ArthurBrussee/cubecl", branch = "patched" }
-cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl", branch = "patched" }
+# cubecl = { git = "https://github.com/ArthurBrussee/cubecl", branch = "patched" }
+# cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl", branch = "patched" }
 
 [profile.dev]
 opt-level = 1

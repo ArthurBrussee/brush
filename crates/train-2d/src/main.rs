@@ -7,6 +7,7 @@ use brush_render::{
     bounding_box::BoundingBox,
     camera::{focal_to_fov, fov_to_focal, Camera},
     gaussian_splats::{RandomSplatsConfig, Splats},
+    BInner,
 };
 use brush_train::{
     image::view_to_sample,
@@ -14,19 +15,14 @@ use brush_train::{
     train::{SceneBatch, SplatTrainer, TrainConfig},
 };
 use brush_ui::burn_texture::BurnTexture;
-use burn::{
-    backend::{wgpu::WgpuDevice, Autodiff, Wgpu},
-    module::AutodiffModule,
-};
+use burn::{backend::wgpu::WgpuDevice, module::AutodiffModule, prelude::Backend};
 use egui::{load::SizedTexture, ImageSource, TextureHandle, TextureOptions};
 use glam::{Quat, Vec2, Vec3};
 use rand::SeedableRng;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-type Backend = Wgpu;
-
 struct TrainStep {
-    splats: Splats<Backend>,
+    splats: Splats<BInner>,
     iter: u32,
 }
 
@@ -41,12 +37,12 @@ fn spawn_train_loop(
     tokio::spawn(async move {
         let seed = 42;
 
-        <Wgpu as burn::prelude::Backend>::seed(seed);
+        BInner::seed(seed);
         let mut rng = rand::rngs::StdRng::from_seed([seed as u8; 32]);
 
         let init_bounds = BoundingBox::from_min_max(-Vec3::ONE * 5.0, Vec3::ONE * 5.0);
 
-        let mut splats: Splats<Autodiff<Backend>> = Splats::from_random_config(
+        let mut splats = Splats::from_random_config(
             &RandomSplatsConfig::new().with_init_count(32),
             init_bounds,
             &mut rng,

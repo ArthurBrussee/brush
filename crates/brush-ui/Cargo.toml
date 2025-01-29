@@ -9,6 +9,9 @@ license.workspace = true
 burn.workspace = true
 burn-wgpu.workspace = true
 burn-fusion.workspace = true
+burn-jit.workspace = true
+brush-render.path = "../brush-render"
+
 glam.workspace = true
 eframe.workspace = true
 egui.workspace = true

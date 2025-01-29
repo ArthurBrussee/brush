@@ -2,17 +2,17 @@
 use async_fn_stream::try_fn_stream;
 
 use brush_dataset::{scene_loader::SceneLoader, Dataset};
-use brush_render::gaussian_splats::Splats;
+use brush_render::{gaussian_splats::Splats, BDiff, BInner};
 use brush_train::train::{RefineStats, SplatTrainer, TrainConfig, TrainStepStats};
-use burn::{backend::Autodiff, module::AutodiffModule};
-use burn_wgpu::{Wgpu, WgpuDevice};
+use burn::module::AutodiffModule;
+use burn_wgpu::WgpuDevice;
 use tokio_stream::Stream;
 use web_time::Instant;
 
 pub enum TrainMessage {
     TrainStep {
-        splats: Box<Splats<Wgpu>>,
-        stats: Box<TrainStepStats<Autodiff<Wgpu>>>,
+        splats: Box<Splats<BInner>>,
+        stats: Box<TrainStepStats<BDiff>>,
         iter: u32,
         timestamp: Instant,
     },
@@ -26,7 +26,7 @@ pub enum TrainMessage {
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn train_stream(
     dataset: Dataset,
-    initial_splats: Splats<Autodiff<Wgpu>>,
+    initial_splats: Splats<BDiff>,
     config: TrainConfig,
     device: WgpuDevice,
 ) -> impl Stream<Item = anyhow::Result<TrainMessage>> {
