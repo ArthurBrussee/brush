@@ -1,11 +1,10 @@
 use super::shaders::{project_backwards, rasterize_backwards};
 use crate::shaders::gather_grads;
 use brush_kernel::{calc_cube_count, kernel_source_gen, CubeCount, JitTensor};
-use brush_render::render::{sh_coeffs_for_degree, InnerWgpu};
-use burn::{backend::wgpu::WgpuRuntime, prelude::Backend, tensor::ops::FloatTensor};
-use burn_jit::cubecl::AtomicFeature;
-
+use brush_render::{render::sh_coeffs_for_degree, BBase};
 use burn::tensor::ops::FloatTensorOps;
+use burn::{backend::wgpu::WgpuRuntime, prelude::Backend, tensor::ops::FloatTensor};
+use burn_jit::{cubecl::AtomicFeature, BoolElement, FloatElement, IntElement};
 use glam::uvec2;
 
 kernel_source_gen!(GatherGrads {}, gather_grads);
@@ -23,7 +22,7 @@ pub struct SplatGrads<B: Backend> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn render_backward(
+pub(crate) fn render_backward<F: FloatElement, I: IntElement, BT: BoolElement>(
     v_output: JitTensor<WgpuRuntime>,
 
     means: JitTensor<WgpuRuntime>,
@@ -39,7 +38,7 @@ pub(crate) fn render_backward(
     tile_offsets: JitTensor<WgpuRuntime>,
     final_index: JitTensor<WgpuRuntime>,
     sh_degree: u32,
-) -> SplatGrads<InnerWgpu> {
+) -> SplatGrads<BBase<F, I, BT>> {
     let device = &out_img.device;
     let img_dimgs = out_img.shape.dims;
     let img_size = glam::uvec2(img_dimgs[1] as u32, img_dimgs[0] as u32);
@@ -53,16 +52,16 @@ pub(crate) fn render_backward(
     // Nb: these are packed vec3 values, special care is taken in the kernel to respect alignment.
     // Nb: These have to be zerod out - as we only write to visible splats.
     //
-    let v_xys_local = InnerWgpu::float_zeros([num_points, 2].into(), device);
-    let v_means = InnerWgpu::float_zeros([num_points, 3].into(), device);
-    let v_scales = InnerWgpu::float_zeros([num_points, 3].into(), device);
-    let v_quats = InnerWgpu::float_zeros([num_points, 4].into(), device);
+    let v_xys_local = BBase::<F, I, BT>::float_zeros([num_points, 2].into(), device);
+    let v_means = BBase::<F, I, BT>::float_zeros([num_points, 3].into(), device);
+    let v_scales = BBase::<F, I, BT>::float_zeros([num_points, 3].into(), device);
+    let v_quats = BBase::<F, I, BT>::float_zeros([num_points, 4].into(), device);
 
-    let v_coeffs = InnerWgpu::float_zeros(
+    let v_coeffs = BBase::<F, I, BT>::float_zeros(
         [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
         device,
     );
-    let v_raw_opac = InnerWgpu::float_zeros([num_points].into(), device);
+    let v_raw_opac = BBase::<F, I, BT>::float_zeros([num_points].into(), device);
 
     let tile_bounds = uvec2(
         img_size
@@ -75,8 +74,8 @@ pub(crate) fn render_backward(
     let invocations = tile_bounds.x * tile_bounds.y;
 
     // These gradients are atomically added to so important to zero them.
-    let v_conics = InnerWgpu::float_zeros([num_points, 3].into(), device);
-    let v_colors = InnerWgpu::float_zeros([num_points, 4].into(), device);
+    let v_conics = BBase::<F, I, BT>::float_zeros([num_points, 3].into(), device);
+    let v_colors = BBase::<F, I, BT>::float_zeros([num_points, 4].into(), device);
 
     let hard_floats = client
         .properties()

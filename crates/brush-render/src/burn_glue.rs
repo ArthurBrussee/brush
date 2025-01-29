@@ -1,7 +1,12 @@
+use std::marker::PhantomData;
+
 use burn::tensor::{ops::FloatTensor, DType};
 use burn_fusion::{client::FusionClient, stream::Operation, Fusion};
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
-use burn_jit::fusion::{FusionJitRuntime, JitFusionHandle};
+use burn_jit::{
+    fusion::{FusionJitRuntime, JitFusionHandle},
+    BoolElement, FloatElement, IntElement,
+};
 use burn_wgpu::WgpuRuntime;
 
 use crate::{
@@ -11,7 +16,7 @@ use crate::{
 };
 
 // Implement forward functions for the inner wgpu backend.
-impl SplatForward<Self> for BBase {
+impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatForward<Self> for BBase<F, I, BT> {
     fn render_splats(
         camera: &Camera,
         img_size: glam::UVec2,
@@ -35,7 +40,9 @@ impl SplatForward<Self> for BBase {
     }
 }
 
-impl SplatForward<Self> for Fusion<BBase> {
+impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatForward<Self>
+    for Fusion<BBase<F, I, BT>>
+{
     fn render_splats(
         cam: &Camera,
         img_size: glam::UVec2,
@@ -46,48 +53,57 @@ impl SplatForward<Self> for Fusion<BBase> {
         raw_opacity: FloatTensor<Self>,
         render_u32_buffer: bool,
     ) -> (FloatTensor<Self>, RenderAuxPrimitive<Self>) {
-        struct CustomOp {
+        struct CustomOp<F: FloatElement, I: IntElement, BT: BoolElement> {
             cam: Camera,
             img_size: glam::UVec2,
             render_u32_buffer: bool,
             desc: CustomOpIr,
+            _c: PhantomData<(F, I, BT)>,
         }
 
-        impl Operation<FusionJitRuntime<WgpuRuntime, u32>> for CustomOp {
+        impl<F: FloatElement, I: IntElement, BT: BoolElement>
+            Operation<FusionJitRuntime<WgpuRuntime, BT>> for CustomOp<F, I, BT>
+        {
             fn execute(self: Box<Self>, h: &mut HandleContainer<JitFusionHandle<WgpuRuntime>>) {
                 let (
                     [means, log_scales, quats, sh_coeffs, raw_opacity],
                     [projected_splats, uniforms_buffer, num_intersections, num_visible, final_index, tile_offsets, compact_gid_from_isect, global_from_compact_gid, radii, out_img],
                 ) = self.desc.consume();
 
-                let (img, aux) = BBase::render_splats(
+                let (img, aux) = BBase::<F, I, BT>::render_splats(
                     &self.cam,
                     self.img_size,
-                    h.get_float_tensor::<BBase>(&means),
-                    h.get_float_tensor::<BBase>(&log_scales),
-                    h.get_float_tensor::<BBase>(&quats),
-                    h.get_float_tensor::<BBase>(&sh_coeffs),
-                    h.get_float_tensor::<BBase>(&raw_opacity),
+                    h.get_float_tensor::<BBase<F, I, BT>>(&means),
+                    h.get_float_tensor::<BBase<F, I, BT>>(&log_scales),
+                    h.get_float_tensor::<BBase<F, I, BT>>(&quats),
+                    h.get_float_tensor::<BBase<F, I, BT>>(&sh_coeffs),
+                    h.get_float_tensor::<BBase<F, I, BT>>(&raw_opacity),
                     self.render_u32_buffer,
                 );
 
                 // Register output.
-                h.register_float_tensor::<BBase>(&out_img.id, img);
-                h.register_float_tensor::<BBase>(&projected_splats.id, aux.projected_splats);
-                h.register_int_tensor::<BBase>(&uniforms_buffer.id, aux.uniforms_buffer);
-                h.register_int_tensor::<BBase>(&num_intersections.id, aux.num_intersections);
-                h.register_int_tensor::<BBase>(&num_visible.id, aux.num_visible);
-                h.register_int_tensor::<BBase>(&final_index.id, aux.final_index);
-                h.register_int_tensor::<BBase>(&tile_offsets.id, aux.tile_offsets);
-                h.register_int_tensor::<BBase>(
+                h.register_float_tensor::<BBase<F, I, BT>>(&out_img.id, img);
+                h.register_float_tensor::<BBase<F, I, BT>>(
+                    &projected_splats.id,
+                    aux.projected_splats,
+                );
+                h.register_int_tensor::<BBase<F, I, BT>>(&uniforms_buffer.id, aux.uniforms_buffer);
+                h.register_int_tensor::<BBase<F, I, BT>>(
+                    &num_intersections.id,
+                    aux.num_intersections,
+                );
+                h.register_int_tensor::<BBase<F, I, BT>>(&num_visible.id, aux.num_visible);
+                h.register_int_tensor::<BBase<F, I, BT>>(&final_index.id, aux.final_index);
+                h.register_int_tensor::<BBase<F, I, BT>>(&tile_offsets.id, aux.tile_offsets);
+                h.register_int_tensor::<BBase<F, I, BT>>(
                     &compact_gid_from_isect.id,
                     aux.compact_gid_from_isect,
                 );
-                h.register_int_tensor::<BBase>(
+                h.register_int_tensor::<BBase<F, I, BT>>(
                     &global_from_compact_gid.id,
                     aux.global_from_compact_gid,
                 );
-                h.register_float_tensor::<BBase>(&radii.id, aux.radii);
+                h.register_float_tensor::<BBase<F, I, BT>>(&radii.id, aux.radii);
             }
         }
 
@@ -150,11 +166,12 @@ impl SplatForward<Self> for Fusion<BBase> {
             ],
         );
 
-        let op = CustomOp {
+        let op = CustomOp::<F, I, BT> {
             cam: cam.clone(),
             img_size,
             render_u32_buffer,
             desc: desc.clone(),
+            _c: PhantomData {},
         };
 
         client.register(vec![stream], OperationIr::Custom(desc), op);

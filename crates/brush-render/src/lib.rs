@@ -3,6 +3,7 @@
 use burn::prelude::{Backend, Tensor};
 use burn::tensor::ops::{FloatTensor, IntTensor};
 use burn::tensor::{ElementConversion, Int, TensorPrimitive};
+use burn_fusion::Fusion;
 use burn_jit::JitBackend;
 use burn_wgpu::graphics::AutoGraphicsApi;
 use burn_wgpu::{RuntimeOptions, WgpuDevice, WgpuRuntime};
@@ -188,7 +189,8 @@ impl<B: Backend> RenderAux<B> {
     }
 }
 
-pub type BBase = JitBackend<WgpuRuntime, f32, i32, u32>;
+pub type BBase<F, I, BT> = JitBackend<WgpuRuntime, F, I, BT>;
+pub type BFused<F, I, BT> = Fusion<BBase<F, I, BT>>;
 
 pub trait SplatForward<B: Backend> {
     /// Render splats to a buffer.

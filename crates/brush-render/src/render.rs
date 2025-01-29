@@ -6,7 +6,7 @@ use crate::{
     camera::Camera,
     dim_check::DimCheck,
     kernels::{MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
-    RenderAuxPrimitive, INTERSECTS_UPPER_BOUND,
+    BBase, RenderAuxPrimitive, INTERSECTS_UPPER_BOUND,
 };
 
 use brush_kernel::create_dispatch_buffer;
@@ -16,15 +16,13 @@ use brush_kernel::{calc_cube_count, CubeCount};
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::tensor::ops::IntTensorOps;
-use burn::tensor::{ops::IntTensor, DType};
-use burn_jit::JitBackend;
+use burn::tensor::DType;
+use burn_jit::{BoolElement, FloatElement, IntElement};
 use burn_wgpu::JitTensor;
 use burn_wgpu::WgpuRuntime;
 
 use burn::tensor::ops::FloatTensorOps;
 use glam::{ivec2, uvec2};
-
-pub type InnerWgpu = JitBackend<WgpuRuntime, f32, i32, u32>;
 
 pub const SH_C0: f32 = shaders::project_visible::SH_C0;
 
@@ -71,12 +69,7 @@ pub(crate) fn max_intersections(img_size: glam::UVec2, num_splats: u32) -> u32 {
     max.min(INTERSECTS_UPPER_BOUND)
 }
 
-fn copy_tensor(tensor: IntTensor<InnerWgpu>) -> IntTensor<InnerWgpu> {
-    // Just an operation to force a new output.
-    InnerWgpu::int_add_scalar(tensor, 0)
-}
-
-pub(crate) fn render_forward(
+pub(crate) fn render_forward<F: FloatElement, I: IntElement, BT: BoolElement>(
     camera: &Camera,
     img_size: glam::UVec2,
     means: JitTensor<WgpuRuntime>,
@@ -85,7 +78,7 @@ pub(crate) fn render_forward(
     sh_coeffs: JitTensor<WgpuRuntime>,
     raw_opacities: JitTensor<WgpuRuntime>,
     raster_u32: bool,
-) -> (JitTensor<WgpuRuntime>, RenderAuxPrimitive<InnerWgpu>) {
+) -> (JitTensor<WgpuRuntime>, RenderAuxPrimitive<BBase<F, I, BT>>) {
     assert!(
         img_size[0] > 0 && img_size[1] > 0,
         "Can't render 0 sized images"
@@ -151,10 +144,10 @@ pub(crate) fn render_forward(
     let num_points = means.shape.dims[0];
     let client = &means.client.clone();
 
-    let radii = InnerWgpu::float_zeros([num_points].into(), device);
+    let radii = BBase::<F, I, BT>::float_zeros([num_points].into(), device);
 
     let (global_from_compact_gid, num_visible) = {
-        let global_from_presort_gid = InnerWgpu::int_zeros([num_points].into(), device);
+        let global_from_presort_gid = BBase::<F, I, BT>::int_zeros([num_points].into(), device);
         let depths = create_tensor([num_points], device, client, DType::F32);
 
         tracing::trace_span!("ProjectSplats", sync_burn = true).in_scope(||
@@ -178,10 +171,10 @@ pub(crate) fn render_forward(
 
         // Get just the number of visible splats from the uniforms buffer.
         let num_vis_field_offset = offset_of!(shaders::helpers::RenderUniforms, num_visible) / 4;
-        let num_visible = copy_tensor(InnerWgpu::int_slice(
+        let num_visible = BBase::<F, I, BT>::int_slice(
             uniforms_buffer.clone(),
             &[num_vis_field_offset..num_vis_field_offset + 1],
-        ));
+        );
 
         let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort", sync_burn = true)
             .in_scope(|| {
@@ -201,7 +194,7 @@ pub(crate) fn render_forward(
 
     let max_intersects = max_intersections(img_size, num_points as u32);
     // 1 extra length to make this an exclusive sum.
-    let tiles_hit_per_splat = InnerWgpu::int_zeros([num_points + 1].into(), device);
+    let tiles_hit_per_splat = BBase::<F, I, BT>::int_zeros([num_points + 1].into(), device);
     let isect_info =
         create_tensor::<2, WgpuRuntime>([max_intersects as usize, 2], device, client, DType::I32);
 
@@ -228,10 +221,10 @@ pub(crate) fn render_forward(
 
     let num_intersections_offset =
         offset_of!(shaders::helpers::RenderUniforms, num_intersections) / 4;
-    let num_intersections = copy_tensor(InnerWgpu::int_slice(
+    let num_intersections = BBase::<F, I, BT>::int_slice(
         uniforms_buffer.clone(),
         &[num_intersections_offset..num_intersections_offset + 1],
-    ));
+    );
 
     let intersect_wg_buf = create_dispatch_buffer(
         num_intersections.clone(),
@@ -247,7 +240,7 @@ pub(crate) fn render_forward(
         let compact_gid_from_isect =
             create_tensor::<1, _>([max_intersects as usize], device, client, DType::I32);
 
-        let tile_counts = InnerWgpu::int_zeros(
+        let tile_counts = BBase::<F, I, BT>::int_zeros(
             [(tile_bounds.y * tile_bounds.x) as usize + 1].into(),
             device,
         );

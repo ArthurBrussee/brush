@@ -22,7 +22,10 @@ use burn::{
 };
 use burn_fusion::{client::FusionClient, stream::Operation, Fusion};
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
-use burn_jit::fusion::{FusionJitRuntime, JitFusionHandle};
+use burn_jit::{
+    fusion::{FusionJitRuntime, JitFusionHandle},
+    BoolElement, FloatElement, IntElement,
+};
 
 use crate::kernels::{render_backward, SplatGrads};
 
@@ -57,7 +60,7 @@ pub trait SplatBackwardOps<B: Backend> {
     ) -> SplatGrads<B>;
 }
 
-impl SplatBackwardOps<Self> for BBase {
+impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatBackwardOps<Self> for BBase<F, I, BT> {
     fn render_splats_bwd(
         state: GaussianBackwardState<Self>,
         v_output: FloatTensor<Self>,
@@ -258,17 +261,21 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
     }
 }
 
-impl SplatBackwardOps<Self> for Fusion<BBase> {
+impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatBackwardOps<Self>
+    for Fusion<BBase<F, I, BT>>
+{
     fn render_splats_bwd(
         state: GaussianBackwardState<Self>,
         v_output: FloatTensor<Self>,
     ) -> SplatGrads<Self> {
-        struct CustomOp {
+        struct CustomOp<F: FloatElement, I: IntElement, BT: BoolElement> {
             desc: CustomOpIr,
-            state: GaussianBackwardState<Fusion<BBase>>,
+            state: GaussianBackwardState<Fusion<BBase<F, I, BT>>>,
         }
 
-        impl Operation<FusionJitRuntime<WgpuRuntime, u32>> for CustomOp {
+        impl<F: FloatElement, I: IntElement, BT: BoolElement>
+            Operation<FusionJitRuntime<WgpuRuntime, BT>> for CustomOp<F, I, BT>
+        {
             fn execute(self: Box<Self>, h: &mut HandleContainer<JitFusionHandle<WgpuRuntime>>) {
                 let ([v_output], [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_xy]) =
                     self.desc.consume();
@@ -276,33 +283,39 @@ impl SplatBackwardOps<Self> for Fusion<BBase> {
                 let state = self.state;
 
                 let inner_state = GaussianBackwardState {
-                    means: h.get_float_tensor::<BBase>(&state.means.into_ir()),
-                    log_scales: h.get_float_tensor::<BBase>(&state.log_scales.into_ir()),
-                    quats: h.get_float_tensor::<BBase>(&state.quats.into_ir()),
-                    raw_opac: h.get_float_tensor::<BBase>(&state.raw_opac.into_ir()),
-                    out_img: h.get_float_tensor::<BBase>(&state.out_img.into_ir()),
+                    means: h.get_float_tensor::<BBase<F, I, BT>>(&state.means.into_ir()),
+                    log_scales: h.get_float_tensor::<BBase<F, I, BT>>(&state.log_scales.into_ir()),
+                    quats: h.get_float_tensor::<BBase<F, I, BT>>(&state.quats.into_ir()),
+                    raw_opac: h.get_float_tensor::<BBase<F, I, BT>>(&state.raw_opac.into_ir()),
+                    out_img: h.get_float_tensor::<BBase<F, I, BT>>(&state.out_img.into_ir()),
                     projected_splats: h
-                        .get_float_tensor::<BBase>(&state.projected_splats.into_ir()),
-                    uniforms_buffer: h.get_int_tensor::<BBase>(&state.uniforms_buffer.into_ir()),
-                    final_index: h.get_int_tensor::<BBase>(&state.final_index.into_ir()),
-                    tile_offsets: h.get_int_tensor::<BBase>(&state.tile_offsets.into_ir()),
+                        .get_float_tensor::<BBase<F, I, BT>>(&state.projected_splats.into_ir()),
+                    uniforms_buffer: h
+                        .get_int_tensor::<BBase<F, I, BT>>(&state.uniforms_buffer.into_ir()),
+                    final_index: h.get_int_tensor::<BBase<F, I, BT>>(&state.final_index.into_ir()),
+                    tile_offsets: h
+                        .get_int_tensor::<BBase<F, I, BT>>(&state.tile_offsets.into_ir()),
                     compact_gid_from_isect: h
-                        .get_int_tensor::<BBase>(&state.compact_gid_from_isect.into_ir()),
-                    global_from_compact_gid: h
-                        .get_int_tensor::<BBase>(&state.global_from_compact_gid.into_ir()),
+                        .get_int_tensor::<BBase<F, I, BT>>(&state.compact_gid_from_isect.into_ir()),
+                    global_from_compact_gid: h.get_int_tensor::<BBase<F, I, BT>>(
+                        &state.global_from_compact_gid.into_ir(),
+                    ),
                     sh_degree: state.sh_degree,
                 };
 
                 let grads =
-                    BBase::render_splats_bwd(inner_state, h.get_float_tensor::<BBase>(&v_output));
+                    <BBase<F, I, BT> as SplatBackwardOps<BBase<F, I, BT>>>::render_splats_bwd(
+                        inner_state,
+                        h.get_float_tensor::<BBase<F, I, BT>>(&v_output),
+                    );
 
                 // // Register output.
-                h.register_float_tensor::<BBase>(&v_means.id, grads.v_means);
-                h.register_float_tensor::<BBase>(&v_quats.id, grads.v_quats);
-                h.register_float_tensor::<BBase>(&v_scales.id, grads.v_scales);
-                h.register_float_tensor::<BBase>(&v_coeffs.id, grads.v_coeffs);
-                h.register_float_tensor::<BBase>(&v_raw_opac.id, grads.v_raw_opac);
-                h.register_float_tensor::<BBase>(&v_xy.id, grads.v_xy);
+                h.register_float_tensor::<BBase<F, I, BT>>(&v_means.id, grads.v_means);
+                h.register_float_tensor::<BBase<F, I, BT>>(&v_quats.id, grads.v_quats);
+                h.register_float_tensor::<BBase<F, I, BT>>(&v_scales.id, grads.v_scales);
+                h.register_float_tensor::<BBase<F, I, BT>>(&v_coeffs.id, grads.v_coeffs);
+                h.register_float_tensor::<BBase<F, I, BT>>(&v_raw_opac.id, grads.v_raw_opac);
+                h.register_float_tensor::<BBase<F, I, BT>>(&v_xy.id, grads.v_xy);
             }
         }
 

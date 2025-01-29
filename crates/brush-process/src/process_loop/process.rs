@@ -1,14 +1,16 @@
 use std::path::Path;
 
 use anyhow::Context;
+use burn::prelude::Backend;
+use burn::tensor::backend::AutodiffBackend;
 use burn_jit::cubecl::Runtime;
 use web_time::Instant;
 
 use crate::{data_source::DataSource, rerun_tools::VisualizeTools};
 use brush_dataset::{brush_vfs::BrushVfs, splat_import, Dataset};
 use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
-use brush_train::train::{RefineStats, TrainStepStats};
-use burn::{backend::Autodiff, module::AutodiffModule, prelude::Backend};
+use brush_train::train::{RefineStats, TrainBack, TrainStepStats};
+use burn::{backend::Autodiff, module::AutodiffModule};
 use burn_wgpu::{Wgpu, WgpuDevice, WgpuRuntime};
 use glam::Vec3;
 use rand::SeedableRng;
@@ -39,7 +41,7 @@ pub enum ProcessMessage {
     /// Nb: Animated splats will have the 'frame' number set.
     ViewSplats {
         up_axis: Option<Vec3>,
-        splats: Box<Splats<Wgpu>>,
+        splats: Box<Splats<<TrainBack as AutodiffBackend>::InnerBackend>>,
         frame: usize,
         total_frames: usize,
     },
@@ -55,8 +57,8 @@ pub enum ProcessMessage {
     /// Some number of training steps are done.
     #[allow(unused)]
     TrainStep {
-        splats: Box<Splats<Wgpu>>,
-        stats: Box<TrainStepStats<Autodiff<Wgpu>>>,
+        splats: Box<Splats<<TrainBack as AutodiffBackend>::InnerBackend>>,
+        stats: Box<TrainStepStats<TrainBack>>,
         iter: u32,
         timestamp: Instant,
     },
@@ -377,6 +379,7 @@ async fn train_process_loop(
                     }
                 }
 
+                // TODO: Should depend on the current compiler... ?
                 let client = WgpuRuntime::client(&device);
                 visualize.log_memory(iter, &client.memory_usage())?;
 

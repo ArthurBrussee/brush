@@ -108,7 +108,7 @@ pub struct TrainConfig {
     cull_scale3d_percentage_threshold: f32,
 
     /// Period before refinement starts.
-    #[config(default = 500)]
+    #[config(default = 100)]
     #[arg(long, help_heading = "Refine options", default_value = "500")]
     refine_start_iter: u32,
 
@@ -133,7 +133,8 @@ pub struct TrainConfig {
     alpha_loss_weight: f32,
 }
 
-type B = Autodiff<Wgpu>;
+pub type TrainBack = Autodiff<Wgpu>;
+// pub type TrainBack = Autodiff<Vulkan>;
 
 #[derive(Clone, Debug)]
 pub struct SceneBatch<B: Backend> {
@@ -168,14 +169,14 @@ pub struct TrainStepStats<B: Backend> {
     pub lr_opac: f64,
 }
 
-type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<B>, B>;
+type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<TrainBack>, TrainBack>;
 
 pub struct SplatTrainer {
     config: TrainConfig,
     sched_mean: ExponentialLrScheduler,
     optim: OptimizerType,
-    ssim: Ssim<B>,
-    refine_record: RefineRecord,
+    ssim: Ssim<TrainBack>,
+    refine_record: RefineRecord<<TrainBack as AutodiffBackend>::InnerBackend>,
 }
 
 fn quaternion_vec_multiply<B: Backend>(
@@ -229,7 +230,7 @@ pub fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
 }
 
 impl SplatTrainer {
-    pub fn new(splats: &Splats<B>, config: &TrainConfig, device: &WgpuDevice) -> Self {
+    pub fn new(splats: &Splats<TrainBack>, config: &TrainConfig, device: &WgpuDevice) -> Self {
         let optim = AdamScaledConfig::new().with_epsilon(1e-15).init();
 
         let ssim = Ssim::new(config.ssim_window_size, 3, device);
@@ -249,9 +250,9 @@ impl SplatTrainer {
     pub fn step(
         &mut self,
         iter: u32,
-        batch: SceneBatch<B>,
-        splats: Splats<B>,
-    ) -> (Splats<B>, TrainStepStats<B>) {
+        batch: SceneBatch<TrainBack>,
+        splats: Splats<TrainBack>,
+    ) -> (Splats<TrainBack>, TrainStepStats<TrainBack>) {
         let mut splats = splats;
 
         let [img_h, img_w, _] = batch.gt_image.dims();
@@ -259,7 +260,7 @@ impl SplatTrainer {
         let camera = &batch.gt_view.camera;
 
         let (pred_image, aux, xy_grad_holder) = {
-            let diff_out = <B as SplatForwardDiff<B>>::render_splats(
+            let diff_out = <TrainBack as SplatForwardDiff<TrainBack>>::render_splats(
                 camera,
                 glam::uvec2(img_w as u32, img_h as u32),
                 splats.means.val().into_primitive().tensor(),
@@ -423,9 +424,9 @@ impl SplatTrainer {
     pub async fn refine_if_needed(
         &mut self,
         iter: u32,
-        splats: Splats<B>,
+        splats: Splats<TrainBack>,
         scene_extent: f32,
-    ) -> (Splats<B>, Option<RefineStats>) {
+    ) -> (Splats<TrainBack>, Option<RefineStats>) {
         let do_refine = iter < self.config.refine_stop_iter
             && iter >= self.config.refine_start_iter
             && iter % self.config.refine_every == 0;
@@ -442,9 +443,9 @@ impl SplatTrainer {
     async fn refine_splats(
         &mut self,
         iter: u32,
-        splats: Splats<B>,
+        splats: Splats<TrainBack>,
         scene_extent: f32,
-    ) -> (Splats<B>, RefineStats) {
+    ) -> (Splats<TrainBack>, RefineStats) {
         let mut record = self.optim.to_record();
 
         let mut splats = splats;
@@ -453,7 +454,8 @@ impl SplatTrainer {
         // Otherwise, do refinement, but do the split/clone on gaussians with no grads applied.
         let avg_grad = self.refine_record.average_grad_2d();
 
-        let is_grad_high = avg_grad.greater_equal_elem(self.config.densify_grad_thresh);
+        let is_grad_high =
+            Tensor::from_inner(avg_grad.greater_equal_elem(self.config.densify_grad_thresh));
         let split_clone_size_mask = splats
             .scales()
             .max_dim(1)
@@ -505,10 +507,12 @@ impl SplatTrainer {
         .all_dim(1)
         .squeeze::<1>(1);
 
-        let radii_grow = self
-            .refine_record
-            .max_radii()
-            .greater_elem(self.config.densify_radius_threshold);
+        let radii_grow = Tensor::from_inner(
+            self.refine_record
+                .max_radii()
+                .greater_elem(self.config.densify_radius_threshold),
+        );
+
         let split_mask = Tensor::stack::<2>(vec![split_mask, radii_grow], 1)
             .any_dim(1)
             .squeeze::<1>(1);
