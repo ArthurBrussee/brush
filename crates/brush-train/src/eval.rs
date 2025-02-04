@@ -37,6 +37,7 @@ pub fn eval_stats<B: Backend + SplatForward<B>>(
 
     indices.into_iter().map(move |index| {
         let view = scene.views[index].clone();
+
         // Compare MSE in RGB only, not sure if this should include alpha.
         let res = glam::uvec2(view.image.width(), view.image.height());
 
@@ -55,6 +56,7 @@ pub fn eval_stats<B: Backend + SplatForward<B>>(
             .mean();
 
         let psnr = mse.recip().log() * 10.0 / std::f32::consts::LN_10;
+
         let ssim_measure = Ssim::new(11, 3, &device);
         let ssim = ssim_measure.ssim(render_rgb.clone(), gt_rgb).mean();
 

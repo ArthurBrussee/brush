@@ -5,6 +5,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 pub async fn process_ui(process: RunningProcess) {
     let mut process = process;
+    while let Some(msg) = process.messages.recv().await {}
 
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
