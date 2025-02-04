@@ -72,6 +72,13 @@ fn get_tile_bbox(pix_center: vec2f, pix_radius: f32, tile_bounds: vec2u) -> vec4
     return get_bbox(tile_center, vec2f(tile_radius, tile_radius), tile_bounds);
 }
 
+fn normalize_quat(quat: vec4f) -> vec4f {
+    let len = length(quat);
+    let id = vec4f(1.0, 0.0f, 0.0f, 0.0f);
+    let eps = 1e-32f;
+    return select(id, quat / sqrt(len), len > eps);
+}
+
 // device helper to get 3D covariance from scale and quat parameters
 fn quat_to_mat(quat: vec4f) -> mat3x3f {
     // quat to rotation matrix
