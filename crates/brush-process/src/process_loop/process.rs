@@ -42,8 +42,8 @@ pub enum ProcessMessage {
     ViewSplats {
         up_axis: Option<Vec3>,
         splats: Box<Splats<<TrainBack as AutodiffBackend>::InnerBackend>>,
-        frame: usize,
-        total_frames: usize,
+        frame: u32,
+        total_frames: u32,
     },
     /// Loaded a bunch of viewpoints to train on.
     Dataset {
@@ -156,7 +156,7 @@ async fn view_process_loop(
             let (frame, total_frames) = if paths.len() == 1 {
                 (message.meta.current_frame, message.meta.frame_count)
             } else {
-                (i, paths.len())
+                (i as u32, paths.len() as u32)
             };
 
             if output
@@ -267,6 +267,7 @@ async fn train_process_loop(
         splats,
         process_args.train_config.clone(),
         device.clone(),
+        process_args.process_config.start_iter,
     );
     let mut stream = std::pin::pin!(stream);
 

@@ -39,7 +39,7 @@ pub(crate) struct ScenePanel {
     pub(crate) last_draw: Option<Instant>,
 
     view_splats: Vec<Splats<<TrainBack as AutodiffBackend>::InnerBackend>>,
-    frame_count: usize,
+    frame_count: u32,
     frame: f32,
 
     // Ui state.
@@ -195,7 +195,7 @@ impl AppPanel for ScenePanel {
                 }
 
                 if self.live_update {
-                    self.view_splats.truncate(*frame);
+                    self.view_splats.truncate(*frame as usize);
                     self.view_splats.push(*splats.clone());
                 }
                 self.frame_count = *total_frames;
@@ -286,7 +286,7 @@ For bigger training runs consider using the native app."#,
             if !self.paused {
                 self.frame += ui.input(|r| r.predicted_dt);
             }
-            if self.view_splats.len() != self.frame_count {
+            if self.view_splats.len() as u32 != self.frame_count {
                 let max_t = (self.view_splats.len() - 1) as f32 / FPS;
                 self.frame = self.frame.min(max_t);
             }
@@ -298,7 +298,7 @@ For bigger training runs consider using the native app."#,
 
             self.draw_splats(ui, context, &splats);
 
-            if self.view_splats.len() > 1 && self.view_splats.len() == self.frame_count {
+            if self.view_splats.len() > 1 && self.view_splats.len() as u32 == self.frame_count {
                 let label = if self.paused {
                     "⏸ paused"
                 } else {

@@ -3,7 +3,9 @@ use async_fn_stream::try_fn_stream;
 
 use brush_dataset::{scene_loader::SceneLoader, Dataset};
 use brush_render::gaussian_splats::Splats;
-use brush_train::train::{RefineStats, SplatTrainer, TrainBack, TrainConfig, TrainStepStats};
+use brush_train::train::TrainBack;
+use brush_train::train::{RefineStats, SplatTrainer, TrainConfig, TrainStepStats};
+
 use burn::{module::AutodiffModule, tensor::backend::AutodiffBackend};
 use burn_wgpu::WgpuDevice;
 use tokio_stream::Stream;
@@ -29,6 +31,7 @@ pub(crate) fn train_stream(
     initial_splats: Splats<TrainBack>,
     config: TrainConfig,
     device: WgpuDevice,
+    start_iter: u32,
 ) -> impl Stream<Item = anyhow::Result<TrainMessage>> {
     try_fn_stream(|emitter| async move {
         let mut splats = initial_splats;
@@ -36,17 +39,18 @@ pub(crate) fn train_stream(
         let train_scene = dataset.train.clone();
 
         let mut dataloader = SceneLoader::new(&train_scene, 42, &device);
-        let mut trainer = SplatTrainer::new(&splats, &config, &device);
 
-        let mut iter = 0;
+        let scene_extent = train_scene.estimate_extent().unwrap_or(1.0);
+        let mut trainer = SplatTrainer::new(splats.num_splats(), &config, &device);
+
+        let mut iter = start_iter;
 
         #[allow(clippy::infinite_loop)]
         loop {
             let batch = dataloader.next_batch().await;
-            let extent = batch.scene_extent;
 
-            let (new_splats, stats) = trainer.step(iter, batch, splats);
-            let (new_splats, refine) = trainer.refine_if_needed(iter, new_splats, extent).await;
+            let (new_splats, stats) = trainer.step(scene_extent, iter, batch, splats);
+            let (new_splats, refine) = trainer.refine_if_needed(iter, new_splats).await;
             splats = new_splats;
 
             emitter

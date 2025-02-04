@@ -27,6 +27,7 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<Vec<GaussianDa
 
     let splats = (0..splats.num_splats())
         .map(|i| {
+            let i = i as usize;
             // Read SH data from [coeffs, channel] format to
             let sh_start = i * sh_coeffs_num * 3;
             let sh_end = (i + 1) * sh_coeffs_num * 3;

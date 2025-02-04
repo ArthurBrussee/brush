@@ -16,8 +16,8 @@ pub(crate) struct StatsPanel {
     cur_sh_degree: u32,
 
     training_started: bool,
-    num_splats: usize,
-    frames: usize,
+    num_splats: u32,
+    frames: u32,
 
     start_load_time: Instant,
     adapter_info: AdapterInfo,

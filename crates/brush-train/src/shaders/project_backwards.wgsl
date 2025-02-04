@@ -9,35 +9,49 @@
 
 @group(0) @binding(4) var<storage, read> global_from_compact_gid: array<i32>;
 
-@group(0) @binding(5) var<storage, read> v_xys: array<vec2f>;
-@group(0) @binding(6) var<storage, read> v_conics: array<helpers::PackedVec3>;
+@group(0) @binding(5) var<storage, read> v_grads: array<f32>;
 
-@group(0) @binding(7) var<storage, read_write> v_means: array<helpers::PackedVec3>;
-@group(0) @binding(8) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
-@group(0) @binding(9) var<storage, read_write> v_quats: array<vec4f>;
+@group(0) @binding(6) var<storage, read_write> v_means: array<helpers::PackedVec3>;
+@group(0) @binding(7) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
+@group(0) @binding(8) var<storage, read_write> v_quats: array<vec4f>;
 
-
+// TODO: What do for quat len == 0.0?
 fn normalize_vjp(quat: vec4f) -> mat4x4f {
     let quat_sqr = quat * quat;
     let quat_len_sqr = dot(quat, quat);
-    let quat_len = length(quat_len_sqr);
+    let quat_len = sqrt(quat_len_sqr);
 
     let cross_complex = -quat.xyz * quat.yzx;
     let cross_scalar = -quat.xyz * quat.w;
 
-    return mat4x4<f32>(
+    let id = mat4x4f(
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0
+    );
+
+    let normed = mat4x4f(
         vec4f(quat_len_sqr - quat_sqr.x, cross_complex.x, cross_complex.z, cross_scalar.x),
         vec4f(cross_complex.x, quat_len_sqr - quat_sqr.y, cross_complex.y, cross_scalar.y),
         vec4f(cross_complex.z, cross_complex.y, quat_len_sqr - quat_sqr.z, cross_scalar.z),
         vec4f(cross_scalar.x, cross_scalar.y, cross_scalar.z, quat_len_sqr - quat_sqr.w),
     ) * (1.0 / (quat_len * quat_len_sqr));
+
+    if quat_len > 1e-35 {
+        return normed;
+    } else {
+        return id;
+    }
 }
 
 fn quat_to_mat_vjp(quat: vec4f, v_R: mat3x3f) -> vec4f {
-    let w = quat.x;
-    let x = quat.y;
-    let y = quat.z;
-    let z = quat.w;
+    let quat_norm = helpers::normalize_quat(quat);
+
+    let w = quat_norm.x;
+    let x = quat_norm.y;
+    let y = quat_norm.z;
+    let z = quat_norm.w;
 
     return vec4f(
         // w element stored in x field
@@ -165,17 +179,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let mean = helpers::as_vec(means[global_gid]);
     let scale = exp(helpers::as_vec(log_scales[global_gid]));
     let quat_unorm = quats[global_gid];
-    let quat = normalize(quat_unorm);
 
-    let v_conics = helpers::as_vec(v_conics[compact_gid]);
-    let v_mean2d = v_xys[compact_gid];
+    let v_mean2d = vec2f(v_grads[compact_gid * 9 + 0], v_grads[compact_gid * 9 + 1]);
+    let v_conics = vec3f(v_grads[compact_gid * 9 + 2], v_grads[compact_gid * 9 + 3], v_grads[compact_gid * 9 + 4]);
+
 
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let mean_c = R * mean + viewmat[3].xyz;
     let rz = 1.0 / mean_c.z;
     let rz2 = rz * rz;
 
-    let rotmat = helpers::quat_to_mat(quat);
+    let rotmat = helpers::quat_to_mat(quat_unorm);
     let S = helpers::scale_to_mat(scale);
     let M = rotmat * S;
 
@@ -235,7 +249,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let v_scale_exp = v_scale * scale;
 
     // grad for (quat, scale) from covar
-    let v_quat = normalize_vjp(quat_unorm) * quat_to_mat_vjp(quat, v_M * S);
+    let v_quat = normalize_vjp(quat_unorm) * quat_to_mat_vjp(quat_unorm, v_M * S);
 
     v_means[global_gid] = helpers::as_packed(v_mean);
     v_scales[global_gid] = helpers::as_packed(v_scale_exp);

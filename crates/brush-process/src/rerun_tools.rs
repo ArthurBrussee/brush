@@ -5,6 +5,7 @@ use std::sync::Arc;
 use brush_dataset::clamp_img_to_max_size;
 use brush_render::gaussian_splats::Splats;
 use brush_train::eval::EvalSample;
+use brush_train::image::view_to_sample;
 use brush_train::{image::tensor_into_image, scene::Scene, train::RefineStats};
 use brush_train::{ssim::Ssim, train::TrainStepStats};
 use burn::prelude::Backend;
@@ -57,12 +58,13 @@ impl VisualizeTools {
                     .expect("Wrong type");
                 let means = means.chunks(3).map(|c| glam::vec3(c[0], c[1], c[2]));
 
-                let base_rgb = splats
-                    .sh_coeffs
-                    .val()
-                    .slice([0..splats.num_splats(), 0..1, 0..3])
-                    * brush_render::render::SH_C0
-                    + 0.5;
+                let base_rgb =
+                    splats
+                        .sh_coeffs
+                        .val()
+                        .slice([0..splats.num_splats() as usize, 0..1, 0..3])
+                        * brush_render::render::SH_C0
+                        + 0.5;
 
                 let transparency = sigmoid(splats.raw_opacity.val());
 
@@ -242,25 +244,10 @@ impl VisualizeTools {
 
                 let [img_h, img_w, _] = stats.pred_image.dims();
                 let pred_rgb = stats.pred_image.clone().slice([0..img_h, 0..img_w, 0..3]);
-                let gt_rgb = stats.gt_images.clone().slice([0..img_h, 0..img_w, 0..3]);
-                let mse = (pred_rgb.clone() - gt_rgb.clone()).powf_scalar(2.0).mean();
-                let psnr = mse.recip().log() * 10.0 / std::f32::consts::LN_10;
+
                 rec.log(
                     "losses/main",
                     &rerun::Scalar::new(stats.loss.clone().into_scalar_async().await.elem::<f64>()),
-                )?;
-
-                let device = gt_rgb.device();
-
-                // TODO: Bit annoyingly expensive to recalculate this here. Idk if train stats should be split into
-                // "very cheap" and somewhat more expensive stats.
-                let ssim_measure = Ssim::new(11, 3, &device);
-                let ssim = ssim_measure
-                    .ssim(pred_rgb.clone().unsqueeze(), gt_rgb.unsqueeze())
-                    .mean();
-                rec.log(
-                    "ssim/train",
-                    &rerun::Scalar::new(ssim.into_scalar_async().await.elem::<f64>()),
                 )?;
             }
         }
@@ -276,20 +263,24 @@ impl VisualizeTools {
                 rec.set_time_sequence("iterations", iter);
 
                 let _ = rec.log(
-                    "refine/num_split",
-                    &rerun::Scalar::new(refine.num_split as f64),
-                );
-                let _ = rec.log(
-                    "refine/num_cloned",
-                    &rerun::Scalar::new(refine.num_cloned as f64),
-                );
-                let _ = rec.log(
                     "refine/num_transparent_pruned",
                     &rerun::Scalar::new(refine.num_transparent_pruned as f64),
                 );
                 let _ = rec.log(
                     "refine/num_scale_pruned",
                     &rerun::Scalar::new(refine.num_scale_pruned as f64),
+                );
+                let _ = rec.log(
+                    "refine/splats_added",
+                    &rerun::Scalar::new(refine.splats_added as f64),
+                );
+                let _ = rec.log(
+                    "refine/effective_growth",
+                    &rerun::Scalar::new(
+                        refine.splats_added as f64
+                            - refine.num_transparent_pruned as f64
+                            - refine.num_scale_pruned as f64,
+                    ),
                 );
             }
         }

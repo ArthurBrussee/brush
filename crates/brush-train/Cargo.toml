@@ -13,6 +13,7 @@ anyhow.workspace = true
 image.workspace = true
 glam.workspace = true
 rand.workspace = true
+
 tracing.workspace = true
 log.workspace = true
 hashbrown.workspace = true

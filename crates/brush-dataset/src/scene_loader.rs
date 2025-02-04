@@ -18,8 +18,6 @@ impl<B: Backend> SceneLoader<B> {
         let (tx, rx) = mpsc::channel(5);
         let device = device.clone();
 
-        let scene_extent = scene.estimate_extent().unwrap_or(1.0);
-
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
         let fut = async move {
@@ -38,11 +36,7 @@ impl<B: Backend> SceneLoader<B> {
                     (view_to_sample(&view, &device), view)
                 };
 
-                let scene_batch = SceneBatch {
-                    gt_image,
-                    gt_view,
-                    scene_extent,
-                };
+                let scene_batch = SceneBatch { gt_image, gt_view };
 
                 if tx.send(scene_batch).await.is_err() {
                     break;

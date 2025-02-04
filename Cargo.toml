@@ -71,6 +71,7 @@ ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',
+    'vulkan',
 ] } # Various burn packages. Currently need to use burn at head.
 burn-jit = { git = "https://github.com/tracel-ai/burn" }
 burn-ir = { git = "https://github.com/tracel-ai/burn" }
@@ -113,7 +114,6 @@ hashbrown = "0.15"
 # burn-jit = { path = "../burn/crates/burn-jit" }
 # burn-wgpu = { path = "../burn/crates/burn-wgpu" }
 # burn-fusion = { path = "../burn/crates/burn-fusion" }
-# burn-ir = { path = "../burn/crates/burn-ir" }
 
 [patch.crates-io]
 # Use wgpu and naga at head

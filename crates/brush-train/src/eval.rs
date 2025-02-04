@@ -56,11 +56,8 @@ pub fn eval_stats<B: Backend + SplatForward<B>>(
             .mean();
 
         let psnr = mse.recip().log() * 10.0 / std::f32::consts::LN_10;
-
         let ssim_measure = Ssim::new(11, 3, &device);
-        let ssim = ssim_measure
-            .ssim(render_rgb.clone().unsqueeze(), gt_rgb.unsqueeze())
-            .mean();
+        let ssim = ssim_measure.ssim(render_rgb.clone(), gt_rgb).mean();
 
         EvalSample {
             index,

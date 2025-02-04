@@ -51,22 +51,19 @@ fn spawn_train_loop(
             &device,
         );
 
-        let mut trainer = SplatTrainer::new(&splats, &config, &device);
+        let mut trainer = SplatTrainer::new(splats.num_splats(), &config, &device);
 
         // One batch of training data, it's the same every step so can just cosntruct it once.
         let batch = SceneBatch {
             gt_image: view_to_sample(&gt_view, &device).unsqueeze(),
             gt_view,
-            scene_extent: 1.0,
         };
 
         let mut iter = 0;
 
         loop {
-            let (new_splats, _) = trainer.step(iter, batch.clone(), splats);
-            let (new_splats, _) = trainer
-                .refine_if_needed(iter, new_splats, batch.scene_extent)
-                .await;
+            let (new_splats, _) = trainer.step(1.0, iter, batch.clone(), splats);
+            let (new_splats, _) = trainer.refine_if_needed(iter, new_splats).await;
 
             splats = new_splats;
             iter += 1;
@@ -138,11 +135,7 @@ impl App {
             cc.egui_ctx
                 .load_texture("nearest_view_tex", color_img, TextureOptions::default());
 
-        let config = TrainConfig::new()
-            .with_refine_start_iter(100) // Don't really need a warmup for simple 2D
-            .with_refine_stop_iter(u32::MAX) // Just keep refining
-            .with_reset_alpha_every_refine(u32::MAX); // Don't use alpha reset.
-
+        let config = TrainConfig::new();
         spawn_train_loop(view.clone(), config, device, cc.egui_ctx.clone(), sender);
 
         let renderer = cc

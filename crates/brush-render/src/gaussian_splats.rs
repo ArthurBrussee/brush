@@ -23,10 +23,10 @@ pub struct RandomSplatsConfig {
 #[derive(Module, Debug)]
 pub struct Splats<B: Backend> {
     pub means: Param<Tensor<B, 2>>,
-    pub sh_coeffs: Param<Tensor<B, 3>>,
     pub rotation: Param<Tensor<B, 2>>,
-    pub raw_opacity: Param<Tensor<B, 1>>,
     pub log_scales: Param<Tensor<B, 2>>,
+    pub sh_coeffs: Param<Tensor<B, 3>>,
+    pub raw_opacity: Param<Tensor<B, 1>>,
 }
 
 fn norm_vec<B: Backend>(vec: Tensor<B, 2>) -> Tensor<B, 2> {
@@ -112,11 +112,11 @@ impl<B: Backend> Splats<B> {
             let extents: Vec<_> = tree_pos
                 .iter()
                 .map(|p| {
-                    // Get average of 5 nearest distances.
-                    (tree.query().nn(p).skip(1).take(5).map(|x| x.1).sum::<f64>() / 5.0)
-                        .max(1e-12)
-                        .ln() as f32
+                    // Get average of 4 nearest distances.
+                    0.5 * tree.query().nn(p).skip(1).take(2).map(|x| x.1).sum::<f64>() / 2.0
                 })
+                .map(|p| p.max(1e-12))
+                .map(|p| p.ln() as f32)
                 .collect();
 
             Tensor::<B, 1>::from_floats(extents.as_slice(), device)
@@ -165,9 +165,9 @@ impl<B: Backend> Splats<B> {
 
         let [n, cur_coeffs, _] = self.sh_coeffs.dims();
 
-        Self::map_param(&mut self.sh_coeffs, |coeffs| {
+        self.sh_coeffs = self.sh_coeffs.map(|coeffs| {
             let device = coeffs.device();
-            if cur_coeffs < n_coeffs {
+            let tens = if cur_coeffs < n_coeffs {
                 Tensor::cat(
                     vec![
                         coeffs,
@@ -177,9 +177,9 @@ impl<B: Backend> Splats<B> {
                 )
             } else {
                 coeffs.slice([0..n, 0..n_coeffs])
-            }
+            };
+            tens.detach().require_grad()
         });
-
         self
     }
 
@@ -203,15 +203,6 @@ impl<B: Backend> Splats<B> {
         }
     }
 
-    pub fn map_param<const D: usize>(
-        param: &mut Param<Tensor<B, D>>,
-        f: impl FnOnce(Tensor<B, D>) -> Tensor<B, D>,
-    ) {
-        // TODO: use param::map once Burn makes it FnOnce.
-        let (id, tensor) = (param.id, param.val());
-        *param = Param::initialized(id, f(tensor).detach().require_grad());
-    }
-
     pub fn opacity(&self) -> Tensor<B, 1> {
         sigmoid(self.raw_opacity.val())
     }
@@ -220,8 +211,8 @@ impl<B: Backend> Splats<B> {
         self.log_scales.val().exp()
     }
 
-    pub fn num_splats(&self) -> usize {
-        self.means.dims()[0]
+    pub fn num_splats(&self) -> u32 {
+        self.means.dims()[0] as u32
     }
 
     pub fn rotations_normed(&self) -> Tensor<B, 2> {
@@ -235,6 +226,10 @@ impl<B: Backend> Splats<B> {
     pub fn sh_degree(&self) -> u32 {
         let [_, coeffs, _] = self.sh_coeffs.dims();
         sh_degree_from_coeffs(coeffs as u32)
+    }
+
+    pub fn device(&self) -> B::Device {
+        self.means.device()
     }
 }
 

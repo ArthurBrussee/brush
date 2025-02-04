@@ -5,7 +5,8 @@
 
 @group(0) @binding(2) var<storage, read> raw_opacities: array<f32>;
 @group(0) @binding(3) var<storage, read> means: array<helpers::PackedVec3>;
-@group(0) @binding(4) var<storage, read> v_colors: array<vec4f>;
+
+@group(0) @binding(4) var<storage, read> v_grads: array<f32>;
 
 @group(0) @binding(5) var<storage, read_write> v_coeffs: array<f32>;
 @group(0) @binding(6) var<storage, read_write> v_opacs: array<f32>;
@@ -170,7 +171,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     // Load colors gradients.
-    var v_color = v_colors[compact_gid];
+    let v_color = vec3f(v_grads[compact_gid * 9 + 5], v_grads[compact_gid * 9 + 6], v_grads[compact_gid * 9 + 7]);
+    let v_opac = v_grads[compact_gid * 9 + 8];
 
     // Convert RGB to global SH gradients.
     let global_gid = global_from_compact_gid[compact_gid];
@@ -179,7 +181,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
 
     let sh_degree = uniforms.sh_degree;
-    let v_coeff = sh_coeffs_to_color_fast_vjp(sh_degree, viewdir, v_color.xyz);
+    let v_coeff = sh_coeffs_to_color_fast_vjp(sh_degree, viewdir, v_color);
     let num_coeffs = num_sh_coeffs(sh_degree);
     var base_id = global_gid * i32(num_coeffs) * 3;
 
@@ -219,6 +221,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // Transform alpha gradient to opacity gradient.
     let raw_opac = raw_opacities[global_gid];
-    let v_opac = v_color.w * v_sigmoid(raw_opac);
-    v_opacs[global_gid] = v_opac;
+    let v_opac_raw = v_opac * v_sigmoid(raw_opac);
+    v_opacs[global_gid] = v_opac_raw;
 }

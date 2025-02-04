@@ -160,9 +160,9 @@ async fn decode_splat<T: AsyncBufRead + Unpin + 'static>(
 
 pub struct SplatMetadata {
     pub up_axis: Option<Vec3>,
-    pub total_splats: usize,
-    pub frame_count: usize,
-    pub current_frame: usize,
+    pub total_splats: u32,
+    pub frame_count: u32,
+    pub current_frame: u32,
 }
 
 pub struct SplatMessage<B: Backend> {
@@ -207,7 +207,7 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
             .elements
             .iter()
             .filter(|e| e.name.starts_with("delta_vertex_"))
-            .count();
+            .count() as u32;
 
         let mut final_splat = None;
         let mut frame = 0;
@@ -277,7 +277,7 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                         emitter
                             .emit(SplatMessage {
                                 meta: SplatMetadata {
-                                    total_splats: element.count,
+                                    total_splats: element.count as u32,
                                     up_axis,
                                     frame_count,
                                     current_frame: frame,
@@ -303,7 +303,10 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                         scales.push(splat.log_scale);
                     }
                     if let Some(rotation) = rotations.as_mut() {
-                        rotation.push(splat.rotation.normalize());
+                        // Normalize rotations, bail if 0.
+                        let vec: Vec4 = splat.rotation.into();
+                        let vec = vec.try_normalize().map_or(Quat::IDENTITY, Quat::from_vec4);
+                        rotation.push(vec);
                     }
                     if let Some(opacity) = opacity.as_mut() {
                         opacity.push(splat.opacity);
@@ -327,7 +330,7 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                 emitter
                     .emit(SplatMessage {
                         meta: SplatMetadata {
-                            total_splats: element.count,
+                            total_splats: element.count as u32,
                             up_axis,
                             frame_count,
                             current_frame: frame,
@@ -378,7 +381,7 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                     // Don't emit any intermediate states as it looks strange to have a torn state.
                 }
 
-                let n_splats = splats.num_splats();
+                let n_splats = splats.num_splats() as usize;
                 let means_tensor: Vec<f32> = means.iter().flat_map(|v| [v.x, v.y, v.z]).collect();
                 let means =
                     Tensor::from_data(TensorData::new(means_tensor, [n_splats, 3]), &device)
@@ -421,7 +424,7 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                 emitter
                     .emit(SplatMessage {
                         meta: SplatMetadata {
-                            total_splats: element.count,
+                            total_splats: element.count as u32,
                             up_axis,
                             frame_count,
                             current_frame: frame,

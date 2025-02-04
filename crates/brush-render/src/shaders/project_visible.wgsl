@@ -180,7 +180,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // Project world space to camera space.
     let mean = helpers::as_vec(means[global_gid]);
     let scale = exp(helpers::as_vec(log_scales[global_gid]));
-    let quat = normalize(quats[global_gid]);
+    let quat = quats[global_gid];
     let opac = helpers::sigmoid(raw_opacities[global_gid]);
 
     let viewmat = uniforms.viewmat;
