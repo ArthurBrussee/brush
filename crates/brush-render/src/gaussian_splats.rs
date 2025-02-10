@@ -27,9 +27,6 @@ pub struct Splats<B: Backend> {
     pub rotation: Param<Tensor<B, 2>>,
     pub raw_opacity: Param<Tensor<B, 1>>,
     pub log_scales: Param<Tensor<B, 2>>,
-
-    // Dummy input to track screenspace gradient.
-    pub xys_dummy: Tensor<B, 2>,
 }
 
 fn norm_vec<B: Backend>(vec: Tensor<B, 2>) -> Tensor<B, 2> {
@@ -197,16 +194,12 @@ impl<B: Backend> Splats<B> {
         assert_eq!(rotation.dims()[1], 4, "Rotation must be 4D");
         assert_eq!(log_scales.dims()[1], 3, "Scales must be 3D");
 
-        let num_points = means.shape().dims[0];
-        let device = means.device();
-
         Self {
             means: Param::initialized(ParamId::new(), means.detach().require_grad()),
             sh_coeffs: Param::initialized(ParamId::new(), sh_coeffs.detach().require_grad()),
             rotation: Param::initialized(ParamId::new(), rotation.detach().require_grad()),
             raw_opacity: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
             log_scales: Param::initialized(ParamId::new(), log_scales.detach().require_grad()),
-            xys_dummy: Tensor::zeros([num_points, 2], &device).require_grad(),
         }
     }
 
@@ -246,6 +239,9 @@ impl<B: Backend> Splats<B> {
 }
 
 impl<B: Backend + SplatForward<B>> Splats<B> {
+    /// Render the splats.
+    ///
+    /// NB: This doesn't work on a differentiable backend.
     pub fn render(
         &self,
         camera: &Camera,
@@ -256,7 +252,6 @@ impl<B: Backend + SplatForward<B>> Splats<B> {
             camera,
             img_size,
             self.means.val().into_primitive().tensor(),
-            self.xys_dummy.clone().into_primitive().tensor(),
             self.log_scales.val().into_primitive().tensor(),
             self.rotation.val().into_primitive().tensor(),
             self.sh_coeffs.val().into_primitive().tensor(),

@@ -19,7 +19,6 @@ impl SplatForward<Self> for BBase {
         camera: &Camera,
         img_size: glam::UVec2,
         means: FloatTensor<Self>,
-        _xy_dummy: FloatTensor<Self>,
         log_scales: FloatTensor<Self>,
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
@@ -44,7 +43,6 @@ impl SplatForward<Self> for Fusion<BBase> {
         cam: &Camera,
         img_size: glam::UVec2,
         means: FloatTensor<Self>,
-        xy_grad_dummy: FloatTensor<Self>,
         log_scales: FloatTensor<Self>,
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
@@ -61,7 +59,7 @@ impl SplatForward<Self> for Fusion<BBase> {
         impl Operation<FusionJitRuntime<WgpuRuntime, u32>> for CustomOp {
             fn execute(self: Box<Self>, h: &mut HandleContainer<JitFusionHandle<WgpuRuntime>>) {
                 let (
-                    [means, xy_dummy, log_scales, quats, sh_coeffs, raw_opacity],
+                    [means, log_scales, quats, sh_coeffs, raw_opacity],
                     [projected_splats, uniforms_buffer, num_intersections, num_visible, final_index, tile_offsets, compact_gid_from_isect, global_from_compact_gid, radii, out_img],
                 ) = self.desc.consume();
 
@@ -69,7 +67,6 @@ impl SplatForward<Self> for Fusion<BBase> {
                     &self.cam,
                     self.img_size,
                     h.get_float_tensor::<BBase>(&means),
-                    h.get_float_tensor::<BBase>(&xy_dummy),
                     h.get_float_tensor::<BBase>(&log_scales),
                     h.get_float_tensor::<BBase>(&quats),
                     h.get_float_tensor::<BBase>(&sh_coeffs),
@@ -137,7 +134,6 @@ impl SplatForward<Self> for Fusion<BBase> {
             "render_splats",
             &[
                 means.into_description(),
-                xy_grad_dummy.into_description(),
                 log_scales.into_description(),
                 quats.into_description(),
                 sh_coeffs.into_description(),

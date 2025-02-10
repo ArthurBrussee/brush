@@ -122,11 +122,13 @@ async fn test_reference() -> Result<()> {
             glam::vec2(0.5, 0.5),
         );
 
+        let xys_dummy: Tensor<DiffBack, 2> = Tensor::zeros([1, 2], &device);
+
         let (img, aux) = DiffBack::render_splats(
             &cam,
             glam::uvec2(w as u32, h as u32),
             splats.means.val().into_primitive().tensor(),
-            splats.xys_dummy.clone().into_primitive().tensor(),
+            xys_dummy.clone().into_primitive().tensor(),
             splats.log_scales.val().into_primitive().tensor(),
             splats.rotation.val().into_primitive().tensor(),
             splats.sh_coeffs.val().into_primitive().tensor(),
@@ -185,8 +187,7 @@ async fn test_reference() -> Result<()> {
             .backward();
 
         // XY gradients are also in compact format.
-        let v_xys = splats
-            .xys_dummy
+        let v_xys = xys_dummy
             .grad(&grads)
             .context("no xys grad")?
             .slice([0..num_visible]);

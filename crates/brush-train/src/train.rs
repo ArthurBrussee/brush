@@ -256,6 +256,9 @@ impl SplatTrainer {
 
         let [img_h, img_w, _] = batch.gt_image.dims();
 
+        let device = splats.means.device();
+        let xys_grad_dummy: Tensor<B, 2> = Tensor::zeros([1, 2], &device);
+
         let (pred_image, aux, loss) = {
             let camera = &batch.gt_view.camera;
 
@@ -264,7 +267,7 @@ impl SplatTrainer {
                     camera,
                     glam::uvec2(img_w as u32, img_h as u32),
                     splats.means.val().into_primitive().tensor(),
-                    splats.xys_dummy.clone().into_primitive().tensor(),
+                    xys_grad_dummy.clone().into_primitive().tensor(),
                     splats.log_scales.val().into_primitive().tensor(),
                     splats.rotation.val().into_primitive().tensor(),
                     splats.sh_coeffs.val().into_primitive().tensor(),
@@ -402,11 +405,9 @@ impl SplatTrainer {
             // TODO: Burn really should implement +=
             if iter > self.config.refine_start_iter {
                 // Get the xy gradient norm from the dummy tensor.
-                let xys_grad = splats
-                    .xys_dummy
+                let xys_grad = xys_grad_dummy
                     .grad_remove(&mut grads)
                     .expect("XY gradients need to be calculated.");
-
                 let aux = aux.clone();
                 self.refine_record.gather_stats(xys_grad, aux);
             }
@@ -457,7 +458,6 @@ impl SplatTrainer {
         let mut record = self.optim.to_record();
 
         let mut splats = splats;
-
         let device = splats.means.device();
 
         // Otherwise, do refinement, but do the split/clone on gaussians with no grads applied.

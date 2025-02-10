@@ -28,7 +28,7 @@ use crate::kernels::{render_backward, SplatGrads};
 
 /// Like [`SplatForward`], but for backends that support differentiation.
 ///
-/// This shouldn't be a seperate trait, but atm is needed because of orphan trait rules.
+/// This shouldn't be a separate trait, but atm is needed because of orphan trait rules.
 pub trait SplatForwardDiff<B: Backend> {
     /// Render splats to a buffer.
     ///
@@ -182,7 +182,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
         let prep_nodes = RenderBackwards
             .prepare::<C>([
                 means.node.clone(),
-                xy_dummy.node.clone(),
+                xy_dummy.node,
                 log_scales.node.clone(),
                 quats.node.clone(),
                 sh_coeffs.node.clone(),
@@ -196,7 +196,6 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
             camera,
             img_size,
             means.clone().into_primitive(),
-            xy_dummy.into_primitive(),
             log_scales.clone().into_primitive(),
             quats.clone().into_primitive(),
             sh_coeffs.clone().into_primitive(),

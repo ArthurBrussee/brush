@@ -199,12 +199,10 @@ pub trait SplatForward<B: Backend> {
     /// The [`xy_grad_dummy`] variable is only used to carry screenspace xy gradients.
     /// This function can optionally render a "u32" buffer, which is a packed RGBA (8 bits per channel)
     /// buffer. This is useful when the results need to be displayed immediately.
-    #[allow(clippy::too_many_arguments)]
     fn render_splats(
         camera: &Camera,
         img_size: glam::UVec2,
         means: FloatTensor<B>,
-        xy_grad_dummy: FloatTensor<B>,
         log_scales: FloatTensor<B>,
         quats: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,

@@ -21,7 +21,6 @@ fn renders_at_all() {
     let device = WgpuDevice::DefaultDevice;
     let num_points = 8;
     let means = Tensor::<Back, 2>::zeros([num_points, 3], &device);
-    let xy_dummy = Tensor::<Back, 2>::zeros([num_points, 2], &device);
     let log_scales = Tensor::<Back, 2>::ones([num_points, 3], &device) * 2.0;
     let quats: Tensor<Back, 2> =
         Tensor::<Back, 1>::from_floats(glam::Quat::IDENTITY.to_array(), &device)
@@ -33,7 +32,6 @@ fn renders_at_all() {
         &cam,
         img_size,
         means.into_primitive().tensor(),
-        xy_dummy.into_primitive().tensor(),
         log_scales.into_primitive().tensor(),
         quats.into_primitive().tensor(),
         sh_coeffs.into_primitive().tensor(),
