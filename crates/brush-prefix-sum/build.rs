@@ -8,7 +8,6 @@ fn main() -> miette::Result<()> {
             "src/shaders/prefix_sum_scan.wgsl",
         ],
         &["src/shaders/prefix_sum_helpers.wgsl"],
-        "src/shaders",
         "src/shaders/mod.rs",
     )
     .into_diagnostic()

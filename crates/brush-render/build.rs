@@ -9,7 +9,6 @@ fn main() -> miette::Result<()> {
             "src/shaders/rasterize.wgsl",
         ],
         &["src/shaders/helpers.wgsl"],
-        "src/shaders",
         "src/shaders/mod.rs",
     )
     .into_diagnostic()

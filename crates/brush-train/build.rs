@@ -7,8 +7,7 @@ fn main() -> miette::Result<()> {
             "src/shaders/gather_grads.wgsl",
             "src/shaders/project_backwards.wgsl",
         ],
-        &["src/shaders/helpers.wgsl"],
-        "src/shaders",
+        &["../brush-render/src/shaders/helpers.wgsl"],
         "src/shaders/mod.rs",
     )
     .into_diagnostic()

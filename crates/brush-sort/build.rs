@@ -10,7 +10,6 @@ fn main() -> miette::Result<()> {
             "src/shaders/sort_scatter.wgsl",
         ],
         &["src/shaders/sorting.wgsl"],
-        "src/shaders",
         "src/shaders/mod.rs",
     )
     .into_diagnostic()
