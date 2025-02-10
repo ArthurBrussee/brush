@@ -34,22 +34,16 @@ pub trait SplatForwardDiff<B: Backend> {
     ///
     /// This projects the gaussians, sorts them, and rasterizes them to a buffer, in a
     /// differentiable way.
-    /// The arguments are all passed as raw tensors. See [`Splats`] for a convenient Module that wraps this fun
-    /// The [`xy_grad_dummy`] variable is only used to carry screenspace xy gradients.
-    /// This function can optionally render a "u32" buffer, which is a packed RGBA (8 bits per channel)
-    /// buffer. This is useful when the results need to be displayed immediately.
     #[allow(clippy::too_many_arguments)]
     fn render_splats(
         camera: &Camera,
         img_size: glam::UVec2,
         means: FloatTensor<B>,
-        xy_grad_dummy: FloatTensor<B>,
         log_scales: FloatTensor<B>,
         quats: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacity: FloatTensor<B>,
-        render_u32_buffer: bool,
-    ) -> (FloatTensor<B>, RenderAuxPrimitive<B>);
+    ) -> SplatOutputDiff<B>;
 }
 
 pub trait SplatBackwardOps<B: Backend> {
@@ -160,6 +154,12 @@ impl<B: Backend + SplatBackwardOps<B>> Backward<B, NUM_ARGS> for RenderBackwards
     }
 }
 
+pub struct SplatOutputDiff<B: Backend> {
+    pub img: FloatTensor<B>,
+    pub aux: RenderAuxPrimitive<B>,
+    pub xy_grad_holder: Tensor<B, 2>,
+}
+
 // Implement
 impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
     SplatForwardDiff<Self> for Autodiff<B, C>
@@ -168,21 +168,22 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
         camera: &Camera,
         img_size: glam::UVec2,
         means: FloatTensor<Self>,
-        xy_dummy: FloatTensor<Self>,
         log_scales: FloatTensor<Self>,
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacity: FloatTensor<Self>,
-        render_u32_buffer: bool,
-    ) -> (FloatTensor<Self>, RenderAuxPrimitive<Self>) {
+    ) -> SplatOutputDiff<Self> {
         // Get backend tensors & dequantize if needed. Could try and support quantized inputs
         // in the future.
+        let device =
+            Tensor::<Self, 2>::from_primitive(TensorPrimitive::Float(means.clone())).device();
+        let xy_grad_holder = Tensor::<Self, 2>::zeros([1, 2], &device).require_grad();
 
         // Prepare backward pass, and check if we even need to do it. Store nodes that need gradients.
         let prep_nodes = RenderBackwards
             .prepare::<C>([
                 means.node.clone(),
-                xy_dummy.node,
+                xy_grad_holder.clone().into_primitive().tensor().node,
                 log_scales.node.clone(),
                 quats.node.clone(),
                 sh_coeffs.node.clone(),
@@ -200,7 +201,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
             quats.clone().into_primitive(),
             sh_coeffs.clone().into_primitive(),
             raw_opacity.clone().into_primitive(),
-            render_u32_buffer,
+            false,
         );
 
         let wrapped_aux = RenderAuxPrimitive::<Self> {
@@ -236,14 +237,22 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
                     global_from_compact_gid: aux.global_from_compact_gid,
                 };
 
-                let finish = prep.finish(state, out_img);
+                let out_img = prep.finish(state, out_img);
 
-                (finish, wrapped_aux)
+                SplatOutputDiff {
+                    img: out_img,
+                    aux: wrapped_aux,
+                    xy_grad_holder,
+                }
             }
             OpsKind::UnTracked(prep) => {
                 // When no node is tracked, we can just use the original operation without
                 // keeping any state.
-                (prep.finish(out_img), wrapped_aux)
+                SplatOutputDiff {
+                    img: prep.finish(out_img),
+                    aux: wrapped_aux,
+                    xy_grad_holder,
+                }
             }
         }
     }

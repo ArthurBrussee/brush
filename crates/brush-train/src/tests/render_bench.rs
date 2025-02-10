@@ -173,20 +173,17 @@ fn bench_general(
     if grad {
         bencher.bench_local(move || {
             for _ in 0..INTERNAL_ITERS {
-                let xy_dummy = Tensor::<DiffBack, 2>::zeros([num_points, 2], &device);
-
-                let (img, _) = DiffBack::render_splats(
+                let diff_out = DiffBack::render_splats(
                     &camera,
                     resolution,
                     splats.means.val().into_primitive().tensor(),
-                    xy_dummy.clone().into_primitive().tensor(),
                     splats.log_scales.val().into_primitive().tensor(),
                     splats.rotation.val().into_primitive().tensor(),
                     splats.sh_coeffs.val().into_primitive().tensor(),
                     splats.raw_opacity.val().into_primitive().tensor(),
-                    false,
                 );
-                let img: Tensor<DiffBack, 3> = Tensor::from_primitive(TensorPrimitive::Float(img));
+                let img: Tensor<DiffBack, 3> =
+                    Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
                 let _ = img.mean().backward();
             }
             // Wait for GPU work.
