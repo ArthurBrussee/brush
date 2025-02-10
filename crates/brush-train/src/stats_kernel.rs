@@ -24,8 +24,8 @@ pub fn stats_gather_kernel(
     let mut line: Line<f32> = Line::empty(2);
 
     // Nb: Clippy reports a warning here about a useless conversion but it's wrong.
-    line[0] = comptime!(w as f32 / 2.0);
-    line[1] = comptime!(h as f32 / 2.0);
+    line[0] = comptime!(w as f32 / 2.0).into();
+    line[1] = comptime!(h as f32 / 2.0).into();
 
     let xy_grad = xy_grads[compact_gid] * line;
     let xy_grad_norm = f32::sqrt(xy_grad[0] * xy_grad[0] + xy_grad[1] * xy_grad[1]);
