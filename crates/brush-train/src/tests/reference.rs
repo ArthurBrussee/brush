@@ -13,7 +13,7 @@ use safetensors::SafeTensors;
 use std::{fs::File, io::Read};
 
 use crate::{
-    burn_glue::SplatBackwards,
+    burn_glue::SplatForwardDiff,
     tests::safetensor_utils::{safetensor_to_burn, splats_from_safetensors},
 };
 

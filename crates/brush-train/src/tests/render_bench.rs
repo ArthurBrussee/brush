@@ -11,7 +11,7 @@ use brush_render::{
     camera::{focal_to_fov, fov_to_focal, Camera},
     gaussian_splats::Splats,
 };
-use brush_train::burn_glue::SplatBackwards;
+use brush_train::burn_glue::SplatForwardDiff;
 use burn::backend::wgpu::WgpuDevice;
 use burn::backend::{Autodiff, Wgpu};
 use burn::module::AutodiffModule;

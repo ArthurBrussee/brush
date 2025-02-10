@@ -26,7 +26,10 @@ use burn_jit::fusion::{FusionJitRuntime, JitFusionHandle};
 
 use crate::kernels::{render_backward, SplatGrads};
 
-pub trait SplatBackwards<B: Backend> {
+/// Like [`SplatForward`], but for backends that support differentiation.
+///
+/// This shouldn't be a seperate trait, but atm is needed because of orphan trait rules.
+pub trait SplatForwardDiff<B: Backend> {
     /// Render splats to a buffer.
     ///
     /// This projects the gaussians, sorts them, and rasterizes them to a buffer, in a
@@ -47,7 +50,9 @@ pub trait SplatBackwards<B: Backend> {
         raw_opacity: FloatTensor<B>,
         render_u32_buffer: bool,
     ) -> (FloatTensor<B>, RenderAuxPrimitive<B>);
+}
 
+pub trait SplatBackwardOps<B: Backend> {
     /// Backward pass for `render_splats`.
     ///
     /// Do not use directly, `render_splats` will use this to calculate gradients.
@@ -58,31 +63,7 @@ pub trait SplatBackwards<B: Backend> {
     ) -> SplatGrads<B>;
 }
 
-impl SplatBackwards<Self> for BBase {
-    fn render_splats(
-        camera: &Camera,
-        img_size: glam::UVec2,
-        means: FloatTensor<Self>,
-        xy_grad_dummy: FloatTensor<Self>,
-        log_scales: FloatTensor<Self>,
-        quats: FloatTensor<Self>,
-        sh_coeffs: FloatTensor<Self>,
-        raw_opacity: FloatTensor<Self>,
-        render_u32_buffer: bool,
-    ) -> (FloatTensor<Self>, RenderAuxPrimitive<Self>) {
-        <Self as SplatForward<Self>>::render_splats(
-            camera,
-            img_size,
-            means,
-            xy_grad_dummy,
-            log_scales,
-            quats,
-            sh_coeffs,
-            raw_opacity,
-            render_u32_buffer,
-        )
-    }
-
+impl SplatBackwardOps<Self> for BBase {
     fn render_splats_bwd(
         state: GaussianBackwardState<Self>,
         v_output: FloatTensor<Self>,
@@ -105,11 +86,6 @@ impl SplatBackwards<Self> for BBase {
     }
 }
 
-#[derive(Debug)]
-struct RenderBackwards;
-
-const NUM_ARGS: usize = 6;
-
 #[derive(Debug, Clone)]
 pub struct GaussianBackwardState<B: Backend> {
     means: FloatTensor<B>,
@@ -129,8 +105,13 @@ pub struct GaussianBackwardState<B: Backend> {
     sh_degree: u32,
 }
 
+#[derive(Debug)]
+struct RenderBackwards;
+
+const NUM_ARGS: usize = 6;
+
 // Implement gradient registration when rendering backwards.
-impl<B: Backend + SplatBackwards<B>> Backward<B, NUM_ARGS> for RenderBackwards {
+impl<B: Backend + SplatBackwardOps<B>> Backward<B, NUM_ARGS> for RenderBackwards {
     type State = GaussianBackwardState<B>;
 
     fn backward(
@@ -180,8 +161,8 @@ impl<B: Backend + SplatBackwards<B>> Backward<B, NUM_ARGS> for RenderBackwards {
 }
 
 // Implement
-impl<B: Backend + SplatBackwards<B>, C: CheckpointStrategy> SplatBackwards<Self>
-    for Autodiff<B, C>
+impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
+    SplatForwardDiff<Self> for Autodiff<B, C>
 {
     fn render_splats(
         camera: &Camera,
@@ -211,7 +192,7 @@ impl<B: Backend + SplatBackwards<B>, C: CheckpointStrategy> SplatBackwards<Self>
             .stateful();
 
         // Render complete forward pass.
-        let (out_img, aux) = <B as SplatBackwards<B>>::render_splats(
+        let (out_img, aux) = <B as SplatForward<B>>::render_splats(
             camera,
             img_size,
             means.clone().into_primitive(),
@@ -267,40 +248,9 @@ impl<B: Backend + SplatBackwards<B>, C: CheckpointStrategy> SplatBackwards<Self>
             }
         }
     }
-
-    fn render_splats_bwd(
-        _state: GaussianBackwardState<Self>,
-        _v_output: FloatTensor<Self>,
-    ) -> SplatGrads<Self> {
-        panic!("Can't get gradient of gradient...")
-    }
 }
 
-impl SplatBackwards<Self> for Fusion<BBase> {
-    fn render_splats(
-        camera: &Camera,
-        img_size: glam::UVec2,
-        means: FloatTensor<Self>,
-        xy_grad_dummy: FloatTensor<Self>,
-        log_scales: FloatTensor<Self>,
-        quats: FloatTensor<Self>,
-        sh_coeffs: FloatTensor<Self>,
-        raw_opacity: FloatTensor<Self>,
-        render_u32_buffer: bool,
-    ) -> (FloatTensor<Self>, RenderAuxPrimitive<Self>) {
-        <Self as SplatForward<Self>>::render_splats(
-            camera,
-            img_size,
-            means,
-            xy_grad_dummy,
-            log_scales,
-            quats,
-            sh_coeffs,
-            raw_opacity,
-            render_u32_buffer,
-        )
-    }
-
+impl SplatBackwardOps<Self> for Fusion<BBase> {
     fn render_splats_bwd(
         state: GaussianBackwardState<Self>,
         v_output: FloatTensor<Self>,

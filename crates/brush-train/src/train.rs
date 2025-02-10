@@ -18,7 +18,7 @@ use hashbrown::HashMap;
 use tracing::trace_span;
 
 use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
-use crate::burn_glue::SplatBackwards;
+use crate::burn_glue::SplatForwardDiff;
 use crate::scene::{SceneView, ViewImageType};
 use crate::ssim::Ssim;
 use crate::stats::RefineRecord;
@@ -260,7 +260,7 @@ impl SplatTrainer {
             let camera = &batch.gt_view.camera;
 
             let (pred_image, aux) = {
-                let (img, aux) = <B as SplatBackwards<B>>::render_splats(
+                let (img, aux) = <B as SplatForwardDiff<B>>::render_splats(
                     camera,
                     glam::uvec2(img_w as u32, img_h as u32),
                     splats.means.val().into_primitive().tensor(),
