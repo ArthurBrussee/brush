@@ -5,11 +5,8 @@ use std::mem::{offset_of, size_of};
 use crate::{
     camera::Camera,
     dim_check::DimCheck,
-    kernels::{
-        GatherGrads, MapGaussiansToIntersect, ProjectBackwards, ProjectSplats, ProjectVisible,
-        Rasterize, RasterizeBackwards,
-    },
-    RenderAuxPrimitive, SplatGrads, INTERSECTS_UPPER_BOUND,
+    kernels::{MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
+    RenderAuxPrimitive, INTERSECTS_UPPER_BOUND,
 };
 
 use brush_kernel::create_dispatch_buffer;
@@ -27,9 +24,9 @@ use burn_wgpu::WgpuRuntime;
 use burn::tensor::ops::FloatTensorOps;
 use glam::{ivec2, uvec2};
 
-type InnerWgpu = JitBackend<WgpuRuntime, f32, i32, u32>;
+pub type InnerWgpu = JitBackend<WgpuRuntime, f32, i32, u32>;
 
-pub const SH_C0: f32 = shaders::gather_grads::SH_C0;
+pub const SH_C0: f32 = shaders::project_visible::SH_C0;
 
 pub const fn sh_coeffs_for_degree(degree: u32) -> u32 {
     (degree + 1).pow(2)
@@ -47,7 +44,7 @@ pub fn sh_degree_from_coeffs(coeffs_per_channel: u32) -> u32 {
 }
 
 pub fn rgb_to_sh(rgb: f32) -> f32 {
-    (rgb - 0.5) / shaders::gather_grads::SH_C0
+    (rgb - 0.5) / SH_C0
 }
 
 pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
@@ -357,143 +354,4 @@ pub(crate) fn render_forward(
             radii,
         },
     )
-}
-
-use std::sync::atomic::{AtomicBool, Ordering};
-
-// TODO: Properly register hardware atomic floats as a cube feature when
-// https://github.com/gfx-rs/wgpu/pull/6234 lands.
-static HARD_FLOATS_AVAILABLE: AtomicBool = AtomicBool::new(false);
-
-// Functions to read and write the flag
-pub fn set_hard_floats_available(available: bool) {
-    HARD_FLOATS_AVAILABLE.store(available, Ordering::SeqCst);
-}
-
-pub fn has_hard_floats() -> bool {
-    HARD_FLOATS_AVAILABLE.load(Ordering::SeqCst)
-}
-
-pub(crate) fn render_backward(
-    v_output: JitTensor<WgpuRuntime>,
-
-    means: JitTensor<WgpuRuntime>,
-    quats: JitTensor<WgpuRuntime>,
-    log_scales: JitTensor<WgpuRuntime>,
-    raw_opac: JitTensor<WgpuRuntime>,
-    out_img: JitTensor<WgpuRuntime>,
-
-    projected_splats: JitTensor<WgpuRuntime>,
-    uniforms_buffer: JitTensor<WgpuRuntime>,
-    compact_gid_from_isect: JitTensor<WgpuRuntime>,
-    global_from_compact_gid: JitTensor<WgpuRuntime>,
-    tile_offsets: JitTensor<WgpuRuntime>,
-    final_index: JitTensor<WgpuRuntime>,
-    sh_degree: u32,
-) -> SplatGrads<InnerWgpu> {
-    let device = &out_img.device;
-    let img_dimgs = out_img.shape.dims;
-    let img_size = glam::uvec2(img_dimgs[1] as u32, img_dimgs[0] as u32);
-
-    let num_points = means.shape.dims[0];
-
-    let client = &means.client;
-
-    // Create tensors to hold gradients.
-
-    // Nb: these are packed vec3 values, special care is taken in the kernel to respect alignment.
-    // Nb: These have to be zerod out - as we only write to visible splats.
-    //
-    let v_xys_local = InnerWgpu::float_zeros([num_points, 2].into(), device);
-    let v_means = InnerWgpu::float_zeros([num_points, 3].into(), device);
-    let v_scales = InnerWgpu::float_zeros([num_points, 3].into(), device);
-    let v_quats = InnerWgpu::float_zeros([num_points, 4].into(), device);
-
-    let v_coeffs = InnerWgpu::float_zeros(
-        [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
-        device,
-    );
-    let v_raw_opac = InnerWgpu::float_zeros([num_points].into(), device);
-
-    let tile_bounds = uvec2(
-        img_size.x.div_ceil(shaders::helpers::TILE_WIDTH),
-        img_size.y.div_ceil(shaders::helpers::TILE_WIDTH),
-    );
-    let invocations = tile_bounds.x * tile_bounds.y;
-
-    // These gradients are atomically added to so important to zero them.
-    let v_conics = InnerWgpu::float_zeros([num_points, 3].into(), device);
-    let v_colors = InnerWgpu::float_zeros([num_points, 4].into(), device);
-
-    let hard_floats = has_hard_floats();
-
-    tracing::trace_span!("RasterizeBackwards", sync_burn = true).in_scope(||
-            // SAFETY: Kernel has to contain no OOB indexing.
-            unsafe {
-                client.execute_unchecked(
-                    RasterizeBackwards::task(hard_floats),
-                    CubeCount::Static(invocations, 1, 1),
-                    vec![
-                        uniforms_buffer.clone().handle.binding(),
-                        compact_gid_from_isect.handle.binding(),
-                        tile_offsets.handle.binding(),
-                        projected_splats.handle.binding(),
-                        final_index.handle.binding(),
-                        out_img.handle.binding(),
-                        v_output.handle.binding(),
-                        v_xys_local.clone().handle.binding(),
-                        v_conics.clone().handle.binding(),
-                        v_colors.clone().handle.binding(),
-                    ],
-                );
-            });
-
-    let _span = tracing::trace_span!("GatherGrads", sync_burn = true).entered();
-
-    // SAFETY: Kernel has to contain no OOB indexing.
-    unsafe {
-        client.execute_unchecked(
-            GatherGrads::task(),
-            calc_cube_count([num_points as u32], GatherGrads::WORKGROUP_SIZE),
-            vec![
-                uniforms_buffer.clone().handle.binding(),
-                global_from_compact_gid.clone().handle.binding(),
-                raw_opac.handle.binding(),
-                means.clone().handle.binding(),
-                v_colors.handle.binding(),
-                v_coeffs.handle.clone().binding(),
-                v_raw_opac.handle.clone().binding(),
-            ],
-        );
-    }
-
-    tracing::trace_span!("ProjectBackwards", sync_burn = true).in_scope(||
-        // SAFETY: Kernel has to contain no OOB indexing.
-        unsafe {
-        client.execute_unchecked(
-            ProjectBackwards::task(),
-            calc_cube_count([num_points as u32], ProjectBackwards::WORKGROUP_SIZE),
-            vec![
-                uniforms_buffer.handle.binding(),
-                means.handle.binding(),
-                log_scales.handle.binding(),
-                quats.handle.binding(),
-                global_from_compact_gid.handle.binding(),
-                v_xys_local.handle.clone().binding(),
-                v_conics.handle.binding(),
-                v_means.handle.clone().binding(),
-                v_scales.handle.clone().binding(),
-                v_quats.handle.clone().binding(),
-            ],
-        );
-    });
-
-    SplatGrads {
-        v_means,
-        v_quats,
-        v_scales,
-        v_coeffs,
-        v_raw_opac,
-        v_xy: v_xys_local,
-    }
 }

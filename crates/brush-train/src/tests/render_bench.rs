@@ -1,6 +1,8 @@
 #![allow(clippy::single_range_in_vec_init)]
 #![recursion_limit = "256"]
 
+mod safetensor_utils;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::{fs::File, io::Read};
@@ -9,10 +11,12 @@ use brush_render::{
     camera::{focal_to_fov, fov_to_focal, Camera},
     gaussian_splats::Splats,
 };
-use burn::backend::Autodiff;
+use brush_train::burn_glue::SplatBackwards;
+use burn::backend::wgpu::WgpuDevice;
+use burn::backend::{Autodiff, Wgpu};
 use burn::module::AutodiffModule;
-use burn::tensor::Tensor;
-use burn_wgpu::{Wgpu, WgpuDevice};
+use burn::tensor::{Tensor, TensorPrimitive};
+use safetensor_utils::splats_from_safetensors;
 use safetensors::SafeTensors;
 
 fn main() {
@@ -143,8 +147,8 @@ fn bench_general(
         .read_to_end(&mut buffer)
         .expect("Failed to read bench data");
     let tensors = SafeTensors::deserialize(&buffer).expect("Failed to deserialize bench data");
-    let splats =
-        Splats::<DiffBack>::from_safetensors(&tensors, &device).expect("Failed to load bench data");
+    let splats: Splats<DiffBack> =
+        splats_from_safetensors(&tensors, &device).expect("Failed to load bench data");
     let num_points = (splats.num_splats() as f32 * dens) as usize;
     let splats = Splats::from_tensor_data(
         (splats.means.val() * mean_mult).slice([0..num_points]),
@@ -169,8 +173,19 @@ fn bench_general(
     if grad {
         bencher.bench_local(move || {
             for _ in 0..INTERNAL_ITERS {
-                let out = splats.render(&camera, resolution, false);
-                let _ = out.0.mean().backward();
+                let (img, _) = DiffBack::render_splats(
+                    &camera,
+                    resolution,
+                    splats.means.val().into_primitive().tensor(),
+                    splats.xys_dummy.clone().into_primitive().tensor(),
+                    splats.log_scales.val().into_primitive().tensor(),
+                    splats.rotation.val().into_primitive().tensor(),
+                    splats.sh_coeffs.val().into_primitive().tensor(),
+                    splats.raw_opacity.val().into_primitive().tensor(),
+                    false,
+                );
+                let img: Tensor<DiffBack, 3> = Tensor::from_primitive(TensorPrimitive::Float(img));
+                let _ = img.mean().backward();
             }
             // Wait for GPU work.
             <Wgpu as burn::prelude::Backend>::sync(&device);

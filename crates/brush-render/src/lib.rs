@@ -1,8 +1,6 @@
 #![recursion_limit = "256"]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::single_range_in_vec_init)]
 
-use burn::prelude::Tensor;
+use burn::prelude::{Backend, Tensor};
 use burn::tensor::ops::{FloatTensor, IntTensor};
 use burn::tensor::{ElementConversion, Int, TensorPrimitive};
 use burn_jit::JitBackend;
@@ -15,8 +13,7 @@ use wgpu::{Adapter, Device, Queue};
 mod burn_glue;
 mod dim_check;
 mod kernels;
-mod safetensor_utils;
-mod shaders;
+pub mod shaders;
 
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests;
@@ -41,7 +38,7 @@ pub struct RenderAuxPrimitive<B: Backend> {
 }
 
 impl<B: Backend> RenderAuxPrimitive<B> {
-    fn into_wrapped(self) -> RenderAux<B> {
+    pub fn into_wrapped(self) -> RenderAux<B> {
         RenderAux {
             num_intersections: Tensor::from_primitive(self.num_intersections),
             num_visible: Tensor::from_primitive(self.num_visible),
@@ -76,6 +73,7 @@ const INTERSECTS_UPPER_BOUND: u32 = shaders::map_gaussian_to_intersects::WORKGRO
 const GAUSSIANS_UPPER_BOUND: u32 = 256 * 65535;
 
 impl<B: Backend> RenderAux<B> {
+    #[allow(clippy::single_range_in_vec_init)]
     pub fn calc_tile_depth(&self) -> Tensor<B, 2, Int> {
         let bins = self.tile_offsets.clone();
         let n_bins = bins.dims()[0];
@@ -190,37 +188,9 @@ impl<B: Backend> RenderAux<B> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SplatGrads<B: Backend> {
-    v_means: FloatTensor<B>,
-    v_quats: FloatTensor<B>,
-    v_scales: FloatTensor<B>,
-    v_coeffs: FloatTensor<B>,
-    v_raw_opac: FloatTensor<B>,
-    v_xy: FloatTensor<B>,
-}
+pub type BBase = JitBackend<WgpuRuntime, f32, i32, u32>;
 
-#[derive(Debug, Clone)]
-pub struct GaussianBackwardState<B: Backend> {
-    means: FloatTensor<B>,
-    quats: FloatTensor<B>,
-    log_scales: FloatTensor<B>,
-    raw_opac: FloatTensor<B>,
-
-    out_img: FloatTensor<B>,
-
-    projected_splats: FloatTensor<B>,
-    uniforms_buffer: IntTensor<B>,
-    compact_gid_from_isect: IntTensor<B>,
-    global_from_compact_gid: IntTensor<B>,
-    tile_offsets: IntTensor<B>,
-    final_index: IntTensor<B>,
-
-    sh_degree: u32,
-}
-
-// Custom operations in Burn work by extending the backend with an extra func.
-pub trait Backend: burn::tensor::backend::Backend {
+pub trait SplatForward<B: Backend> {
     /// Render splats to a buffer.
     ///
     /// This projects the gaussians, sorts them, and rasterizes them to a buffer, in a
@@ -229,36 +199,19 @@ pub trait Backend: burn::tensor::backend::Backend {
     /// The [`xy_grad_dummy`] variable is only used to carry screenspace xy gradients.
     /// This function can optionally render a "u32" buffer, which is a packed RGBA (8 bits per channel)
     /// buffer. This is useful when the results need to be displayed immediately.
+    #[allow(clippy::too_many_arguments)]
     fn render_splats(
         camera: &Camera,
         img_size: glam::UVec2,
-        means: FloatTensor<Self>,
-        xy_grad_dummy: FloatTensor<Self>,
-        log_scales: FloatTensor<Self>,
-        quats: FloatTensor<Self>,
-        sh_coeffs: FloatTensor<Self>,
-        raw_opacity: FloatTensor<Self>,
+        means: FloatTensor<B>,
+        xy_grad_dummy: FloatTensor<B>,
+        log_scales: FloatTensor<B>,
+        quats: FloatTensor<B>,
+        sh_coeffs: FloatTensor<B>,
+        raw_opacity: FloatTensor<B>,
         render_u32_buffer: bool,
-    ) -> (FloatTensor<Self>, RenderAuxPrimitive<Self>);
-
-    /// Backward pass for `render_splats`.
-    ///
-    /// Do not use directly, `render_splats` will use this to calculate gradients.
-    #[allow(unused_variables)]
-    fn render_splats_bwd(
-        state: GaussianBackwardState<Self>,
-        v_output: FloatTensor<Self>,
-    ) -> SplatGrads<Self> {
-        panic!("Do not call this manually.");
-    }
+    ) -> (FloatTensor<B>, RenderAuxPrimitive<B>);
 }
-
-pub trait AutodiffBackend:
-    Backend + burn::tensor::backend::AutodiffBackend<InnerBackend: Backend>
-{
-}
-
-type BBase = JitBackend<WgpuRuntime, f32, i32, u32>;
 
 fn burn_options() -> RuntimeOptions {
     RuntimeOptions {
@@ -267,18 +220,7 @@ fn burn_options() -> RuntimeOptions {
     }
 }
 
-fn set_hard_floats(adapter: &Adapter) {
-    let hard_floats = adapter
-        .features()
-        .contains(wgpu::Features::SHADER_FLOAT32_ATOMIC);
-
-    render::set_hard_floats_available(hard_floats);
-    log::info!("Running with native atomic floats: {hard_floats}");
-}
-
 pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuDevice {
-    set_hard_floats(&adapter);
-
     let setup = burn_wgpu::WgpuSetup {
         instance: wgpu::Instance::new(&wgpu::InstanceDescriptor::default()), // unused... need to fix this in Burn.
         adapter,
@@ -289,9 +231,7 @@ pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuD
 }
 
 pub async fn burn_init_setup() -> WgpuDevice {
-    let setup =
-        burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
-            .await;
-    set_hard_floats(&setup.adapter);
+    burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
+        .await;
     WgpuDevice::DefaultDevice
 }

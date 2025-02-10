@@ -1,8 +1,11 @@
 use std::collections::HashSet;
 
 use async_fn_stream::try_fn_stream;
-use brush_render::{render::rgb_to_sh, Backend};
-use burn::tensor::{Tensor, TensorData};
+use brush_render::render::rgb_to_sh;
+use burn::{
+    prelude::Backend,
+    tensor::{Tensor, TensorData},
+};
 use glam::{Quat, Vec3, Vec4};
 use ply_rs::{
     parser::Parser,

@@ -814,7 +814,6 @@ dependencies = [
  "log",
  "rrfd",
  "tokio",
- "tokio_with_wasm",
  "winit",
 ]
 
@@ -822,7 +821,6 @@ dependencies = [
 name = "brush-app"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "brush-cli",
  "brush-dataset",
  "brush-process",
@@ -913,7 +911,6 @@ dependencies = [
  "brush-kernel",
  "brush-wgsl",
  "burn",
- "burn-jit",
  "burn-wgpu",
  "miette",
  "naga_oil",
@@ -933,7 +930,6 @@ dependencies = [
  "burn",
  "burn-jit",
  "burn-wgpu",
- "cfg-if",
  "clap",
  "glam",
  "image",
@@ -947,19 +943,16 @@ dependencies = [
  "tokio-util",
  "tokio_with_wasm",
  "web-time",
- "zip 2.2.2",
 ]
 
 [[package]]
 name = "brush-render"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "assert_approx_eq",
  "ball-tree",
  "brush-kernel",
  "brush-prefix-sum",
- "brush-rerun",
  "brush-sort",
  "brush-wgsl",
  "burn",
@@ -967,17 +960,11 @@ dependencies = [
  "burn-jit",
  "burn-wgpu",
  "bytemuck",
- "divan",
  "glam",
- "image",
- "log",
  "miette",
  "naga_oil",
  "rand",
- "rerun",
- "safetensors 0.4.5",
  "serde",
- "tokio",
  "tracing",
  "wgpu",
 ]
@@ -1014,16 +1001,26 @@ dependencies = [
  "anyhow",
  "brush-kernel",
  "brush-render",
+ "brush-rerun",
+ "brush-wgsl",
  "burn",
  "burn-fusion",
  "burn-jit",
+ "bytemuck",
  "clap",
+ "divan",
  "glam",
  "hashbrown 0.15.2",
  "image",
  "log",
+ "miette",
+ "naga_oil",
  "rand",
+ "rerun",
+ "safetensors 0.4.5",
+ "tokio",
  "tracing",
+ "wgpu",
 ]
 
 [[package]]
@@ -1032,13 +1029,9 @@ version = "0.2.0"
 dependencies = [
  "burn",
  "burn-fusion",
- "burn-wgpu",
  "eframe",
  "egui",
  "glam",
- "log",
- "tokio",
- "tokio_with_wasm",
  "wgpu",
 ]
 
@@ -2837,7 +2830,6 @@ dependencies = [
  "burn",
  "eframe",
  "egui",
- "env_logger",
  "glam",
  "image",
  "rand",
@@ -4602,7 +4594,6 @@ dependencies = [
  "hexf-parse",
  "indexmap 2.7.1",
  "log",
- "pp-rs",
  "rustc-hash 1.1.0",
  "spirv",
  "strum",
@@ -5468,15 +5459,6 @@ name = "powerfmt"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
-
-[[package]]
-name = "pp-rs"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb458bb7f6e250e6eb79d5026badc10a3ebb8f9a15d1fff0f13d17c71f4d6dee"
-dependencies = [
- "unicode-xid",
-]
 
 [[package]]
 name = "ppv-lite86"
@@ -7345,7 +7327,6 @@ name = "sync-span"
 version = "0.2.0"
 dependencies = [
  "burn",
- "burn-wgpu",
  "tracing",
  "tracing-subscriber",
 ]

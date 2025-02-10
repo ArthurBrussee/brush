@@ -1,7 +1,7 @@
-use brush_render::Backend;
 use brush_train::image::view_to_sample;
 use brush_train::scene::Scene;
 use brush_train::train::SceneBatch;
+use burn::prelude::Backend;
 use rand::{seq::SliceRandom, SeedableRng};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;

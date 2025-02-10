@@ -1,7 +1,6 @@
 use anyhow::Result;
 use brush_render::gaussian_splats::{inverse_sigmoid, Splats};
 use brush_render::render::sh_coeffs_for_degree;
-use brush_render::{AutodiffBackend, Backend};
 use burn::backend::wgpu::WgpuDevice;
 use burn::backend::{Autodiff, Wgpu};
 use burn::lr_scheduler::exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig};
@@ -10,13 +9,16 @@ use burn::module::{Param, ParamId};
 use burn::optim::adaptor::OptimizerAdaptor;
 use burn::optim::record::AdaptorRecord;
 use burn::optim::Optimizer;
+use burn::prelude::Backend;
 use burn::tensor::activation::sigmoid;
-use burn::tensor::{Bool, Distribution, Int};
+use burn::tensor::backend::AutodiffBackend;
+use burn::tensor::{Bool, Distribution, Int, TensorPrimitive};
 use burn::{config::Config, optim::GradientsParams, tensor::Tensor};
 use hashbrown::HashMap;
 use tracing::trace_span;
 
 use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
+use crate::burn_glue::SplatBackwards;
 use crate::scene::{SceneView, ViewImageType};
 use crate::ssim::Ssim;
 use crate::stats::RefineRecord;
@@ -149,7 +151,7 @@ pub struct RefineStats {
 }
 
 #[derive(Clone)]
-pub struct TrainStepStats<B: AutodiffBackend> {
+pub struct TrainStepStats<B: Backend> {
     pub pred_image: Tensor<B, 3>,
     pub gt_images: Tensor<B, 3>,
     pub gt_views: SceneView,
@@ -257,8 +259,25 @@ impl SplatTrainer {
         let (pred_image, aux, loss) = {
             let camera = &batch.gt_view.camera;
 
-            let (pred_image, aux) =
-                splats.render(camera, glam::uvec2(img_w as u32, img_h as u32), false);
+            let (pred_image, aux) = {
+                let (img, aux) = <B as SplatBackwards<B>>::render_splats(
+                    camera,
+                    glam::uvec2(img_w as u32, img_h as u32),
+                    splats.means.val().into_primitive().tensor(),
+                    splats.xys_dummy.clone().into_primitive().tensor(),
+                    splats.log_scales.val().into_primitive().tensor(),
+                    splats.rotation.val().into_primitive().tensor(),
+                    splats.sh_coeffs.val().into_primitive().tensor(),
+                    splats.raw_opacity.val().into_primitive().tensor(),
+                    false,
+                );
+                let img = Tensor::from_primitive(TensorPrimitive::Float(img));
+                let wrapped_aux = aux.into_wrapped();
+                (img, wrapped_aux)
+            };
+
+            // let (pred_image, aux) =
+            //     splats.render(camera, glam::uvec2(img_w as u32, img_h as u32), false);
 
             let _span = trace_span!("Calculate losses", sync_burn = true).entered();
 

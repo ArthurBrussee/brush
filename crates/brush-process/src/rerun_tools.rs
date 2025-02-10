@@ -3,10 +3,12 @@
 use std::sync::Arc;
 
 use brush_dataset::clamp_img_to_max_size;
-use brush_render::{gaussian_splats::Splats, AutodiffBackend, Backend};
+use brush_render::gaussian_splats::Splats;
 use brush_train::eval::EvalSample;
 use brush_train::{image::tensor_into_image, scene::Scene, train::RefineStats};
 use brush_train::{ssim::Ssim, train::TrainStepStats};
+use burn::prelude::Backend;
+use burn::tensor::backend::AutodiffBackend;
 use burn::tensor::{activation::sigmoid, ElementConversion};
 
 use anyhow::Result;

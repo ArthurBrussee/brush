@@ -3,8 +3,8 @@ use crate::{
     splat_import::{load_splat_from_ply, SplatMessage},
     Dataset, LoadDataseConfig, WasmNotSend,
 };
-use brush_render::Backend;
 use brush_train::scene::ViewImageType;
+use burn::prelude::Backend;
 use image::DynamicImage;
 use path_clean::PathClean;
 use std::{

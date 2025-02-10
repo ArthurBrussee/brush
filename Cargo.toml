@@ -10,7 +10,6 @@ readme = "README.md"
 license = "Apache-2.0"
 repository = "https://github.com/ArthurBrussee/brush"
 
-
 [workspace.dependencies]
 glam = { version = "0.28", features = ["serde"] }
 bytemuck = "1.20"
@@ -28,7 +27,6 @@ serde = { version = "1.0.215", default-features = false, features = [
 serde_json = { version = "1.0.133", default-features = false }
 
 rand = "0.8.5"
-anyhow = "1.0.94"
 tracing = "0.1.41"
 tracing-tracy = "0.11.3"
 tracing-subscriber = "0.3.19"
@@ -38,12 +36,18 @@ tokio_with_wasm = "0.7.4"
 tokio-stream = "0.1"
 tokio-util = { version = "0.7.13", features = ["io"] }
 
+anyhow = "1.0.94"
+thiserror = "*"
+
 reqwest = { version = "0.12.9", default-features = false, features = [
     "stream",
     "rustls-tls",
 ] }
 
 indicatif = "0.17.9"
+env_logger = "0.10.2"
+clap = { version = "4.5.23", features = ["derive"] }
+
 web-time = "1.1.0"
 humantime = "2.1.0"
 
@@ -58,11 +62,8 @@ safetensors = "0.4.5"
 log = "0.4.22"
 wasm-bindgen = "0.2.97"
 
-naga_oil = "0.17"
+naga_oil = { version = "0.17", default-features = false }
 wgpu = { version = "24", features = ["naga-ir"] }
-
-env_logger = "0.10.2"
-parking_lot = { version = "0.12.3", features = ["arc_lock"] }
 
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
 ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
@@ -95,8 +96,6 @@ rerun = { version = "0.21", default-features = false, features = [
 
 ball-tree = "0.5.1"
 
-# Build dependencies.
-thiserror = "*"
 web-sys = { version = "0.3.74", features = [
     "Window",
     "Location",
@@ -106,7 +105,6 @@ wasm-logger = "0.2.0"
 zip = { version = "2.2.1", default-features = false, features = ["deflate"] }
 urlencoding = "2.1"
 hashbrown = "0.15"
-clap = { version = "4.5.23", features = ["derive"] }
 
 # [patch."https://github.com/tracel-ai/burn"]
 # # Uncomment this to use local burn.
@@ -129,27 +127,11 @@ naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v24" }
 opt-level = 1
 debug = true
 
-# Optimize dependencies even in debug builds (does not affect workspace packages):
-[profile.dev.package."*"]
-opt-level = 1
-debug = true
-
-[profile.release]
-
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
 lto = "thin"
 # debug = true # good for profilers
-#
-# This leads to better optimizations and smaller binaries (and is the default in Wasm).
-# However, this leads to problems in the current burn versions as it uses panics for
-# controls flow
-# panic = "abort"
-
-# Lto helps a tiny bit on wasm, but doesn't seem worth it generally, as it makes
-# linking much much slower.
-# lto = "thin"
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }
@@ -313,6 +295,11 @@ missing_errors_doc = "allow"
 # string_add = "allow"
 # string_add_assign = "allow"
 # Annoying: I like big functuions what can I say.
-# too_many_lines = "allow"
+too_many_lines = "allow"
+too_many_arguments = "allow"
+
 # Annoying: this one is just worse imho
 # manual_range_contains = "allow"
+
+# This doesn't quite work with Burn:
+single_range_in_vec_init = "allow"

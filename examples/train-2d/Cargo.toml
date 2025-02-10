@@ -13,7 +13,6 @@ brush-render.path = "../../crates/brush-render"
 brush-ui.path = "../../crates/brush-ui"
 
 tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros"] }
-env_logger.workspace = true
 rand.workspace = true
 glam.workspace = true
 image.workspace = true

@@ -1,6 +1,6 @@
 use anyhow::anyhow;
-use brush_render::{gaussian_splats::Splats, Backend};
-use burn::tensor::DataError;
+use brush_render::gaussian_splats::Splats;
+use burn::{prelude::Backend, tensor::DataError};
 use glam::{Quat, Vec3};
 use ply_rs::{
     ply::{self, Ply, PropertyDef, PropertyType, ScalarType},

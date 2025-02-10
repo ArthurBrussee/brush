@@ -110,7 +110,7 @@ macro_rules! kernel_source_gen {
             }
         }
 
-        impl<C: burn_jit::cubecl::Compiler> brush_kernel::CubeTask<C> for $struct_name {
+        impl<C: brush_kernel::Compiler> brush_kernel::CubeTask<C> for $struct_name {
             fn id(&self) -> brush_kernel::KernelId {
                 brush_kernel::calc_kernel_id::<Self>(&[$(self.$field_name),*])
             }

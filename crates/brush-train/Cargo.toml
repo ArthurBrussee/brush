@@ -21,7 +21,27 @@ burn.workspace = true
 burn-jit.workspace = true
 burn-fusion.workspace = true
 
+naga_oil.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+
 clap.workspace = true
+
+[build-dependencies]
+brush-wgsl.path = "../brush-wgsl"
+miette.workspace = true
+
+[dev-dependencies]
+divan = "0.1.17"
+safetensors.workspace = true
+brush-rerun.path = "../brush-rerun"
+rerun.workspace = true
+tokio.workspace = true
+
+[[bench]]
+name = "render_bench"
+harness = false
+path = "src/tests/render_bench.rs"
 
 [lints]
 workspace = true

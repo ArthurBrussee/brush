@@ -43,46 +43,42 @@ web-time.workspace = true
 
 log.workspace = true
 
-clap.workspace = true
-anyhow.workspace = true
-
 # Default to wayland on linux. Change this to x11 if needed.
 # this perhaps could use a feature on our side as well,
 # so you could run with cargo run --no-default-features --features=11
-winit = { version = "0.30", features = ["default"] }
 tokio_with_wasm = { workspace = true, features = ["rt"] }
 
 tracing.workspace = true
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+brush-cli.path = "../brush-cli"
+tracing-tracy = { workspace = true, optional = true }
+clap.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 env_logger.workspace = true
+winit = { version = "0.30", features = ["default"] }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.'cfg(target_family = "wasm")'.dependencies]
+tracing-wasm.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt"] }
 wasm-bindgen.workspace = true
 console_error_panic_hook.workspace = true
 web-sys.workspace = true
 wasm-logger.workspace = true
 
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-brush-cli.path = "../brush-cli"
-tracing-tracy = { workspace = true, optional = true }
-
-[target.'cfg(target_family = "wasm")'.dependencies]
-tracing-wasm.workspace = true
-web-sys.workspace = true
-
 [features]
 tracy = ["tracing", "dep:tracing-tracy"]
-tracing = []
+tracing = ["tracing-subscriber"]
 
 [package.metadata.wasm-pack.profile.release.wasm-bindgen]
 debug-js-glue = false
 demangle-name-section = false
 dwarf-debug-info = false
 omit-default-module-path = false
+
+[package.metadata.cargo-machete]
+ignored = ["winit"] # Need winit to set backend.
 
 [lints]
 workspace = true

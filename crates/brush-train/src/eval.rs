@@ -1,5 +1,6 @@
-use brush_render::RenderAux;
-use brush_render::{gaussian_splats::Splats, Backend};
+use brush_render::gaussian_splats::Splats;
+use brush_render::{RenderAux, SplatForward};
+use burn::prelude::Backend;
 use burn::tensor::Tensor;
 use rand::seq::IteratorRandom;
 
@@ -19,7 +20,7 @@ pub struct EvalSample<B: Backend> {
     pub aux: RenderAux<B>,
 }
 
-pub fn eval_stats<B: Backend>(
+pub fn eval_stats<B: Backend + SplatForward<B>>(
     splats: Splats<B>,
     eval_scene: &Scene,
     num_frames: Option<usize>,

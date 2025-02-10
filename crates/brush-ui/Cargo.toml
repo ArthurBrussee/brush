@@ -7,15 +7,11 @@ license.workspace = true
 
 [dependencies]
 burn.workspace = true
-burn-wgpu.workspace = true
 burn-fusion.workspace = true
 glam.workspace = true
 eframe.workspace = true
 egui.workspace = true
 wgpu.workspace = true
-tokio = { workspace = true, features = ["rt", "sync"] }
-tokio_with_wasm = { workspace = true, features = ["rt"] }
-log.workspace = true
 
 [lints]
 workspace = true

@@ -53,6 +53,8 @@ struct ShCoeffs {
     b4_c8: vec3f,
 }
 
+const SH_C0: f32 = 0.2820947917738781f;
+
 // Evaluate spherical harmonics bases at unit direction for high orders using approach described by
 // Efficient Spherical Harmonic Evaluation, Peter-Pike Sloan, JCGT 2013
 // See https://jcgt.org/published/0002/02/06/ for reference implementation
@@ -61,7 +63,7 @@ fn sh_coeffs_to_color(
     viewdir: vec3f,
     sh: ShCoeffs,
 ) -> vec3f {
-    var colors = 0.2820947917738781f * sh.b0_c0;
+    var colors = SH_C0 * sh.b0_c0;
 
     if (degree == 0) {
         return colors;

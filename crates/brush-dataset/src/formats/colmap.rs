@@ -17,9 +17,9 @@ use brush_render::{
     camera::{self, Camera},
     gaussian_splats::Splats,
     render::rgb_to_sh,
-    Backend,
 };
 use brush_train::scene::SceneView;
+use burn::prelude::Backend;
 use glam::Vec3;
 use std::collections::HashMap;
 use tokio_stream::StreamExt;

@@ -7,7 +7,13 @@ use brush_process::process_loop::start_process;
 #[allow(unused)]
 use tokio::sync::oneshot::error::RecvError;
 
-fn main() -> Result<(), clap::Error> {
+#[cfg(not(target_family = "wasm"))]
+type MainResult = Result<(), clap::Error>;
+
+#[cfg(target_family = "wasm")]
+type MainResult = Result<(), ()>;
+
+fn main() -> MainResult {
     let wgpu_options = brush_ui::create_egui_options();
 
     #[allow(unused)]

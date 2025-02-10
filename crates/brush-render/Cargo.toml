@@ -8,7 +8,6 @@ license.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 brush-prefix-sum.path = "../brush-prefix-sum"
-anyhow.workspace = true
 assert_approx_eq.workspace = true
 brush-kernel.path = "../brush-kernel"
 brush-sort.path = "../brush-sort"
@@ -20,15 +19,14 @@ burn-fusion.workspace = true
 
 bytemuck.workspace = true
 glam.workspace = true
-naga_oil.workspace = true
-safetensors.workspace = true
+
 tracing.workspace = true
-log.workspace = true
 serde.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 rand.workspace = true
-wgpu.workspace = true
 ball-tree.workspace = true
+
+naga_oil.workspace = true
+wgpu.workspace = true
 
 [features]
 debug_validation = []
@@ -36,16 +34,6 @@ debug_validation = []
 [build-dependencies]
 brush-wgsl.path = "../brush-wgsl"
 miette.workspace = true
-
-[dev-dependencies]
-rerun.workspace = true
-image.workspace = true
-brush-rerun.path = "../brush-rerun"
-divan = "0.1.17"
-
-[[bench]]
-name = "render_bench"
-harness = false
 
 [lints]
 workspace = true

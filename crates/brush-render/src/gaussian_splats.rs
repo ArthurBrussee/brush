@@ -2,18 +2,17 @@ use crate::{
     bounding_box::BoundingBox,
     camera::Camera,
     render::{sh_coeffs_for_degree, sh_degree_from_coeffs},
-    safetensor_utils::safetensor_to_burn,
-    Backend, RenderAux,
+    RenderAux, SplatForward,
 };
 use ball_tree::BallTree;
 use burn::{
     config::Config,
     module::{Module, Param, ParamId},
+    prelude::Backend,
     tensor::{activation::sigmoid, Tensor, TensorData, TensorPrimitive},
 };
 use glam::{Quat, Vec3};
 use rand::Rng;
-use safetensors::SafeTensors;
 
 #[derive(Config)]
 pub struct RandomSplatsConfig {
@@ -220,6 +219,33 @@ impl<B: Backend> Splats<B> {
         *param = Param::initialized(id, f(tensor).detach().require_grad());
     }
 
+    pub fn opacity(&self) -> Tensor<B, 1> {
+        sigmoid(self.raw_opacity.val())
+    }
+
+    pub fn scales(&self) -> Tensor<B, 2> {
+        self.log_scales.val().exp()
+    }
+
+    pub fn num_splats(&self) -> usize {
+        self.means.dims()[0]
+    }
+
+    pub fn rotations_normed(&self) -> Tensor<B, 2> {
+        norm_vec(self.rotation.val())
+    }
+
+    pub fn norm_rotations(&mut self) {
+        self.rotation = self.rotation.clone().map(|r| norm_vec(r));
+    }
+
+    pub fn sh_degree(&self) -> u32 {
+        let [_, coeffs, _] = self.sh_coeffs.dims();
+        sh_degree_from_coeffs(coeffs as u32)
+    }
+}
+
+impl<B: Backend + SplatForward<B>> Splats<B> {
     pub fn render(
         &self,
         camera: &Camera,
@@ -245,40 +271,5 @@ impl<B: Backend> Splats<B> {
             wrapped_aux.clone().debug_assert_valid();
         }
         (img, wrapped_aux)
-    }
-
-    pub fn opacity(&self) -> Tensor<B, 1> {
-        sigmoid(self.raw_opacity.val())
-    }
-
-    pub fn scales(&self) -> Tensor<B, 2> {
-        self.log_scales.val().exp()
-    }
-
-    pub fn num_splats(&self) -> usize {
-        self.means.dims()[0]
-    }
-
-    pub fn rotations_normed(&self) -> Tensor<B, 2> {
-        norm_vec(self.rotation.val())
-    }
-
-    pub fn norm_rotations(&mut self) {
-        self.rotation = self.rotation.clone().map(|r| norm_vec(r));
-    }
-
-    pub fn from_safetensors(tensors: &SafeTensors, device: &B::Device) -> anyhow::Result<Self> {
-        Ok(Self::from_tensor_data(
-            safetensor_to_burn::<B, 2>(&tensors.tensor("means")?, device),
-            safetensor_to_burn::<B, 2>(&tensors.tensor("quats")?, device),
-            safetensor_to_burn::<B, 2>(&tensors.tensor("scales")?, device),
-            safetensor_to_burn::<B, 3>(&tensors.tensor("coeffs")?, device),
-            safetensor_to_burn::<B, 1>(&tensors.tensor("opacities")?, device),
-        ))
-    }
-
-    pub fn sh_degree(&self) -> u32 {
-        let [_, coeffs, _] = self.sh_coeffs.dims();
-        sh_degree_from_coeffs(coeffs as u32)
     }
 }

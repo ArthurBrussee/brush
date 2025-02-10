@@ -27,7 +27,6 @@ anyhow.workspace = true
 rand.workspace = true
 log.workspace = true
 
-zip.workspace = true
 async-fn-stream.workspace = true
 
 tokio_with_wasm = { workspace = true, features = ["rt"] }
@@ -37,7 +36,6 @@ tokio-stream.workspace = true
 
 reqwest.workspace = true
 clap.workspace = true
-cfg-if.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 rerun.workspace = true

@@ -1,19 +1,21 @@
-use crate::{
+use anyhow::{Context, Result};
+use brush_render::{
     camera::{focal_to_fov, fov_to_focal, Camera},
     gaussian_splats::Splats,
-    safetensor_utils::safetensor_to_burn,
-    Backend,
 };
-
-use anyhow::{Context, Result};
 use brush_rerun::{BurnToImage, BurnToRerun};
 use burn::{
-    backend::Autodiff,
+    backend::{wgpu::WgpuDevice, Autodiff, Wgpu},
+    prelude::Backend,
     tensor::{Float, Tensor, TensorPrimitive},
 };
-use burn_wgpu::{Wgpu, WgpuDevice};
 use safetensors::SafeTensors;
 use std::{fs::File, io::Read};
+
+use crate::{
+    burn_glue::SplatBackwards,
+    tests::safetensor_utils::{safetensor_to_burn, splats_from_safetensors},
+};
 
 type DiffBack = Autodiff<Wgpu>;
 
@@ -101,7 +103,7 @@ async fn test_reference() -> Result<()> {
         let _ = File::open(format!("./test_cases/{path}.safetensors"))?.read_to_end(&mut buffer)?;
 
         let tensors = SafeTensors::deserialize(&buffer)?;
-        let splats = Splats::<DiffBack>::from_safetensors(&tensors, &device)?;
+        let splats: Splats<DiffBack> = splats_from_safetensors(&tensors, &device)?;
 
         let img_ref = safetensor_to_burn::<DiffBack, 3>(&tensors.tensor("out_img")?, &device);
         let [h, w, _] = img_ref.dims();

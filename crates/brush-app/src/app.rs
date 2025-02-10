@@ -234,7 +234,8 @@ impl App {
             state.queue.clone(),
         );
 
-        if cfg!(feature = "tracing") {
+        #[cfg(feature = "tracing")]
+        {
             // TODO: In debug only?
             #[cfg(target_family = "wasm")]
             {

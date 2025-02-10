@@ -7,6 +7,13 @@ pub mod train;
 pub mod image;
 pub mod scene;
 
+pub mod burn_glue;
+mod kernels;
+mod shaders;
+
 mod adam_scaled;
 mod stats;
 mod stats_kernel;
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests;

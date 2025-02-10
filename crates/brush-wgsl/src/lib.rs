@@ -224,7 +224,7 @@ pub fn build_modules(
             if let Some(type_and_value) = type_and_value {
                 if let Some(mangled_name) = t.1.name.as_ref() {
                     let (m, name) = mod_name_from_mangled(mangled_name);
-                    let constant_str = vec![format!("pub(crate) const {name}: {type_and_value};")];
+                    let constant_str = vec![format!("pub const {name}: {type_and_value};")];
 
                     let map = if m == mod_name || m.is_empty() {
                         &mut constants
@@ -270,17 +270,13 @@ pub fn build_modules(
                     "#[derive(bytemuck::Pod, bytemuck::Zeroable, Debug, PartialEq, Clone, Copy)]"
                         .to_owned(),
                 );
-                struct_str.push(format!("pub(crate) struct {name} {{"));
+                struct_str.push(format!("pub struct {name} {{"));
                 for member in members {
                     let rust_name = rust_type_name(member.ty, ctx);
 
                     struct_str.push(
-                        format!(
-                            "    pub(crate) {}: {},",
-                            member.name.as_ref().unwrap(),
-                            rust_name
-                        )
-                        .to_owned(),
+                        format!("    pub {}: {},", member.name.as_ref().unwrap(), rust_name)
+                            .to_owned(),
                     );
                 }
                 struct_str.push("}".to_owned());
@@ -319,7 +315,7 @@ pub fn build_modules(
         match m.1 {
             ModuleInfo::Include { constants, types } => {
                 code.add_line("#[rustfmt::skip]");
-                code.add_line(format!("pub(crate) mod {} {{", m.0));
+                code.add_line(format!("pub mod {} {{", m.0));
 
                 let mut writes: Vec<_> = constants.iter().chain(types.iter()).collect();
                 writes.sort_by_key(|x| x.0.clone());
@@ -336,11 +332,11 @@ pub fn build_modules(
                 wg_size,
             } => {
                 code.add_line("#[rustfmt::skip]");
-                code.add_line(format!("pub(crate) mod {} {{", m.0));
+                code.add_line(format!("pub mod {} {{", m.0));
 
                 let [wg_x, wg_y, wg_z] = wg_size;
                 code.add_line(format!(
-                    "pub(crate) const WORKGROUP_SIZE: [u32; 3] = [{wg_x}, {wg_y}, {wg_z}];"
+                    "pub const WORKGROUP_SIZE: [u32; 3] = [{wg_x}, {wg_y}, {wg_z}];"
                 ));
 
                 let mut writes: Vec<_> = constants.iter().chain(types.iter()).collect();
