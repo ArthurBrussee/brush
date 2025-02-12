@@ -108,7 +108,7 @@ pub struct TrainConfig {
     cull_scale3d_percentage_threshold: f32,
 
     /// Period before refinement starts.
-    #[config(default = 100)]
+    #[config(default = 500)]
     #[arg(long, help_heading = "Refine options", default_value = "500")]
     refine_start_iter: u32,
 
