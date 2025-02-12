@@ -51,6 +51,8 @@ tokio_with_wasm = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, optional = true }
 
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 brush-cli.path = "../brush-cli"
 tracing-tracy = { workspace = true, optional = true }
@@ -58,7 +60,6 @@ clap.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 env_logger.workspace = true
 winit = { version = "0.30", features = ["default"] }
-
 [target.'cfg(target_family = "wasm")'.dependencies]
 tracing-wasm.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt"] }
