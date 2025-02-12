@@ -107,13 +107,13 @@ zip = { version = "2.2.1", default-features = false, features = ["deflate"] }
 urlencoding = "2.1"
 hashbrown = "0.15"
 
-[patch."https://github.com/tracel-ai/burn"]
-# Uncomment this to use local burn.
-burn = { path = "../burn/crates/burn" }
-burn-jit = { path = "../burn/crates/burn-jit" }
-burn-wgpu = { path = "../burn/crates/burn-wgpu" }
-burn-fusion = { path = "../burn/crates/burn-fusion" }
-burn-ir = { path = "../burn/crates/burn-ir" }
+# [patch."https://github.com/tracel-ai/burn"]
+# # Uncomment this to use local burn.
+# burn = { path = "../burn/crates/burn" }
+# burn-jit = { path = "../burn/crates/burn-jit" }
+# burn-wgpu = { path = "../burn/crates/burn-wgpu" }
+# burn-fusion = { path = "../burn/crates/burn-fusion" }
+# burn-ir = { path = "../burn/crates/burn-ir" }
 
 [patch.crates-io]
 # Use wgpu and naga at head
