@@ -26,7 +26,7 @@ serde = { version = "1.0.215", default-features = false, features = [
 ] }
 serde_json = { version = "1.0.133", default-features = false }
 
-rand = "0.8.5"
+rand = "0.9.0"
 tracing = "0.1.41"
 tracing-tracy = "0.11.3"
 tracing-subscriber = "0.3.19"
@@ -107,12 +107,13 @@ zip = { version = "2.2.1", default-features = false, features = ["deflate"] }
 urlencoding = "2.1"
 hashbrown = "0.15"
 
-# [patch."https://github.com/tracel-ai/burn"]
-# # Uncomment this to use local burn.
-# burn = { path = "../burn/crates/burn" }
-# burn-jit = { path = "../burn/crates/burn-jit" }
-# burn-wgpu = { path = "../burn/crates/burn-wgpu" }
-# burn-fusion = { path = "../burn/crates/burn-fusion" }
+[patch."https://github.com/tracel-ai/burn"]
+# Uncomment this to use local burn.
+burn = { path = "../burn/crates/burn" }
+burn-jit = { path = "../burn/crates/burn-jit" }
+burn-wgpu = { path = "../burn/crates/burn-wgpu" }
+burn-fusion = { path = "../burn/crates/burn-fusion" }
+burn-ir = { path = "../burn/crates/burn-ir" }
 
 [patch.crates-io]
 # Use wgpu and naga at head

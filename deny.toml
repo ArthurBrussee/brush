@@ -40,13 +40,17 @@ skip = [
     { name = 'derive-new' },
     { name = 'getrandom' },
 
+    { name = "zerocopy" },
+
+    # Until everyone is on 0.9
+    { name = "rand" },
+    { name = "rand_core" },
+    { name = "rand_chacha" },
+
     #
     { name = 'thiserror' },
     { name = 'thiserror-impl' },
     { name = 'unicode-width' },
-
-    # Old version from cubecl.
-    { name = 'syn' },
 
     # Custom ply fork.
     { name = "ply-rs" },         # Custom fork & rerun version.

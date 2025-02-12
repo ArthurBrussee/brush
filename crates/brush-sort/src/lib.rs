@@ -233,14 +233,14 @@ mod tests {
     #[test]
     fn test_sorting_big() {
         // Simulate some data as one might find for a bunch of gaussians.
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut keys_inp = Vec::new();
         for i in 0..10000 {
-            let start = rng.gen_range(i..i + 150);
-            let end = rng.gen_range(start..start + 250);
+            let start = rng.random_range(i..i + 150);
+            let end = rng.random_range(start..start + 250);
 
             for j in start..end {
-                if rng.gen::<f32>() < 0.5 {
+                if rng.random::<f32>() < 0.5 {
                     keys_inp.push(j);
                 }
             }

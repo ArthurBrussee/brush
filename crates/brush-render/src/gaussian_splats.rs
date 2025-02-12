@@ -51,17 +51,17 @@ impl<B: Backend> Splats<B> {
 
         let mut positions: Vec<Vec3> = Vec::with_capacity(num_points);
         for _ in 0..num_points {
-            let x = rng.gen_range(min.x..max.x);
-            let y = rng.gen_range(min.y..max.y);
-            let z = rng.gen_range(min.z..max.z);
+            let x = rng.random_range(min.x..max.x);
+            let y = rng.random_range(min.y..max.y);
+            let z = rng.random_range(min.z..max.z);
             positions.push(Vec3::new(x, y, z));
         }
 
         let mut colors: Vec<f32> = Vec::with_capacity(num_points);
         for _ in 0..num_points {
-            let r = rng.gen_range(0.0..1.0);
-            let g = rng.gen_range(0.0..1.0);
-            let b = rng.gen_range(0.0..1.0);
+            let r = rng.random_range(0.0..1.0);
+            let g = rng.random_range(0.0..1.0);
+            let b = rng.random_range(0.0..1.0);
             colors.push(r);
             colors.push(g);
             colors.push(b);
