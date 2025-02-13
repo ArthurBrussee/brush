@@ -41,13 +41,13 @@ jobs:
         run: cargo check --locked --all-targets
 
       - name: check --no-default-features
-        run: cargo check --locked --no-default-features --lib --all-targets
+        run: cargo check --locked --no-default-features --all-targets
 
       - name: Rustfmt
         run: cargo fmt --all -- --check
 
-      - name: cargo doc --lib
-        run: cargo doc --lib --no-deps --all-features
+      - name: cargo doc
+        run: cargo doc --no-deps --all-features
 
       - name: cargo doc --document-private-items
         run: cargo doc --document-private-items --no-deps --all-features
@@ -73,7 +73,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check wasm32
-        run: cargo check --lib --target wasm32-unknown-unknown
+        run: cargo check --target wasm32-unknown-unknown
 
   # ---------------------------------------------------------------------------
 
