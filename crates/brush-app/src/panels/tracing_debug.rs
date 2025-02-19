@@ -1,8 +1,11 @@
+use burn_wgpu::WgpuDevice;
+
 use crate::app::{AppContext, AppPanel};
 
 #[derive(Default)]
 pub(crate) struct TracingPanel {
     constant_redraw: bool,
+    device: WgpuDevice,
 }
 
 impl AppPanel for TracingPanel {
@@ -13,8 +16,7 @@ impl AppPanel for TracingPanel {
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut AppContext) {
         let mut checked = sync_span::is_enabled();
         ui.checkbox(&mut checked, "Sync scopes");
-        sync_span::set_enabled(checked);
-
+        sync_span::set_enabled(checked.then(|| self.device.clone()));
         ui.checkbox(&mut self.constant_redraw, "Constant redraw");
 
         // Nb: this redraws the whole context so this will include the splat views.

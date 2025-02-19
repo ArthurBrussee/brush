@@ -234,37 +234,9 @@ impl App {
             state.queue.clone(),
         );
 
-        #[cfg(feature = "tracing")]
-        {
-            // TODO: In debug only?
-            #[cfg(target_family = "wasm")]
-            {
-                use tracing_subscriber::layer::SubscriberExt;
-
-                tracing::subscriber::set_global_default(
-                    tracing_subscriber::registry()
-                        .with(tracing_wasm::WASMLayer::new(Default::default())),
-                )
-                .expect("Failed to set tracing subscriber");
-            }
-
-            #[cfg(all(feature = "tracy", not(target_family = "wasm")))]
-            {
-                use tracing_subscriber::layer::SubscriberExt;
-
-                tracing::subscriber::set_global_default(
-                    tracing_subscriber::registry()
-                        .with(tracing_tracy::TracyLayer::default())
-                        .with(sync_span::SyncLayer::<
-                            burn_jit::JitBackend<burn_wgpu::WgpuRuntime, f32, i32, u32>,
-                        >::new(device.clone())),
-                )
-                .expect("Failed to set tracing subscriber");
-            }
-        }
-
         #[cfg(target_family = "wasm")]
         let start_uri = web_sys::window().and_then(|w| w.location().search().ok());
+
         #[cfg(not(target_family = "wasm"))]
         let start_uri: Option<String> = None;
 

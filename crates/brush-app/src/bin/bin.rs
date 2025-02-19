@@ -19,6 +19,33 @@ fn main() -> MainResult {
     #[allow(unused)]
     let (send, rec) = tokio::sync::oneshot::channel();
 
+    #[cfg(feature = "tracing")]
+    {
+        // // TODO: In debug only?
+        // #[cfg(target_family = "wasm")]
+        // {
+        //     use tracing_subscriber::layer::SubscriberExt;
+
+        //     tracing::subscriber::set_global_default(
+        //         tracing_subscriber::registry()
+        //             .with(tracing_wasm::WASMLayer::new(Default::default())),
+        //     )
+        //     .expect("Failed to set tracing subscriber");
+        // }
+
+        #[cfg(all(feature = "tracy", not(target_family = "wasm")))]
+        {
+            use tracing_subscriber::layer::SubscriberExt;
+
+            tracing::subscriber::set_global_default(
+                tracing_subscriber::registry()
+                    .with(tracing_tracy::TracyLayer::default())
+                    .with(sync_span::SyncLayer::default()),
+            )
+            .expect("Failed to set tracing subscriber");
+        }
+    }
+
     #[cfg(not(target_family = "wasm"))]
     {
         use brush_cli::Cli;
@@ -80,6 +107,13 @@ fn main() -> MainResult {
                 };
 
                 let device = brush_render::burn_init_setup().await;
+
+                #[cfg(all(feature = "tracy", not(target_family = "wasm")))]
+                {
+                    // For the CLI, always enable GPU sync for tracy. Could maybe make this an argument instead.
+                    sync_span::set_enabled(Some(device.clone()));
+                }
+
                 let process = start_process(source, args.process, device);
                 brush_cli::ui::process_ui(process).await;
             }

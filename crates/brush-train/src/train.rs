@@ -277,44 +277,47 @@ impl SplatTrainer {
         // let (pred_image, aux) =
         //     splats.render(camera, glam::uvec2(img_w as u32, img_h as u32), false);
 
-        let _span = trace_span!("Calculate losses", sync_burn = true).entered();
-
-        let pred_rgb = pred_image.clone().slice([0..img_h, 0..img_w, 0..3]);
-        let gt_rgb = batch.gt_image.clone().slice([0..img_h, 0..img_w, 0..3]);
-
-        let l1_rgb = (pred_rgb.clone() - gt_rgb).abs();
-
-        let total_err = if self.config.ssim_weight > 0.0 {
+        let loss = trace_span!("Calculate losses", sync_burn = true).in_scope(|| {
+            let pred_rgb = pred_image.clone().slice([0..img_h, 0..img_w, 0..3]);
             let gt_rgb = batch.gt_image.clone().slice([0..img_h, 0..img_w, 0..3]);
 
-            let ssim_err = -self.ssim.ssim(pred_rgb, gt_rgb);
-            l1_rgb * (1.0 - self.config.ssim_weight) + ssim_err * self.config.ssim_weight
-        } else {
-            l1_rgb
-        };
+            let l1_rgb = (pred_rgb.clone() - gt_rgb).abs();
 
-        let mut loss = if batch.gt_view.image.color().has_alpha() {
-            let alpha_input = batch.gt_image.clone().slice([0..img_h, 0..img_w, 3..4]);
+            let total_err = if self.config.ssim_weight > 0.0 {
+                let gt_rgb = batch.gt_image.clone().slice([0..img_h, 0..img_w, 0..3]);
 
-            match batch.gt_view.img_type {
-                // In masked mode, weigh the errors by the alpha channel.
-                ViewImageType::Masked => (total_err * alpha_input).mean(),
-                // In alpha mode, add the l1 error of the alpha channel to the total error.
-                ViewImageType::Alpha => {
-                    let pred_alpha = pred_image.clone().slice([0..img_h, 0..img_w, 3..4]);
-                    total_err.mean()
-                        + (alpha_input - pred_alpha).abs().mean() * self.config.alpha_loss_weight
+                let ssim_err = -self.ssim.ssim(pred_rgb, gt_rgb);
+                l1_rgb * (1.0 - self.config.ssim_weight) + ssim_err * self.config.ssim_weight
+            } else {
+                l1_rgb
+            };
+
+            let mut loss = if batch.gt_view.image.color().has_alpha() {
+                let alpha_input = batch.gt_image.clone().slice([0..img_h, 0..img_w, 3..4]);
+
+                match batch.gt_view.img_type {
+                    // In masked mode, weigh the errors by the alpha channel.
+                    ViewImageType::Masked => (total_err * alpha_input).mean(),
+                    // In alpha mode, add the l1 error of the alpha channel to the total error.
+                    ViewImageType::Alpha => {
+                        let pred_alpha = pred_image.clone().slice([0..img_h, 0..img_w, 3..4]);
+                        total_err.mean()
+                            + (alpha_input - pred_alpha).abs().mean()
+                                * self.config.alpha_loss_weight
+                    }
                 }
-            }
-        } else {
-            total_err.mean()
-        };
+            } else {
+                total_err.mean()
+            };
 
-        // Add in opacity loss if enabled.
-        if self.config.opac_loss_weight > 0.0 {
-            let opac_loss = splats.opacity().mean();
-            loss = loss + opac_loss * self.config.opac_loss_weight;
-        }
+            // Add in opacity loss if enabled.
+            if self.config.opac_loss_weight > 0.0 {
+                let opac_loss = splats.opacity().mean();
+                loss = loss + opac_loss * self.config.opac_loss_weight;
+            }
+
+            loss
+        });
 
         let mut grads = trace_span!("Backward pass", sync_burn = true).in_scope(|| loss.backward());
 
