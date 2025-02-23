@@ -194,6 +194,9 @@ fn main(
                 let v_colors_sum = subgroupAdd(v_colors);
                 let v_refine_sum = subgroupAdd(v_refine);
 
+                // For super small subgroups, handle the last few elements seperately.
+                let is_last_in_sg = subgroup_invocation_id == subgroup_size - 1;
+
                 if subgroup_invocation_id == 0 {
                     write_grads_atomic(compact_gid * 9 + 0, v_xy_sum.x);
                 }
@@ -218,13 +221,13 @@ fn main(
                 else if subgroup_invocation_id == 7 {
                     write_grads_atomic(compact_gid * 9 + 7, v_colors_sum.z);
                 }
-                else if subgroup_invocation_id == 8 {
+                else if subgroup_invocation_id == 8 || subgroup_size <= 8 && is_last_in_sg {
                     write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w);
                 }
-                else if subgroup_invocation_id == 9 {
+                else if subgroup_invocation_id == 9 || subgroup_size <= 9 && is_last_in_sg {
                     write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x);
                 }
-                else if subgroup_invocation_id == 10 {
+                else if subgroup_invocation_id == 10 || subgroup_size <= 10 && is_last_in_sg {
                     write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y);
                 }
             }
