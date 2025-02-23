@@ -107,6 +107,12 @@ fn main(
         v_out = v_output[pix_id];
     }
 
+    // For super small subgroups, handle the last few elements separately.
+    let is_last_in_sg = subgroup_invocation_id == subgroup_size - 1;
+    // Subgroups of size 8 need to be handled separately as there's not enough threads to write
+    // all the gaussian fields. The next size (16) is fine.
+    let small_sg = subgroup_size == 8;
+
     for (var b = 0; b < num_batches; b++) {
         // each thread fetch 1 gaussian from back to front
         // 0 index will be furthest back in batch
@@ -194,8 +200,6 @@ fn main(
                 let v_colors_sum = subgroupAdd(v_colors);
                 let v_refine_sum = subgroupAdd(v_refine);
 
-                // For super small subgroups, handle the last few elements separately.
-                let is_last_in_sg = subgroup_invocation_id == subgroup_size - 1;
 
                 if subgroup_invocation_id == 0 {
                     write_grads_atomic(compact_gid * 9 + 0, v_xy_sum.x);
@@ -221,13 +225,13 @@ fn main(
                 else if subgroup_invocation_id == 7 {
                     write_grads_atomic(compact_gid * 9 + 7, v_colors_sum.z);
                 }
-                else if subgroup_invocation_id == 8 || subgroup_size <= 8 && is_last_in_sg {
+                else if subgroup_invocation_id == 8 || small_sg && is_last_in_sg {
                     write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w);
                 }
-                else if subgroup_invocation_id == 9 || subgroup_size <= 9 && is_last_in_sg {
+                else if subgroup_invocation_id == 9 || small_sg && is_last_in_sg {
                     write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x);
                 }
-                else if subgroup_invocation_id == 10 || subgroup_size <= 10 && is_last_in_sg {
+                else if subgroup_invocation_id == 10 || small_sg && is_last_in_sg {
                     write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y);
                 }
             }
