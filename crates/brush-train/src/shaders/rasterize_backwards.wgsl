@@ -194,7 +194,7 @@ fn main(
                 let v_colors_sum = subgroupAdd(v_colors);
                 let v_refine_sum = subgroupAdd(v_refine);
 
-                // For super small subgroups, handle the last few elements seperately.
+                // For super small subgroups, handle the last few elements separately.
                 let is_last_in_sg = subgroup_invocation_id == subgroup_size - 1;
 
                 if subgroup_invocation_id == 0 {
