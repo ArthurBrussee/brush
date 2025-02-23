@@ -9,23 +9,22 @@
 
 @group(0) @binding(4) var<storage, read> global_from_compact_gid: array<i32>;
 
-@group(0) @binding(5) var<storage, read> v_xys: array<vec2f>;
-@group(0) @binding(6) var<storage, read> v_conics: array<helpers::PackedVec3>;
+@group(0) @binding(5) var<storage, read> v_grads: array<f32>;
 
-@group(0) @binding(7) var<storage, read_write> v_means: array<helpers::PackedVec3>;
-@group(0) @binding(8) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
-@group(0) @binding(9) var<storage, read_write> v_quats: array<vec4f>;
+@group(0) @binding(6) var<storage, read_write> v_means: array<helpers::PackedVec3>;
+@group(0) @binding(7) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
+@group(0) @binding(8) var<storage, read_write> v_quats: array<vec4f>;
 
-
+// TODO: What do for quat len == 0.0?
 fn normalize_vjp(quat: vec4f) -> mat4x4f {
     let quat_sqr = quat * quat;
     let quat_len_sqr = dot(quat, quat);
-    let quat_len = length(quat_len_sqr);
+    let quat_len = sqrt(quat_len_sqr);
 
     let cross_complex = -quat.xyz * quat.yzx;
     let cross_scalar = -quat.xyz * quat.w;
 
-    return mat4x4<f32>(
+    return mat4x4f(
         vec4f(quat_len_sqr - quat_sqr.x, cross_complex.x, cross_complex.z, cross_scalar.x),
         vec4f(cross_complex.x, quat_len_sqr - quat_sqr.y, cross_complex.y, cross_scalar.y),
         vec4f(cross_complex.z, cross_complex.y, quat_len_sqr - quat_sqr.z, cross_scalar.z),
@@ -165,10 +164,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let mean = helpers::as_vec(means[global_gid]);
     let scale = exp(helpers::as_vec(log_scales[global_gid]));
     let quat_unorm = quats[global_gid];
+    // Safe to normalize, quats with norm 0 are invisible.
     let quat = normalize(quat_unorm);
 
-    let v_conics = helpers::as_vec(v_conics[compact_gid]);
-    let v_mean2d = v_xys[compact_gid];
+    let v_mean2d = vec2f(v_grads[compact_gid * 9 + 0], v_grads[compact_gid * 9 + 1]);
+    let v_conics = vec3f(v_grads[compact_gid * 9 + 2], v_grads[compact_gid * 9 + 3], v_grads[compact_gid * 9 + 4]);
 
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let mean_c = R * mean + viewmat[3].xyz;

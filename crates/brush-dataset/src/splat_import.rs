@@ -411,14 +411,14 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
                     splats.log_scales.val()
                 };
 
-                let mut new_splat = Splats::from_tensor_data(
+                let new_splat = Splats::from_tensor_data(
                     means,
                     rotations,
                     log_scales,
                     splats.sh_coeffs.val(),
                     splats.raw_opacity.val(),
-                );
-                new_splat.norm_rotations();
+                )
+                .with_normed_rotations();
 
                 // Emit newly animated splat.
                 emitter

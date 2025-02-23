@@ -67,8 +67,7 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<Vec<GaussianDa
 }
 
 pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> anyhow::Result<Vec<u8>> {
-    let mut splats = splats;
-    splats.norm_rotations();
+    let splats = splats.with_normed_rotations();
 
     let data = read_splat_data(splats.clone())
         .await

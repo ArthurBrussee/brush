@@ -12,15 +12,12 @@
 @group(0) @binding(6) var<storage, read> v_output: array<vec4f>;
 
 #ifdef HARD_FLOAT
-    @group(0) @binding(7) var<storage, read_write> v_xy: array<atomic<f32>>;
-    @group(0) @binding(8) var<storage, read_write> v_conics: array<atomic<f32>>;
-    @group(0) @binding(9) var<storage, read_write> v_colors: array<atomic<f32>>;
+    @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<f32>>;
+    @group(0) @binding(8) var<storage, read_write> v_refine_grad: array<atomic<f32>>;
 #else
-    @group(0) @binding(7) var<storage, read_write> v_xy: array<atomic<u32>>;
-    @group(0) @binding(8) var<storage, read_write> v_conics: array<atomic<u32>>;
-    @group(0) @binding(9) var<storage, read_write> v_colors: array<atomic<u32>>;
+    @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<u32>>;
+    @group(0) @binding(8) var<storage, read_write> v_refine_grad: array<atomic<u32>>;
 #endif
-
 
 const BATCH_SIZE = helpers::TILE_SIZE;
 
@@ -36,98 +33,22 @@ var<workgroup> local_id: array<i32, BATCH_SIZE>;
 
 // Current queue of gradients to be flushed.
 var<workgroup> grad_count: atomic<i32>;
-var<workgroup> gather_grads: array<helpers::ProjectedSplat, BATCH_SIZE>;
+
+const TOTAL_GRADS = BATCH_SIZE * 10;
+var<workgroup> gather_grads: array<f32, TOTAL_GRADS>;
 var<workgroup> gather_grad_id: array<i32, BATCH_SIZE>;
 
 fn add_bitcast(cur: u32, add: f32) -> u32 {
     return bitcast<u32>(bitcast<f32>(cur) + add);
 }
 
-fn write_grads_atomic(grads: helpers::ProjectedSplat, id: i32) {
+fn write_grads_atomic(grads: f32, id: i32) {
 #ifdef HARD_FLOAT
-    atomicAdd(&v_xy[id * 2 + 0], grads.xy_x);
-    atomicAdd(&v_xy[id * 2 + 1], grads.xy_y);
-
-    atomicAdd(&v_conics[id * 3 + 0], grads.conic_x);
-    atomicAdd(&v_conics[id * 3 + 1], grads.conic_y);
-    atomicAdd(&v_conics[id * 3 + 2], grads.conic_z);
-
-    atomicAdd(&v_colors[id * 4 + 0], grads.color_r);
-    atomicAdd(&v_colors[id * 4 + 1], grads.color_g);
-    atomicAdd(&v_colors[id * 4 + 2], grads.color_b);
-    atomicAdd(&v_colors[id * 4 + 3], grads.color_a);
+    atomicAdd(&v_splats[id], grads);
 #else
-    // Alternatively can run without any atomics and just race:
-    // v_xy[id * 2 + 0] = add_bitcast(v_xy[id * 2 + 0], grads.xy.x);
-    // v_xy[id * 2 + 1] = add_bitcast(v_xy[id * 2 + 1], grads.xy.y);
-    // v_conics[id * 3 + 0] = add_bitcast(v_conics[id * 3 + 0], grads.conic.x);
-    // v_conics[id * 3 + 1] = add_bitcast(v_conics[id * 3 + 1], grads.conic.y);
-    // v_conics[id * 3 + 2] = add_bitcast(v_conics[id * 3 + 2], grads.conic.z);
-    // v_colors[id * 4 + 0] = add_bitcast(v_colors[id * 4 + 0], grads.color.r);
-    // v_colors[id * 4 + 1] = add_bitcast(v_colors[id * 4 + 1], grads.color.g);
-    // v_colors[id * 4 + 2] = add_bitcast(v_colors[id * 4 + 2], grads.color.b);
-    // v_colors[id * 4 + 3] = add_bitcast(v_colors[id * 4 + 3], grads.color.a);
-
-    // Writing out all these CAS loops individually is terrible but wgsl doesn't have a mechanism to
-    // turn this into a function as ptr<storage> can't be passed to a function...
-    // v_xy.x
-    let xy = vec2f(grads.xy_x, grads.xy_y);
-    let conic = vec3f(grads.conic_x, grads.conic_y, grads.conic_z);
-    let color = vec4f(grads.color_r, grads.color_g, grads.color_b, grads.color_a);
-
-    var old_value = atomicLoad(&v_xy[id * 2 + 0]);
+    var old_value = atomicLoad(&v_splats[id]);
     loop {
-        let cas = atomicCompareExchangeWeak(&v_xy[id * 2 + 0], old_value, add_bitcast(old_value, xy.x));
-        if cas.exchanged { break; } else { old_value = cas.old_value; }
-    }
-    // v_xy.y
-    old_value = atomicLoad(&v_xy[id * 2 + 1]);
-    loop {
-        let cas = atomicCompareExchangeWeak(&v_xy[id * 2 + 1], old_value, add_bitcast(old_value, xy.y));
-        if cas.exchanged { break; } else { old_value = cas.old_value; }
-    }
-
-    // v_conic.x
-    old_value = atomicLoad(&v_conics[id * 3 + 0]);
-    loop {
-        let cas = atomicCompareExchangeWeak(&v_conics[id * 3 + 0], old_value, add_bitcast(old_value, conic.x));
-        if cas.exchanged { break; } else { old_value = cas.old_value; }
-    }
-    // v_conic.y
-    old_value = atomicLoad(&v_conics[id * 3 + 1]);
-    loop {
-        let cas = atomicCompareExchangeWeak(&v_conics[id * 3 + 1], old_value, add_bitcast(old_value, conic.y));
-        if cas.exchanged { break; } else { old_value = cas.old_value; }
-    }
-    // v_conic.z
-    old_value = atomicLoad(&v_conics[id * 3 + 2]);
-    loop {
-        let cas = atomicCompareExchangeWeak(&v_conics[id * 3 + 2], old_value, add_bitcast(old_value, conic.z));
-        if cas.exchanged { break; } else { old_value = cas.old_value; }
-    }
-
-    // v_color.r
-    old_value = atomicLoad(&v_colors[id * 4 + 0]);
-    loop {
-        let cas = atomicCompareExchangeWeak(&v_colors[id * 4 + 0], old_value, add_bitcast(old_value, color.r));
-        if cas.exchanged { break; } else { old_value = cas.old_value; }
-    }
-    // v_color.g
-    old_value = atomicLoad(&v_colors[id * 4 + 1]);
-    loop {
-        let cas = atomicCompareExchangeWeak(&v_colors[id * 4 + 1], old_value, add_bitcast(old_value, color.g));
-        if cas.exchanged { break; } else { old_value = cas.old_value; }
-    }
-    // v_color.b
-    old_value = atomicLoad(&v_colors[id * 4 + 2]);
-    loop {
-        let cas = atomicCompareExchangeWeak(&v_colors[id * 4 + 2], old_value, add_bitcast(old_value, color.b));
-        if cas.exchanged { break; } else { old_value = cas.old_value; }
-    }
-    // v_color.a
-    old_value = atomicLoad(&v_colors[id * 4 + 3]);
-    loop {
-        let cas = atomicCompareExchangeWeak(&v_colors[id * 4 + 3], old_value, add_bitcast(old_value, color.a));
+        let cas = atomicCompareExchangeWeak(&v_splats[id], old_value, add_bitcast(old_value, grads));
         if cas.exchanged { break; } else { old_value = cas.old_value; }
     }
 #endif
@@ -225,6 +146,7 @@ fn main(
                 var v_xy = vec2f(0.0);
                 var v_conic = vec3f(0.0);
                 var v_colors = vec4f(0.0);
+                var v_refine = vec2f(0.0);
 
                 var splat_active = false;
 
@@ -272,25 +194,36 @@ fn main(
 
                         let v_rgb = select(vec3f(0.0), fac * v_out.rgb, color.rgb > vec3f(0.0));
                         v_colors = vec4f(v_rgb, vis * v_alpha);
+
+                        v_refine = abs(v_xy);
                     }
                 }
 
                 // Queue a new gradient if this subgroup has any.
                 // The gradient is sum of all gradients in the subgroup.
                 if subgroupAny(splat_active) {
-                    var v_xy_sum = subgroupAdd(v_xy);
-                    var v_conic_sum = subgroupAdd(v_conic);
-                    var v_colors_sum = subgroupAdd(v_colors);
+                    let v_xy_sum = subgroupAdd(v_xy);
+                    let v_conic_sum = subgroupAdd(v_conic);
+                    let v_colors_sum = subgroupAdd(v_colors);
+                    let v_refine_sum = subgroupAdd(v_refine);
 
                     // First thread of subgroup writes the gradient. This should be a
                     // subgroupBallot() when it's supported.
                     if subgroup_invocation_id == 0 {
                         let grad_idx = atomicAdd(&grad_count, 1);
-                        gather_grads[grad_idx] = helpers::create_projected_splat(
-                            v_xy_sum,
-                            v_conic_sum,
-                            v_colors_sum
-                        );
+                        gather_grads[grad_idx * 11 + 0] = v_xy_sum.x;
+                        gather_grads[grad_idx * 11 + 1] = v_xy_sum.y;
+                        gather_grads[grad_idx * 11 + 2] = v_conic_sum.x;
+                        gather_grads[grad_idx * 11 + 3] = v_conic_sum.y;
+                        gather_grads[grad_idx * 11 + 4] = v_conic_sum.z;
+                        gather_grads[grad_idx * 11 + 5] = v_colors_sum.x;
+                        gather_grads[grad_idx * 11 + 6] = v_colors_sum.y;
+                        gather_grads[grad_idx * 11 + 7] = v_colors_sum.z;
+                        gather_grads[grad_idx * 11 + 8] = v_colors_sum.w;
+
+                        gather_grads[grad_idx * 11 + 9] = v_refine_sum.x;
+                        gather_grads[grad_idx * 11 + 10] = v_refine_sum.y;
+
                         gather_grad_id[grad_idx] = local_id[t];
                     }
                 }
@@ -299,7 +232,35 @@ fn main(
             // Make sure all threads are done, and flush a batch of gradients.
             workgroupBarrier();
             if local_idx < u32(grad_count) {
-                write_grads_atomic(gather_grads[local_idx], gather_grad_id[local_idx]);
+                let compact_gid = gather_grad_id[local_idx];
+                write_grads_atomic(gather_grads[local_idx * 11 + 0], compact_gid * 9 + 0);
+                write_grads_atomic(gather_grads[local_idx * 11 + 1], compact_gid * 9 + 1);
+                write_grads_atomic(gather_grads[local_idx * 11 + 2], compact_gid * 9 + 2);
+                write_grads_atomic(gather_grads[local_idx * 11 + 3], compact_gid * 9 + 3);
+                write_grads_atomic(gather_grads[local_idx * 11 + 4], compact_gid * 9 + 4);
+                write_grads_atomic(gather_grads[local_idx * 11 + 5], compact_gid * 9 + 5);
+                write_grads_atomic(gather_grads[local_idx * 11 + 6], compact_gid * 9 + 6);
+                write_grads_atomic(gather_grads[local_idx * 11 + 7], compact_gid * 9 + 7);
+                write_grads_atomic(gather_grads[local_idx * 11 + 8], compact_gid * 9 + 8);
+
+                let refine_grad_x = gather_grads[local_idx * 11 + 9];
+                let refine_grad_y = gather_grads[local_idx * 11 + 10];
+
+                #ifdef HARD_FLOAT
+                    atomicAdd(&v_refine_grad[compact_gid * 2 + 0], refine_grad_x);
+                    atomicAdd(&v_refine_grad[compact_gid * 2 + 1], refine_grad_y);
+                #else
+                    var old_value = atomicLoad(&v_refine_grad[compact_gid * 2 + 0]);
+                    loop {
+                        let cas = atomicCompareExchangeWeak(&v_refine_grad[compact_gid * 2 + 0], old_value, add_bitcast(old_value, refine_grad_x));
+                        if cas.exchanged { break; } else { old_value = cas.old_value; }
+                    }
+                    old_value = atomicLoad(&v_refine_grad[compact_gid * 2 + 1]);
+                    loop {
+                        let cas = atomicCompareExchangeWeak(&v_refine_grad[compact_gid * 2 + 1], old_value, add_bitcast(old_value, refine_grad_y));
+                        if cas.exchanged { break; } else { old_value = cas.old_value; }
+                    }
+                #endif
             }
             workgroupBarrier();
         }

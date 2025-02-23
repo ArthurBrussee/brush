@@ -185,17 +185,6 @@ async fn test_reference() -> Result<()> {
             .mean()
             .backward();
 
-        // XY gradients are also in compact format.
-        let v_xys = diff_out
-            .xy_grad_holder
-            .grad(&grads)
-            .context("no xys grad")?
-            .slice([0..num_visible]);
-        let v_xys_ref =
-            safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_xy")?, &device).inner();
-        let v_xys_ref = v_xys_ref.select(0, gs_ids.inner().clone());
-        compare("v_xys", v_xys, v_xys_ref, 1e-6, 1e-7);
-
         let v_opacities_ref =
             safetensor_to_burn::<DiffBack, 1>(&tensors.tensor("v_opacities")?, &device).inner();
         let v_opacities = splats.raw_opacity.grad(&grads).context("opacities grad")?;
