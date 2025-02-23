@@ -2,10 +2,10 @@ use brush_kernel::create_dispatch_buffer;
 use brush_render::{BBase, RenderAux};
 use burn::backend::Autodiff;
 use burn::prelude::*;
+use burn_cubecl::cubecl::CubeDim;
+use burn_cubecl::{cubecl, BoolElement, FloatElement, IntElement};
 use burn_fusion::client::FusionClient;
 use burn_fusion::Fusion;
-use burn_jit::cubecl::CubeDim;
-use burn_jit::{cubecl, BoolElement, FloatElement, IntElement};
 use tracing::trace_span;
 
 use crate::stats_kernel::stats_gather_kernel;

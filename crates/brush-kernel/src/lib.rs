@@ -4,12 +4,12 @@
 mod shaders;
 
 use burn::tensor::{DType, Shape};
-pub use burn_jit::cubecl::prelude::ExecutionMode;
-pub use burn_jit::cubecl::{
+pub use burn_cubecl::cubecl::prelude::ExecutionMode;
+pub use burn_cubecl::cubecl::{
     client::ComputeClient, compute::CompiledKernel, compute::CubeTask, server::ComputeServer,
     CubeCount, CubeDim, KernelId,
 };
-pub use burn_jit::{cubecl::Compiler, tensor::JitTensor, JitRuntime};
+pub use burn_cubecl::{cubecl::Compiler, tensor::CubeTensor, CubeRuntime};
 
 use bytemuck::Pod;
 use wgpu::naga;
@@ -127,44 +127,44 @@ macro_rules! kernel_source_gen {
 }
 
 // Reserve a buffer from the client for the given shape.
-pub fn create_tensor<const D: usize, R: JitRuntime>(
+pub fn create_tensor<const D: usize, R: CubeRuntime>(
     shape: [usize; D],
     device: &R::Device,
     client: &ComputeClient<R::Server, R::Channel>,
     dtype: DType,
-) -> JitTensor<R> {
+) -> CubeTensor<R> {
     let shape = Shape::from(shape.to_vec());
     let bufsize = shape.num_elements() * dtype.size();
     let mut buffer = client.empty(bufsize);
 
     if cfg!(test) {
         use burn::tensor::ops::FloatTensorOps;
-        use burn_jit::JitBackend;
+        use burn_cubecl::CubeBackend;
         // for tests - make doubly sure we're not accidentally relying on values
         // being initialized to zero by adding in some random noise.
-        let f = JitTensor::<R>::new_contiguous(
+        let f = CubeTensor::<R>::new_contiguous(
             client.clone(),
             device.clone(),
             shape.clone(),
             buffer,
             DType::F32,
         );
-        let noised = JitBackend::<R, f32, i32, u32>::float_add_scalar(f, -12345.0);
+        let noised = CubeBackend::<R, f32, i32, u32>::float_add_scalar(f, -12345.0);
         buffer = noised.handle;
     }
 
-    JitTensor::new_contiguous(client.clone(), device.clone(), shape, buffer, dtype)
+    CubeTensor::new_contiguous(client.clone(), device.clone(), shape, buffer, dtype)
 }
 
-pub fn create_uniform_buffer<R: JitRuntime, T: Pod>(
+pub fn create_uniform_buffer<R: CubeRuntime, T: Pod>(
     val: T,
     device: &R::Device,
     client: &ComputeClient<R::Server, R::Channel>,
-) -> JitTensor<R> {
+) -> CubeTensor<R> {
     let bytes = bytemuck::bytes_of(&val);
     let shape = bytes.len() / 4;
 
-    JitTensor::new_contiguous(
+    CubeTensor::new_contiguous(
         client.clone(),
         device.clone(),
         Shape::new([shape]),
@@ -197,10 +197,10 @@ impl<C: Compiler> CubeTask<C> for CreateDispatchBuffer {
     }
 }
 
-pub fn create_dispatch_buffer<R: JitRuntime>(
-    thread_nums: JitTensor<R>,
+pub fn create_dispatch_buffer<R: CubeRuntime>(
+    thread_nums: CubeTensor<R>,
     wg_size: [u32; 3],
-) -> JitTensor<R> {
+) -> CubeTensor<R> {
     let client = thread_nums.client;
     let uniforms_buffer = create_uniform_buffer::<R, _>(
         wg::Uniforms {

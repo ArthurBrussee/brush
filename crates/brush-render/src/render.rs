@@ -17,8 +17,8 @@ use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::tensor::ops::IntTensorOps;
 use burn::tensor::DType;
-use burn_jit::{BoolElement, FloatElement, IntElement};
-use burn_wgpu::JitTensor;
+use burn_cubecl::{BoolElement, FloatElement, IntElement};
+use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
 
 use burn::tensor::ops::FloatTensorOps;
@@ -72,13 +72,13 @@ pub(crate) fn max_intersections(img_size: glam::UVec2, num_splats: u32) -> u32 {
 pub(crate) fn render_forward<F: FloatElement, I: IntElement, BT: BoolElement>(
     camera: &Camera,
     img_size: glam::UVec2,
-    means: JitTensor<WgpuRuntime>,
-    log_scales: JitTensor<WgpuRuntime>,
-    quats: JitTensor<WgpuRuntime>,
-    sh_coeffs: JitTensor<WgpuRuntime>,
-    raw_opacities: JitTensor<WgpuRuntime>,
+    means: CubeTensor<WgpuRuntime>,
+    log_scales: CubeTensor<WgpuRuntime>,
+    quats: CubeTensor<WgpuRuntime>,
+    sh_coeffs: CubeTensor<WgpuRuntime>,
+    raw_opacities: CubeTensor<WgpuRuntime>,
     raster_u32: bool,
-) -> (JitTensor<WgpuRuntime>, RenderAuxPrimitive<BBase<F, I, BT>>) {
+) -> (CubeTensor<WgpuRuntime>, RenderAuxPrimitive<BBase<F, I, BT>>) {
     assert!(
         img_size[0] > 0 && img_size[1] > 0,
         "Can't render 0 sized images"

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use brush_render::{BBase, BFused};
 use burn::tensor::{Tensor, TensorPrimitive};
+use burn_cubecl::{BoolElement, FloatElement, IntElement};
 use burn_fusion::client::FusionClient;
-use burn_jit::{BoolElement, FloatElement, IntElement};
 use eframe::egui_wgpu::Renderer;
 use egui::epaint::mutex::RwLock as EguiRwLock;
 use egui::TextureId;

@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context;
 use burn::prelude::Backend;
 use burn::tensor::backend::AutodiffBackend;
-use burn_jit::cubecl::Runtime;
+use burn_cubecl::cubecl::Runtime;
 use web_time::Instant;
 
 use crate::{data_source::DataSource, rerun_tools::VisualizeTools};

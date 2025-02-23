@@ -1,5 +1,5 @@
-use burn_jit::JitRuntime;
-use burn_wgpu::JitTensor;
+use burn_cubecl::CubeRuntime;
+use burn_wgpu::CubeTensor;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy)]
@@ -9,12 +9,12 @@ pub(crate) enum DimBound {
     Matching(&'static str),
 }
 
-pub(crate) struct DimCheck<'a, R: JitRuntime> {
+pub(crate) struct DimCheck<'a, R: CubeRuntime> {
     bound: HashMap<&'a str, usize>,
     device: Option<R::Device>,
 }
 
-impl<R: JitRuntime> DimCheck<'_, R> {
+impl<R: CubeRuntime> DimCheck<'_, R> {
     pub fn new() -> Self {
         DimCheck {
             bound: HashMap::new(),
@@ -22,7 +22,7 @@ impl<R: JitRuntime> DimCheck<'_, R> {
         }
     }
 
-    pub fn check_dims(mut self, tensor: &JitTensor<R>, bounds: &[DimBound]) -> Self {
+    pub fn check_dims(mut self, tensor: &CubeTensor<R>, bounds: &[DimBound]) -> Self {
         let dims = &tensor.shape.dims;
 
         match self.device.as_ref() {

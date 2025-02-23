@@ -13,9 +13,9 @@ kernel_source_gen!(PrefixSumScan {}, prefix_sum_scan);
 kernel_source_gen!(PrefixSumScanSums {}, prefix_sum_scan_sums);
 kernel_source_gen!(PrefixSumAddScannedSums {}, prefix_sum_add_scanned_sums);
 
-use burn_wgpu::JitTensor;
+use burn_wgpu::CubeTensor;
 
-pub fn prefix_sum(input: JitTensor<WgpuRuntime>) -> JitTensor<WgpuRuntime> {
+pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     let threads_per_group = shaders::prefix_sum_helpers::THREADS_PER_GROUP as usize;
     let num = input.shape.dims[0];
     let client = &input.client;
@@ -112,9 +112,9 @@ pub fn prefix_sum(input: JitTensor<WgpuRuntime>) -> JitTensor<WgpuRuntime> {
 mod tests {
     use crate::prefix_sum;
     use burn::tensor::{Int, Tensor};
-    use burn_wgpu::{JitBackend, WgpuRuntime};
+    use burn_wgpu::{CubeBackend, WgpuRuntime};
 
-    type Backend = JitBackend<WgpuRuntime, f32, i32, u32>;
+    type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
 
     #[test]
     fn test_sum_tiny() {

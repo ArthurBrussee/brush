@@ -1,10 +1,10 @@
 use super::shaders::{project_backwards, rasterize_backwards};
 use crate::shaders::gather_grads;
-use brush_kernel::{calc_cube_count, kernel_source_gen, CubeCount, JitTensor};
+use brush_kernel::{calc_cube_count, kernel_source_gen, CubeCount, CubeTensor};
 use brush_render::{render::sh_coeffs_for_degree, BBase};
 use burn::tensor::ops::FloatTensorOps;
 use burn::{backend::wgpu::WgpuRuntime, prelude::Backend, tensor::ops::FloatTensor};
-use burn_jit::{cubecl::AtomicFeature, BoolElement, FloatElement, IntElement};
+use burn_cubecl::{cubecl::AtomicFeature, BoolElement, FloatElement, IntElement};
 use glam::uvec2;
 
 kernel_source_gen!(GatherGrads {}, gather_grads);
@@ -24,20 +24,20 @@ pub struct SplatGrads<B: Backend> {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_backward<F: FloatElement, I: IntElement, BT: BoolElement>(
-    v_output: JitTensor<WgpuRuntime>,
+    v_output: CubeTensor<WgpuRuntime>,
 
-    means: JitTensor<WgpuRuntime>,
-    quats: JitTensor<WgpuRuntime>,
-    log_scales: JitTensor<WgpuRuntime>,
-    raw_opac: JitTensor<WgpuRuntime>,
-    out_img: JitTensor<WgpuRuntime>,
+    means: CubeTensor<WgpuRuntime>,
+    quats: CubeTensor<WgpuRuntime>,
+    log_scales: CubeTensor<WgpuRuntime>,
+    raw_opac: CubeTensor<WgpuRuntime>,
+    out_img: CubeTensor<WgpuRuntime>,
 
-    projected_splats: JitTensor<WgpuRuntime>,
-    uniforms_buffer: JitTensor<WgpuRuntime>,
-    compact_gid_from_isect: JitTensor<WgpuRuntime>,
-    global_from_compact_gid: JitTensor<WgpuRuntime>,
-    tile_offsets: JitTensor<WgpuRuntime>,
-    final_index: JitTensor<WgpuRuntime>,
+    projected_splats: CubeTensor<WgpuRuntime>,
+    uniforms_buffer: CubeTensor<WgpuRuntime>,
+    compact_gid_from_isect: CubeTensor<WgpuRuntime>,
+    global_from_compact_gid: CubeTensor<WgpuRuntime>,
+    tile_offsets: CubeTensor<WgpuRuntime>,
+    final_index: CubeTensor<WgpuRuntime>,
     sh_degree: u32,
 ) -> SplatGrads<BBase<F, I, BT>> {
     let device = &out_img.device;
@@ -76,9 +76,12 @@ pub(crate) fn render_backward<F: FloatElement, I: IntElement, BT: BoolElement>(
     let v_grads = BBase::<F, I, BT>::float_zeros([num_points, 9].into(), device);
     let v_refine_weight = BBase::<F, I, BT>::float_zeros([num_points, 2].into(), device);
 
-    let hard_floats = client
-        .properties()
-        .feature_enabled(burn_jit::cubecl::Feature::AtomicFloat(AtomicFeature::Add));
+    let hard_floats =
+        client
+            .properties()
+            .feature_enabled(burn_cubecl::cubecl::Feature::AtomicFloat(
+                AtomicFeature::Add,
+            ));
 
     tracing::trace_span!("RasterizeBackwards", sync_burn = true).in_scope(||
             // SAFETY: Kernel has to contain no OOB indexing.

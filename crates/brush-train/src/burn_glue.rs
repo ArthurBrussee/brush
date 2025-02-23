@@ -20,12 +20,9 @@ use burn::{
         DType, Tensor, TensorPrimitive,
     },
 };
-use burn_fusion::{client::FusionClient, stream::Operation, Fusion};
+use burn_cubecl::{fusion::FusionCubeRuntime, BoolElement, FloatElement, IntElement};
+use burn_fusion::{client::FusionClient, stream::Operation, Fusion, FusionHandle};
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
-use burn_jit::{
-    fusion::{FusionJitRuntime, JitFusionHandle},
-    BoolElement, FloatElement, IntElement,
-};
 
 use crate::kernels::{render_backward, SplatGrads};
 
@@ -274,9 +271,12 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatBackwardOps<Self>
         }
 
         impl<F: FloatElement, I: IntElement, BT: BoolElement>
-            Operation<FusionJitRuntime<WgpuRuntime, BT>> for CustomOp<F, I, BT>
+            Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp<F, I, BT>
         {
-            fn execute(self: Box<Self>, h: &mut HandleContainer<JitFusionHandle<WgpuRuntime>>) {
+            fn execute(
+                self: Box<Self>,
+                h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
+            ) {
                 let ([v_output], [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine]) =
                     self.desc.consume();
 

@@ -72,7 +72,7 @@ burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',
 ] } # Various burn packages. Currently need to use burn at head.
-burn-jit = { git = "https://github.com/tracel-ai/burn" }
+burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
 burn-ir = { git = "https://github.com/tracel-ai/burn" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
