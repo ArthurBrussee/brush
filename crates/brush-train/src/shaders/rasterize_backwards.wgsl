@@ -107,12 +107,6 @@ fn main(
         v_out = v_output[pix_id];
     }
 
-    // For super small subgroups, handle the last few elements separately.
-    let is_last_in_sg = subgroup_invocation_id == subgroup_size - 1;
-    // Subgroups of size 8 need to be handled separately as there's not enough threads to write
-    // all the gaussian fields. The next size (16) is fine.
-    let small_sg = subgroup_size == 8;
-
     for (var b = 0; b < num_batches; b++) {
         // each thread fetch 1 gaussian from back to front
         // 0 index will be furthest back in batch
@@ -200,39 +194,30 @@ fn main(
                 let v_colors_sum = subgroupAdd(v_colors);
                 let v_refine_sum = subgroupAdd(v_refine);
 
+                switch subgroup_invocation_id {
+                    case 0u:  { write_grads_atomic(compact_gid * 9 + 0, v_xy_sum.x); }
+                    case 1u:  { write_grads_atomic(compact_gid * 9 + 1, v_xy_sum.y); }
+                    case 2u:  { write_grads_atomic(compact_gid * 9 + 2, v_conic_sum.x); }
+                    case 3u:  { write_grads_atomic(compact_gid * 9 + 3, v_conic_sum.y); }
+                    case 4u:  { write_grads_atomic(compact_gid * 9 + 4, v_conic_sum.z); }
+                    case 5u:  { write_grads_atomic(compact_gid * 9 + 5, v_colors_sum.x); }
+                    case 6u:  { write_grads_atomic(compact_gid * 9 + 6, v_colors_sum.y); }
+                    case 7u:  {
+                        write_grads_atomic(compact_gid * 9 + 7, v_colors_sum.z);
 
-                if subgroup_invocation_id == 0 {
-                    write_grads_atomic(compact_gid * 9 + 0, v_xy_sum.x);
-                }
-                else if subgroup_invocation_id == 1 {
-                    write_grads_atomic(compact_gid * 9 + 1, v_xy_sum.y);
-                }
-                else if subgroup_invocation_id == 2 {
-                    write_grads_atomic(compact_gid * 9 + 2, v_conic_sum.x);
-                }
-                else if subgroup_invocation_id == 3 {
-                    write_grads_atomic(compact_gid * 9 + 3, v_conic_sum.y);
-                }
-                else if subgroup_invocation_id == 4 {
-                    write_grads_atomic(compact_gid * 9 + 4, v_conic_sum.z);
-                }
-                else if subgroup_invocation_id == 5 {
-                    write_grads_atomic(compact_gid * 9 + 5, v_colors_sum.x);
-                }
-                else if subgroup_invocation_id == 6 {
-                    write_grads_atomic(compact_gid * 9 + 6, v_colors_sum.y);
-                }
-                else if subgroup_invocation_id == 7 {
-                    write_grads_atomic(compact_gid * 9 + 7, v_colors_sum.z);
-                }
-                else if subgroup_invocation_id == 8 || small_sg && is_last_in_sg {
-                    write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w);
-                }
-                else if subgroup_invocation_id == 9 || small_sg && is_last_in_sg {
-                    write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x);
-                }
-                else if subgroup_invocation_id == 10 || small_sg && is_last_in_sg {
-                    write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y);
+                        // Subgroups of size 8 need to be handled separately as there's not enough threads to write
+                        // all the gaussian fields. The next size (16) is fine.
+                        if subgroup_size == 8u {
+                            write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w);
+                            write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x);
+                            write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y);
+                        }
+                    }
+
+                    case 8u:  { write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w); }
+                    case 9u:  { write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x); }
+                    case 10u: { write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y); }
+                    default: {}
                 }
             }
         }
