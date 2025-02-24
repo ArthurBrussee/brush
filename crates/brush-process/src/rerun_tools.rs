@@ -261,14 +261,13 @@ impl VisualizeTools {
         if let Some(rec) = self.rec.as_ref() {
             if rec.is_enabled() {
                 rec.set_time_sequence("iterations", iter);
-
                 let _ = rec.log(
-                    "refine/num_transparent_pruned",
-                    &rerun::Scalar::new(refine.num_transparent_pruned as f64),
+                    "refine/num_added",
+                    &rerun::Scalar::new(refine.num_added as f64),
                 );
                 let _ = rec.log(
-                    "refine/num_scale_pruned",
-                    &rerun::Scalar::new(refine.num_scale_pruned as f64),
+                    "refine/num_pruned",
+                    &rerun::Scalar::new(refine.num_pruned as f64),
                 );
             }
         }

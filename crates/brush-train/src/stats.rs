@@ -91,6 +91,14 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> RefineRecord<Fused<F, I, B
 }
 
 impl<B: Backend> RefineRecord<B> {
+    pub fn keep(self, indices: Tensor<B, 1, Int>) -> Self {
+        Self {
+            refine_weight_norm: self.refine_weight_norm.select(0, indices.clone()),
+            visible_counts: self.visible_counts.select(0, indices.clone()),
+            max_radii: self.max_radii.select(0, indices),
+        }
+    }
+
     pub fn into_stats(self) -> (Tensor<B, 1>, Tensor<B, 1>) {
         (
             self.refine_weight_norm / self.visible_counts.clamp_min(1).float(),
