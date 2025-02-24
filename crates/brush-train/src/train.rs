@@ -332,7 +332,6 @@ impl SplatTrainer {
             let sh_degree = splats.sh_degree();
             let device = splats.device();
 
-            let mut record = HashMap::new();
             let coeff_count = sh_coeffs_for_degree(sh_degree) as i32;
             let sh_size = coeff_count;
             let mut sh_lr_scales = vec![1.0];
@@ -341,13 +340,14 @@ impl SplatTrainer {
             }
             let sh_lr_scales = Tensor::<_, 1>::from_floats(sh_lr_scales.as_slice(), &device)
                 .reshape([1, coeff_count, 1]);
-            let state = AdamState {
-                momentum: None,
-                scaling: Some(sh_lr_scales),
-            };
-            record.insert(splats.sh_coeffs.id, AdaptorRecord::from_state(state));
-            let optimizer = create_default_optimizer();
-            optimizer.load_record(record)
+
+            create_default_optimizer().load_record(HashMap::from([(
+                splats.sh_coeffs.id,
+                AdaptorRecord::from_state(AdamState {
+                    momentum: None,
+                    scaling: Some(sh_lr_scales),
+                }),
+            )]))
         });
 
         splats = trace_span!("Optimizer step", sync_burn = true).in_scope(|| {
