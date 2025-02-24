@@ -229,26 +229,8 @@ pub fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
     (x.clone() / (-x + 1.0)).log()
 }
 
-fn create_default_optimizer(splats: &Splats<TrainBack>, sh_lr_scale: f32) -> OptimizerType {
-    let sh_degree = splats.sh_degree();
-    let device = splats.device();
-
-    let mut record = HashMap::new();
-    let coeff_count = sh_coeffs_for_degree(sh_degree) as i32;
-    let sh_size = coeff_count;
-    let mut sh_lr_scales = vec![1.0];
-    for _ in 1..sh_size {
-        sh_lr_scales.push(1.0 / sh_lr_scale);
-    }
-    let sh_lr_scales =
-        Tensor::<_, 1>::from_floats(sh_lr_scales.as_slice(), &device).reshape([1, coeff_count, 1]);
-    let state = AdamState {
-        momentum: None,
-        scaling: Some(sh_lr_scales),
-    };
-    record.insert(splats.sh_coeffs.id, AdaptorRecord::from_state(state));
-    let optimizer = AdamScaledConfig::new().with_epsilon(1e-15).init();
-    optimizer.load_record(record)
+fn create_default_optimizer() -> OptimizerType {
+    AdamScaledConfig::new().with_epsilon(1e-15).init()
 }
 
 impl SplatTrainer {
@@ -347,7 +329,25 @@ impl SplatTrainer {
         );
 
         let optimizer = self.optim.get_or_insert_with(|| {
-            create_default_optimizer(&splats, self.config.lr_coeffs_sh_scale)
+            let sh_degree = splats.sh_degree();
+            let device = splats.device();
+
+            let mut record = HashMap::new();
+            let coeff_count = sh_coeffs_for_degree(sh_degree) as i32;
+            let sh_size = coeff_count;
+            let mut sh_lr_scales = vec![1.0];
+            for _ in 1..sh_size {
+                sh_lr_scales.push(1.0 / self.config.lr_coeffs_sh_scale);
+            }
+            let sh_lr_scales = Tensor::<_, 1>::from_floats(sh_lr_scales.as_slice(), &device)
+                .reshape([1, coeff_count, 1]);
+            let state = AdamState {
+                momentum: None,
+                scaling: Some(sh_lr_scales),
+            };
+            record.insert(splats.sh_coeffs.id, AdaptorRecord::from_state(state));
+            let optimizer = create_default_optimizer();
+            optimizer.load_record(record)
         });
 
         splats = trace_span!("Optimizer step", sync_burn = true).in_scope(|| {
@@ -650,12 +650,7 @@ impl SplatTrainer {
         }
 
         // Stats don't line up anymore so have to reset them.
-        self.optim = Some(
-            AdamScaledConfig::new()
-                .with_epsilon(1e-15)
-                .init()
-                .load_record(record),
-        );
+        self.optim = Some(create_default_optimizer().load_record(record));
 
         let stats = RefineStats {
             num_split: split_count,
