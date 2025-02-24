@@ -1,4 +1,4 @@
-use burn::tensor::{backend::Backend, module::conv2d, ops::ConvOptions, Tensor};
+use burn::tensor::{Tensor, backend::Backend, module::conv2d, ops::ConvOptions};
 
 pub struct Ssim<B: Backend> {
     weights: Tensor<B, 4>,

@@ -1,15 +1,15 @@
 use crate::{
+    RenderAux, SplatForward,
     bounding_box::BoundingBox,
     camera::Camera,
     render::{sh_coeffs_for_degree, sh_degree_from_coeffs},
-    RenderAux, SplatForward,
 };
 use ball_tree::BallTree;
 use burn::{
     config::Config,
     module::{Module, Param, ParamId},
     prelude::Backend,
-    tensor::{activation::sigmoid, Tensor, TensorData, TensorPrimitive},
+    tensor::{Tensor, TensorData, TensorPrimitive, activation::sigmoid},
 };
 use glam::{Quat, Vec3};
 use rand::Rng;
@@ -205,15 +205,6 @@ impl<B: Backend> Splats<B> {
             raw_opacity: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
             log_scales: Param::initialized(ParamId::new(), log_scales.detach().require_grad()),
         }
-    }
-
-    pub fn map_param<const D: usize>(
-        param: &mut Param<Tensor<B, D>>,
-        f: impl FnOnce(Tensor<B, D>) -> Tensor<B, D>,
-    ) {
-        // TODO: use param::map once Burn makes it FnOnce.
-        let (id, tensor) = (param.id, param.val());
-        *param = Param::initialized(id, f(tensor).detach().require_grad());
     }
 
     pub fn opacity(&self) -> Tensor<B, 1> {

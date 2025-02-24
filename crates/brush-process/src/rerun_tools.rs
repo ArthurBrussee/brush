@@ -10,7 +10,7 @@ use brush_train::{image::tensor_into_image, scene::Scene, train::RefineStats};
 use brush_train::{ssim::Ssim, train::TrainStepStats};
 use burn::prelude::Backend;
 use burn::tensor::backend::AutodiffBackend;
-use burn::tensor::{activation::sigmoid, ElementConversion};
+use burn::tensor::{ElementConversion, activation::sigmoid};
 
 use anyhow::Result;
 

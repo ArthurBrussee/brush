@@ -3,9 +3,9 @@ use brush_render::{BBase, RenderAux};
 use burn::backend::Autodiff;
 use burn::prelude::*;
 use burn_cubecl::cubecl::CubeDim;
-use burn_cubecl::{cubecl, BoolElement, FloatElement, IntElement};
-use burn_fusion::client::FusionClient;
+use burn_cubecl::{BoolElement, FloatElement, IntElement, cubecl};
 use burn_fusion::Fusion;
+use burn_fusion::client::FusionClient;
 use tracing::trace_span;
 
 use crate::stats_kernel::stats_gather_kernel;
@@ -15,9 +15,9 @@ type Fused<F, I, BT> = Fusion<BBase<F, I, BT>>;
 pub(crate) struct RefineRecord<B: Backend> {
     // Helper tensors for accumulating the viewspace_xy gradients and the number
     // of observations per gaussian. Used in pruning and densification.
-    refine_weight_norm: Tensor<B, 1>,
-    visible_counts: Tensor<B, 1, Int>,
-    max_radii: Tensor<B, 1>,
+    pub refine_weight_norm: Tensor<B, 1>,
+    pub visible_counts: Tensor<B, 1, Int>,
+    pub max_radii: Tensor<B, 1>,
 }
 
 impl<B: Backend> RefineRecord<B> {
@@ -87,13 +87,5 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> RefineRecord<Fused<F, I, B
             w as u32,
             h as u32,
         );
-    }
-
-    pub fn max_radii(&self) -> Tensor<Fused<F, I, BT>, 1> {
-        self.max_radii.clone()
-    }
-
-    pub fn refine_weight(&self) -> Tensor<Fused<F, I, BT>, 1> {
-        self.refine_weight_norm.clone() / self.visible_counts.clone().clamp_min(1).float()
     }
 }

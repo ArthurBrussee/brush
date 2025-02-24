@@ -1,6 +1,6 @@
 #![cfg(target_os = "android")]
 
-use jni::sys::{jint, JNI_VERSION_1_6};
+use jni::sys::{JNI_VERSION_1_6, jint};
 use std::os::raw::c_void;
 use std::sync::Arc;
 

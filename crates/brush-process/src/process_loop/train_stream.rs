@@ -1,7 +1,7 @@
 /// A default training loop for Brush.
 use async_fn_stream::try_fn_stream;
 
-use brush_dataset::{scene_loader::SceneLoader, Dataset};
+use brush_dataset::{Dataset, scene_loader::SceneLoader};
 use brush_render::gaussian_splats::Splats;
 use brush_train::train::TrainBack;
 use brush_train::train::{RefineStats, SplatTrainer, TrainConfig, TrainStepStats};
@@ -41,7 +41,7 @@ pub(crate) fn train_stream(
         let mut dataloader = SceneLoader::new(&train_scene, 42, &device);
 
         let scene_extent = train_scene.estimate_extent().unwrap_or(1.0);
-        let mut trainer = SplatTrainer::new(splats.num_splats(), &config, &device);
+        let mut trainer = SplatTrainer::new(&config, &device);
 
         let mut iter = start_iter;
 

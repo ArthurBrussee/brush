@@ -1,4 +1,4 @@
-use tokio::sync::mpsc::{channel, Receiver};
+use tokio::sync::mpsc::{Receiver, channel};
 use tokio_with_wasm::alias as tokio_wasm;
 
 pub fn reactive_receiver<T: Send + 'static>(

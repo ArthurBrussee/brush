@@ -4,7 +4,7 @@ members = ["crates/*", "examples/*"]
 default-members = ["crates/brush-app"]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 version = "0.2.0"
 readme = "README.md"
 license = "Apache-2.0"
@@ -71,13 +71,13 @@ ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',
-] } # Various burn packages. Currently need to use burn at head.
-burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
-burn-ir = { git = "https://github.com/tracel-ai/burn" }
+], branch = "remove-wasm-shared-sum" } # Various burn packages. Currently need to use burn at head.
+burn-cubecl = { git = "https://github.com/tracel-ai/burn", branch = "remove-wasm-shared-sum" }
+burn-ir = { git = "https://github.com/tracel-ai/burn", branch = "remove-wasm-shared-sum" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
-] }
-burn-fusion = { git = "https://github.com/tracel-ai/burn" }
+], branch = "remove-wasm-shared-sum" }
+burn-fusion = { git = "https://github.com/tracel-ai/burn", branch = "remove-wasm-shared-sum" }
 
 egui = "0.31.0"
 eframe = { version = "0.31.0", default-features = false, features = [

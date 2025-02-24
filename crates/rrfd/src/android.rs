@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
+use jni::JNIEnv;
 use jni::objects::{GlobalRef, JClass, JStaticMethodID};
 use jni::signature::Primitive;
 use jni::sys::jint;
-use jni::JNIEnv;
 use lazy_static::lazy_static;
 use std::os::fd::FromRawFd;
 use std::sync::Arc;

@@ -1,15 +1,16 @@
 use std::marker::PhantomData;
 
-use burn::tensor::{ops::FloatTensor, DType};
-use burn_cubecl::{fusion::FusionCubeRuntime, BoolElement, FloatElement, IntElement};
-use burn_fusion::{client::FusionClient, stream::Operation, Fusion, FusionHandle};
+use burn::tensor::{DType, ops::FloatTensor};
+use burn_cubecl::{BoolElement, FloatElement, IntElement, fusion::FusionCubeRuntime};
+use burn_fusion::{Fusion, FusionHandle, client::FusionClient, stream::Operation};
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
 use burn_wgpu::WgpuRuntime;
 
 use crate::{
+    BBase, RenderAuxPrimitive, SplatForward,
     camera::Camera,
     render::{calc_tile_bounds, max_intersections, render_forward},
-    shaders, BBase, RenderAuxPrimitive, SplatForward,
+    shaders,
 };
 
 // Implement forward functions for the inner wgpu backend.
@@ -67,7 +68,18 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatForward<Self>
             ) {
                 let (
                     [means, log_scales, quats, sh_coeffs, raw_opacity],
-                    [projected_splats, uniforms_buffer, num_intersections, num_visible, final_index, tile_offsets, compact_gid_from_isect, global_from_compact_gid, radii, out_img],
+                    [
+                        projected_splats,
+                        uniforms_buffer,
+                        num_intersections,
+                        num_visible,
+                        final_index,
+                        tile_offsets,
+                        compact_gid_from_isect,
+                        global_from_compact_gid,
+                        radii,
+                        out_img,
+                    ],
                 ) = self.desc.consume();
 
                 let (img, aux) = BBase::<F, I, BT>::render_splats(

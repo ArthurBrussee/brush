@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use brush_render::{
-    camera::{focal_to_fov, fov_to_focal, Camera},
+    camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
 };
 use brush_rerun::{BurnToImage, BurnToRerun};
 use burn::{
-    backend::{wgpu::WgpuDevice, Autodiff, Wgpu},
+    backend::{Autodiff, Wgpu, wgpu::WgpuDevice},
     prelude::Backend,
     tensor::{Float, Tensor, TensorPrimitive},
 };

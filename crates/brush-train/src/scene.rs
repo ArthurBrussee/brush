@@ -1,5 +1,5 @@
 use brush_render::{bounding_box::BoundingBox, camera::Camera};
-use glam::{vec3, Affine3A, Vec3};
+use glam::{Affine3A, Vec3, vec3};
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

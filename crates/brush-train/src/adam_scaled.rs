@@ -1,16 +1,16 @@
 use burn::{
+    LearningRate,
     config::Config,
     grad_clipping::GradientClippingConfig,
     module::AutodiffModule,
     optim::{
+        AdaptiveMomentumState, SimpleOptimizer,
         adaptor::OptimizerAdaptor,
         decay::{WeightDecay, WeightDecayConfig},
-        AdaptiveMomentumState, SimpleOptimizer,
     },
     prelude::Backend,
     record::Record,
-    tensor::{backend::AutodiffBackend, Device, ElementConversion, Tensor},
-    LearningRate,
+    tensor::{Device, ElementConversion, Tensor, backend::AutodiffBackend},
 };
 
 /// Adam optimizer as described in the paper [Adam: A Method for Stochastic Optimization](https://arxiv.org/pdf/1412.6980.pdf).
@@ -49,7 +49,7 @@ struct AdaptiveMomentum {
 #[derive(Record, Clone)]
 pub struct AdamState<B: Backend, const D: usize> {
     /// The current adaptive momentum.
-    pub momentum: AdaptiveMomentumState<B, D>,
+    pub momentum: Option<AdaptiveMomentumState<B, D>>,
     pub scaling: Option<Tensor<B, D>>,
 }
 
@@ -93,7 +93,7 @@ impl<B: Backend> SimpleOptimizer<B> for AdamScaled {
         let mut scaling = None;
 
         if let Some(state) = state {
-            state_momentum = Some(state.momentum);
+            state_momentum = state.momentum;
             scaling = state.scaling;
         }
 
@@ -104,7 +104,7 @@ impl<B: Backend> SimpleOptimizer<B> for AdamScaled {
         let (grad, state_momentum) = self.momentum.transform(grad, state_momentum);
 
         let state = AdamState {
-            momentum: state_momentum,
+            momentum: Some(state_momentum),
             scaling: scaling.clone(),
         };
 
@@ -118,7 +118,7 @@ impl<B: Backend> SimpleOptimizer<B> for AdamScaled {
     }
 
     fn to_device<const D: usize>(mut state: Self::State<D>, device: &Device<B>) -> Self::State<D> {
-        state.momentum = state.momentum.to_device(device);
+        state.momentum = state.momentum.map(|m| m.to_device(device));
         state
     }
 }

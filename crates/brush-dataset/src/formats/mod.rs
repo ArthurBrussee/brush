@@ -1,7 +1,7 @@
 use crate::{
-    brush_vfs::BrushVfs,
-    splat_import::{load_splat_from_ply, SplatMessage},
     Dataset, LoadDataseConfig, WasmNotSend,
+    brush_vfs::BrushVfs,
+    splat_import::{SplatMessage, load_splat_from_ply},
 };
 use brush_train::scene::ViewImageType;
 use burn::prelude::Backend;

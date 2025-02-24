@@ -3,7 +3,7 @@ use burn::{
     prelude::Backend,
     tensor::{Float, Tensor, TensorData},
 };
-use safetensors::{tensor::TensorView, SafeTensors};
+use safetensors::{SafeTensors, tensor::TensorView};
 
 fn float_from_u8(data: &[u8]) -> Vec<f32> {
     bytemuck::cast_slice(data).to_vec()
