@@ -73,10 +73,6 @@ skip = [
     { name = 'tower' },
     { name = 'indexmap' },
 
-    # Duplicate from rerun / egui.
-    { name = 'ecolor' },
-    { name = 'emath' },
-
     { name = 'ndk-sys' }, # Needed on Android.
 ]
 
@@ -97,7 +93,6 @@ allow = [
     "Zlib",                           # https://tldrlegal.com/license/zlib-libpng-license-(zlib)
     "Unlicense",                      # https://www.tldrlegal.com/license/unlicense
     "Unicode-3.0",
-    "OpenSSL",
 ]
 
 [[licenses.clarify]]
