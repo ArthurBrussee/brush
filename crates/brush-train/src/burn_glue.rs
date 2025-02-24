@@ -1,30 +1,30 @@
 use brush_render::{
+    BBase, RenderAuxPrimitive, SplatForward,
     camera::Camera,
     render::{sh_coeffs_for_degree, sh_degree_from_coeffs},
-    BBase, RenderAuxPrimitive, SplatForward,
 };
 use burn::{
     backend::{
+        Autodiff,
         autodiff::{
             checkpoint::{base::Checkpointer, strategy::CheckpointStrategy},
             grads::Gradients,
             ops::{Backward, Ops, OpsKind},
         },
         wgpu::WgpuRuntime,
-        Autodiff,
     },
     prelude::Backend,
     tensor::{
+        DType, Tensor, TensorPrimitive,
         backend::AutodiffBackend,
         ops::{FloatTensor, IntTensor},
-        DType, Tensor, TensorPrimitive,
     },
 };
-use burn_cubecl::{fusion::FusionCubeRuntime, BoolElement, FloatElement, IntElement};
-use burn_fusion::{client::FusionClient, stream::Operation, Fusion, FusionHandle};
+use burn_cubecl::{BoolElement, FloatElement, IntElement, fusion::FusionCubeRuntime};
+use burn_fusion::{Fusion, FusionHandle, client::FusionClient, stream::Operation};
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
 
-use crate::kernels::{render_backward, SplatGrads};
+use crate::kernels::{SplatGrads, render_backward};
 
 /// Like [`SplatForward`], but for backends that support differentiation.
 ///
@@ -122,8 +122,14 @@ impl<B: Backend + SplatBackwardOps<B>> Backward<B, NUM_ARGS> for RenderBackwards
 
         // Register gradients for parent nodes (This code is already skipped entirely
         // if no parent nodes require gradients).
-        let [mean_parent, refine_weight, log_scales_parent, quats_parent, coeffs_parent, raw_opacity_parent] =
-            ops.parents;
+        let [
+            mean_parent,
+            refine_weight,
+            log_scales_parent,
+            quats_parent,
+            coeffs_parent,
+            raw_opacity_parent,
+        ] = ops.parents;
 
         let v_tens = B::render_splats_bwd(state, v_output);
 

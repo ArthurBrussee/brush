@@ -7,7 +7,7 @@ use crate::panels::{DatasetPanel, PresetsPanel, ScenePanel, StatsPanel, TracingP
 use brush_dataset::Dataset;
 use brush_process::data_source::DataSource;
 use brush_process::process_loop::{
-    start_process, ControlMessage, ProcessArgs, ProcessMessage, RunningProcess,
+    ControlMessage, ProcessArgs, ProcessMessage, RunningProcess, start_process,
 };
 use brush_render::camera::Camera;
 use brush_train::scene::SceneView;
@@ -73,11 +73,7 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
     /// Width of the gap between tiles in a horizontal or vertical layout,
     /// and between rows/columns in a grid layout.
     fn gap_width(&self, _style: &egui::Style) -> f32 {
-        if self.zen {
-            0.0
-        } else {
-            0.5
-        }
+        if self.zen { 0.0 } else { 0.5 }
     }
 }
 

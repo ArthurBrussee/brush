@@ -2,7 +2,7 @@
 mod codewriter;
 
 use anyhow::Result;
-use naga::{proc::GlobalCtx, valid::Capabilities, Handle, Type};
+use naga::{Handle, Type, proc::GlobalCtx, valid::Capabilities};
 use naga_oil::compose::{
     ComposableModuleDescriptor, Composer, ComposerError, NagaModuleDescriptor,
 };

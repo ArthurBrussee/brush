@@ -3,20 +3,20 @@ use super::shaders;
 use std::mem::{offset_of, size_of};
 
 use crate::{
+    BBase, INTERSECTS_UPPER_BOUND, RenderAuxPrimitive,
     camera::Camera,
     dim_check::DimCheck,
     kernels::{MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
-    BBase, RenderAuxPrimitive, INTERSECTS_UPPER_BOUND,
 };
 
 use brush_kernel::create_dispatch_buffer;
 use brush_kernel::create_tensor;
 use brush_kernel::create_uniform_buffer;
-use brush_kernel::{calc_cube_count, CubeCount};
+use brush_kernel::{CubeCount, calc_cube_count};
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
-use burn::tensor::ops::IntTensorOps;
 use burn::tensor::DType;
+use burn::tensor::ops::IntTensorOps;
 use burn_cubecl::{BoolElement, FloatElement, IntElement};
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;

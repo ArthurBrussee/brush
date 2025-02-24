@@ -1,10 +1,10 @@
 use super::shaders::{project_backwards, rasterize_backwards};
 use crate::shaders::gather_grads;
-use brush_kernel::{calc_cube_count, kernel_source_gen, CubeCount, CubeTensor};
-use brush_render::{render::sh_coeffs_for_degree, BBase};
+use brush_kernel::{CubeCount, CubeTensor, calc_cube_count, kernel_source_gen};
+use brush_render::{BBase, render::sh_coeffs_for_degree};
 use burn::tensor::ops::FloatTensorOps;
 use burn::{backend::wgpu::WgpuRuntime, prelude::Backend, tensor::ops::FloatTensor};
-use burn_cubecl::{cubecl::AtomicFeature, BoolElement, FloatElement, IntElement};
+use burn_cubecl::{BoolElement, FloatElement, IntElement, cubecl::AtomicFeature};
 use glam::uvec2;
 
 kernel_source_gen!(GatherGrads {}, gather_grads);

@@ -4,7 +4,7 @@ members = ["crates/*", "examples/*"]
 default-members = ["crates/brush-app"]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 version = "0.2.0"
 readme = "README.md"
 license = "Apache-2.0"

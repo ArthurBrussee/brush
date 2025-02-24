@@ -4,8 +4,8 @@ use std::{path::Path, str::FromStr};
 
 use anyhow::anyhow;
 
-use brush_dataset::brush_vfs::{BrushVfs, PathReader};
 use brush_dataset::WasmNotSend;
+use brush_dataset::brush_vfs::{BrushVfs, PathReader};
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 use tokio_stream::StreamExt;
 use tokio_util::io::StreamReader;
@@ -64,7 +64,9 @@ impl DataSource {
                 .await
                 .map_err(|e| anyhow::anyhow!(e))
         } else if peek.starts_with(b"<!DOCTYPE html>") {
-            anyhow::bail!("Failed to download data (are you trying to download from Google Drive? You might have to use the proxy.")
+            anyhow::bail!(
+                "Failed to download data (are you trying to download from Google Drive? You might have to use the proxy."
+            )
         } else if let Some(path_bytes) = peek.strip_prefix(b"BRUSH_PATH") {
             let string = String::from_utf8(path_bytes.to_vec())?;
             let path = Path::new(&string);

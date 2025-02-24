@@ -1,7 +1,7 @@
 use crate::app::{AppContext, AppPanel};
 use brush_process::process_loop::ProcessMessage;
 use brush_train::scene::{Scene, SceneView, ViewImageType, ViewType};
-use egui::{pos2, Slider, TextureHandle, TextureOptions};
+use egui::{Slider, TextureHandle, TextureOptions, pos2};
 
 struct SelectedView {
     index: usize,

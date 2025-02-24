@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use burn::prelude::Backend;
-use tracing::{info_span, Subscriber};
+use tracing::{Subscriber, info_span};
 use tracing_subscriber::{
     layer::{Context, Layer},
     registry::LookupSpan,

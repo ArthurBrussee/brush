@@ -1,7 +1,7 @@
+use brush_kernel::CubeCount;
 use brush_kernel::create_dispatch_buffer;
 use brush_kernel::create_tensor;
 use brush_kernel::create_uniform_buffer;
-use brush_kernel::CubeCount;
 use burn::tensor::DType;
 use burn::tensor::Int;
 use burn::tensor::Tensor;

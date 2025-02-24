@@ -1,4 +1,4 @@
-use crate::{camera::Camera, SplatForward};
+use crate::{SplatForward, camera::Camera};
 use assert_approx_eq::assert_approx_eq;
 use burn::tensor::{Tensor, TensorPrimitive};
 use burn_wgpu::{Wgpu, WgpuDevice};

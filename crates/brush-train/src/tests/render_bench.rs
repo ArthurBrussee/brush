@@ -8,7 +8,7 @@ use std::path::Path;
 use std::{fs::File, io::Read};
 
 use brush_render::{
-    camera::{focal_to_fov, fov_to_focal, Camera},
+    camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
 };
 use brush_train::burn_glue::SplatForwardDiff;
@@ -205,7 +205,7 @@ fn bench_general(
 
 #[divan::bench_group(max_time = 1000, sample_count = TARGET_SAMPLE_COUNT, sample_size = 1)]
 mod fwd {
-    use crate::{bench_general, BENCH_DENSITIES, DENSE_MULT, HIGH_RES, LOW_RES};
+    use crate::{BENCH_DENSITIES, DENSE_MULT, HIGH_RES, LOW_RES, bench_general};
 
     #[divan::bench(args = BENCH_DENSITIES)]
     fn base(bencher: divan::Bencher, dens: f32) {
@@ -225,7 +225,7 @@ mod fwd {
 
 #[divan::bench_group(max_time = 20, sample_count = TARGET_SAMPLE_COUNT, sample_size = 1)]
 mod bwd {
-    use crate::{bench_general, BENCH_DENSITIES, DENSE_MULT, HIGH_RES, LOW_RES};
+    use crate::{BENCH_DENSITIES, DENSE_MULT, HIGH_RES, LOW_RES, bench_general};
 
     #[divan::bench(args = BENCH_DENSITIES)]
     fn base(bencher: divan::Bencher, dens: f32) {

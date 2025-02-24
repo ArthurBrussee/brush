@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use brush_render::{
     bounding_box::BoundingBox,
-    camera::{focal_to_fov, fov_to_focal, Camera},
+    camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::{RandomSplatsConfig, Splats},
 };
 use brush_train::{
@@ -18,7 +18,7 @@ use burn::{
     backend::wgpu::WgpuDevice, module::AutodiffModule, prelude::Backend,
     tensor::backend::AutodiffBackend,
 };
-use egui::{load::SizedTexture, ImageSource, TextureHandle, TextureOptions};
+use egui::{ImageSource, TextureHandle, TextureOptions, load::SizedTexture};
 use glam::{Quat, Vec2, Vec3};
 use rand::SeedableRng;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -51,7 +51,7 @@ fn spawn_train_loop(
             &device,
         );
 
-        let mut trainer = SplatTrainer::new(splats.num_splats(), &config, &device);
+        let mut trainer = SplatTrainer::new(&config, &device);
 
         // One batch of training data, it's the same every step so can just cosntruct it once.
         let batch = SceneBatch {

@@ -5,8 +5,8 @@ use burn::tensor::{Tensor, TensorPrimitive};
 use burn_cubecl::{BoolElement, FloatElement, IntElement};
 use burn_fusion::client::FusionClient;
 use eframe::egui_wgpu::Renderer;
-use egui::epaint::mutex::RwLock as EguiRwLock;
 use egui::TextureId;
+use egui::epaint::mutex::RwLock as EguiRwLock;
 use wgpu::{CommandEncoderDescriptor, TexelCopyBufferLayout, TextureViewDescriptor};
 
 struct TextureState {

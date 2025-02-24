@@ -6,10 +6,10 @@ mod shaders;
 use burn::tensor::{DType, Shape};
 pub use burn_cubecl::cubecl::prelude::ExecutionMode;
 pub use burn_cubecl::cubecl::{
-    client::ComputeClient, compute::CompiledKernel, compute::CubeTask, server::ComputeServer,
-    CubeCount, CubeDim, KernelId,
+    CubeCount, CubeDim, KernelId, client::ComputeClient, compute::CompiledKernel,
+    compute::CubeTask, server::ComputeServer,
 };
-pub use burn_cubecl::{cubecl::Compiler, tensor::CubeTensor, CubeRuntime};
+pub use burn_cubecl::{CubeRuntime, cubecl::Compiler, tensor::CubeTensor};
 
 use bytemuck::Pod;
 use wgpu::naga;

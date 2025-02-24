@@ -2,7 +2,7 @@ use brush_train::image::view_to_sample;
 use brush_train::scene::Scene;
 use brush_train::train::SceneBatch;
 use burn::prelude::Backend;
-use rand::{seq::SliceRandom, SeedableRng};
+use rand::{SeedableRng, seq::SliceRandom};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio_with_wasm::alias as tokio_wasm;
