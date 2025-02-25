@@ -57,7 +57,7 @@
   {
     "label": "test rendering",
     "command": "cargo test",
-    "args": ["-p brush-render -- --nocapture"],
+    "args": ["-p brush-train -- --nocapture"],
     "env": {
       "RUST_BACKTRACE": "1"
     },

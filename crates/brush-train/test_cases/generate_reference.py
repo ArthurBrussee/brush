@@ -180,19 +180,7 @@ def tiny_case():
     means = 10.5 * (torch.rand(num_points, 3, device=g_device) - 0.5)
     log_scales = (torch.rand(num_points, 3, device=g_device) * 2.5).log()
     coeffs = (torch.rand(num_points, SH_COUNT, 3, device=g_device) - 0.5) * 0.5
-    
-    u = torch.rand(num_points, 1, device=g_device)
-    v = torch.rand(num_points, 1, device=g_device)
-    w = torch.rand(num_points, 1, device=g_device)
-    quats = torch.cat(
-        [
-            torch.sqrt(1.0 - u) * torch.sin(2.0 * math.pi * v),
-            torch.sqrt(1.0 - u) * torch.cos(2.0 * math.pi * v),
-            torch.sqrt(u) * torch.sin(2.0 * math.pi * w),
-            torch.sqrt(u) * torch.cos(2.0 * math.pi * w),
-        ],
-        -1,
-    )
+    quats = torch.rand(num_points, 4, device=g_device)
     opacities = torch.rand(num_points, device=g_device) * 0.5 + 0.5
     execute_test(means, log_scales, quats, coeffs, opacities, "tiny_case")
 
@@ -207,19 +195,7 @@ def gen_basic_case():
     means = 10.0 * (torch.rand(num_points, 3, device=g_device) - 0.5)
     log_scales = torch.rand(num_points, 3, device=g_device).log() * 0.5
     coeffs = (torch.rand(num_points, SH_COUNT, 3, device=g_device) - 0.5) * 0.5
-
-    u = torch.rand(num_points, 1, device=g_device)
-    v = torch.rand(num_points, 1, device=g_device)
-    w = torch.rand(num_points, 1, device=g_device)
-    quats = torch.cat(
-        [
-            torch.sqrt(1.0 - u) * torch.sin(2.0 * math.pi * v),
-            torch.sqrt(1.0 - u) * torch.cos(2.0 * math.pi * v),
-            torch.sqrt(u) * torch.sin(2.0 * math.pi * w),
-            torch.sqrt(u) * torch.cos(2.0 * math.pi * w),
-        ],
-        -1,
-    )
+    quats = torch.rand(num_points, 4, device=g_device)
     opacities = torch.rand(num_points, device=g_device) * 0.5 + 0.5
     execute_test(means, log_scales, quats, coeffs, opacities, "basic_case")
 
@@ -235,19 +211,7 @@ def gen_mix_case():
     means = 2000.0 * (torch.rand(num_points, 3, device=g_device) - 0.5)
     log_scales = (torch.rand(num_points, 3, device=g_device) * 15.0 + 0.05).log()
     coeffs = (torch.rand(num_points, SH_COUNT, 3, device=g_device) - 0.5) * 0.5
-    
-    u = torch.rand(num_points, 1, device=g_device)
-    v = torch.rand(num_points, 1, device=g_device)
-    w = torch.rand(num_points, 1, device=g_device)
-    quats = torch.cat(
-        [
-            torch.sqrt(1.0 - u) * torch.sin(2.0 * math.pi * v),
-            torch.sqrt(1.0 - u) * torch.cos(2.0 * math.pi * v),
-            torch.sqrt(u) * torch.sin(2.0 * math.pi * w),
-            torch.sqrt(u) * torch.cos(2.0 * math.pi * w),
-        ],
-        -1,
-    )
+    quats = torch.rand(num_points, 4, device=g_device)
     opacities = torch.rand(num_points, device=g_device)
     execute_test(means, log_scales, quats, coeffs, opacities, "mix_case")
 

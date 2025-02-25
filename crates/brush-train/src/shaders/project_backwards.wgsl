@@ -18,7 +18,7 @@
 fn normalize_vjp(quat: vec4f) -> mat4x4f {
     let quat_sqr = quat * quat;
     let quat_len_sqr = dot(quat, quat);
-    let quat_len = length(quat_len_sqr);
+    let quat_len = sqrt(quat_len_sqr);
 
     let cross_complex = -quat.xyz * quat.yzx;
     let cross_scalar = -quat.xyz * quat.w;

@@ -64,6 +64,7 @@ async fn test_reference() -> Result<()> {
     let device = WgpuDevice::DefaultDevice;
 
     let crab_img = image::open("./test_cases/crab.png")?;
+
     // Convert the image to RGB format
     // Get the raw buffer
     let raw_buffer = crab_img.to_rgb8().into_raw();
@@ -76,6 +77,7 @@ async fn test_reference() -> Result<()> {
         &device,
     )
     .reshape([crab_img.height() as usize, crab_img.width() as usize, 3]);
+
     // Concat alpha to tensor.
     let crab_tens = Tensor::cat(
         vec![
