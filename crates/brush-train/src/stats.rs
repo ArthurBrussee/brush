@@ -88,4 +88,12 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> RefineRecord<Fused<F, I, B
             h as u32,
         );
     }
+
+    pub fn keep(self, indices: Tensor<Fused<F, I, BT>, 1, Int>) -> Self {
+        Self {
+            refine_weight_norm: self.refine_weight_norm.select(0, indices.clone()),
+            visible_counts: self.visible_counts.select(0, indices.clone()),
+            max_radii: self.max_radii.select(0, indices),
+        }
+    }
 }
