@@ -30,7 +30,11 @@ pub struct Splats<B: Backend> {
 }
 
 fn norm_vec<B: Backend>(vec: Tensor<B, 2>) -> Tensor<B, 2> {
-    vec.clone() / Tensor::clamp_min(Tensor::sum_dim(vec.powf_scalar(2.0), 1).sqrt(), 1e-12)
+    let magnitudes = Tensor::clamp_min(
+        Tensor::sum_dim(vec.clone().powf_scalar(2.0), 1).sqrt(),
+        1e-32,
+    );
+    vec / magnitudes
 }
 
 pub fn inverse_sigmoid(x: f32) -> f32 {
@@ -228,8 +232,9 @@ impl<B: Backend> Splats<B> {
         norm_vec(self.rotation.val())
     }
 
-    pub fn norm_rotations(&mut self) {
-        self.rotation = self.rotation.clone().map(|r| norm_vec(r));
+    pub fn with_normed_rotations(mut self) -> Self {
+        self.rotation = self.rotation.map(|r| norm_vec(r));
+        self
     }
 
     pub fn sh_degree(&self) -> u32 {

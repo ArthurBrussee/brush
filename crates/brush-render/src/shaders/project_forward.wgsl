@@ -15,6 +15,8 @@
 
 @group(0) @binding(7) var<storage, read_write> radii: array<f32>;
 
+const INV_SIGMOID_THRESH: f32 = -5.537334267018537;
+
 @compute
 @workgroup_size(helpers::MAIN_WG, 1, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3u) {
@@ -37,11 +39,19 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     }
 
     let scale = exp(helpers::as_vec(log_scales[global_gid]));
-    let quat = normalize(quats[global_gid]);
+    var quat = quats[global_gid];
+
+    // Skip any invalid rotations. This will mean overtime
+    // these gaussians just die off while optimizing. For the viewer, the importer
+    // atm always normalizes the quaternions.
+    if length(quat) < 1e-32 {
+        return;
+    }
+    quat = normalize(quat);
+
     let raw_opac = raw_opacities[global_gid];
 
-    // inv_sigmoid(1.0 / 255.0);
-    if raw_opac <= -5.537 {
+    if raw_opac < INV_SIGMOID_THRESH {
         return;
     }
 

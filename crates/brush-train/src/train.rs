@@ -24,6 +24,8 @@ use crate::ssim::Ssim;
 use crate::stats::RefineRecord;
 use clap::Args;
 
+const MIN_OPACITY: f32 = 0.99 / 255.0;
+
 #[derive(Config, Args)]
 pub struct TrainConfig {
     /// Total number of steps to train for.
@@ -84,10 +86,7 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "0.004")]
     opac_refine_subtract: f32,
 
-    /// GSs with opacity below this value will be pruned
     #[config(default = 0.002)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.002")]
-    cull_opacity: f32,
 
     /// Threshold for positional gradient norm
     #[config(default = 0.0002)]
@@ -566,7 +565,10 @@ impl SplatTrainer {
         // of gradient <-> splat.
 
         // Remove barely visible gaussians.
-        let alpha_mask = splats.opacity().lower_elem(self.config.cull_opacity);
+        let alpha_mask = splats
+            .raw_opacity
+            .val()
+            .lower_elem(inverse_sigmoid(MIN_OPACITY));
         let alpha_pruned = prune_points(&mut splats, &mut record, alpha_mask).await;
 
         // Slowly lower opacity.
