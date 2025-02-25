@@ -125,7 +125,7 @@ impl<B: Backend + SplatBackwardOps<B>> Backward<B, NUM_ARGS> for RenderBackwards
 
         // Register gradients for parent nodes (This code is already skipped entirely
         // if no parent nodes require gradients).
-        let [mean_parent, xys_parent, log_scales_parent, quats_parent, coeffs_parent, raw_opacity_parent] =
+        let [mean_parent, refine_weight, log_scales_parent, quats_parent, coeffs_parent, raw_opacity_parent] =
             ops.parents;
 
         let v_tens = B::render_splats_bwd(state, v_output);
@@ -135,8 +135,8 @@ impl<B: Backend + SplatBackwardOps<B>> Backward<B, NUM_ARGS> for RenderBackwards
         }
 
         // Register the gradients for the dummy xy input.
-        if let Some(node) = xys_parent {
-            grads.register::<B>(node.id, v_tens.v_xy);
+        if let Some(node) = refine_weight {
+            grads.register::<B>(node.id, v_tens.v_refine_weight);
         }
 
         if let Some(node) = log_scales_parent {
@@ -160,7 +160,7 @@ impl<B: Backend + SplatBackwardOps<B>> Backward<B, NUM_ARGS> for RenderBackwards
 pub struct SplatOutputDiff<B: Backend> {
     pub img: FloatTensor<B>,
     pub aux: RenderAuxPrimitive<B>,
-    pub xy_grad_holder: Tensor<B, 2>,
+    pub refine_weight_holder: Tensor<B, 1>,
 }
 
 // Implement
@@ -180,13 +180,13 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
         // in the future.
         let device =
             Tensor::<Self, 2>::from_primitive(TensorPrimitive::Float(means.clone())).device();
-        let xy_grad_holder = Tensor::<Self, 2>::zeros([1, 2], &device).require_grad();
+        let refine_weight_holder = Tensor::<Self, 1>::zeros([1], &device).require_grad();
 
         // Prepare backward pass, and check if we even need to do it. Store nodes that need gradients.
         let prep_nodes = RenderBackwards
             .prepare::<C>([
                 means.node.clone(),
-                xy_grad_holder.clone().into_primitive().tensor().node,
+                refine_weight_holder.clone().into_primitive().tensor().node,
                 log_scales.node.clone(),
                 quats.node.clone(),
                 sh_coeffs.node.clone(),
@@ -245,7 +245,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
                 SplatOutputDiff {
                     img: out_img,
                     aux: wrapped_aux,
-                    xy_grad_holder,
+                    refine_weight_holder,
                 }
             }
             OpsKind::UnTracked(prep) => {
@@ -254,7 +254,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
                 SplatOutputDiff {
                     img: prep.finish(out_img),
                     aux: wrapped_aux,
-                    xy_grad_holder,
+                    refine_weight_holder,
                 }
             }
         }
@@ -277,7 +277,7 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatBackwardOps<Self>
             Operation<FusionJitRuntime<WgpuRuntime, BT>> for CustomOp<F, I, BT>
         {
             fn execute(self: Box<Self>, h: &mut HandleContainer<JitFusionHandle<WgpuRuntime>>) {
-                let ([v_output], [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_xy]) =
+                let ([v_output], [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine]) =
                     self.desc.consume();
 
                 let state = self.state;
@@ -315,7 +315,7 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatBackwardOps<Self>
                 h.register_float_tensor::<BBase<F, I, BT>>(&v_scales.id, grads.v_scales);
                 h.register_float_tensor::<BBase<F, I, BT>>(&v_coeffs.id, grads.v_coeffs);
                 h.register_float_tensor::<BBase<F, I, BT>>(&v_raw_opac.id, grads.v_raw_opac);
-                h.register_float_tensor::<BBase<F, I, BT>>(&v_xy.id, grads.v_xy);
+                h.register_float_tensor::<BBase<F, I, BT>>(&v_refine.id, grads.v_refine_weight);
             }
         }
 
@@ -332,7 +332,7 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatBackwardOps<Self>
             v_scales: client.tensor_uninitialized(vec![num_points, 3], DType::F32),
             v_coeffs: client.tensor_uninitialized(vec![num_points, coeffs, 3], DType::F32),
             v_raw_opac: client.tensor_uninitialized(vec![num_points], DType::F32),
-            v_xy: client.tensor_uninitialized(vec![num_points, 2], DType::F32),
+            v_refine_weight: client.tensor_uninitialized(vec![num_points, 2], DType::F32),
         };
 
         let desc = CustomOpIr::new(
@@ -344,7 +344,7 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatBackwardOps<Self>
                 grads.v_scales.to_ir_out(),
                 grads.v_coeffs.to_ir_out(),
                 grads.v_raw_opac.to_ir_out(),
-                grads.v_xy.to_ir_out(),
+                grads.v_refine_weight.to_ir_out(),
             ],
         );
 

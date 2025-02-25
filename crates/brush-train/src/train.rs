@@ -86,8 +86,6 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "0.004")]
     opac_refine_subtract: f32,
 
-    #[config(default = 0.002)]
-
     /// Threshold for positional gradient norm
     #[config(default = 0.0002)]
     #[arg(long, help_heading = "Refine options", default_value = "0.0002")]
@@ -260,7 +258,7 @@ impl SplatTrainer {
 
         let camera = &batch.gt_view.camera;
 
-        let (pred_image, aux, xy_grad_holder) = {
+        let (pred_image, aux, refine_weight_holder) = {
             let diff_out = <TrainBack as SplatForwardDiff<TrainBack>>::render_splats(
                 camera,
                 glam::uvec2(img_w as u32, img_h as u32),
@@ -272,7 +270,7 @@ impl SplatTrainer {
             );
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
             let wrapped_aux = diff_out.aux.into_wrapped();
-            (img, wrapped_aux, diff_out.xy_grad_holder)
+            (img, wrapped_aux, diff_out.refine_weight_holder)
         };
 
         let _span = trace_span!("Calculate losses", sync_burn = true).entered();
@@ -399,7 +397,7 @@ impl SplatTrainer {
                     .saturating_sub(self.config.refine_every)
             {
                 // Get the xy gradient norm from the dummy tensor.
-                let xys_grad = xy_grad_holder
+                let xys_grad = refine_weight_holder
                     .grad_remove(&mut grads)
                     .expect("XY gradients need to be calculated.");
                 let aux = aux.clone();
@@ -454,7 +452,7 @@ impl SplatTrainer {
         let device = splats.means.device();
 
         // Otherwise, do refinement, but do the split/clone on gaussians with no grads applied.
-        let avg_grad = self.refine_record.average_grad_2d();
+        let avg_grad = self.refine_record.refine_weight();
 
         let is_grad_high =
             Tensor::from_inner(avg_grad.greater_equal_elem(self.config.densify_grad_thresh));

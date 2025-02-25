@@ -18,7 +18,8 @@ pub struct SplatGrads<B: Backend> {
     pub v_scales: FloatTensor<B>,
     pub v_coeffs: FloatTensor<B>,
     pub v_raw_opac: FloatTensor<B>,
-    pub v_xy: FloatTensor<B>,
+
+    pub v_refine_weight: FloatTensor<B>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -51,8 +52,6 @@ pub(crate) fn render_backward<F: FloatElement, I: IntElement, BT: BoolElement>(
 
     // Nb: these are packed vec3 values, special care is taken in the kernel to respect alignment.
     // Nb: These have to be zeroed out - as we only write to visible splats.
-    //
-    let v_xys_local = BBase::<F, I, BT>::float_zeros([num_points, 2].into(), device);
     let v_means = BBase::<F, I, BT>::float_zeros([num_points, 3].into(), device);
     let v_scales = BBase::<F, I, BT>::float_zeros([num_points, 3].into(), device);
     let v_quats = BBase::<F, I, BT>::float_zeros([num_points, 4].into(), device);
@@ -74,8 +73,8 @@ pub(crate) fn render_backward<F: FloatElement, I: IntElement, BT: BoolElement>(
     let invocations = tile_bounds.x * tile_bounds.y;
 
     // These gradients are atomically added to so important to zero them.
-    let v_conics = BBase::<F, I, BT>::float_zeros([num_points, 3].into(), device);
-    let v_colors = BBase::<F, I, BT>::float_zeros([num_points, 4].into(), device);
+    let v_grads = BBase::<F, I, BT>::float_zeros([num_points, 9].into(), device);
+    let v_refine_weight = BBase::<F, I, BT>::float_zeros([num_points, 2].into(), device);
 
     let hard_floats = client
         .properties()
@@ -95,13 +94,11 @@ pub(crate) fn render_backward<F: FloatElement, I: IntElement, BT: BoolElement>(
                         final_index.handle.binding(),
                         out_img.handle.binding(),
                         v_output.handle.binding(),
-                        v_xys_local.clone().handle.binding(),
-                        v_conics.clone().handle.binding(),
-                        v_colors.clone().handle.binding(),
+                        v_grads.clone().handle.binding(),
+                        v_refine_weight.clone().handle.binding(),
                     ],
                 );
             });
-
     let _span = tracing::trace_span!("GatherGrads", sync_burn = true).entered();
 
     // SAFETY: Kernel has to contain no OOB indexing.
@@ -114,7 +111,7 @@ pub(crate) fn render_backward<F: FloatElement, I: IntElement, BT: BoolElement>(
                 global_from_compact_gid.clone().handle.binding(),
                 raw_opac.handle.binding(),
                 means.clone().handle.binding(),
-                v_colors.handle.binding(),
+                v_grads.clone().handle.binding(),
                 v_coeffs.handle.clone().binding(),
                 v_raw_opac.handle.clone().binding(),
             ],
@@ -133,8 +130,7 @@ pub(crate) fn render_backward<F: FloatElement, I: IntElement, BT: BoolElement>(
                 log_scales.handle.binding(),
                 quats.handle.binding(),
                 global_from_compact_gid.handle.binding(),
-                v_xys_local.handle.clone().binding(),
-                v_conics.handle.binding(),
+                v_grads.handle.binding(),
                 v_means.handle.clone().binding(),
                 v_scales.handle.clone().binding(),
                 v_quats.handle.clone().binding(),
@@ -148,6 +144,6 @@ pub(crate) fn render_backward<F: FloatElement, I: IntElement, BT: BoolElement>(
         v_scales,
         v_coeffs,
         v_raw_opac,
-        v_xy: v_xys_local,
+        v_refine_weight,
     }
 }
