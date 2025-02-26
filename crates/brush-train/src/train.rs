@@ -483,112 +483,117 @@ impl SplatTrainer {
         let (mut splats, refiner, pruned) =
             prune_points(splats, &mut record, refiner, prune_mask).await;
 
-        let (avg_refine_grad, max_radii) = refiner.into_stats();
-        let over_refine_thresh =
-            avg_refine_grad.greater_equal_elem(self.config.densify_grad_thresh);
-        let radii_grow = max_radii.greater_elem(self.config.densify_radius_threshold);
-        let split_mask = over_refine_thresh.bool_or(radii_grow.clone());
-        let split_inds = split_mask.clone().argwhere_async().await;
+        let time_since_reset =
+            iter % (self.config.reset_alpha_every_refine * self.config.refine_every);
 
-        let refine_count = split_inds.dims()[0];
-        if refine_count > 0 {
-            let split_inds = split_inds.squeeze(1);
+        let mut refine_count = 0;
 
-            let cur_means = splats.means.val().inner().select(0, split_inds.clone());
-            let cur_coeff = splats.sh_coeffs.val().inner().select(0, split_inds.clone());
-            let cur_raw_opac = splats
-                .raw_opacity
-                .val()
-                .inner()
-                .select(0, split_inds.clone());
-            let cur_rots = splats.rotation.val().inner().select(0, split_inds.clone());
-            let cur_log_scale = splats
-                .log_scales
-                .val()
-                .inner()
-                .select(0, split_inds.clone());
+        if time_since_reset > self.config.refine_every * 2 {
+            let (avg_refine_grad, max_radii) = refiner.into_stats();
+            let over_refine_thresh =
+                avg_refine_grad.greater_equal_elem(self.config.densify_grad_thresh);
+            let radii_grow = max_radii.greater_elem(self.config.densify_radius_threshold);
+            let split_mask = over_refine_thresh.bool_or(radii_grow.clone());
+            let split_inds = split_mask.clone().argwhere_async().await;
 
-            // The amount to offset the scale and opacity should maybe depend on how far away we have sampled these gaussians.
-            let samples = quaternion_vec_multiply(
-                cur_rots.clone(),
-                Tensor::random([refine_count, 3], Distribution::Normal(0.0, 1.0), &device)
-                    * cur_log_scale.clone().exp(),
-            );
+            refine_count = split_inds.dims()[0];
+            if refine_count > 0 {
+                let split_inds = split_inds.squeeze(1);
 
-            // Split decreases scale - clone does not.
-            let should_size_be_split = splats
-                .scales()
-                .inner()
-                .max_dim(1)
-                .lower_elem(self.config.densify_size_threshold * scene_extent)
-                .squeeze(1)
-                .bool_not();
+                let cur_means = splats.means.val().inner().select(0, split_inds.clone());
+                let cur_coeff = splats.sh_coeffs.val().inner().select(0, split_inds.clone());
+                let cur_raw_opac = splats
+                    .raw_opacity
+                    .val()
+                    .inner()
+                    .select(0, split_inds.clone());
+                let cur_rots = splats.rotation.val().inner().select(0, split_inds.clone());
+                let cur_log_scale = splats
+                    .log_scales
+                    .val()
+                    .inner()
+                    .select(0, split_inds.clone());
 
-            let split_or_clone = should_size_be_split
-                .bool_or(radii_grow)
-                .float()
-                .select(0, split_inds.clone());
+                // The amount to offset the scale and opacity should maybe depend on how far away we have sampled these gaussians.
+                let samples = quaternion_vec_multiply(
+                    cur_rots.clone(),
+                    Tensor::random([refine_count, 3], Distribution::Normal(0.0, 0.5), &device)
+                        * cur_log_scale.clone().exp(),
+                );
 
-            let split_or_clone = split_or_clone.unsqueeze_dim(1).repeat_dim(1, 3);
-            let scale_div = (split_or_clone.clone() * 0.6 + 1.0).log();
+                // Split decreases scale - clone does not.
+                let should_size_be_split = splats
+                    .scales()
+                    .inner()
+                    .greater_elem(self.config.densify_size_threshold * scene_extent)
+                    .any_dim(1)
+                    .squeeze(1);
 
-            let sh_dim = splats.sh_coeffs.dims()[1];
+                let split_or_clone = should_size_be_split
+                    .bool_or(radii_grow)
+                    .float()
+                    .select(0, split_inds.clone());
 
-            splats.means = splats.means.map(|m| {
-                Tensor::from_inner(m.inner().select_assign(
-                    0,
-                    split_inds.clone(),
-                    -split_or_clone * samples.clone(),
-                ))
-            });
+                let split_or_clone = split_or_clone.unsqueeze_dim(1).repeat_dim(1, 3);
+                let scale_div = (split_or_clone * 0.6 + 1.0).log();
 
-            // Shrink existing.
-            splats.log_scales = splats.log_scales.map(|s| {
-                Tensor::from_inner(s.inner().select_assign(0, split_inds, -scale_div.clone()))
-                    .require_grad()
-            });
+                let sh_dim = splats.sh_coeffs.dims()[1];
 
-            // Add new splats.
-            splats = map_splats_and_opt(
-                splats,
-                &mut record,
-                |x| Tensor::cat(vec![x, cur_means + samples], 0),
-                |x| Tensor::cat(vec![x, cur_rots.clone()], 0),
-                |x| Tensor::cat(vec![x, cur_log_scale.clone() - scale_div], 0),
-                |x| Tensor::cat(vec![x, cur_coeff], 0),
-                |x| Tensor::cat(vec![x, cur_raw_opac], 0),
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 3], &device)], 0),
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 4], &device)], 0),
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 3], &device)], 0),
-                |x| {
-                    Tensor::cat(
-                        vec![x, Tensor::zeros([refine_count, sh_dim, 3], &device)],
+                splats.means = splats.means.map(|m| {
+                    Tensor::from_inner(m.inner().select_assign(
                         0,
-                    )
-                },
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count], &device)], 0),
-            );
+                        split_inds.clone(),
+                        -samples.clone(),
+                    ))
+                });
+
+                // Shrink existing.
+                splats.log_scales = splats.log_scales.map(|s| {
+                    Tensor::from_inner(s.inner().select_assign(0, split_inds, -scale_div.clone()))
+                        .require_grad()
+                });
+
+                // Add new splats.
+                splats = map_splats_and_opt(
+                    splats,
+                    &mut record,
+                    |x| Tensor::cat(vec![x, cur_means + samples], 0),
+                    |x| Tensor::cat(vec![x, cur_rots.clone()], 0),
+                    |x| Tensor::cat(vec![x, cur_log_scale.clone() - scale_div], 0),
+                    |x| Tensor::cat(vec![x, cur_coeff], 0),
+                    |x| Tensor::cat(vec![x, cur_raw_opac], 0),
+                    |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 3], &device)], 0),
+                    |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 4], &device)], 0),
+                    |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 3], &device)], 0),
+                    |x| {
+                        Tensor::cat(
+                            vec![x, Tensor::zeros([refine_count, sh_dim, 3], &device)],
+                            0,
+                        )
+                    },
+                    |x| Tensor::cat(vec![x, Tensor::zeros([refine_count], &device)], 0),
+                );
+            }
         }
 
-        let refine_step = iter / self.config.refine_every;
-        if refine_step % self.config.reset_alpha_every_refine == 0 {
+        if time_since_reset == 0 {
             splats.raw_opacity = splats
                 .raw_opacity
                 .map(|op| op.clamp_max(inverse_sigmoid(0.01)));
             map_opt::<_, 1>(splats.raw_opacity.id, &mut record, &|s| {
                 Tensor::zeros_like(&s)
             });
-        } else {
-            // Slowly lower opacity.
-            if self.config.opac_refine_subtract > 0.0 {
-                splats.raw_opacity = splats.raw_opacity.map(|op| {
-                    let op = op.inner();
-                    let lowered = inv_sigmoid(
-                        (sigmoid(op) - self.config.opac_refine_subtract).clamp_min(1e-3),
-                    );
-                    Tensor::from_inner(lowered).require_grad()
-                });
-            }
+        }
+
+        // Slowly lower opacity.
+        if self.config.opac_refine_subtract > 0.0 && time_since_reset > self.config.refine_every * 2
+        {
+            splats.raw_opacity = splats.raw_opacity.map(|op| {
+                let op = op.inner();
+                let lowered =
+                    inv_sigmoid((sigmoid(op) - self.config.opac_refine_subtract).clamp_min(1e-3));
+                Tensor::from_inner(lowered).require_grad()
+            });
         }
 
         // Stats don't line up anymore so have to reset them.
