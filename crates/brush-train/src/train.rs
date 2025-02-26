@@ -389,19 +389,18 @@ impl SplatTrainer {
         let num_intersections = aux.num_intersections.clone();
 
         trace_span!("Housekeeping", sync_burn = true).in_scope(|| {
-            // TODO: Burn really should implement +=
-            if iter
-                > self
-                    .config
-                    .refine_start_iter
-                    .saturating_sub(self.config.refine_every)
-            {
+            let start_collect_iter = self
+                .config
+                .refine_start_iter
+                .saturating_sub(self.config.refine_every);
+
+            if iter > start_collect_iter {
                 // Get the xy gradient norm from the dummy tensor.
-                let xys_grad = refine_weight_holder
+                let refine_weight = refine_weight_holder
                     .grad_remove(&mut grads)
                     .expect("XY gradients need to be calculated.");
                 let aux = aux.clone();
-                self.refine_record.gather_stats(xys_grad, aux);
+                self.refine_record.gather_stats(refine_weight, aux);
             }
         });
 
@@ -427,14 +426,15 @@ impl SplatTrainer {
         splats: Splats<TrainBack>,
         scene_extent: f32,
     ) -> (Splats<TrainBack>, Option<RefineStats>) {
-        let do_refine = iter < self.config.refine_stop_iter
-            && iter >= self.config.refine_start_iter
-            && iter % self.config.refine_every == 0;
+        if iter > 0 && iter % self.config.refine_every == 0 {
 
-        if do_refine {
             // If not refining, update splat to step with gradients applied.
-            let (refined_splats, refine) = self.refine_splats(iter, splats, scene_extent).await;
-            (refined_splats, Some(refine))
+            if iter >= self.config.refine_start_iter && iter < self.config.refine_stop_iter {
+                let (splats, refine) = self.refine_splats(iter, splats, scene_extent).await;
+                (splats, Some(refine))
+            } else {
+                (splats, None)
+            }
         } else {
             (splats, None)
         }
@@ -449,15 +449,16 @@ impl SplatTrainer {
         let mut record = self.optim.to_record();
 
         let mut splats = splats;
+
         let device = splats.means.device();
 
         // Otherwise, do refinement, but do the split/clone on gaussians with no grads applied.
         let avg_grad = self.refine_record.refine_weight();
 
-        let is_grad_high =
-            Tensor::from_inner(avg_grad.greater_equal_elem(self.config.densify_grad_thresh));
+        let is_grad_high = avg_grad.greater_equal_elem(self.config.densify_grad_thresh);
         let split_clone_size_mask = splats
             .scales()
+            .inner()
             .max_dim(1)
             .squeeze(1)
             .lower_elem(self.config.densify_size_threshold * scene_extent);
@@ -478,11 +479,10 @@ impl SplatTrainer {
         // Clone splats
         let clone_count = clone_inds.dims()[0] as u32;
         if clone_count > 0 {
-            let clone_inds = clone_inds.squeeze(1);
+            let clone_inds = Tensor::from_inner(clone_inds.squeeze(1));
             let cur_means = splats.means.val().select(0, clone_inds.clone());
-            let cur_rots = splats.rotations_normed().select(0, clone_inds.clone());
+            let cur_rots = splats.rotation.val().select(0, clone_inds.clone());
             let cur_scale = splats.log_scales.val().select(0, clone_inds.clone());
-
             let cur_coeff = splats.sh_coeffs.val().select(0, clone_inds.clone());
             let cur_raw_opac = splats.raw_opacity.val().select(0, clone_inds);
 
@@ -510,11 +510,10 @@ impl SplatTrainer {
         .all_dim(1)
         .squeeze::<1>(1);
 
-        let radii_grow = Tensor::from_inner(
-            self.refine_record
-                .max_radii()
-                .greater_elem(self.config.densify_radius_threshold),
-        );
+        let radii_grow = self
+            .refine_record
+            .max_radii()
+            .greater_elem(self.config.densify_radius_threshold);
 
         let split_mask = Tensor::stack::<2>(vec![split_mask, radii_grow], 1)
             .any_dim(1)
@@ -524,7 +523,7 @@ impl SplatTrainer {
 
         let split_count = split_inds.dims()[0] as u32;
         if split_count > 0 {
-            let split_inds = split_inds.squeeze(1);
+            let split_inds = Tensor::from_inner(split_inds.squeeze(1));
 
             // Some parts can be straightforwardly copied to the new splats.
             let cur_means = splats.means.val().select(0, split_inds.clone());
@@ -566,6 +565,7 @@ impl SplatTrainer {
         let alpha_mask = splats
             .raw_opacity
             .val()
+            .inner()
             .lower_elem(inverse_sigmoid(MIN_OPACITY));
         let alpha_pruned = prune_points(&mut splats, &mut record, alpha_mask).await;
 
@@ -583,13 +583,10 @@ impl SplatTrainer {
         let scale_big = splats
             .log_scales
             .val()
+            .inner()
             .greater_elem((self.config.cull_scale3d_percentage_threshold * scene_extent).ln());
 
-        // less than e^-10, too small to care about.
-        let scale_small = splats.log_scales.val().lower_elem(-10.0);
-
-        let scale_mask =
-            Tensor::any_dim(Tensor::cat(vec![scale_small, scale_big], 1), 1).squeeze(1);
+        let scale_mask = Tensor::any_dim(scale_big, 1).squeeze(1);
         let scale_pruned = prune_points(&mut splats, &mut record, scale_mask).await;
 
         if !append_means.is_empty() {
@@ -655,7 +652,7 @@ fn map_param<B: AutodiffBackend, const D: usize>(
 pub async fn prune_points<B: AutodiffBackend>(
     splats: &mut Splats<B>,
     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, B>>,
-    prune: Tensor<B, 1, Bool>,
+    prune: Tensor<B::InnerBackend, 1, Bool>,
 ) -> u32 {
     assert_eq!(
         prune.dims()[0] as u32,
@@ -681,7 +678,7 @@ pub async fn prune_points<B: AutodiffBackend>(
     let new_points = valid_inds.dims()[0] as u32;
 
     if new_points < start_splats {
-        let valid_inds = valid_inds.squeeze(1);
+        let valid_inds = Tensor::from_inner(valid_inds.squeeze(1));
         map_param(
             &mut splats.means,
             record,
