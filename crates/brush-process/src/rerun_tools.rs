@@ -16,7 +16,7 @@ use anyhow::Result;
 
 #[cfg(not(target_family = "wasm"))]
 use brush_rerun::BurnToRerun;
-use burn_jit::cubecl::MemoryUsage;
+use burn_cubecl::cubecl::MemoryUsage;
 
 pub struct VisualizeTools {
     #[cfg(not(target_family = "wasm"))]

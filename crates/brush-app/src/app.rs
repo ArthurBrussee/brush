@@ -256,7 +256,7 @@ impl App {
                     tracing_subscriber::registry()
                         .with(tracing_tracy::TracyLayer::default())
                         .with(sync_span::SyncLayer::<
-                            burn_jit::JitBackend<burn_wgpu::WgpuRuntime, f32, i32, u32>,
+                            burn_cubecl::CubeBackend<burn_wgpu::WgpuRuntime, f32, i32, u32>,
                         >::new(device.clone())),
                 )
                 .expect("Failed to set tracing subscriber");

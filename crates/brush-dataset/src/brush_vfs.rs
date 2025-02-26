@@ -19,8 +19,8 @@ use tokio::{
 };
 
 use zip::{
-    result::{ZipError, ZipResult},
     ZipArchive,
+    result::{ZipError, ZipResult},
 };
 
 use crate::WasmNotSend;
@@ -74,7 +74,6 @@ pub enum BrushVfs {
     Directory(PathBuf, Vec<PathBuf>),
 }
 
-// TODO: This is all awfully ad-hoc.
 impl BrushVfs {
     pub async fn from_zip_reader(reader: impl AsyncRead + Unpin) -> ZipResult<Self> {
         let mut bytes = vec![];

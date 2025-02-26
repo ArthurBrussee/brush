@@ -1,18 +1,18 @@
+use super::DataStream;
 use super::clamp_img_to_max_size;
 use super::find_mask_path;
 use super::load_image;
-use super::DataStream;
-use crate::brush_vfs::BrushVfs;
-use crate::splat_import::load_splat_from_ply;
-use crate::splat_import::SplatMessage;
-use crate::stream_fut_parallel;
 use crate::Dataset;
 use crate::LoadDataseConfig;
+use crate::brush_vfs::BrushVfs;
+use crate::splat_import::SplatMessage;
+use crate::splat_import::load_splat_from_ply;
+use crate::stream_fut_parallel;
 use anyhow::Context;
 use anyhow::Result;
 use async_fn_stream::try_fn_stream;
 use brush_render::camera::fov_to_focal;
-use brush_render::camera::{focal_to_fov, Camera};
+use brush_render::camera::{Camera, focal_to_fov};
 use brush_train::scene::SceneView;
 use burn::prelude::Backend;
 use std::future::Future;
@@ -86,7 +86,7 @@ struct FrameData {
     /// Image height. Should be an integer but read as float, fine to truncate.
     h: Option<f64>,
 
-    // TODO: These are unused currently.
+    // Nb: These are unused currently until we can optimize distorted cameras.
     /// First radial distortion parameter used by [`OPENCV`, `OPENCV_FISHEYE`]
     k1: Option<f64>,
     /// Second radial distortion parameter used by [`OPENCV`, `OPENCV_FISHEYE`]
@@ -109,7 +109,7 @@ fn read_transforms_file(
     transforms_path: &Path,
     vfs: BrushVfs,
     load_args: &LoadDataseConfig,
-) -> Vec<impl Future<Output = anyhow::Result<SceneView>>> {
+) -> Vec<impl Future<Output = anyhow::Result<SceneView>> + use<>> {
     let iter = scene
         .frames
         .into_iter()

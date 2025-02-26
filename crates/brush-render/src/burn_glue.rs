@@ -1,12 +1,9 @@
 use std::marker::PhantomData;
 
 use burn::tensor::{ops::FloatTensor, DType};
-use burn_fusion::{client::FusionClient, stream::Operation, Fusion};
+use burn_cubecl::{fusion::FusionCubeRuntime, BoolElement, FloatElement, IntElement};
+use burn_fusion::{client::FusionClient, stream::Operation, Fusion, FusionHandle};
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
-use burn_jit::{
-    fusion::{FusionJitRuntime, JitFusionHandle},
-    BoolElement, FloatElement, IntElement,
-};
 use burn_wgpu::WgpuRuntime;
 
 use crate::{
@@ -62,9 +59,12 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatForward<Self>
         }
 
         impl<F: FloatElement, I: IntElement, BT: BoolElement>
-            Operation<FusionJitRuntime<WgpuRuntime, BT>> for CustomOp<F, I, BT>
+            Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp<F, I, BT>
         {
-            fn execute(self: Box<Self>, h: &mut HandleContainer<JitFusionHandle<WgpuRuntime>>) {
+            fn execute(
+                self: Box<Self>,
+                h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
+            ) {
                 let (
                     [means, log_scales, quats, sh_coeffs, raw_opacity],
                     [projected_splats, uniforms_buffer, num_intersections, num_visible, final_index, tile_offsets, compact_gid_from_isect, global_from_compact_gid, radii, out_img],

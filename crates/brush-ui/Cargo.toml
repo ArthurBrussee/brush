@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 burn.workspace = true
 burn-fusion.workspace = true
-burn-jit.workspace = true
+burn-cubecl.workspace = true
 brush-render.path = "../brush-render"
 
 glam.workspace = true

@@ -1,5 +1,5 @@
-use burn_jit::cubecl;
-use burn_jit::cubecl::{cube, prelude::*};
+use burn_cubecl::cubecl;
+use burn_cubecl::cubecl::{cube, prelude::*};
 
 #[cube(launch)]
 #[allow(clippy::useless_conversion)]

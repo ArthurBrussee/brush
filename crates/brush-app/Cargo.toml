@@ -27,7 +27,7 @@ rrfd.path = "../rrfd"
 
 burn-wgpu.workspace = true
 burn.workspace = true
-burn-jit.workspace = true
+burn-cubecl.workspace = true
 
 glam.workspace = true
 

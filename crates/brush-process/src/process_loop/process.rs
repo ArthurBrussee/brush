@@ -3,28 +3,28 @@ use std::path::Path;
 use anyhow::Context;
 use burn::prelude::Backend;
 use burn::tensor::backend::AutodiffBackend;
-use burn_jit::cubecl::Runtime;
+use burn_cubecl::cubecl::Runtime;
 use web_time::Instant;
 
 use crate::{data_source::DataSource, rerun_tools::VisualizeTools};
-use brush_dataset::{brush_vfs::BrushVfs, splat_import, Dataset};
+use brush_dataset::{Dataset, brush_vfs::BrushVfs, splat_import};
 use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
 use brush_train::train::{RefineStats, TrainBack, TrainStepStats};
 use burn::{backend::Autodiff, module::AutodiffModule};
 use burn_wgpu::{Wgpu, WgpuDevice, WgpuRuntime};
 use glam::Vec3;
 use rand::SeedableRng;
-use tokio::sync::mpsc::{channel, UnboundedSender};
-use tokio::sync::mpsc::{unbounded_channel, Receiver};
+use tokio::sync::mpsc::{Receiver, unbounded_channel};
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
+use tokio::sync::mpsc::{UnboundedSender, channel};
 use tokio_stream::StreamExt;
 
 #[allow(unused)]
 use brush_dataset::splat_export;
 
 use super::{
-    train_stream::{self, train_stream},
     ProcessArgs,
+    train_stream::{self, train_stream},
 };
 
 pub enum ProcessMessage {
@@ -380,7 +380,6 @@ async fn train_process_loop(
                     }
                 }
 
-                // TODO: Should depend on the current compiler... ?
                 let client = WgpuRuntime::client(&device);
                 visualize.log_memory(iter, &client.memory_usage())?;
 

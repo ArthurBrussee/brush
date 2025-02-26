@@ -13,8 +13,7 @@ pub struct EvalSample<B: Backend> {
 
     pub view: SceneView,
     pub rendered: Tensor<B, 3>,
-    // TODO: Maybe these are better kept as tensors too,
-    // but would complicate displaying things in the stats panel a bit.
+
     pub psnr: Tensor<B, 1>,
     pub ssim: Tensor<B, 1>,
     pub aux: RenderAux<B>,

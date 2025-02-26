@@ -6,10 +6,11 @@ use std::{
 
 use super::DataStream;
 use crate::{
+    Dataset, LoadDataseConfig,
     brush_vfs::BrushVfs,
     formats::{clamp_img_to_max_size, find_mask_path, load_image},
     splat_import::SplatMessage,
-    stream_fut_parallel, Dataset, LoadDataseConfig,
+    stream_fut_parallel,
 };
 use anyhow::{Context, Result};
 use async_fn_stream::try_fn_stream;
@@ -65,7 +66,7 @@ fn find_mask_and_img(vfs: &BrushVfs, paths: &[PathBuf]) -> Result<(PathBuf, Opti
 
 async fn read_views(
     vfs: BrushVfs,
-    load_args: &LoadDataseConfig,
+    load_args: LoadDataseConfig,
 ) -> Result<Vec<impl Future<Output = Result<SceneView>>>> {
     log::info!("Loading colmap dataset");
     let mut vfs = vfs;
@@ -107,7 +108,6 @@ async fn read_views(
         .take(load_args.max_frames.unwrap_or(usize::MAX))
         .map(move |(_, img_info)| {
             let cam_data = cam_model_data[&img_info.camera_id].clone();
-            let load_args = load_args.clone();
             let mut vfs = vfs.clone();
 
             // Create a future to handle loading the image.
@@ -163,7 +163,7 @@ pub(crate) async fn load_dataset<B: Backend>(
     load_args: &LoadDataseConfig,
     device: &B::Device,
 ) -> Result<(DataStream<SplatMessage<B>>, DataStream<Dataset>)> {
-    let mut handles = read_views(vfs.clone(), load_args).await?;
+    let mut handles = read_views(vfs.clone(), load_args.clone()).await?;
 
     if let Some(subsample) = load_args.subsample_frames {
         handles = handles.into_iter().step_by(subsample as usize).collect();

@@ -6,8 +6,8 @@ use burn::tensor::DType;
 use burn::tensor::Int;
 use burn::tensor::Tensor;
 use burn::tensor::TensorMetadata;
-use burn_jit::JitBackend;
-use burn_wgpu::JitTensor;
+use burn_cubecl::CubeBackend;
+use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
 use shaders::sort_count;
 use shaders::sort_reduce;
@@ -31,11 +31,11 @@ kernel_source_gen!(SortScan {}, sort_scan);
 kernel_source_gen!(SortScatter {}, sort_scatter);
 
 pub fn radix_argsort(
-    input_keys: JitTensor<WgpuRuntime>,
-    input_values: JitTensor<WgpuRuntime>,
-    n_sort: &JitTensor<WgpuRuntime>,
+    input_keys: CubeTensor<WgpuRuntime>,
+    input_values: CubeTensor<WgpuRuntime>,
+    n_sort: &CubeTensor<WgpuRuntime>,
     sorting_bits: u32,
-) -> (JitTensor<WgpuRuntime>, JitTensor<WgpuRuntime>) {
+) -> (CubeTensor<WgpuRuntime>, CubeTensor<WgpuRuntime>) {
     assert_eq!(
         input_keys.shape.dims[0], input_values.shape.dims[0],
         "Input keys and values must have the same number of elements"
@@ -54,16 +54,16 @@ pub fn radix_argsort(
     let max_needed_wgs = max_n.div_ceil(BLOCK_SIZE);
 
     let num_wgs = create_dispatch_buffer(n_sort.clone(), [BLOCK_SIZE, 1, 1]);
-    let num_reduce_wgs: Tensor<JitBackend<WgpuRuntime, f32, i32, u32>, 1, Int> =
+    let num_reduce_wgs: Tensor<CubeBackend<WgpuRuntime, f32, i32, u32>, 1, Int> =
         Tensor::from_primitive(create_dispatch_buffer(num_wgs.clone(), [BLOCK_SIZE, 1, 1]))
             * Tensor::from_ints([BIN_COUNT, 1, 1], device);
-    let num_reduce_wgs: JitTensor<WgpuRuntime> = num_reduce_wgs.into_primitive();
+    let num_reduce_wgs: CubeTensor<WgpuRuntime> = num_reduce_wgs.into_primitive();
 
     let mut cur_keys = input_keys;
     let mut cur_vals = input_values;
 
     for pass in 0..sorting_bits.div_ceil(4) {
-        let uniforms_buffer: JitTensor<WgpuRuntime> = create_uniform_buffer(
+        let uniforms_buffer: CubeTensor<WgpuRuntime> = create_uniform_buffer(
             shaders::sort_count::Uniforms { shift: pass * 4 },
             device,
             client,
@@ -164,10 +164,10 @@ pub fn radix_argsort(
 mod tests {
     use crate::radix_argsort;
     use burn::tensor::{Int, Tensor};
-    use burn_wgpu::{JitBackend, WgpuRuntime};
+    use burn_wgpu::{CubeBackend, WgpuRuntime};
     use rand::Rng;
 
-    type Backend = JitBackend<WgpuRuntime, f32, i32, u32>;
+    type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
 
     pub fn argsort<T: Ord>(data: &[T]) -> Vec<usize> {
         let mut indices = (0..data.len()).collect::<Vec<_>>();

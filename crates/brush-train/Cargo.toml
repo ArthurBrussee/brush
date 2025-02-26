@@ -18,7 +18,7 @@ log.workspace = true
 hashbrown.workspace = true
 
 burn.workspace = true
-burn-jit.workspace = true
+burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
 
