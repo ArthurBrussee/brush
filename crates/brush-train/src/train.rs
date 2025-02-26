@@ -465,9 +465,9 @@ impl SplatTrainer {
 
         let device = splats.means.device();
 
-        let is_grad_high = refiner
-            .refine_weight()
-            .greater_equal_elem(self.config.densify_grad_thresh);
+        let (refine_weight, max_radii) = refiner.into_stats();
+
+        let is_grad_high = refine_weight.greater_equal_elem(self.config.densify_grad_thresh);
         let split_clone_size_mask = splats
             .scales()
             .inner()
@@ -529,9 +529,7 @@ impl SplatTrainer {
         .all_dim(1)
         .squeeze::<1>(1);
 
-        let radii_grow = refiner
-            .max_radii()
-            .greater_elem(self.config.densify_radius_threshold);
+        let radii_grow = max_radii.greater_elem(self.config.densify_radius_threshold);
 
         let split_mask = Tensor::stack::<2>(vec![split_mask, radii_grow], 1)
             .any_dim(1)
@@ -592,19 +590,7 @@ impl SplatTrainer {
             .val()
             .inner()
             .lower_elem(inverse_sigmoid(MIN_OPACITY));
-        let (mut splats, alpha_pruned) = prune_points(splats, &mut record, alpha_mask).await;
-
-        // Slowly lower opacity.
-        if self.config.opac_refine_subtract > 0.0 {
-            splats.raw_opacity = splats.raw_opacity.map(|op| {
-                Tensor::from_inner(
-                    inv_sigmoid(
-                        (sigmoid(op.inner()) - self.config.opac_refine_subtract).clamp_min(1e-3),
-                    )
-                    .require_grad(),
-                )
-            });
-        }
+        let (splats, alpha_pruned) = prune_points(splats, &mut record, alpha_mask).await;
 
         // Delete Gaussians with too large of a radius in world-units.
         let scale_big = splats
@@ -642,6 +628,17 @@ impl SplatTrainer {
             map_opt::<_, 1>(splats.raw_opacity.id, &mut record, &|s| {
                 Tensor::zeros_like(&s)
             });
+        } else {
+            // Slowly lower opacity.
+            if self.config.opac_refine_subtract > 0.0 {
+                splats.raw_opacity = splats.raw_opacity.map(|op| {
+                    let op = op.inner();
+                    let lowered = inv_sigmoid(
+                        (sigmoid(op) - self.config.opac_refine_subtract).clamp_min(1e-3),
+                    );
+                    Tensor::from_inner(lowered).require_grad()
+                });
+            }
         }
 
         // Stats don't line up anymore so have to reset them.

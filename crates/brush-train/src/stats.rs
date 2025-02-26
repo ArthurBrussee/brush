@@ -88,12 +88,13 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> RefineRecord<Fused<F, I, B
             h as u32,
         );
     }
+}
 
-    pub fn max_radii(&self) -> Tensor<Fused<F, I, BT>, 1> {
-        self.max_radii.clone()
-    }
-
-    pub fn refine_weight(&self) -> Tensor<Fused<F, I, BT>, 1> {
-        self.refine_weight_norm.clone() / self.visible_counts.clone().clamp_min(1).float()
+impl<B: Backend> RefineRecord<B> {
+    pub fn into_stats(self) -> (Tensor<B, 1>, Tensor<B, 1>) {
+        (
+            self.refine_weight_norm / self.visible_counts.clamp_min(1).float(),
+            self.max_radii,
+        )
     }
 }
