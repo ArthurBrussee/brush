@@ -180,7 +180,7 @@ fn main(
                     let v_rgb = select(vec3f(0.0), fac * v_out.rgb, color.rgb > vec3f(0.0));
                     v_colors = vec4f(v_rgb, vis * v_alpha);
 
-                    v_refine = v_xy;
+                    v_refine = abs(v_xy);
                 }
             }
 

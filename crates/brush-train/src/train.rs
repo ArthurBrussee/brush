@@ -87,8 +87,8 @@ pub struct TrainConfig {
     opac_refine_subtract: f32,
 
     /// Threshold for positional gradient norm
-    #[config(default = 0.0002)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.0002")]
+    #[config(default = 0.0006)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0006")]
     densify_grad_thresh: f32,
 
     /// Gaussians bigger than this size in screenspace radius are split
