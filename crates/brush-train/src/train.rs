@@ -92,13 +92,13 @@ pub struct TrainConfig {
     opac_loss_weight: f32,
 
     /// How much opacity to subtrat every refine step.
-    #[config(default = 0.004)]
-    #[arg(long, help_heading = "Training options", default_value = "0.004")]
+    #[config(default = 0.005)]
+    #[arg(long, help_heading = "Training options", default_value = "0.005")]
     opac_refine_subtract: f32,
 
     /// Threshold for positional gradient norm
-    #[config(default = 0.0006)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.0006")]
+    #[config(default = 0.0005)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0005")]
     densify_grad_thresh: f32,
 
     /// Period before refinement starts.
@@ -107,13 +107,13 @@ pub struct TrainConfig {
     refine_start_iter: u32,
 
     /// Period after which refinement stops.
-    #[config(default = 15000)]
-    #[arg(long, help_heading = "Refine options", default_value = "15000")]
+    #[config(default = 20000)]
+    #[arg(long, help_heading = "Refine options", default_value = "20000")]
     growth_stop_iter: u32,
 
     /// Period after which refinement stops.
-    #[config(default = 25000)]
-    #[arg(long, help_heading = "Refine options", default_value = "25000")]
+    #[config(default = 27500)]
+    #[arg(long, help_heading = "Refine options", default_value = "27500")]
     refine_stop_iter: u32,
 
     /// Period of steps where gaussians are culled and densified
