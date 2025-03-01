@@ -62,8 +62,8 @@ pub struct TrainConfig {
     mean_noise_weight: f32,
 
     /// Learning rate for the basic coefficients.
-    #[config(default = 2e-3)]
-    #[arg(long, help_heading = "Training options", default_value = "2e-3")]
+    #[config(default = 3e-3)]
+    #[arg(long, help_heading = "Training options", default_value = "3e-3")]
     lr_coeffs_dc: f64,
 
     /// How much to divide the learning rate by for higher SH orders.
@@ -92,23 +92,23 @@ pub struct TrainConfig {
     opac_loss_weight: f32,
 
     /// How much opacity to subtrat every refine step.
-    #[config(default = 0.006)]
-    #[arg(long, help_heading = "Training options", default_value = "0.006")]
+    #[config(default = 0.004)]
+    #[arg(long, help_heading = "Training options", default_value = "0.004")]
     opac_refine_subtract: f32,
 
     /// Threshold for positional gradient norm
-    #[config(default = 0.0011)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.0011")]
+    #[config(default = 0.00125)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.00125")]
     densify_grad_thresh: f32,
 
     /// Period before refinement starts.
-    #[config(default = 0)]
-    #[arg(long, help_heading = "Refine options", default_value = "200")]
+    #[config(default = 500)]
+    #[arg(long, help_heading = "Refine options", default_value = "500")]
     refine_start_iter: u32,
 
     /// Period after which refinement stops.
-    #[config(default = 10000)]
-    #[arg(long, help_heading = "Refine options", default_value = "10000")]
+    #[config(default = 15000)]
+    #[arg(long, help_heading = "Refine options", default_value = "15000")]
     growth_stop_iter: u32,
 
     /// Period after which refinement stops.
