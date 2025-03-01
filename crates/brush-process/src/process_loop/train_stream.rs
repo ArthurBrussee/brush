@@ -50,9 +50,7 @@ pub(crate) fn train_stream(
             let batch = dataloader.next_batch().await;
 
             let (new_splats, stats) = trainer.step(scene_extent, iter, batch, splats);
-            let (new_splats, refine) = trainer
-                .refine_if_needed(iter, new_splats, scene_extent)
-                .await;
+            let (new_splats, refine) = trainer.refine_if_needed(iter, new_splats).await;
             splats = new_splats;
 
             emitter

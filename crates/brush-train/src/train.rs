@@ -18,6 +18,7 @@ use burn::tensor::backend::AutodiffBackend;
 use burn::tensor::{Bool, Distribution, Int, TensorData, TensorPrimitive};
 use burn::{config::Config, optim::GradientsParams, tensor::Tensor};
 use hashbrown::{HashMap, HashSet};
+use rand::seq::IndexedRandom;
 use tracing::trace_span;
 
 use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
@@ -28,13 +29,13 @@ use crate::ssim::Ssim;
 use crate::stats::RefineRecord;
 use clap::Args;
 
-const MIN_OPACITY: f32 = 0.5 / 255.0;
+const MIN_OPACITY: f32 = 0.99 / 255.0;
 
 #[derive(Config, Args)]
 pub struct TrainConfig {
     /// Total number of steps to train for.
-    #[config(default = 35000)]
-    #[arg(long, help_heading = "Training options", default_value = "35000")]
+    #[config(default = 30000)]
+    #[arg(long, help_heading = "Training options", default_value = "30000")]
     pub total_steps: u32,
 
     /// Weight of SSIM loss (compared to l1 loss)
@@ -53,8 +54,8 @@ pub struct TrainConfig {
     lr_mean: f64,
 
     /// Start learning rate for the mean.
-    #[config(default = 1e-6)]
-    #[arg(long, help_heading = "Training options", default_value = "1e-6")]
+    #[config(default = 2e-7)]
+    #[arg(long, help_heading = "Training options", default_value = "2e-7")]
     lr_mean_end: f64,
 
     #[config(default = 5e4)]
@@ -86,24 +87,19 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "1e-3")]
     lr_rotation: f64,
 
-    /// Weight of mean-opacity loss.
-    #[config(default = 0.0)]
-    #[arg(long, help_heading = "Training options", default_value = "0.0")]
-    opac_loss_weight: f32,
-
     /// How much opacity to subtrat every refine step.
-    #[config(default = 0.005)]
-    #[arg(long, help_heading = "Training options", default_value = "0.005")]
+    #[config(default = 0.007)]
+    #[arg(long, help_heading = "Training options", default_value = "0.007")]
     opac_refine_subtract: f32,
 
     /// Threshold for positional gradient norm
-    #[config(default = 0.0005)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.0005")]
+    #[config(default = 0.0007)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0007")]
     densify_grad_thresh: f32,
 
     /// Period before refinement starts.
-    #[config(default = 500)]
-    #[arg(long, help_heading = "Refine options", default_value = "500")]
+    #[config(default = 200)]
+    #[arg(long, help_heading = "Refine options", default_value = "200")]
     refine_start_iter: u32,
 
     /// Period after which refinement stops.
@@ -283,7 +279,7 @@ impl SplatTrainer {
             l1_rgb
         };
 
-        let mut loss = if batch.gt_view.image.color().has_alpha() {
+        let loss = if batch.gt_view.image.color().has_alpha() {
             let alpha_input = batch.gt_image.clone().slice([0..img_h, 0..img_w, 3..4]);
 
             match batch.gt_view.img_type {
@@ -299,12 +295,6 @@ impl SplatTrainer {
         } else {
             total_err.mean()
         };
-
-        // Add in opacity loss if enabled.
-        if self.config.opac_loss_weight > 0.0 {
-            let opac_loss = splats.opacity().mean();
-            loss = loss + opac_loss * self.config.opac_loss_weight;
-        }
 
         let mut grads = trace_span!("Backward pass", sync_burn = true).in_scope(|| loss.backward());
 
@@ -447,12 +437,11 @@ impl SplatTrainer {
         &mut self,
         iter: u32,
         splats: Splats<TrainBack>,
-        scene_extent: f32,
     ) -> (Splats<TrainBack>, Option<RefineStats>) {
         if iter > 0 && iter % self.config.refine_every == 0 {
             // If not refining, update splat to step with gradients applied.
             if iter >= self.config.refine_start_iter && iter < self.config.refine_stop_iter {
-                let (splats, refine) = self.refine_splats(iter, splats, scene_extent).await;
+                let (splats, refine) = self.refine_splats(iter, splats).await;
                 (splats, Some(refine))
             } else {
                 (splats, None)
@@ -466,7 +455,6 @@ impl SplatTrainer {
         &mut self,
         iter: u32,
         mut splats: Splats<TrainBack>,
-        scene_extent: f32,
     ) -> (Splats<TrainBack>, RefineStats) {
         // TODO: Max splats.
         // TODO: Consistent grow function?
@@ -499,53 +487,13 @@ impl SplatTrainer {
             .val()
             .inner()
             .lower_elem(inverse_sigmoid(MIN_OPACITY));
-
         let (mut splats, refiner, pruned_count) =
             prune_points(splats, &mut record, refiner, alpha_mask).await;
 
-        // Collect growth stats.
-        let (avg_refine_grad, max_radii) = refiner.into_stats();
-
-        // let radii_grow = max_radii
-        //     .clone()
-        //     .greater_elem(self.config.densify_radius_threshold);
-
-        let refine_weight_data = avg_refine_grad
-            .to_data_async()
-            .await
-            .to_vec::<f32>()
-            .expect("Failed to convert refine weights");
-
-        let threshold_ids: Vec<_> = refine_weight_data
-            .iter()
-            .enumerate()
-            .filter(|(_, weight)| **weight > self.config.densify_grad_thresh)
-            .map(|(i, _)| i as u32)
-            .collect();
-
         // Grow to nr. of targe splats.
         let mut add_indices = HashSet::new();
-
-        let sample_high_grad_count = (threshold_ids.len() as f32 / 2.0).round() as usize;
-        let grow_count = sample_high_grad_count.saturating_sub(pruned_count as usize);
-
-        // Choose indices for high gradient splats.
-        if grow_count > 0 && iter < self.config.growth_stop_iter {
-            let growth_inds = multinomial_sample(
-                &refine_weight_data
-                    .iter()
-                    .map(|x| {
-                        if *x > self.config.densify_grad_thresh {
-                            1.0
-                        } else {
-                            0.0
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-                grow_count as u32,
-            );
-            add_indices.extend(growth_inds);
-        }
+        // Collect growth stats.
+        let (avg_refine_grad, max_radii) = refiner.into_stats();
 
         // Choose indices for splats that we replace.
         // TODO: Ideally this would sample from all indices minus the high gradient indices.
@@ -564,6 +512,27 @@ impl SplatTrainer {
                 .expect("Failed to read weights");
             let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
             add_indices.extend(resampled_inds);
+        }
+
+        // Slightly sad that arghwere creates a tensor that we then immediatly
+        // read.
+        let threshold_ids = avg_refine_grad
+            .greater_elem(self.config.densify_grad_thresh)
+            .argwhere_async()
+            .await
+            .to_data_async()
+            .await
+            .to_vec::<i32>()
+            .expect("Failed to convert refine weights");
+
+        let sample_high_grad_count = (threshold_ids.len() as f32 / 2.0).round() as usize;
+        let grow_count = sample_high_grad_count.saturating_sub(pruned_count as usize);
+
+        // Choose indices for high gradient splats.
+        if grow_count > 0 && iter < self.config.growth_stop_iter {
+            let mut rng = rand::rng();
+            let growth_inds = threshold_ids.choose_multiple(&mut rng, grow_count);
+            add_indices.extend(growth_inds);
         }
 
         let refine_count = add_indices.len();
@@ -669,7 +638,7 @@ impl SplatTrainer {
 }
 
 fn map_splats_and_opt<B: AutodiffBackend>(
-    splats: Splats<B>,
+    mut splats: Splats<B>,
     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, B>>,
     map_mean: impl FnOnce(Tensor<B::InnerBackend, 2>) -> Tensor<B::InnerBackend, 2>,
     map_rotation: impl FnOnce(Tensor<B::InnerBackend, 2>) -> Tensor<B::InnerBackend, 2>,
@@ -683,31 +652,32 @@ fn map_splats_and_opt<B: AutodiffBackend>(
     map_opt_coeffs: impl Fn(Tensor<B::InnerBackend, 3>) -> Tensor<B::InnerBackend, 3>,
     map_opt_opac: impl Fn(Tensor<B::InnerBackend, 1>) -> Tensor<B::InnerBackend, 1>,
 ) -> Splats<B> {
-    let new_splats = Splats {
-        means: splats
-            .means
-            .map(|x| Tensor::from_inner(map_mean(x.inner())).require_grad()),
-        rotation: splats
-            .rotation
-            .map(|x| Tensor::from_inner(map_rotation(x.inner())).require_grad()),
-        log_scales: splats
-            .log_scales
-            .map(|x| Tensor::from_inner(map_scale(x.inner())).require_grad()),
-        sh_coeffs: splats
-            .sh_coeffs
-            .map(|x| Tensor::from_inner(map_coeffs(x.inner())).require_grad()),
-        raw_opacity: splats
-            .raw_opacity
-            .map(|x| Tensor::from_inner(map_opac(x.inner())).require_grad()),
-    };
+    splats.means = splats
+        .means
+        .map(|x| Tensor::from_inner(map_mean(x.inner())).require_grad());
+    map_opt(splats.means.id, record, &map_opt_mean);
 
-    map_opt(new_splats.means.id, record, &map_opt_mean);
-    map_opt(new_splats.rotation.id, record, &map_opt_rotation);
-    map_opt(new_splats.log_scales.id, record, &map_opt_scale);
-    map_opt(new_splats.sh_coeffs.id, record, &map_opt_coeffs);
-    map_opt(new_splats.raw_opacity.id, record, &map_opt_opac);
+    splats.rotation = splats
+        .rotation
+        .map(|x| Tensor::from_inner(map_rotation(x.inner())).require_grad());
+    map_opt(splats.rotation.id, record, &map_opt_rotation);
 
-    new_splats
+    splats.log_scales = splats
+        .log_scales
+        .map(|x| Tensor::from_inner(map_scale(x.inner())).require_grad());
+    map_opt(splats.log_scales.id, record, &map_opt_scale);
+
+    splats.sh_coeffs = splats
+        .sh_coeffs
+        .map(|x| Tensor::from_inner(map_coeffs(x.inner())).require_grad());
+    map_opt(splats.sh_coeffs.id, record, &map_opt_coeffs);
+
+    splats.raw_opacity = splats
+        .raw_opacity
+        .map(|x| Tensor::from_inner(map_opac(x.inner())).require_grad());
+    map_opt(splats.raw_opacity.id, record, &map_opt_opac);
+
+    splats
 }
 
 fn map_opt<B: AutodiffBackend, const D: usize>(
@@ -745,9 +715,7 @@ async fn prune_points<B: AutodiffBackend>(
         "Prune mask must have same number of elements as splats"
     );
 
-    // bool[n]. If True, delete these Gaussians.
     let prune_count = prune.dims()[0];
-
     if prune_count == 0 {
         return (splats, refiner, 0);
     }
