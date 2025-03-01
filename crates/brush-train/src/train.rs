@@ -97,8 +97,8 @@ pub struct TrainConfig {
     opac_refine_subtract: f32,
 
     /// Threshold for positional gradient norm
-    #[config(default = 0.00125)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.00125")]
+    #[config(default = 0.0006)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0006")]
     densify_grad_thresh: f32,
 
     /// Period before refinement starts.
@@ -526,10 +526,11 @@ impl SplatTrainer {
         // Grow to nr. of targe splats.
         let mut add_indices = HashSet::new();
 
-        let sample_high_grad = threshold_ids.len();
+        let sample_high_grad_count = (threshold_ids.len() as f32 / 2.0).round() as usize;
+        let grow_count = sample_high_grad_count.saturating_sub(pruned_count as usize);
 
         // Choose indices for high gradient splats.
-        if sample_high_grad > 0 && iter < self.config.growth_stop_iter {
+        if grow_count > 0 && iter < self.config.growth_stop_iter {
             let growth_inds = multinomial_sample(
                 &refine_weight_data
                     .iter()
@@ -541,7 +542,7 @@ impl SplatTrainer {
                         }
                     })
                     .collect::<Vec<_>>(),
-                threshold_ids.len() as u32,
+                grow_count as u32,
             );
             add_indices.extend(growth_inds);
         }
