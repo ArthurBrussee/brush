@@ -48,21 +48,22 @@ pub struct TrainConfig {
     #[clap(long, help_heading = "Training options", default_value = "11")]
     ssim_window_size: usize,
 
-    /// Start learning rate for the mean.
+    /// Start learning rate for the mean parameters.
     #[config(default = 1e-4)]
     #[arg(long, help_heading = "Training options", default_value = "1e-4")]
     lr_mean: f64,
 
-    /// Start learning rate for the mean.
+    /// Start learning rate for the mean parameters.
     #[config(default = 2e-7)]
     #[arg(long, help_heading = "Training options", default_value = "2e-7")]
     lr_mean_end: f64,
 
+    /// How much noise to add to the mean parameters of low opacity gaussians.
     #[config(default = 5e4)]
     #[arg(long, help_heading = "Training options", default_value = "5e4")]
     mean_noise_weight: f32,
 
-    /// Learning rate for the basic coefficients.
+    /// Learning rate for the base SH (RGB) coefficients.
     #[config(default = 3e-3)]
     #[arg(long, help_heading = "Training options", default_value = "3e-3")]
     lr_coeffs_dc: f64,
@@ -72,47 +73,47 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "20.0")]
     lr_coeffs_sh_scale: f32,
 
-    /// Learning rate for the opacity.
+    /// Learning rate for the opacity parameter.
     #[config(default = 3e-2)]
     #[arg(long, help_heading = "Training options", default_value = "3e-2")]
     lr_opac: f64,
 
-    /// Learning rate for the scale.
+    /// Learning rate for the scale parameters.
     #[config(default = 6e-3)]
     #[arg(long, help_heading = "Training options", default_value = "6e-3")]
     lr_scale: f64,
 
-    /// Learning rate for the rotation.
+    /// Learning rate for the rotation parameters.
     #[config(default = 1e-3)]
     #[arg(long, help_heading = "Training options", default_value = "1e-3")]
     lr_rotation: f64,
 
-    /// How much opacity to subtrat every refine step.
+    /// How much opacity to subtract on every refine step.
     #[config(default = 0.007)]
     #[arg(long, help_heading = "Training options", default_value = "0.007")]
     opac_refine_subtract: f32,
 
-    /// Threshold for positional gradient norm
+    /// Threshold to control splat growth. Lower means faster growth.
     #[config(default = 0.0007)]
     #[arg(long, help_heading = "Refine options", default_value = "0.0007")]
     densify_grad_thresh: f32,
 
-    /// Period before refinement starts.
+    /// Period before any refinement or growth starts.
     #[config(default = 200)]
     #[arg(long, help_heading = "Refine options", default_value = "200")]
     refine_start_iter: u32,
 
-    /// Period after which refinement stops.
+    /// Period after which splat growth stops.
     #[config(default = 20000)]
     #[arg(long, help_heading = "Refine options", default_value = "20000")]
     growth_stop_iter: u32,
 
-    /// Period after which refinement stops.
+    /// Period after which refinement stops (culling & replacing dead gaussians).
     #[config(default = 27500)]
     #[arg(long, help_heading = "Refine options", default_value = "27500")]
     refine_stop_iter: u32,
 
-    /// Period of steps where gaussians are culled and densified
+    /// Frequency of refinement, where gaussians are replaced and densified.
     #[config(default = 100)]
     #[arg(long, help_heading = "Refine options", default_value = "100")]
     refine_every: u32,
