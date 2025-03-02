@@ -97,6 +97,11 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "0.0007")]
     densify_grad_thresh: f32,
 
+    /// Which % of gaussians above the threshold to grow each refine.
+    #[config(default = 0.5)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.5")]
+    threshold_grow_factor: f32,
+
     /// Period before any refinement or growth starts.
     #[config(default = 200)]
     #[arg(long, help_heading = "Refine options", default_value = "200")]
@@ -121,6 +126,11 @@ pub struct TrainConfig {
     #[config(default = 0.1)]
     #[arg(long, help_heading = "Refine options", default_value = "0.1")]
     match_alpha_weight: f32,
+
+    /// Maximum number of splats in the scene.
+    #[config(default = 10000000)]
+    #[arg(long, help_heading = "Refine options", default_value = "10000000")]
+    max_splats: u32,
 }
 
 pub type TrainBack = Autodiff<Wgpu>;
@@ -481,6 +491,8 @@ impl SplatTrainer {
             });
         }
 
+        let cur_splat_count = splats.num_splats();
+
         // Remove barely visible gaussians and delete Gaussians with too large of a radius in world-units.
         let alpha_mask = splats
             .raw_opacity
@@ -496,8 +508,6 @@ impl SplatTrainer {
         let (avg_refine_grad, max_radii) = refiner.into_stats();
 
         // Choose indices for splats that we replace.
-        // TODO: Ideally this would sample from all indices minus the high gradient indices.
-        // For now it's easier to just sample N indices and add them to the hashset.
         if pruned_count > 0 {
             // Sample from random opacities.
             //
@@ -514,25 +524,31 @@ impl SplatTrainer {
             add_indices.extend(resampled_inds);
         }
 
-        // Slightly sad that arghwere creates a tensor that we then immediatly
-        // read.
-        let threshold_ids = avg_refine_grad
-            .greater_elem(self.config.densify_grad_thresh)
-            .argwhere_async()
-            .await
-            .to_data_async()
-            .await
-            .to_vec::<i32>()
-            .expect("Failed to convert refine weights");
+        if iter < self.config.growth_stop_iter {
+            let threshold_ids = avg_refine_grad
+                .greater_elem(self.config.densify_grad_thresh)
+                .argwhere_async()
+                .await
+                .to_data_async()
+                .await
+                .to_vec::<i32>()
+                .expect("Failed to convert refine weights");
 
-        let sample_high_grad_count = (threshold_ids.len() as f32 / 2.0).round() as usize;
-        let grow_count = sample_high_grad_count.saturating_sub(pruned_count as usize);
+            // Figure out how many splats to grow. Could just grow all splats above the threshold straight away
+            // but that seems to perform a bit worse.
+            let sample_high_grad_count =
+                (threshold_ids.len() as f32 * self.config.threshold_grow_factor).round() as usize;
+            let grow_count = sample_high_grad_count.saturating_sub(pruned_count as usize);
 
-        // Choose indices for high gradient splats.
-        if grow_count > 0 && iter < self.config.growth_stop_iter {
-            let mut rng = rand::rng();
-            let growth_inds = threshold_ids.choose_multiple(&mut rng, grow_count);
-            add_indices.extend(growth_inds);
+            // Only grow up to max splats.
+            let grow_count =
+                grow_count.min(self.config.max_splats.saturating_sub(cur_splat_count) as usize);
+
+            if grow_count > 0 {
+                let mut rng = rand::rng();
+                let growth_inds = threshold_ids.choose_multiple(&mut rng, grow_count);
+                add_indices.extend(growth_inds);
+            }
         }
 
         let refine_count = add_indices.len();
