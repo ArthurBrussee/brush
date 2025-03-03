@@ -127,6 +127,11 @@ pub struct TrainConfig {
     #[config(default = 0.1)]
     #[arg(long, help_heading = "Refine options", default_value = "0.1")]
     match_alpha_weight: f32,
+
+    /// Max nr. of splats. This is an upper bound, but the actual final number of splats might be lower than this.
+    #[config(default = 10000000)]
+    #[arg(long, help_heading = "Refine options", default_value = "10000000")]
+    max_splats: u32,
 }
 
 pub type TrainBack = Autodiff<Wgpu>;
@@ -307,12 +312,8 @@ impl SplatTrainer {
             total_err.mean()
         };
 
-        // Small hack: Keep alpha going for a biiit longer than when we stop refining to push
-        // out some almost dead gaussians. Gaussians that are optimized to be dead "naturally" will
-        // still be culled.
-        let end_alpha_loss_iter = self.config.refine_stop_iter + self.config.refine_every * 10;
-
-        let loss = if self.config.opac_loss_weight > 0.0 && iter < end_alpha_loss_iter {
+        // Lower alpha as long as refine is going.
+        let loss = if self.config.opac_loss_weight > 0.0 && iter <= self.config.refine_stop_iter {
             loss + splats.opacities().mean() * self.config.opac_loss_weight
         } else {
             loss
@@ -520,6 +521,11 @@ impl SplatTrainer {
                     .expect("Failed to convert refine weights");
                 let sample_high_grad_count = (threshold_ids.len() as f32).round() as usize;
                 let grow_count = sample_high_grad_count.saturating_sub(pruned_count as usize);
+
+                // Maximally grow to max nr. of splats.
+                let cur_splats = splats.num_splats() + pruned_count;
+                let grow_count = grow_count.min((self.config.max_splats - cur_splats) as usize);
+
                 if grow_count > 0 {
                     let mut rng = rand::rng();
                     let growth_inds = threshold_ids.choose_multiple(&mut rng, grow_count);
