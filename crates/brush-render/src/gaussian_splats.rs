@@ -207,7 +207,7 @@ impl<B: Backend> Splats<B> {
         }
     }
 
-    pub fn opacity(&self) -> Tensor<B, 1> {
+    pub fn opacities(&self) -> Tensor<B, 1> {
         sigmoid(self.raw_opacity.val())
     }
 
