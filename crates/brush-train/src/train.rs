@@ -49,13 +49,13 @@ pub struct TrainConfig {
     ssim_window_size: usize,
 
     /// Start learning rate for the mean parameters.
-    #[config(default = 1e-4)]
-    #[arg(long, help_heading = "Training options", default_value = "1e-4")]
+    #[config(default = 5e-5)]
+    #[arg(long, help_heading = "Training options", default_value = "5e-5")]
     lr_mean: f64,
 
     /// Start learning rate for the mean parameters.
-    #[config(default = 2e-7)]
-    #[arg(long, help_heading = "Training options", default_value = "2e-7")]
+    #[config(default = 4e-7)]
+    #[arg(long, help_heading = "Training options", default_value = "4e-7")]
     lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
@@ -79,19 +79,24 @@ pub struct TrainConfig {
     lr_opac: f64,
 
     /// Learning rate for the scale parameters.
-    #[config(default = 6e-3)]
-    #[arg(long, help_heading = "Training options", default_value = "6e-3")]
+    #[config(default = 8e-3)]
+    #[arg(long, help_heading = "Training options", default_value = "8e-3")]
     lr_scale: f64,
+
+    /// Learning rate for the scale parameters.
+    #[config(default = 3e-3)]
+    #[arg(long, help_heading = "Training options", default_value = "3e-3")]
+    lr_scale_end: f64,
 
     /// Learning rate for the rotation parameters.
     #[config(default = 1e-3)]
     #[arg(long, help_heading = "Training options", default_value = "1e-3")]
     lr_rotation: f64,
 
-    /// How much opacity to subtract on every refine step.
-    #[config(default = 0.007)]
-    #[arg(long, help_heading = "Training options", default_value = "0.007")]
-    opac_refine_subtract: f32,
+    /// Weight of the opacity loss.
+    #[config(default = 0.01)]
+    #[arg(long, help_heading = "Training options", default_value = "0.01")]
+    opac_loss_weight: f32,
 
     /// Threshold to control splat growth. Lower means faster growth.
     #[config(default = 0.0007)]
@@ -99,18 +104,18 @@ pub struct TrainConfig {
     densify_grad_thresh: f32,
 
     /// Period before any refinement or growth starts.
-    #[config(default = 200)]
-    #[arg(long, help_heading = "Refine options", default_value = "200")]
+    #[config(default = 500)]
+    #[arg(long, help_heading = "Refine options", default_value = "500")]
     refine_start_iter: u32,
 
     /// Period after which splat growth stops.
-    #[config(default = 20000)]
-    #[arg(long, help_heading = "Refine options", default_value = "20000")]
+    #[config(default = 10000)]
+    #[arg(long, help_heading = "Refine options", default_value = "10000")]
     growth_stop_iter: u32,
 
     /// Period after which refinement stops (culling & replacing dead gaussians).
-    #[config(default = 27500)]
-    #[arg(long, help_heading = "Refine options", default_value = "27500")]
+    #[config(default = 25000)]
+    #[arg(long, help_heading = "Refine options", default_value = "25000")]
     refine_stop_iter: u32,
 
     /// Frequency of refinement, where gaussians are replaced and densified.
@@ -160,6 +165,7 @@ type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<TrainBack>, TrainBack>;
 pub struct SplatTrainer {
     config: TrainConfig,
     sched_mean: ExponentialLrScheduler,
+    sched_scale: ExponentialLrScheduler,
     ssim: Ssim<TrainBack>,
 
     refine_record: Option<RefineRecord<<TrainBack as AutodiffBackend>::InnerBackend>>,
@@ -227,9 +233,13 @@ impl SplatTrainer {
         let decay = (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_steps as f64);
         let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean, decay);
 
+        let decay = (config.lr_scale_end / config.lr_scale).powf(1.0 / config.total_steps as f64);
+        let lr_scale = ExponentialLrSchedulerConfig::new(config.lr_scale, decay);
+
         Self {
             config: config.clone(),
-            sched_mean: lr_mean.init().expect("Lr schedule must be valid."),
+            sched_mean: lr_mean.init().expect("Mean lr schedule must be valid."),
+            sched_scale: lr_scale.init().expect("Scale lr schedule must be valid."),
             optim: None,
             refine_record: None,
             ssim,
@@ -297,6 +307,12 @@ impl SplatTrainer {
             total_err.mean()
         };
 
+        let loss = if self.config.opac_loss_weight > 0.0 {
+            loss + splats.opacities().mean() * self.config.opac_loss_weight
+        } else {
+            loss
+        };
+
         let mut grads = trace_span!("Backward pass", sync_burn = true).in_scope(|| loss.backward());
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
@@ -304,7 +320,7 @@ impl SplatTrainer {
             self.config.lr_rotation,
             // Scale is relative to the scene scale, but the exp() activation function
             // means "offsetting" all values also solves the learning rate scaling.
-            self.config.lr_scale,
+            self.sched_scale.step(),
             self.config.lr_coeffs_dc,
             self.config.lr_opac,
         );
@@ -397,7 +413,7 @@ impl SplatTrainer {
             // let the splats settle in without noise, not much point in exploring regions anymore.
             // trace_span!("Noise means").in_scope(|| {
             let one = Tensor::ones([1], &device);
-            let noise_weight = (one - splats.opacity().inner()).powf_scalar(100.0);
+            let noise_weight = (one - splats.opacities().inner()).powf_scalar(100.0);
             let noise_weight = noise_weight * aux.radii.inner().greater_elem(0.0).float(); // Only noise visible gaussians.
             let noise_weight = noise_weight.unsqueeze_dim(1);
 
@@ -455,7 +471,7 @@ impl SplatTrainer {
     async fn refine_splats(
         &mut self,
         iter: u32,
-        mut splats: Splats<TrainBack>,
+        splats: Splats<TrainBack>,
     ) -> (Splats<TrainBack>, RefineStats) {
         // TODO: Max splats.
         // TODO: Consistent grow function?
@@ -471,17 +487,6 @@ impl SplatTrainer {
             .take()
             .expect("Can only refine if refine stats are initialized");
 
-        // Slowly lower opacity.
-        if self.config.opac_refine_subtract > 0.0 {
-            splats.raw_opacity = splats.raw_opacity.map(|op| {
-                let lowered = inv_sigmoid(
-                    (sigmoid(op.inner()) - self.config.opac_refine_subtract)
-                        .clamp(1e-24, 1.0 - 1e-24),
-                );
-                Tensor::from_inner(lowered).require_grad()
-            });
-        }
-
         // Remove barely visible gaussians and delete Gaussians with too large of a radius in world-units.
         let alpha_mask = splats
             .raw_opacity
@@ -491,10 +496,11 @@ impl SplatTrainer {
         let (mut splats, refiner, pruned_count) =
             prune_points(splats, &mut record, refiner, alpha_mask).await;
 
+        // Collect growth stats.
+        let (avg_refine_grad, _) = refiner.into_stats();
+
         // Grow to nr. of targe splats.
         let mut add_indices = HashSet::new();
-        // Collect growth stats.
-        let (avg_refine_grad, max_radii) = refiner.into_stats();
 
         // Choose indices for splats that we replace.
         // TODO: Ideally this would sample from all indices minus the high gradient indices.
@@ -505,7 +511,7 @@ impl SplatTrainer {
             // Sampling from _only visible_ splats here perhaps seems to improve things ever so slightly,
             // as I'm guessing it's because that prevents selecting gaussians which are effectively dead already,
             // but bit dubious. Just going with pure opacity for now.
-            let resampled_weights = splats.opacity().inner() * max_radii.greater_elem(0.0).float();
+            let resampled_weights = splats.opacities().inner();
             let resampled_weights = resampled_weights
                 .into_data_async()
                 .await
@@ -526,7 +532,7 @@ impl SplatTrainer {
             .to_vec::<i32>()
             .expect("Failed to convert refine weights");
 
-        let sample_high_grad_count = (threshold_ids.len() as f32 / 2.0).round() as usize;
+        let sample_high_grad_count = (threshold_ids.len() as f32).round() as usize;
         let grow_count = sample_high_grad_count.saturating_sub(pruned_count as usize);
 
         // Choose indices for high gradient splats.
@@ -597,7 +603,7 @@ impl SplatTrainer {
             });
 
             splats.raw_opacity = splats.raw_opacity.map(|m| {
-                let difference = cur_raw_opac.clone() - new_raw_opac.clone();
+                let difference = new_raw_opac.clone() - cur_raw_opac.clone();
                 let new_opacities = m.inner().scatter(0, refine_inds.clone(), difference);
                 Tensor::from_inner(new_opacities).require_grad()
             });

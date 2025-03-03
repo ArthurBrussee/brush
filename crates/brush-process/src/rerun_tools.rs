@@ -67,7 +67,7 @@ impl VisualizeTools {
                         * SH_C0
                         + 0.5;
 
-                let transparency = sigmoid(splats.raw_opacity.val());
+                let transparency = splats.opacities();
 
                 let colors = base_rgb
                     .into_data_async()
