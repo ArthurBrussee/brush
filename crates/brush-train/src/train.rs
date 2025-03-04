@@ -18,7 +18,6 @@ use burn::tensor::backend::AutodiffBackend;
 use burn::tensor::{Bool, Distribution, Int, TensorData, TensorPrimitive};
 use burn::{config::Config, optim::GradientsParams, tensor::Tensor};
 use hashbrown::{HashMap, HashSet};
-use rand::seq::IndexedRandom;
 use tracing::trace_span;
 
 use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
@@ -94,13 +93,13 @@ pub struct TrainConfig {
     lr_rotation: f64,
 
     /// Weight of the opacity loss.
-    #[config(default = 0.01)]
-    #[arg(long, help_heading = "Training options", default_value = "0.01")]
+    #[config(default = 0.025)]
+    #[arg(long, help_heading = "Training options", default_value = "0.025")]
     opac_loss_weight: f32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[config(default = 0.0007)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.0007")]
+    #[config(default = 0.00065)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.00065")]
     densify_grad_thresh: f32,
 
     /// Period before any refinement or growth starts.
@@ -109,8 +108,8 @@ pub struct TrainConfig {
     refine_start_iter: u32,
 
     /// Period after which splat growth stops.
-    #[config(default = 10000)]
-    #[arg(long, help_heading = "Refine options", default_value = "10000")]
+    #[config(default = 15000)]
+    #[arg(long, help_heading = "Refine options", default_value = "15000")]
     growth_stop_iter: u32,
 
     /// Period after which refinement stops (culling & replacing dead gaussians).
@@ -312,9 +311,15 @@ impl SplatTrainer {
             total_err.mean()
         };
 
+        let visible = aux.radii.clone().inner().greater_elem(0.0).float();
+
         // Lower alpha as long as refine is going.
         let loss = if self.config.opac_loss_weight > 0.0 && iter <= self.config.refine_stop_iter {
-            loss + splats.opacities().mean() * self.config.opac_loss_weight
+            let visible_count = Tensor::from_inner(visible.clone().sum());
+            let opac_loss = (splats.opacities() * Tensor::from_inner(visible.clone())).sum()
+                * self.config.opac_loss_weight
+                / visible_count;
+            loss + opac_loss
         } else {
             loss
         };
@@ -420,7 +425,7 @@ impl SplatTrainer {
             // trace_span!("Noise means").in_scope(|| {
             let one = Tensor::ones([1], &device);
             let noise_weight = (one - splats.opacities().inner()).powf_scalar(100.0);
-            let noise_weight = noise_weight * aux.radii.inner().greater_elem(0.0).float(); // Only noise visible gaussians.
+            let noise_weight = noise_weight * visible; // Only noise visible gaussians.
             let noise_weight = noise_weight.unsqueeze_dim(1);
 
             let samples = quaternion_vec_multiply(
@@ -492,8 +497,23 @@ impl SplatTrainer {
             let (avg_refine_grad, max_radii) = refiner.into_stats();
             let mut add_indices = HashSet::new();
 
+            let above_threshold = avg_refine_grad
+                .clone()
+                .greater_elem(self.config.densify_grad_thresh)
+                .float();
+            let threshold_count = above_threshold.clone().sum().into_scalar_async().await;
+            // Growth is too fast.
+            let threshold_count = threshold_count / 4.0;
+
+            let (random_sample_count, sample_high_grad) = if iter < self.config.growth_stop_iter {
+                let half = (threshold_count / 2.0).round() as u32;
+                (half, half)
+            } else {
+                (pruned_count, 0)
+            };
+
             // Replace dead gaussians if we're still refining.
-            if pruned_count > 0 {
+            if random_sample_count > 0 {
                 // Sample from random opacities.
                 //
                 // Sampling from _only visible_ splats here perhaps seems to improve things ever so slightly,
@@ -505,30 +525,26 @@ impl SplatTrainer {
                     .await
                     .to_vec::<f32>()
                     .expect("Failed to read weights");
-                let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
+                let resampled_inds = multinomial_sample(&resampled_weights, random_sample_count);
                 add_indices.extend(resampled_inds);
             }
 
             // If still growing, sample from indices which are over the threshold.
             if iter < self.config.growth_stop_iter {
-                let threshold_ids = avg_refine_grad
-                    .greater_elem(self.config.densify_grad_thresh)
-                    .argwhere_async()
-                    .await
-                    .to_data_async()
-                    .await
-                    .to_vec::<i32>()
-                    .expect("Failed to convert refine weights");
-                let sample_high_grad_count = (threshold_ids.len() as f32).round() as usize;
-                let grow_count = sample_high_grad_count.saturating_sub(pruned_count as usize);
-
-                // Maximally grow to max nr. of splats.
-                let cur_splats = splats.num_splats() + pruned_count;
-                let grow_count = grow_count.min((self.config.max_splats - cur_splats) as usize);
+                // Only grow to max nr. of splats.
+                let cur_splats = splats.num_splats() + add_indices.len() as u32;
+                let grow_count = sample_high_grad.min(self.config.max_splats - cur_splats);
 
                 if grow_count > 0 {
-                    let mut rng = rand::rng();
-                    let growth_inds = threshold_ids.choose_multiple(&mut rng, grow_count);
+                    // let mut rng = rand::rng();
+                    // let growth_inds = threshold_ids.choose_multiple(&mut rng, grow_count);
+                    let weights = above_threshold * avg_refine_grad.clone();
+                    let weights = weights
+                        .into_data_async()
+                        .await
+                        .to_vec::<f32>()
+                        .expect("Failed to read weights");
+                    let growth_inds = multinomial_sample(&weights, grow_count);
                     add_indices.extend(growth_inds);
                 }
             }
@@ -594,11 +610,11 @@ impl SplatTrainer {
                             .scatter(0, refine_inds_2d.clone(), -scale_div.clone());
                     Tensor::from_inner(new_scales).require_grad()
                 });
-                splats.raw_opacity = splats.raw_opacity.map(|m| {
-                    let difference = new_raw_opac.clone() - cur_raw_opac.clone();
-                    let new_opacities = m.inner().scatter(0, refine_inds.clone(), difference);
-                    Tensor::from_inner(new_opacities).require_grad()
-                });
+                // splats.raw_opacity = splats.raw_opacity.map(|m| {
+                //     let difference = new_raw_opac.clone() - cur_raw_opac.clone();
+                //     let new_opacities = m.inner().scatter(0, refine_inds.clone(), difference);
+                //     Tensor::from_inner(new_opacities).require_grad()
+                // });
 
                 // Concatenate new splats.
                 let sh_dim = splats.sh_coeffs.dims()[1];
