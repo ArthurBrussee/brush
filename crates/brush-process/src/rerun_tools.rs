@@ -121,8 +121,11 @@ impl VisualizeTools {
         if let Some(rec) = self.rec.as_ref() {
             if rec.is_enabled() {
                 rec.log_static("world", &rerun::ViewCoordinates::RIGHT_HAND_Y_DOWN())?;
+                // Only log 200 views at most, to not take down rerun for super large datasets. Bit sad that
+                // it can't handle more!
+                let view_step = (scene.views.len() / 200).max(1);
 
-                for (i, view) in scene.views.iter().enumerate() {
+                for (i, view) in scene.views.iter().step_by(view_step).enumerate() {
                     let path = format!("world/dataset/camera/{i}");
                     let log_img = clamp_img_to_max_size(view.image.clone(), max_img_size);
 
