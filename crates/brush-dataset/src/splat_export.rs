@@ -1,3 +1,4 @@
+use crate::parsed_gaussian::ParsedGaussian;
 use anyhow::anyhow;
 use brush_render::gaussian_splats::Splats;
 use burn::{prelude::Backend, tensor::DataError};
@@ -7,9 +8,7 @@ use ply_rs::{
     writer::Writer,
 };
 
-use crate::splat_import::GaussianData;
-
-async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<Vec<GaussianData>, DataError> {
+async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<Vec<ParsedGaussian>, DataError> {
     let means = splats.means.val().into_data_async().await.to_vec()?;
     let log_scales = splats.log_scales.val().into_data_async().await.to_vec()?;
     let rotations = splats.rotation.val().into_data_async().await.to_vec()?;
@@ -40,11 +39,11 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<Vec<GaussianDa
                 &splat_sh[sh_coeffs_num * 2..sh_coeffs_num * 3],
             ];
 
-            let sh_dc = [sh_red[0], sh_green[0], sh_blue[0]];
+            let sh_dc = glam::vec3(sh_red[0], sh_green[0], sh_blue[0]);
             let sh_coeffs_rest = [&sh_red[1..], &sh_green[1..], &sh_blue[1..]].concat();
 
-            GaussianData {
-                means: Vec3::new(means[i * 3], means[i * 3 + 1], means[i * 3 + 2]),
+            ParsedGaussian {
+                mean: Vec3::new(means[i * 3], means[i * 3 + 1], means[i * 3 + 2]),
                 log_scale: Vec3::new(
                     log_scales[i * 3],
                     log_scales[i * 3 + 1],
@@ -92,7 +91,7 @@ pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> anyhow::Result<Vec<u
         ));
     }
 
-    let mut ply: Ply<GaussianData> = Ply::new();
+    let mut ply: Ply<ParsedGaussian> = Ply::new();
 
     // Create PLY header
     let mut vertex = ply::ElementDef::new("vertex");
@@ -104,7 +103,7 @@ pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> anyhow::Result<Vec<u
     ply.payload.insert("vertex".to_owned(), data);
 
     let mut buf = vec![];
-    let writer = Writer::<GaussianData>::new();
+    let writer = Writer::<ParsedGaussian>::new();
     writer.write_ply(&mut buf, &mut ply)?;
     Ok(buf)
 }

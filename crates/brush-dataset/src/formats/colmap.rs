@@ -229,11 +229,12 @@ pub(crate) async fn load_dataset<B: Backend>(
                 let mut colors: Vec<f32> = points_data
                     .values()
                     .flat_map(|p| {
-                        [
-                            rgb_to_sh(p.rgb[0] as f32 / 255.0),
-                            rgb_to_sh(p.rgb[1] as f32 / 255.0),
-                            rgb_to_sh(p.rgb[2] as f32 / 255.0),
-                        ]
+                        let sh = rgb_to_sh(glam::vec3(
+                            p.rgb[0] as f32 / 255.0,
+                            p.rgb[1] as f32 / 255.0,
+                            p.rgb[2] as f32 / 255.0,
+                        ));
+                        [sh.x, sh.y, sh.z]
                     })
                     .collect();
 
@@ -248,7 +249,7 @@ pub(crate) async fn load_dataset<B: Backend>(
                     Splats::from_raw(&positions, None, None, Some(&colors), None, &device);
                 emitter
                     .emit(SplatMessage {
-                        meta: crate::splat_import::SplatMetadata {
+                        meta: crate::splat_import::ParseMetadata {
                             up_axis: None,
                             total_splats: init_splat.num_splats(),
                             frame_count: 1,

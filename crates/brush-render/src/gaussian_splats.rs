@@ -88,6 +88,7 @@ impl<B: Backend> Splats<B> {
         let means_tensor = Tensor::from_data(TensorData::new(means_tensor, [n_splats, 3]), device);
 
         let rotations = if let Some(rotations) = rotations {
+            // Rasterizer expects quaternions in scalar form.
             let rotations: Vec<f32> = rotations
                 .iter()
                 .flat_map(|v| [v.w, v.x, v.y, v.z])

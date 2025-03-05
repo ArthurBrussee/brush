@@ -1,5 +1,7 @@
 pub mod brush_vfs;
 mod formats;
+mod parsed_gaussian;
+mod quant;
 pub mod scene_loader;
 pub mod splat_export;
 pub mod splat_import;

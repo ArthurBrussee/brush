@@ -22,9 +22,9 @@ use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
 
 use burn::tensor::ops::FloatTensorOps;
-use glam::{ivec2, uvec2};
+use glam::{Vec3, ivec2, uvec2};
 
-pub const SH_C0: f32 = shaders::project_visible::SH_C0;
+const SH_C0: f32 = shaders::project_visible::SH_C0;
 
 pub const fn sh_coeffs_for_degree(degree: u32) -> u32 {
     (degree + 1).pow(2)
@@ -41,8 +41,16 @@ pub fn sh_degree_from_coeffs(coeffs_per_channel: u32) -> u32 {
     }
 }
 
-pub fn rgb_to_sh(rgb: f32) -> f32 {
+pub fn channel_to_sh(rgb: f32) -> f32 {
     (rgb - 0.5) / SH_C0
+}
+
+pub fn rgb_to_sh(rgb: Vec3) -> Vec3 {
+    glam::vec3(
+        channel_to_sh(rgb.x),
+        channel_to_sh(rgb.y),
+        channel_to_sh(rgb.z),
+    )
 }
 
 pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {

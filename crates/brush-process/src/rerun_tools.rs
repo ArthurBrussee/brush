@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use brush_dataset::clamp_img_to_max_size;
 use brush_render::gaussian_splats::Splats;
+use brush_render::shaders::project_visible::SH_C0;
 use brush_train::eval::EvalSample;
 use brush_train::image::view_to_sample;
 use brush_train::{image::tensor_into_image, scene::Scene, train::RefineStats};
@@ -63,7 +64,7 @@ impl VisualizeTools {
                         .sh_coeffs
                         .val()
                         .slice([0..splats.num_splats() as usize, 0..1, 0..3])
-                        * brush_render::render::SH_C0
+                        * SH_C0
                         + 0.5;
 
                 let transparency = sigmoid(splats.raw_opacity.val());
