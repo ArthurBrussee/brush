@@ -67,7 +67,7 @@ impl VisualizeTools {
                         * SH_C0
                         + 0.5;
 
-                let transparency = sigmoid(splats.raw_opacity.val());
+                let transparency = splats.opacities();
 
                 let colors = base_rgb
                     .into_data_async()
@@ -192,6 +192,18 @@ impl VisualizeTools {
                     format!("world/eval/view_{}/render", view.index),
                     &rerun::Image::from_rgb24(rendered.to_vec(), [w, h]),
                 )?;
+                rec.log(
+                    format!("psnr/eval_{}", view.index),
+                    &rerun::Scalar::new(
+                        view.psnr.clone().into_scalar_async().await.elem::<f32>() as f64
+                    ),
+                )?;
+                rec.log(
+                    format!("ssim/eval_{}", view.index),
+                    &rerun::Scalar::new(
+                        view.ssim.clone().into_scalar_async().await.elem::<f32>() as f64
+                    ),
+                )?;
             }
         }
 
@@ -269,6 +281,10 @@ impl VisualizeTools {
                 let _ = rec.log(
                     "refine/num_pruned",
                     &rerun::Scalar::new(refine.num_pruned as f64),
+                );
+                let _ = rec.log(
+                    "refine/effective_growth",
+                    &rerun::Scalar::new(refine.num_added as f64 - refine.num_pruned as f64),
                 );
             }
         }
