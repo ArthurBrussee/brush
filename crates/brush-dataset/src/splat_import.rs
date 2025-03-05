@@ -77,7 +77,7 @@ async fn try_yield(i: usize) {
     }
 }
 
-pub fn load_splat_from_ply<T: AsyncRead + Send + Unpin + 'static, B: Backend>(
+pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
     reader: T,
     subsample_points: Option<u32>,
     device: B::Device,
