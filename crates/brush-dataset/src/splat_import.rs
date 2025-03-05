@@ -1,4 +1,4 @@
-use std::{collections::HashSet, pin::Pin};
+use std::collections::HashSet;
 
 use async_fn_stream::try_fn_stream;
 use brush_render::{gaussian_splats::inverse_sigmoid, render::rgb_to_sh};
@@ -118,33 +118,45 @@ pub fn load_splat_from_ply<T: AsyncRead + Send + Unpin + 'static, B: Backend>(
             anyhow::bail!("Couldn't decide format of Ply file. Unknown Ply format.")
         };
 
-        let mut stream: Pin<Box<dyn Stream<Item = _> + Send>> = match ply_type {
+        match ply_type {
             PlyFormat::Ply => {
-                Box::pin(parse_ply(reader, subsample_points, device, header, up_axis))
+                let mut stream =
+                    std::pin::pin!(parse_ply(reader, subsample_points, device, header, up_axis));
+                while let Some(splat) = stream.next().await {
+                    emitter.emit(splat?).await;
+                }
             }
-            PlyFormat::Brush4DCompressed => Box::pin(parse_delta_ply(
-                reader,
-                subsample_points,
-                device,
-                header,
-                up_axis,
-            )),
-            PlyFormat::SuperSplatCompressed => Box::pin(parse_compressed_ply(
-                reader,
-                subsample_points,
-                device,
-                header,
-                up_axis,
-            )),
+            PlyFormat::Brush4DCompressed => {
+                let mut stream = std::pin::pin!(parse_delta_ply(
+                    reader,
+                    subsample_points,
+                    device,
+                    header,
+                    up_axis
+                ));
+                while let Some(splat) = stream.next().await {
+                    emitter.emit(splat?).await;
+                }
+            }
+            PlyFormat::SuperSplatCompressed => {
+                let mut stream = std::pin::pin!(parse_compressed_ply(
+                    reader,
+                    subsample_points,
+                    device,
+                    header,
+                    up_axis
+                ));
+                while let Some(splat) = stream.next().await {
+                    emitter.emit(splat?).await;
+                }
+            }
         };
-        while let Some(splat) = stream.next().await {
-            emitter.emit(splat?).await;
-        }
+
         Ok(())
     })
 }
 
-fn parse_ply<T: AsyncBufRead + Send + Unpin + 'static, B: Backend>(
+fn parse_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
     mut reader: T,
     subsample_points: Option<u32>,
     device: B::Device,
