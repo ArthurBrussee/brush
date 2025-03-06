@@ -354,9 +354,7 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
 
         for i in 0..vertex.count {
             // Occasionally yield.
-            if i % 500 == 0 {
-                tokio_wasm::task::yield_now().await;
-            }
+            try_yield(i).await;
 
             // Doing this after first reading and parsing the points is quite wasteful, but
             // we do need to advance the reader.
@@ -370,7 +368,7 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
                 .get(i / 256)
                 .context("not enough quantization data to parse ply")?;
 
-            let mut splat = parse_elem(&mut reader, &parser, header.encoding, vertex).await?;
+            let splat = parse_elem(&mut reader, &parser, header.encoding, vertex).await?;
 
             // Don't add invalid splats.
             if !splat.is_finite() {
@@ -378,20 +376,17 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
                 continue;
             }
 
-            splat.mean = quant_data.mean.dequant(splat.mean);
-            means.push(splat.mean);
+            means.push(quant_data.mean.dequant(splat.mean));
 
-            splat.log_scale = quant_data.scale.dequant(splat.log_scale);
-            log_scales.push(splat.log_scale);
+            log_scales.push(quant_data.scale.dequant(splat.log_scale));
             rotations.push(splat.rotation);
 
             // Compressed ply specifies things in post-activated values. Convert to pre-activated values.
             opacity.push(inverse_sigmoid(splat.opacity));
 
             // These come in as RGB colors. Convert to base SH coeffecients.
-            splat.sh_dc = quant_data.color.dequant(splat.sh_dc);
-            splat.sh_dc = rgb_to_sh(splat.sh_dc);
-            sh_coeffs.extend([splat.sh_dc.x, splat.sh_dc.y, splat.sh_dc.z]);
+            let sh_dc = rgb_to_sh(quant_data.color.dequant(splat.sh_dc));
+            sh_coeffs.extend([sh_dc.x, sh_dc.y, sh_dc.z]);
 
             // Occasionally send some updated splats.
             if (i - last_update) >= update_every || i == vertex.count - 1 {
