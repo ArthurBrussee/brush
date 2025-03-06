@@ -299,6 +299,8 @@ missing_errors_doc = "allow"
 # Annoying: I like big functuions what can I say.
 too_many_lines = "allow"
 too_many_arguments = "allow"
+needless_range_loop = "allow"
+
 
 # Annoying: this one is just worse imho
 # manual_range_contains = "allow"

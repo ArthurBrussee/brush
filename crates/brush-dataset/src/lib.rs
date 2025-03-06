@@ -63,7 +63,6 @@ fn solve_cubic(a: f32, b: f32, c: f32, d: f32) -> (f32, f32, f32) {
     roots.into()
 }
 
-#[allow(clippy::needless_range_loop)]
 fn find_eigenvector(matrix: Mat3, eigenvalue: f32) -> Vec3 {
     // Create matrix (A - λI)
     let m = Mat3::from_cols(

@@ -202,6 +202,10 @@ fn parse_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
 
             let splat = parse_elem(&mut reader, &parser, header.encoding, vertex).await?;
 
+            if !splat.is_finite() {
+                continue;
+            }
+
             means.push(splat.mean);
             if let Some(scales) = &mut log_scales {
                 scales.push(splat.log_scale);
@@ -346,6 +350,8 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
         let update_every = vertex.count.div_ceil(20);
         let mut last_update = 0;
 
+        let mut valid = vec![true; vertex.count];
+
         for i in 0..vertex.count {
             // Occasionally yield.
             if i % 500 == 0 {
@@ -365,6 +371,13 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
                 .context("not enough quantization data to parse ply")?;
 
             let mut splat = parse_elem(&mut reader, &parser, header.encoding, vertex).await?;
+
+            // Don't add invalid splats.
+            if !splat.is_finite() {
+                valid[i] = false;
+                continue;
+            }
+
             splat.mean = quant_data.mean.dequant(splat.mean);
             means.push(splat.mean);
 
@@ -413,9 +426,15 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
                 anyhow::bail!("Second element should be SH compression metadata!");
             }
 
+            let mut splat_index = 0;
+
             let mut total_coeffs = vec![];
             for i in 0..sh_vals.count {
                 try_yield(i).await;
+
+                if !valid[i] {
+                    continue;
+                }
 
                 // Parse a splat - though nb only SH values will be used.
                 let mut splat = parse_elem(&mut reader, &parser, header.encoding, sh_vals).await?;
@@ -423,8 +442,13 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
                     *coeff = 8.0 * (*coeff - 0.5);
                 }
 
-                let dc = glam::vec3(sh_coeffs[i * 3], sh_coeffs[i * 3 + 1], sh_coeffs[i * 3 + 2]);
+                let dc = glam::vec3(
+                    sh_coeffs[splat_index * 3],
+                    sh_coeffs[splat_index * 3 + 1],
+                    sh_coeffs[splat_index * 3 + 2],
+                );
                 interleave_coeffs(dc, &splat.sh_coeffs_rest, &mut total_coeffs);
+                splat_index += 1;
             }
 
             emitter

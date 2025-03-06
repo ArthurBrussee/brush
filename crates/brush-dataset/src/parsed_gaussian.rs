@@ -20,6 +20,17 @@ pub(crate) struct ParsedGaussian<const QUANT_PARSE: bool> {
     pub(crate) sh_coeffs_rest: Vec<f32>,
 }
 
+impl<const QUANT: bool> ParsedGaussian<QUANT> {
+    pub(crate) fn is_finite(&self) -> bool {
+        self.mean.is_finite()
+            && self.log_scale.is_finite()
+            && self.opacity.is_finite()
+            && self.rotation.is_finite()
+            && self.sh_dc.is_finite()
+            && self.sh_coeffs_rest.iter().all(|f| f.is_finite())
+    }
+}
+
 impl PropertyAccess for ParsedGaussian<false> {
     fn new() -> Self {
         Self::default()
@@ -34,11 +45,6 @@ impl PropertyAccess for ParsedGaussian<false> {
             Property::UShort(value) => (value as f32) / (u16::MAX as f32 - 1.0),
             _ => return,
         };
-
-        if value.is_nan() || value.is_infinite() {
-            log::warn!("Invalid numbers in imported splat, skipping parse.");
-            return;
-        }
 
         // Floating point values.
         match ascii {

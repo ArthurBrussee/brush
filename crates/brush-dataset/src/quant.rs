@@ -54,7 +54,6 @@ pub(crate) fn decode_quat(value: u32) -> glam::Quat {
 
     let mut ind = 0;
 
-    #[allow(clippy::needless_range_loop)]
     for i in 0..4 {
         if i != largest {
             quat[i] = vals[ind];
