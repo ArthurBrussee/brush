@@ -22,9 +22,7 @@ all-features = true
 
 [advisories]
 version = 2
-ignore = [
-    "ring", # will deal with this later.
-]
+ignore = []
 
 [bans]
 multiple-versions = "deny"
