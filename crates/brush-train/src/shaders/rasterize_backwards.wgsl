@@ -70,10 +70,14 @@ fn main(
     let img_size = uniforms.img_size;
     let tile_bounds = uniforms.tile_bounds;
 
-    let tile_id = i32(workgroup_id.x);
+    let tile_id = workgroup_id.x;
 
-    let tile_loc = vec2i(tile_id % tile_bounds.x, tile_id / tile_bounds.x);
-    let pixel_coordi = tile_loc * i32(helpers::TILE_WIDTH) + vec2i(i32(local_idx % helpers::TILE_WIDTH), i32(local_idx / helpers::TILE_WIDTH));
+    let tile_loc = vec2u(tile_id % tile_bounds.x, tile_id / tile_bounds.x);
+    let pixel_coordi = tile_loc * helpers::TILE_WIDTH + vec2u(
+        local_idx % helpers::TILE_WIDTH,
+        local_idx / helpers::TILE_WIDTH
+    );
+
     let pix_id = pixel_coordi.x + pixel_coordi.y * img_size.x;
     let pixel_coord = vec2f(pixel_coordi) + 0.5;
 
@@ -87,9 +91,9 @@ fn main(
     // Have all threads in tile process the same gaussians in batches
     // first collect gaussians between bin_start and bin_final in batches
     // which gaussians to look through in this tile
-    let range = vec2i(tile_offsets[tile_id], tile_offsets[tile_id + 1]);
+    let range = vec2u(u32(tile_offsets[tile_id]), u32(tile_offsets[tile_id + 1]));
 
-    let num_batches = helpers::ceil_div(range.y - range.x, i32(BATCH_SIZE));
+    let num_batches = helpers::ceil_div(range.y - range.x, BATCH_SIZE);
 
     // current visibility left to render
     var T = T_final;
@@ -107,16 +111,16 @@ fn main(
         v_out = v_output[pix_id];
     }
 
-    for (var b = 0; b < num_batches; b++) {
+    for (var b = 0u; b < num_batches; b++) {
         // each thread fetch 1 gaussian from back to front
         // 0 index will be furthest back in batch
         // index of gaussian to load
-        let batch_end = range.y - b * i32(BATCH_SIZE);
-        let remaining = min(i32(BATCH_SIZE), batch_end - range.x);
+        let batch_end = range.y - b * BATCH_SIZE;
+        let remaining = min(BATCH_SIZE, batch_end - range.x);
 
         // Each thread first gathers one gaussian.
-        if i32(local_idx) < remaining {
-            let load_isect_id = batch_end - 1 - i32(local_idx);
+        if local_idx < remaining {
+            let load_isect_id = batch_end - 1 - local_idx;
             let load_compact_gid = compact_gid_from_isect[load_isect_id];
             local_id[local_idx] = load_compact_gid;
             local_batch[local_idx] = projected_splats[load_compact_gid];
@@ -125,7 +129,7 @@ fn main(
         // Wait for all threads to finish loading.
         workgroupBarrier();
 
-        for (var t = 0; t < remaining; t += 1) {
+        for (var t = 0u; t < remaining; t += 1) {
             let isect_id = batch_end - 1 - t;
 
             var v_xy = vec2f(0.0);
@@ -135,7 +139,7 @@ fn main(
 
             var splat_active = false;
 
-            if inside && isect_id < final_isect {
+            if inside && isect_id < u32(final_isect) {
                 let projected = local_batch[t];
 
                 let xy = vec2f(projected.xy_x, projected.xy_y);

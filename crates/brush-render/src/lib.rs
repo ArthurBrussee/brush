@@ -16,6 +16,8 @@ mod dim_check;
 mod kernels;
 pub mod shaders;
 
+pub mod sh;
+
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests;
 
@@ -189,8 +191,10 @@ impl<B: Backend> RenderAux<B> {
     }
 }
 
-pub type BBase<F, I, BT> = CubeBackend<WgpuRuntime, F, I, BT>;
-pub type BFused<F, I, BT> = Fusion<BBase<F, I, BT>>;
+/// The base WGPU backend these extension are written against. The bool type varies
+/// between the native vulkan and WebGPU backend.
+pub type BBase<BT> = CubeBackend<WgpuRuntime, f32, i32, BT>;
+pub type BFused<BT> = Fusion<BBase<BT>>;
 
 pub trait SplatForward<B: Backend> {
     /// Render splats to a buffer.

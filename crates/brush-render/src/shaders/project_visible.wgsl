@@ -258,13 +258,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     for (var ty = tile_min.y; ty < tile_max.y; ty++) {
         for (var tx = tile_min.x; tx < tile_max.x; tx++) {
-            if helpers::can_be_visible(vec2i(tx, ty), mean2d, conic, opac) {
+            if helpers::can_be_visible(vec2u(tx, ty), mean2d, conic, opac) {
                 // Add to the tile hit count.
                 num_tiles_hit += 1;
                 let isect_id = atomicAdd(&uniforms.num_intersections, 1);
 
                 let tile_id = tx + ty * uniforms.tile_bounds.x; // tile within image
-                isect_info[isect_id] = IsectInfo(compact_gid, tile_id);
+                isect_info[isect_id] = IsectInfo(i32(compact_gid), i32(tile_id));
             }
         }
     }

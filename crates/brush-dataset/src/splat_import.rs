@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use async_fn_stream::try_fn_stream;
-use brush_render::{gaussian_splats::inverse_sigmoid, render::rgb_to_sh};
+use brush_render::{gaussian_splats::inverse_sigmoid, sh::rgb_to_sh};
 use burn::{
     prelude::Backend,
     tensor::{Tensor, TensorData},

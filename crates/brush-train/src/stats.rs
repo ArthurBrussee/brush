@@ -3,14 +3,14 @@ use brush_render::{BBase, RenderAux};
 use burn::backend::Autodiff;
 use burn::prelude::*;
 use burn_cubecl::cubecl::CubeDim;
-use burn_cubecl::{BoolElement, FloatElement, IntElement, cubecl};
+use burn_cubecl::{BoolElement, cubecl};
 use burn_fusion::Fusion;
 use burn_fusion::client::FusionClient;
 use tracing::trace_span;
 
 use crate::stats_kernel::stats_gather_kernel;
 
-type Fused<F, I, BT> = Fusion<BBase<F, I, BT>>;
+type Fused<BT> = Fusion<BBase<BT>>;
 
 pub(crate) struct RefineRecord<B: Backend> {
     // Helper tensors for accumulating the viewspace_xy gradients and the number
@@ -30,11 +30,11 @@ impl<B: Backend> RefineRecord<B> {
     }
 }
 
-impl<F: FloatElement, I: IntElement, BT: BoolElement> RefineRecord<Fused<F, I, BT>> {
+impl<BT: BoolElement> RefineRecord<Fused<BT>> {
     pub(crate) fn gather_stats(
         &self,
-        refine_weight: Tensor<Fused<F, I, BT>, 1>,
-        aux: RenderAux<Autodiff<Fused<F, I, BT>>>,
+        refine_weight: Tensor<Fused<BT>, 1>,
+        aux: RenderAux<Autodiff<Fused<BT>>>,
     ) {
         let _span = trace_span!("Gather stats", sync_burn = true);
 
@@ -46,25 +46,23 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> RefineRecord<Fused<F, I, B
             .tensor()
             .client;
 
-        let compact_gid = client
-            .resolve_tensor_int::<BBase<F, I, BT>>(aux.global_from_compact_gid.into_primitive());
-        let num_visible =
-            client.resolve_tensor_int::<BBase<F, I, BT>>(aux.num_visible.into_primitive());
-        let radii = client
-            .resolve_tensor_float::<BBase<F, I, BT>>(aux.radii.inner().into_primitive().tensor());
+        let compact_gid =
+            client.resolve_tensor_int::<BBase<BT>>(aux.global_from_compact_gid.into_primitive());
+        let num_visible = client.resolve_tensor_int::<BBase<BT>>(aux.num_visible.into_primitive());
+        let radii =
+            client.resolve_tensor_float::<BBase<BT>>(aux.radii.inner().into_primitive().tensor());
         let refine_weight =
-            client.resolve_tensor_float::<BBase<F, I, BT>>(refine_weight.into_primitive().tensor());
-        let grad_counts = client
-            .resolve_tensor_int::<BBase<F, I, BT>>(self.visible_counts.clone().into_primitive());
+            client.resolve_tensor_float::<BBase<BT>>(refine_weight.into_primitive().tensor());
+        let grad_counts =
+            client.resolve_tensor_int::<BBase<BT>>(self.visible_counts.clone().into_primitive());
 
         let inner_client = &compact_gid.client;
 
-        let refine_accum = client.resolve_tensor_float::<BBase<F, I, BT>>(
+        let refine_accum = client.resolve_tensor_float::<BBase<BT>>(
             self.refine_weight_norm.clone().into_primitive().tensor(),
         );
-        let max_radii = client.resolve_tensor_float::<BBase<F, I, BT>>(
-            self.max_radii.clone().into_primitive().tensor(),
-        );
+        let max_radii = client
+            .resolve_tensor_float::<BBase<BT>>(self.max_radii.clone().into_primitive().tensor());
 
         const WG_SIZE: u32 = 256;
         // Execute lazily the kernel with the launch information and the given buffers. For

@@ -28,20 +28,20 @@ fn main(
     let img_size = uniforms.img_size;
 
     // Get index of tile being drawn.
-    let pix_id = i32(global_id.x) + i32(global_id.y) * img_size.x;
-    let tile_id = i32(workgroup_id.x) + i32(workgroup_id.y) * uniforms.tile_bounds.x;
+    let pix_id = global_id.x + global_id.y * img_size.x;
+    let tile_id = workgroup_id.x + workgroup_id.y * uniforms.tile_bounds.x;
     let pixel_coord = vec2f(global_id.xy) + 0.5;
 
     // return if out of bounds
     // keep not rasterizing threads around for reading data
-    let inside = i32(global_id.x) < img_size.x && i32(global_id.y) < img_size.y;
+    let inside = global_id.x < img_size.x && global_id.y < img_size.y;
     var done = !inside;
 
     // have all threads in tile process the same gaussians in batches
     // first collect gaussians between the bin counts.
-    let range = vec2i(tile_offsets[tile_id], tile_offsets[tile_id + 1]);
+    let range = vec2u(u32(tile_offsets[tile_id]), u32(tile_offsets[tile_id + 1]));
 
-    let num_batches = helpers::ceil_div(range.y - range.x, i32(helpers::TILE_SIZE));
+    let num_batches = helpers::ceil_div(range.y - range.x, u32(helpers::TILE_SIZE));
     // current visibility left to render
     var T = 1.0;
     var pix_out = vec3f(0.0);
@@ -50,27 +50,27 @@ fn main(
     // each thread loads one gaussian at a time before rasterizing its
     // designated pixel
     var t = 0;
-    var final_idx = 0;
+    var final_idx = 0u;
 
     // each thread loads one gaussian at a time before rasterizing its
     // designated pixel
-    for (var b = 0; b < num_batches; b++) {
-        let batch_start = range.x + b * i32(helpers::TILE_SIZE);
+    for (var b = 0u; b < num_batches; b++) {
+        let batch_start = range.x + b * helpers::TILE_SIZE;
 
         // Wait for all in flight threads.
         workgroupBarrier();
 
         // process gaussians in the current batch for this pixel
-        let remaining = min(i32(helpers::TILE_SIZE), range.y - batch_start);
+        let remaining = min(helpers::TILE_SIZE, range.y - batch_start);
 
-        if i32(local_idx) < remaining {
-            let load_isect_id = batch_start + i32(local_idx);
+        if local_idx < remaining {
+            let load_isect_id = batch_start + local_idx;
             local_batch[local_idx] = projected_splats[compact_gid_from_isect[load_isect_id]];
         }
         // Wait for all writes to complete.
         workgroupBarrier();
 
-        for (var t = 0; t < remaining && !done; t++) {
+        for (var t = 0u; t < remaining && !done; t++) {
             let projected = local_batch[t];
 
             let xy = vec2f(projected.xy_x, projected.xy_y);
@@ -109,10 +109,10 @@ fn main(
             let colors_u = vec4u(clamp(final_color * 255.0, vec4f(0.0), vec4f(255.0)));
             let packed: u32 = colors_u.x | (colors_u.y << 8u) | (colors_u.z << 16u) | (colors_u.w << 24u);
             out_img[pix_id] = packed;
-            final_index[pix_id] = final_idx;
+            final_index[pix_id] = i32(final_idx);
         #else
             out_img[pix_id] = final_color;
-            final_index[pix_id] = final_idx;
+            final_index[pix_id] = i32(final_idx);
         #endif
     }
 }

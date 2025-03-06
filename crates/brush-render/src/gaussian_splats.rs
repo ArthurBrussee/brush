@@ -2,7 +2,7 @@ use crate::{
     RenderAux, SplatForward,
     bounding_box::BoundingBox,
     camera::Camera,
-    render::{sh_coeffs_for_degree, sh_degree_from_coeffs},
+    sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
 use ball_tree::BallTree;
 use burn::{

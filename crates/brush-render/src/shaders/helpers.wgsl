@@ -12,8 +12,8 @@ struct RenderUniforms {
     // Focal of camera (fx, fy)
     focal: vec2f,
     // Img resolution (w, h)
-    img_size: vec2i,
-    tile_bounds: vec2i,
+    img_size: vec2u,
+    tile_bounds: vec2u,
     // Camera center (cx, cy).
     pixel_center: vec2f,
     // Degree of sh coeffecients used.
@@ -55,16 +55,16 @@ struct PackedVec3 {
     z: f32,
 }
 
-fn get_bbox(center: vec2f, dims: vec2f, bounds: vec2i) -> vec4i {
+fn get_bbox(center: vec2f, dims: vec2f, bounds: vec2u) -> vec4u {
     // get bounding box with center and dims, within bounds
     // bounding box coords returned in tile coords, inclusive min, exclusive max
     // clamp between 0 and tile bounds
-    let min = vec2i(clamp(center - dims, vec2f(0.0), vec2f(bounds)));
-    let max = vec2i(clamp(center + dims + vec2f(1.0), vec2f(0.0), vec2f(bounds)));
-    return vec4i(min, max);
+    let min = vec2u(clamp(center - dims, vec2f(0.0), vec2f(bounds)));
+    let max = vec2u(clamp(center + dims + vec2f(1.0), vec2f(0.0), vec2f(bounds)));
+    return vec4u(min, max);
 }
 
-fn get_tile_bbox(pix_center: vec2f, pix_radius: f32, tile_bounds: vec2i) -> vec4i {
+fn get_tile_bbox(pix_center: vec2f, pix_radius: f32, tile_bounds: vec2u) -> vec4u {
     // gets gaussian dimensions in tile space, i.e. the span of a gaussian in
     // tile_grid (image divided into tiles)
     let tile_center = pix_center / f32(TILE_WIDTH);
@@ -123,7 +123,7 @@ fn calc_cov3d(scale: vec3f, quat: vec4f) -> mat3x3f {
     return M * transpose(M);
 }
 
-fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2i, pixel_center: vec2f) -> mat3x2f {
+fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f) -> mat3x2f {
     let tan_fov = 0.5 * vec2f(img_size.xy) / focal;
 
     let lims_pos = (vec2f(img_size.xy) - pixel_center) / focal + 0.3f * tan_fov;
@@ -144,7 +144,7 @@ fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2i, pixel_center: vec2f)
     return J;
 }
 
-fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2i, pixel_center: vec2f, viewmat: mat4x4f) -> mat2x2f {
+fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f, viewmat: mat4x4f) -> mat2x2f {
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let covar_cam = R * cov3d * transpose(R);
 
@@ -253,7 +253,7 @@ fn ellipse_intersects_aabb(box_pos: vec2f, box_extent: vec2f, ellipse_center: ve
            check_edge(nearest_corner, edge2_end, ellipse_center, ellipse_conic);
 }
 
-fn can_be_visible(tile: vec2i, xy: vec2f, conic: mat2x2f, opac: f32) -> bool {
+fn can_be_visible(tile: vec2u, xy: vec2f, conic: mat2x2f, opac: f32) -> bool {
     // opac * exp(-sigma) == 1.0 / 255.0
     // exp(-sigma) == 1.0 / (opac * 255.0)
     // -sigma == log(1.0 / (opac * 255.0))
@@ -271,7 +271,7 @@ fn can_be_visible(tile: vec2i, xy: vec2f, conic: mat2x2f, opac: f32) -> bool {
     return ellipse_intersects_aabb(tile_center, tile_extent, xy, conic_scaled);
 }
 
-fn ceil_div(a: i32, b: i32) -> i32 {
+fn ceil_div(a: u32, b: u32) -> u32 {
     return (a + b - 1) / b;
 }
 

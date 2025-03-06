@@ -156,18 +156,17 @@ pub fn create_tensor<const D: usize, R: CubeRuntime>(
     CubeTensor::new_contiguous(client.clone(), device.clone(), shape, buffer, dtype)
 }
 
+/// Create a buffer to use as a shader uniform, from a structure.
 pub fn create_uniform_buffer<R: CubeRuntime, T: Pod>(
     val: T,
     device: &R::Device,
     client: &ComputeClient<R::Server, R::Channel>,
 ) -> CubeTensor<R> {
     let bytes = bytemuck::bytes_of(&val);
-    let shape = bytes.len() / 4;
-
     CubeTensor::new_contiguous(
         client.clone(),
         device.clone(),
-        Shape::new([shape]),
+        Shape::new([bytes.len() / 4]),
         client.create(bytes),
         DType::I32,
     )

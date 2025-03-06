@@ -1,4 +1,4 @@
-use brush_render::render::channel_to_sh;
+use brush_render::sh::channel_to_sh;
 use glam::{Quat, Vec3};
 use ply_rs::ply::{Property, PropertyAccess};
 

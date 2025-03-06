@@ -17,7 +17,7 @@ use async_fn_stream::try_fn_stream;
 use brush_render::{
     camera::{self, Camera},
     gaussian_splats::Splats,
-    render::rgb_to_sh,
+    sh::rgb_to_sh,
 };
 use brush_train::scene::SceneView;
 use burn::prelude::Backend;

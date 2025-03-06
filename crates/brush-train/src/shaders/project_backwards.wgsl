@@ -82,7 +82,7 @@ fn persp_proj_vjp(
     cov3d: mat3x3f,
     focal: vec2f,
     pixel_center: vec2f,
-    img_size: vec2i,
+    img_size: vec2u,
     // grad outputs
     v_cov2d: mat2x2f,
     v_mean2d: vec2f,

@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use burn::tensor::{DType, ops::FloatTensor};
-use burn_cubecl::{BoolElement, FloatElement, IntElement, fusion::FusionCubeRuntime};
+use burn_cubecl::{BoolElement, fusion::FusionCubeRuntime};
 use burn_fusion::{Fusion, FusionHandle, client::FusionClient, stream::Operation};
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
 use burn_wgpu::WgpuRuntime;
@@ -14,7 +14,7 @@ use crate::{
 };
 
 // Implement forward functions for the inner wgpu backend.
-impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatForward<Self> for BBase<F, I, BT> {
+impl<BT: BoolElement> SplatForward<Self> for BBase<BT> {
     fn render_splats(
         camera: &Camera,
         img_size: glam::UVec2,
@@ -38,9 +38,7 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatForward<Self> for BBa
     }
 }
 
-impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatForward<Self>
-    for Fusion<BBase<F, I, BT>>
-{
+impl<BT: BoolElement> SplatForward<Self> for Fusion<BBase<BT>> {
     fn render_splats(
         cam: &Camera,
         img_size: glam::UVec2,
@@ -51,17 +49,15 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatForward<Self>
         raw_opacity: FloatTensor<Self>,
         render_u32_buffer: bool,
     ) -> (FloatTensor<Self>, RenderAuxPrimitive<Self>) {
-        struct CustomOp<F: FloatElement, I: IntElement, BT: BoolElement> {
+        struct CustomOp<BT: BoolElement> {
             cam: Camera,
             img_size: glam::UVec2,
             render_u32_buffer: bool,
             desc: CustomOpIr,
-            _c: PhantomData<(F, I, BT)>,
+            _c: PhantomData<BT>,
         }
 
-        impl<F: FloatElement, I: IntElement, BT: BoolElement>
-            Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp<F, I, BT>
-        {
+        impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp<BT> {
             fn execute(
                 self: Box<Self>,
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
@@ -82,40 +78,34 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatForward<Self>
                     ],
                 ) = self.desc.consume();
 
-                let (img, aux) = BBase::<F, I, BT>::render_splats(
+                let (img, aux) = BBase::<BT>::render_splats(
                     &self.cam,
                     self.img_size,
-                    h.get_float_tensor::<BBase<F, I, BT>>(&means),
-                    h.get_float_tensor::<BBase<F, I, BT>>(&log_scales),
-                    h.get_float_tensor::<BBase<F, I, BT>>(&quats),
-                    h.get_float_tensor::<BBase<F, I, BT>>(&sh_coeffs),
-                    h.get_float_tensor::<BBase<F, I, BT>>(&raw_opacity),
+                    h.get_float_tensor::<BBase<BT>>(&means),
+                    h.get_float_tensor::<BBase<BT>>(&log_scales),
+                    h.get_float_tensor::<BBase<BT>>(&quats),
+                    h.get_float_tensor::<BBase<BT>>(&sh_coeffs),
+                    h.get_float_tensor::<BBase<BT>>(&raw_opacity),
                     self.render_u32_buffer,
                 );
 
                 // Register output.
-                h.register_float_tensor::<BBase<F, I, BT>>(&out_img.id, img);
-                h.register_float_tensor::<BBase<F, I, BT>>(
-                    &projected_splats.id,
-                    aux.projected_splats,
-                );
-                h.register_int_tensor::<BBase<F, I, BT>>(&uniforms_buffer.id, aux.uniforms_buffer);
-                h.register_int_tensor::<BBase<F, I, BT>>(
-                    &num_intersections.id,
-                    aux.num_intersections,
-                );
-                h.register_int_tensor::<BBase<F, I, BT>>(&num_visible.id, aux.num_visible);
-                h.register_int_tensor::<BBase<F, I, BT>>(&final_index.id, aux.final_index);
-                h.register_int_tensor::<BBase<F, I, BT>>(&tile_offsets.id, aux.tile_offsets);
-                h.register_int_tensor::<BBase<F, I, BT>>(
+                h.register_float_tensor::<BBase<BT>>(&out_img.id, img);
+                h.register_float_tensor::<BBase<BT>>(&projected_splats.id, aux.projected_splats);
+                h.register_int_tensor::<BBase<BT>>(&uniforms_buffer.id, aux.uniforms_buffer);
+                h.register_int_tensor::<BBase<BT>>(&num_intersections.id, aux.num_intersections);
+                h.register_int_tensor::<BBase<BT>>(&num_visible.id, aux.num_visible);
+                h.register_int_tensor::<BBase<BT>>(&final_index.id, aux.final_index);
+                h.register_int_tensor::<BBase<BT>>(&tile_offsets.id, aux.tile_offsets);
+                h.register_int_tensor::<BBase<BT>>(
                     &compact_gid_from_isect.id,
                     aux.compact_gid_from_isect,
                 );
-                h.register_int_tensor::<BBase<F, I, BT>>(
+                h.register_int_tensor::<BBase<BT>>(
                     &global_from_compact_gid.id,
                     aux.global_from_compact_gid,
                 );
-                h.register_float_tensor::<BBase<F, I, BT>>(&radii.id, aux.radii);
+                h.register_float_tensor::<BBase<BT>>(&radii.id, aux.radii);
             }
         }
 
@@ -178,7 +168,7 @@ impl<F: FloatElement, I: IntElement, BT: BoolElement> SplatForward<Self>
             ],
         );
 
-        let op = CustomOp::<F, I, BT> {
+        let op = CustomOp::<BT> {
             cam: cam.clone(),
             img_size,
             render_u32_buffer,

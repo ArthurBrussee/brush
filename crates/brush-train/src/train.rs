@@ -1,6 +1,7 @@
 use anyhow::Result;
 use brush_render::gaussian_splats::{Splats, inverse_sigmoid};
-use brush_render::render::sh_coeffs_for_degree;
+
+use brush_render::sh::sh_coeffs_for_degree;
 use burn::backend::wgpu::WgpuDevice;
 use burn::backend::{Autodiff, Wgpu};
 use burn::lr_scheduler::LrScheduler;
