@@ -98,9 +98,6 @@ impl<B: Backend> RefineRecord<B> {
     }
 
     pub fn into_stats(self) -> (Tensor<B, 1>, Tensor<B, 1>) {
-        (
-            self.refine_weight_norm / self.visible_counts.clamp_min(1).float(),
-            self.max_radii,
-        )
+        (self.refine_weight_norm, self.max_radii)
     }
 }

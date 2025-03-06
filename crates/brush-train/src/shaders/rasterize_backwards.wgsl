@@ -111,7 +111,11 @@ fn main(
         v_out = v_output[pix_id];
     }
 
-    for (var b = 0u; b < num_batches; b++) {
+    // Not common but when using masked out images, there can be quite large regions where
+    // the loss is 0. In that case, can skip gradients entirely as they all depend on v_out.
+    let pixel_active = length(v_out) > 0.0;
+
+    for (var b = 0; b < num_batches; b++) {
         // each thread fetch 1 gaussian from back to front
         // 0 index will be furthest back in batch
         // index of gaussian to load
@@ -139,7 +143,7 @@ fn main(
 
             var splat_active = false;
 
-            if inside && isect_id < u32(final_isect) {
+            if inside && isect_id < final_isect && pixel_active {
                 let projected = local_batch[t];
 
                 let xy = vec2f(projected.xy_x, projected.xy_y);

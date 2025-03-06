@@ -34,7 +34,7 @@ pub fn stats_gather_kernel(
     let refine_norm =
         f32::sqrt(refine_grads[0] * refine_grads[0] + refine_grads[1] * refine_grads[1]);
 
-    accum_refine_weight[global_gid] += refine_norm;
+    accum_refine_weight[global_gid] = f32::max(accum_refine_weight[global_gid], refine_norm);
     visible_counts[global_gid] += 1;
 
     let radii_norm = radius / comptime!(if w > h { w as f32 } else { h as f32 });
