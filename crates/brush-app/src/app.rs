@@ -121,6 +121,7 @@ pub struct AppContext {
 struct CameraSettings {
     focal: f64,
     radius: f32,
+    focus_distance: f32,
 }
 
 impl AppContext {
@@ -177,11 +178,11 @@ impl AppContext {
         self.controls.stop_movement();
         self.view_aspect = Some(view.image.width() as f32 / view.image.height() as f32);
 
-        self.controls.focus_distance = self
-            .dataset
-            .train
-            .estimate_extent()
-            .map_or(4.0, |x| x / 3.0);
+        if let Some(extent) = self.dataset.train.estimate_extent() {
+            self.controls.focus_distance = extent / 3.0;
+        } else {
+            self.controls.focus_distance = self.cam_settings.focus_distance;
+        }
     }
 
     pub fn connect_to(&mut self, process: RunningProcess) {
@@ -283,7 +284,16 @@ impl App {
             .and_then(|f| f.parse().ok())
             .unwrap_or(4.0);
 
-        let settings = CameraSettings { focal, radius };
+        let focus_distance = search_params
+            .get("focus_distance")
+            .and_then(|f| f.parse().ok())
+            .unwrap_or(10.0);
+
+        let settings = CameraSettings {
+            focal,
+            radius,
+            focus_distance,
+        };
         let context = AppContext::new(device.clone(), cc.egui_ctx.clone(), &settings);
 
         let mut tiles: Tiles<PaneType> = Tiles::default();
