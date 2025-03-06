@@ -28,7 +28,7 @@ use crate::ssim::Ssim;
 use crate::stats::RefineRecord;
 use clap::Args;
 
-const MIN_OPACITY: f32 = 0.9 / 255.0;
+const MIN_OPACITY: f32 = 0.99 / 255.0;
 
 #[derive(Config, Args)]
 pub struct TrainConfig {
@@ -48,18 +48,18 @@ pub struct TrainConfig {
     ssim_window_size: usize,
 
     /// Start learning rate for the mean parameters.
-    #[config(default = 3e-5)]
-    #[arg(long, help_heading = "Training options", default_value = "3e-5")]
+    #[config(default = 4e-5)]
+    #[arg(long, help_heading = "Training options", default_value = "4e-5")]
     lr_mean: f64,
 
     /// Start learning rate for the mean parameters.
-    #[config(default = 2e-7)]
-    #[arg(long, help_heading = "Training options", default_value = "2e-7")]
+    #[config(default = 4e-7)]
+    #[arg(long, help_heading = "Training options", default_value = "4e-7")]
     lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
-    #[config(default = 2e4)]
-    #[arg(long, help_heading = "Training options", default_value = "2e4")]
+    #[config(default = 5e3)]
+    #[arg(long, help_heading = "Training options", default_value = "5e3")]
     mean_noise_weight: f32,
 
     /// Learning rate for the base SH (RGB) coefficients.
@@ -78,8 +78,8 @@ pub struct TrainConfig {
     lr_opac: f64,
 
     /// Learning rate for the scale parameters.
-    #[config(default = 6e-3)]
-    #[arg(long, help_heading = "Training options", default_value = "6e-3")]
+    #[config(default = 1e-2)]
+    #[arg(long, help_heading = "Training options", default_value = "1e-2")]
     lr_scale: f64,
 
     /// Learning rate for the scale parameters.
@@ -93,17 +93,17 @@ pub struct TrainConfig {
     lr_rotation: f64,
 
     /// Weight of the opacity loss.
-    #[config(default = 0.01)]
-    #[arg(long, help_heading = "Training options", default_value = "0.01")]
+    #[config(default = 0.04)]
+    #[arg(long, help_heading = "Training options", default_value = "0.04")]
     opac_loss_weight: f32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[config(default = 0.00175)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.00175")]
+    #[config(default = 0.0015)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0015")]
     densify_grad_thresh: f32,
 
     /// Period after which splat growth stops.
-    #[config(default = 15000)]
+    #[config(default = 10000)]
     #[arg(long, help_heading = "Refine options", default_value = "15000")]
     growth_stop_iter: u32,
 
@@ -262,17 +262,14 @@ impl SplatTrainer {
                 splats.log_scales.val().into_primitive().tensor(),
                 splats.rotation.val().into_primitive().tensor(),
                 splats.sh_coeffs.val().into_primitive().tensor(),
-                splats
-                    .raw_opacity
-                    .val()
-                    .clamp(-20.0, 20.0)
-                    .into_primitive()
-                    .tensor(),
+                splats.raw_opacity.val().into_primitive().tensor(),
             );
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
             let wrapped_aux = diff_out.aux.into_wrapped();
             (img, wrapped_aux, diff_out.refine_weight_holder)
         };
+
+        let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
 
         let _span = trace_span!("Calculate losses", sync_burn = true).entered();
 
@@ -309,12 +306,12 @@ impl SplatTrainer {
 
         let visible = aux.radii.clone().inner().greater_elem(0.0).float();
 
-        let loss = if self.config.opac_loss_weight > 0.0 {
+        let opac_loss_weight = self.config.opac_loss_weight * (1.0 - train_t);
+
+        let loss = if opac_loss_weight > 0.0 {
             let visible_count = Tensor::from_inner(visible.clone().sum());
-            let opac_loss = (splats.opacities() * Tensor::from_inner(visible.clone())).sum()
-                * self.config.opac_loss_weight
-                / visible_count;
-            loss + opac_loss
+            let visible = Tensor::from_inner(visible.clone());
+            loss + (splats.opacities() * visible).sum() * opac_loss_weight / visible_count
         } else {
             loss
         };
@@ -407,33 +404,34 @@ impl SplatTrainer {
             record.gather_stats(refine_weight, aux);
         });
 
-        // Clamp.
-        // splats.raw_opacity = splats.raw_opacity.map(|o| o.clamp(-25.0, 25.0));
+        let mean_noise_weight_scale = self.config.mean_noise_weight * (1.0 - train_t);
 
-        let device = splats.device();
-        // Add random noise. Only do this in the growth phase, otherwise
-        // let the splats settle in without noise, not much point in exploring regions anymore.
-        // trace_span!("Noise means").in_scope(|| {
-        let one = Tensor::ones([1], &device);
-        let noise_weight = (one - splats.opacities().inner())
-            .powf_scalar(100.0)
-            .clamp(0.0, 1.0);
-        let noise_weight = noise_weight * visible; // Only noise visible gaussians.
-        let noise_weight = noise_weight.unsqueeze_dim(1);
+        if mean_noise_weight_scale > 0.0 {
+            let device = splats.device();
+            // Add random noise. Only do this in the growth phase, otherwise
+            // let the splats settle in without noise, not much point in exploring regions anymore.
+            // trace_span!("Noise means").in_scope(|| {
+            let one = Tensor::ones([1], &device);
+            let noise_weight = (one - splats.opacities().inner())
+                .powf_scalar(100.0)
+                .clamp(0.0, 1.0);
+            let noise_weight = noise_weight * visible; // Only noise visible gaussians.
+            let noise_weight = noise_weight.unsqueeze_dim(1);
 
-        let samples = quaternion_vec_multiply(
-            splats.rotations_normed().inner(),
-            Tensor::random(
-                [splats.num_splats() as usize, 3],
-                Distribution::Normal(0.0, 1.0),
-                &device,
-            ) * splats.scales().inner(),
-        );
+            let samples = quaternion_vec_multiply(
+                splats.rotations_normed().inner(),
+                Tensor::random(
+                    [splats.num_splats() as usize, 3],
+                    Distribution::Normal(0.0, 1.0),
+                    &device,
+                ) * splats.scales().inner(),
+            );
 
-        let mean_noise = samples * (noise_weight * lr_mean as f32 * self.config.mean_noise_weight);
-        splats.means = splats
-            .means
-            .map(|m| Tensor::from_inner(m.inner() + mean_noise).require_grad());
+            let noise_weight = noise_weight * (lr_mean as f32 * mean_noise_weight_scale);
+            splats.means = splats
+                .means
+                .map(|m| Tensor::from_inner(m.inner() + samples * noise_weight).require_grad());
+        }
 
         let stats = TrainStepStats {
             pred_image,
