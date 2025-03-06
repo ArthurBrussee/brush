@@ -8,7 +8,9 @@ use ply_rs::{
     writer::Writer,
 };
 
-async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<Vec<ParsedGaussian>, DataError> {
+async fn read_splat_data<B: Backend>(
+    splats: Splats<B>,
+) -> Result<Vec<ParsedGaussian<false>>, DataError> {
     let means = splats.means.val().into_data_async().await.to_vec()?;
     let log_scales = splats.log_scales.val().into_data_async().await.to_vec()?;
     let rotations = splats.rotation.val().into_data_async().await.to_vec()?;
@@ -91,7 +93,7 @@ pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> anyhow::Result<Vec<u
         ));
     }
 
-    let mut ply: Ply<ParsedGaussian> = Ply::new();
+    let mut ply: Ply<ParsedGaussian<false>> = Ply::new();
 
     // Create PLY header
     let mut vertex = ply::ElementDef::new("vertex");
@@ -103,7 +105,7 @@ pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> anyhow::Result<Vec<u
     ply.payload.insert("vertex".to_owned(), data);
 
     let mut buf = vec![];
-    let writer = Writer::<ParsedGaussian>::new();
+    let writer = Writer::<ParsedGaussian<false>>::new();
     writer.write_ply(&mut buf, &mut ply)?;
     Ok(buf)
 }

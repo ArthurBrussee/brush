@@ -169,7 +169,7 @@ fn parse_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
             anyhow::bail!("First element must be 'vertex'")
         }
 
-        let parser = Parser::<ParsedGaussian>::new();
+        let parser = Parser::<ParsedGaussian<false>>::new();
 
         let properties: HashSet<_> = vertex.properties.iter().map(|x| x.name.clone()).collect();
         let mut means = Vec::with_capacity(vertex.count);
@@ -335,7 +335,7 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
             anyhow::bail!("Second element should be vertex compression metadata!");
         }
 
-        let parser = Parser::<ParsedGaussian>::new();
+        let parser = Parser::<ParsedGaussian<true>>::new();
         let mut means = Vec::with_capacity(vertex.count);
         // Atm, unlike normal plys, these values aren't optional.
         let mut log_scales = Vec::with_capacity(vertex.count);
@@ -405,6 +405,10 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
         }
 
         if let Some(sh_vals) = header.elements.get(2) {
+            // Bit of a hack - use the unquantized parser as that handles SH values. Really we don't need
+            // the entire splat parser though.
+            let parser = Parser::<ParsedGaussian<false>>::new();
+
             if sh_vals.name != "sh" {
                 anyhow::bail!("Second element should be SH compression metadata!");
             }
@@ -455,7 +459,7 @@ fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
     up_axis: Option<Vec3>,
 ) -> impl Stream<Item = Result<SplatMessage<B>>> + 'static {
     try_fn_stream(|emitter| async move {
-        let parser = Parser::<ParsedGaussian>::new();
+        let parser = Parser::<ParsedGaussian<false>>::new();
 
         // Check for frame count.
         let frame_count = header
