@@ -10,6 +10,8 @@ pub struct CameraController {
     roll: Quat,
     fly_velocity: Vec3,
     orbit_velocity: Vec2,
+
+    speed_scale: f32,
 }
 
 pub fn smooth_orbit(
@@ -47,14 +49,15 @@ fn exp_lerp3(a: Vec3, b: Vec3, dt: f32, lambda: f32) -> Vec3 {
 }
 
 impl CameraController {
-    pub fn new(start_focus_distance: f32) -> Self {
+    pub fn new(start_radius: f32, start_focus_distance: f32, speed_scale: f32) -> Self {
         Self {
-            position: -Vec3::Z * start_focus_distance,
+            position: -Vec3::Z * start_radius,
             rotation: Quat::IDENTITY,
             roll: Quat::IDENTITY,
             focus_distance: start_focus_distance,
             fly_velocity: Vec3::ZERO,
             orbit_velocity: Vec2::ZERO,
+            speed_scale,
         }
     }
 
@@ -116,7 +119,8 @@ impl CameraController {
 
         let fly_moment_lambda = 0.8;
 
-        let move_speed = 30.0
+        let move_speed = 25.0
+            * self.speed_scale
             * if ui.input(|r| r.modifiers.shift) {
                 4.0
             } else {
