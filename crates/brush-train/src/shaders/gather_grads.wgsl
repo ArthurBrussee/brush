@@ -3,13 +3,13 @@
 @group(0) @binding(0) var<uniform> uniforms: helpers::RenderUniforms;
 @group(0) @binding(1) var<storage, read> global_from_compact_gid: array<i32>;
 
-@group(0) @binding(2) var<storage, read> raw_opacities: array<f32>;
-@group(0) @binding(3) var<storage, read> means: array<helpers::PackedVec3>;
+// @group(0) @binding(2) var<storage, read> opacities: array<f32>;
+@group(0) @binding(2) var<storage, read> means: array<helpers::PackedVec3>;
 
-@group(0) @binding(4) var<storage, read> v_grads: array<f32>;
+@group(0) @binding(3) var<storage, read> v_grads: array<f32>;
 
-@group(0) @binding(5) var<storage, read_write> v_coeffs: array<f32>;
-@group(0) @binding(6) var<storage, read_write> v_opacs: array<f32>;
+@group(0) @binding(4) var<storage, read_write> v_coeffs: array<f32>;
+@group(0) @binding(5) var<storage, read_write> v_opacs: array<f32>;
 
 const SH_C0: f32 = 0.2820947917738781f;
 
@@ -153,13 +153,13 @@ fn write_coeffs(base_id: ptr<function, i32>, val: vec3f) {
     *base_id += 3;
 }
 
-fn sigmoid(x: f32) -> f32 {
-    return 1.0 / (1.0 + exp(-x));
-}
+// fn sigmoid(x: f32) -> f32 {
+//     return 1.0 / (1.0 + exp(-x));
+// }
 
-fn v_sigmoid(x: f32) -> f32 {
-    return sigmoid(x) * (1.0 - sigmoid(x));
-}
+// fn v_sigmoid(x: f32) -> f32 {
+//     return sigmoid(x) * (1.0 - sigmoid(x));
+// }
 
 @compute
 @workgroup_size(256, 1, 1)
@@ -220,7 +220,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     // Transform alpha gradient to opacity gradient.
-    let raw_opac = raw_opacities[global_gid];
-    let v_opac_raw = v_opac * v_sigmoid(raw_opac);
-    v_opacs[global_gid] = v_opac_raw;
+    // let raw_opac = opacities[global_gid];
+    // let v_opac_raw = v_opac * v_sigmoid(raw_opac);
+    v_opacs[global_gid] = v_opac;
 }

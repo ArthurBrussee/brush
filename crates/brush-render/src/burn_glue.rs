@@ -22,7 +22,7 @@ impl<BT: BoolElement> SplatForward<Self> for BBase<BT> {
         log_scales: FloatTensor<Self>,
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
-        raw_opacity: FloatTensor<Self>,
+        opacity: FloatTensor<Self>,
         render_u32_buffer: bool,
     ) -> (FloatTensor<Self>, RenderAuxPrimitive<Self>) {
         render_forward(
@@ -32,7 +32,7 @@ impl<BT: BoolElement> SplatForward<Self> for BBase<BT> {
             log_scales,
             quats,
             sh_coeffs,
-            raw_opacity,
+            opacity,
             render_u32_buffer,
         )
     }
@@ -46,7 +46,7 @@ impl<BT: BoolElement> SplatForward<Self> for Fusion<BBase<BT>> {
         log_scales: FloatTensor<Self>,
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
-        raw_opacity: FloatTensor<Self>,
+        opacity: FloatTensor<Self>,
         render_u32_buffer: bool,
     ) -> (FloatTensor<Self>, RenderAuxPrimitive<Self>) {
         struct CustomOp<BT: BoolElement> {
@@ -63,7 +63,7 @@ impl<BT: BoolElement> SplatForward<Self> for Fusion<BBase<BT>> {
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
             ) {
                 let (
-                    [means, log_scales, quats, sh_coeffs, raw_opacity],
+                    [means, log_scales, quats, sh_coeffs, opacity],
                     [
                         projected_splats,
                         uniforms_buffer,
@@ -81,11 +81,11 @@ impl<BT: BoolElement> SplatForward<Self> for Fusion<BBase<BT>> {
                 let (img, aux) = BBase::<BT>::render_splats(
                     &self.cam,
                     self.img_size,
-                    h.get_float_tensor::<BBase<BT>>(&means),
-                    h.get_float_tensor::<BBase<BT>>(&log_scales),
-                    h.get_float_tensor::<BBase<BT>>(&quats),
-                    h.get_float_tensor::<BBase<BT>>(&sh_coeffs),
-                    h.get_float_tensor::<BBase<BT>>(&raw_opacity),
+                    h.get_float_tensor::<BBase<F, I, BT>>(&means),
+                    h.get_float_tensor::<BBase<F, I, BT>>(&log_scales),
+                    h.get_float_tensor::<BBase<F, I, BT>>(&quats),
+                    h.get_float_tensor::<BBase<F, I, BT>>(&sh_coeffs),
+                    h.get_float_tensor::<BBase<F, I, BT>>(&opacity),
                     self.render_u32_buffer,
                 );
 
@@ -152,7 +152,7 @@ impl<BT: BoolElement> SplatForward<Self> for Fusion<BBase<BT>> {
                 log_scales.into_ir(),
                 quats.into_ir(),
                 sh_coeffs.into_ir(),
-                raw_opacity.into_ir(),
+                opacity.into_ir(),
             ],
             &[
                 aux.projected_splats.to_ir_out(),

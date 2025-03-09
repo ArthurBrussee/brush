@@ -212,7 +212,7 @@ pub trait SplatForward<B: Backend> {
         log_scales: FloatTensor<B>,
         quats: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
-        raw_opacity: FloatTensor<B>,
+        opacities: FloatTensor<B>,
         render_u32_buffer: bool,
     ) -> (FloatTensor<B>, RenderAuxPrimitive<B>);
 }

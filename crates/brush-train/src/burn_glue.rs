@@ -67,7 +67,6 @@ impl<BT: BoolElement> SplatBackwardOps<Self> for BBase<BT> {
             state.means,
             state.quats,
             state.log_scales,
-            state.raw_opac,
             state.out_img,
             state.projected_splats,
             state.uniforms_buffer,

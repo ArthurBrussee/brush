@@ -93,25 +93,29 @@ pub struct TrainConfig {
     lr_rotation: f64,
 
     /// Weight of the opacity loss.
-    #[config(default = 0.04)]
-    #[arg(long, help_heading = "Training options", default_value = "0.04")]
+    #[config(default = 0.02)]
+    #[arg(long, help_heading = "Training options", default_value = "0.02")]
     opac_loss_weight: f32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[config(default = 0.0015)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.0015")]
+    #[config(default = 0.0006)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0006")]
     densify_grad_thresh: f32,
 
     /// Period after which splat growth stops.
-    #[config(default = 10000)]
+    #[config(default = 15000)]
     #[arg(long, help_heading = "Refine options", default_value = "15000")]
     growth_stop_iter: u32,
 
     /// Frequency of 'refinement' where gaussians are replaced and densified. This should
     /// roughly be the number of images it takes to properly "cover" your scene.
-    #[config(default = 250)]
-    #[arg(long, help_heading = "Refine options", default_value = "250")]
+    #[config(default = 200)]
+    #[arg(long, help_heading = "Refine options", default_value = "200")]
     refine_every: u32,
+
+    #[config(default = 12.5)]
+    #[arg(long, help_heading = "Refine options", default_value = "12.5")]
+    refine_grow_fraction: f32,
 
     /// Weight of l1 loss on alpha if input view has transparency.
     #[config(default = 0.1)]
@@ -262,7 +266,7 @@ impl SplatTrainer {
                 splats.log_scales.val().into_primitive().tensor(),
                 splats.rotation.val().into_primitive().tensor(),
                 splats.sh_coeffs.val().into_primitive().tensor(),
-                splats.raw_opacity.val().into_primitive().tensor(),
+                splats.opacities().into_primitive().tensor(),
             );
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
             let wrapped_aux = diff_out.aux.into_wrapped();
@@ -306,9 +310,10 @@ impl SplatTrainer {
 
         let visible = aux.radii.clone().inner().greater_elem(0.0).float();
 
-        let opac_loss_weight = self.config.opac_loss_weight * (1.0 - train_t);
+        let opac_loss_weight = self.config.opac_loss_weight;
 
-        let loss = if opac_loss_weight > 0.0 {
+        let loss = if opac_loss_weight > 0.0 && iter > 1000 && iter < self.config.total_steps - 5000
+        {
             let visible_count = Tensor::from_inner(visible.clone().sum());
             let visible = Tensor::from_inner(visible.clone());
             loss + (splats.opacities() * visible).sum() * opac_loss_weight / visible_count
@@ -488,7 +493,9 @@ impl SplatTrainer {
         let threshold_count = above_threshold.clone().sum().into_scalar_async().await as u32;
 
         let (random_sample_count, sample_high_grad) = if iter < self.config.growth_stop_iter {
-            (pruned_count, threshold_count - pruned_count)
+            let grow_count =
+                (threshold_count as f32 / self.config.refine_grow_fraction).round() as u32;
+            (pruned_count, grow_count.saturating_sub(pruned_count))
         } else {
             (pruned_count, 0)
         };

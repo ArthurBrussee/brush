@@ -256,7 +256,7 @@ impl<B: Backend + SplatForward<B>> Splats<B> {
             self.log_scales.val().into_primitive().tensor(),
             self.rotation.val().into_primitive().tensor(),
             self.sh_coeffs.val().into_primitive().tensor(),
-            self.raw_opacity.val().into_primitive().tensor(),
+            self.opacities().into_primitive().tensor(),
             render_u32_buffer,
         );
 

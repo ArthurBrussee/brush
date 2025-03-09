@@ -13,7 +13,7 @@ struct IsectInfo {
 @group(0) @binding(2) var<storage, read> log_scales: array<helpers::PackedVec3>;
 @group(0) @binding(3) var<storage, read> quats: array<vec4f>;
 @group(0) @binding(4) var<storage, read> coeffs: array<helpers::PackedVec3>;
-@group(0) @binding(5) var<storage, read> raw_opacities: array<f32>;
+@group(0) @binding(5) var<storage, read> opacities: array<f32>;
 
 @group(0) @binding(6) var<storage, read> global_from_compact_gid: array<i32>;
 
@@ -182,7 +182,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let scale = exp(helpers::as_vec(log_scales[global_gid]));
     // Safe to normalize, splats with length(quat) == 0 are invisible.
     let quat = normalize(quats[global_gid]);
-    let opac = helpers::sigmoid(raw_opacities[global_gid]);
+    let opac = opacities[global_gid];
 
     let viewmat = uniforms.viewmat;
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);

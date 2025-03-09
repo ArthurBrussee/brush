@@ -30,7 +30,6 @@ pub(crate) fn render_backward<BT: BoolElement>(
     means: CubeTensor<WgpuRuntime>,
     quats: CubeTensor<WgpuRuntime>,
     log_scales: CubeTensor<WgpuRuntime>,
-    raw_opac: CubeTensor<WgpuRuntime>,
     out_img: CubeTensor<WgpuRuntime>,
 
     projected_splats: CubeTensor<WgpuRuntime>,
@@ -61,7 +60,7 @@ pub(crate) fn render_backward<BT: BoolElement>(
         [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
         device,
     );
-    let v_raw_opac = BBase::<BT>::float_zeros([num_points].into(), device);
+    let v_opac = BBase::<F, I, BT>::float_zeros([num_points].into(), device);
 
     let tile_bounds = uvec2(
         img_size
@@ -113,11 +112,11 @@ pub(crate) fn render_backward<BT: BoolElement>(
             vec![
                 uniforms_buffer.clone().handle.binding(),
                 global_from_compact_gid.clone().handle.binding(),
-                raw_opac.handle.binding(),
+                // raw_opac.handle.binding(),
                 means.clone().handle.binding(),
                 v_grads.clone().handle.binding(),
                 v_coeffs.handle.clone().binding(),
-                v_raw_opac.handle.clone().binding(),
+                v_opac.handle.clone().binding(),
             ],
         );
     }
@@ -147,7 +146,7 @@ pub(crate) fn render_backward<BT: BoolElement>(
         v_quats,
         v_scales,
         v_coeffs,
-        v_raw_opac,
+        v_raw_opac: v_opac,
         v_refine_weight,
     }
 }

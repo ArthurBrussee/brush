@@ -52,7 +52,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
     log_scales: CubeTensor<WgpuRuntime>,
     quats: CubeTensor<WgpuRuntime>,
     sh_coeffs: CubeTensor<WgpuRuntime>,
-    raw_opacities: CubeTensor<WgpuRuntime>,
+    opacities: CubeTensor<WgpuRuntime>,
     raster_u32: bool,
 ) -> (CubeTensor<WgpuRuntime>, RenderAuxPrimitive<BBase<BT>>) {
     assert!(
@@ -74,7 +74,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
         .check_dims(&log_scales, &["D".into(), 3.into()])
         .check_dims(&quats, &["D".into(), 4.into()])
         .check_dims(&sh_coeffs, &["D".into(), "C".into(), 3.into()])
-        .check_dims(&raw_opacities, &["D".into()]);
+        .check_dims(&opacities, &["D".into()]);
 
     // Divide screen into tiles.
     let tile_bounds = calc_tile_bounds(img_size);
@@ -131,7 +131,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
                     means.clone().handle.binding(),
                     quats.clone().handle.binding(),
                     log_scales.clone().handle.binding(),
-                    raw_opacities.clone().handle.binding(),
+                    opacities.clone().handle.binding(),
                     global_from_presort_gid.clone().handle.binding(),
                     depths.clone().handle.binding(),
                     radii.clone().handle.binding(),
@@ -183,7 +183,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
                 log_scales.handle.binding(),
                 quats.handle.binding(),
                 sh_coeffs.handle.binding(),
-                raw_opacities.handle.binding(),
+                opacities.handle.binding(),
                 global_from_compact_gid.handle.clone().binding(),
                 projected_splats.handle.clone().binding(),
                 tiles_hit_per_splat.handle.clone().binding(),
