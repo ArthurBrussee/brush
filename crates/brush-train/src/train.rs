@@ -93,8 +93,8 @@ pub struct TrainConfig {
     lr_rotation: f64,
 
     /// Weight of the opacity loss.
-    #[config(default = 0.02)]
-    #[arg(long, help_heading = "Training options", default_value = "0.02")]
+    #[config(default = 0.01)]
+    #[arg(long, help_heading = "Training options", default_value = "0.01")]
     opac_loss_weight: f32,
 
     /// Threshold to control splat growth. Lower means faster growth.
