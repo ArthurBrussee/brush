@@ -259,13 +259,10 @@ impl<B: Backend + SplatForward<B>> Splats<B> {
             self.opacities().into_primitive().tensor(),
             render_u32_buffer,
         );
-
         let img = Tensor::from_primitive(TensorPrimitive::Float(img));
-
-        let wrapped_aux = aux.into_wrapped();
         if cfg!(feature = "debug_validation") {
-            wrapped_aux.clone().debug_assert_valid();
+            aux.debug_assert_valid();
         }
-        (img, wrapped_aux)
+        (img, aux)
     }
 }

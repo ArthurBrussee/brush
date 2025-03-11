@@ -9,9 +9,10 @@
     @group(0) @binding(4) var<storage, read_write> out_img: array<u32>;
 #else
     @group(0) @binding(4) var<storage, read_write> out_img: array<vec4f>;
-#endif
 
-@group(0) @binding(5) var<storage, read_write> final_index : array<i32>;
+    @group(0) @binding(5) var<storage, read_write> final_index: array<i32>;
+    @group(0) @binding(6) var<storage, read_write> visible: array<f32>;
+#endif
 
 var<workgroup> local_batch: array<helpers::ProjectedSplat, helpers::TILE_SIZE>;
 
@@ -63,9 +64,13 @@ fn main(
         // process gaussians in the current batch for this pixel
         let remaining = min(helpers::TILE_SIZE, range.y - batch_start);
 
-        if local_idx < remaining {
-            let load_isect_id = batch_start + local_idx;
-            local_batch[local_idx] = projected_splats[compact_gid_from_isect[load_isect_id]];
+        if i32(local_idx) < remaining {
+            let load_isect_id = batch_start + i32(local_idx);
+            let compact_gid = compact_gid_from_isect[load_isect_id];
+            local_batch[local_idx] = projected_splats[compact_gid];
+
+            // TODO: Only if actually visible.
+            visible[compact_gid] = 1.0;
         }
         // Wait for all writes to complete.
         workgroupBarrier();
@@ -109,7 +114,6 @@ fn main(
             let colors_u = vec4u(clamp(final_color * 255.0, vec4f(0.0), vec4f(255.0)));
             let packed: u32 = colors_u.x | (colors_u.y << 8u) | (colors_u.z << 16u) | (colors_u.w << 24u);
             out_img[pix_id] = packed;
-            final_index[pix_id] = i32(final_idx);
         #else
             out_img[pix_id] = final_color;
             final_index[pix_id] = i32(final_idx);

@@ -38,7 +38,7 @@ fn renders_at_all() {
         raw_opacity.into_primitive().tensor(),
         false,
     );
-    aux.into_wrapped().debug_assert_valid();
+    aux.debug_assert_valid();
 
     let output: Tensor<Back, 3> = Tensor::from_primitive(TensorPrimitive::Float(output));
     let rgb = output.clone().slice([0..32, 0..32, 0..3]);

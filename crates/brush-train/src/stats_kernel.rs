@@ -6,11 +6,8 @@ use burn_cubecl::cubecl::{cube, prelude::*};
 pub fn stats_gather_kernel(
     gs_ids: &Tensor<u32>,
     num_visible: &Tensor<u32>,
-    radii: &Tensor<f32>,
     refine_weight: &Tensor<Line<f32>>,
     accum_refine_weight: &mut Tensor<f32>,
-    visible_counts: &mut Tensor<u32>,
-    max_radii: &mut Tensor<f32>,
     #[comptime] w: u32,
     #[comptime] h: u32,
 ) {
@@ -22,7 +19,6 @@ pub fn stats_gather_kernel(
     }
 
     let global_gid = gs_ids[compact_gid];
-    let radius = radii[global_gid];
 
     let mut line: Line<f32> = Line::empty(2);
 
@@ -35,8 +31,4 @@ pub fn stats_gather_kernel(
         f32::sqrt(refine_grads[0] * refine_grads[0] + refine_grads[1] * refine_grads[1]);
 
     accum_refine_weight[global_gid] = f32::max(accum_refine_weight[global_gid], refine_norm);
-    visible_counts[global_gid] += 1;
-
-    let radii_norm = radius / comptime!(if w > h { w as f32 } else { h as f32 });
-    max_radii[global_gid] = f32::max(radii_norm, max_radii[global_gid]);
 }

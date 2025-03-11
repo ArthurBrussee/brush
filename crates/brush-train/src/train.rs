@@ -28,7 +28,7 @@ use crate::ssim::Ssim;
 use crate::stats::RefineRecord;
 use clap::Args;
 
-const MIN_OPACITY: f32 = 0.99 / 255.0;
+const MIN_OPACITY: f32 = 0.9 / 255.0;
 
 #[derive(Config, Args)]
 pub struct TrainConfig {
@@ -97,25 +97,27 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "0.01")]
     opac_loss_weight: f32,
 
-    /// Threshold to control splat growth. Lower means faster growth.
-    #[config(default = 0.0006)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.0006")]
-    densify_grad_thresh: f32,
-
-    /// Period after which splat growth stops.
-    #[config(default = 15000)]
-    #[arg(long, help_heading = "Refine options", default_value = "15000")]
-    growth_stop_iter: u32,
-
     /// Frequency of 'refinement' where gaussians are replaced and densified. This should
     /// roughly be the number of images it takes to properly "cover" your scene.
-    #[config(default = 200)]
-    #[arg(long, help_heading = "Refine options", default_value = "200")]
+    #[config(default = 150)]
+    #[arg(long, help_heading = "Refine options", default_value = "150")]
     refine_every: u32,
 
-    #[config(default = 12.5)]
-    #[arg(long, help_heading = "Refine options", default_value = "12.5")]
-    refine_grow_fraction: f32,
+    /// Threshold to control splat growth. Lower means faster growth.
+    #[config(default = 0.0007)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0007")]
+    growth_grad_threshold: f32,
+
+    /// What fraction of splats that are deemed as needing to grow do actually grow.
+    /// Increase this to make splats grow more aggressively.
+    #[config(default = 0.1)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.1")]
+    growth_select_fraction: f32,
+
+    /// Period after which splat growth stops.
+    #[config(default = 12500)]
+    #[arg(long, help_heading = "Refine options", default_value = "12500")]
+    growth_stop_iter: u32,
 
     /// Weight of l1 loss on alpha if input view has transparency.
     #[config(default = 0.1)]
@@ -258,7 +260,14 @@ impl SplatTrainer {
 
         let camera = &batch.gt_view.camera;
 
-        let (pred_image, aux, refine_weight_holder) = {
+        let (
+            pred_image,
+            visible,
+            global_from_compact_gid,
+            num_visible,
+            num_intersections,
+            refine_weight_holder,
+        ) = {
             let diff_out = <TrainBack as SplatForwardDiff<TrainBack>>::render_splats(
                 camera,
                 glam::uvec2(img_w as u32, img_h as u32),
@@ -269,8 +278,14 @@ impl SplatTrainer {
                 splats.opacities().into_primitive().tensor(),
             );
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-            let wrapped_aux = diff_out.aux.into_wrapped();
-            (img, wrapped_aux, diff_out.refine_weight_holder)
+            (
+                img,
+                diff_out.aux.visible,
+                diff_out.aux.global_from_compact_gid,
+                diff_out.aux.num_visible,
+                diff_out.aux.num_intersections,
+                diff_out.refine_weight_holder,
+            )
         };
 
         let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
@@ -308,15 +323,13 @@ impl SplatTrainer {
             total_err.mean()
         };
 
-        let visible = aux.radii.clone().inner().greater_elem(0.0).float();
-
         let opac_loss_weight = self.config.opac_loss_weight;
+        let visible: Tensor<_, 1> = Tensor::from_primitive(TensorPrimitive::Float(visible));
 
         let loss = if opac_loss_weight > 0.0 && iter > 1000 && iter < self.config.total_steps - 5000
         {
-            let visible_count = Tensor::from_inner(visible.clone().sum());
-            let visible = Tensor::from_inner(visible.clone());
-            loss + (splats.opacities() * visible).sum() * opac_loss_weight / visible_count
+            let visible_count = visible.clone().sum();
+            loss + (splats.opacities() * visible.clone()).sum() * opac_loss_weight / visible_count
         } else {
             loss
         };
@@ -390,15 +403,11 @@ impl SplatTrainer {
             splats
         });
 
-        let num_visible = aux.num_visible.clone();
-        let num_intersections = aux.num_intersections.clone();
-
         trace_span!("Housekeeping", sync_burn = true).in_scope(|| {
             // Get the xy gradient norm from the dummy tensor.
             let refine_weight = refine_weight_holder
                 .grad_remove(&mut grads)
                 .expect("XY gradients need to be calculated.");
-            let aux = aux.clone();
 
             let device = splats.device();
             let num_splats = splats.num_splats();
@@ -406,7 +415,12 @@ impl SplatTrainer {
                 .refine_record
                 .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
 
-            record.gather_stats(refine_weight, aux);
+            record.gather_stats(
+                refine_weight,
+                glam::uvec2(img_w as u32, img_h as u32),
+                global_from_compact_gid,
+                num_visible.clone(),
+            );
         });
 
         let mean_noise_weight_scale = self.config.mean_noise_weight * (1.0 - train_t);
@@ -420,7 +434,7 @@ impl SplatTrainer {
             let noise_weight = (one - splats.opacities().inner())
                 .powf_scalar(100.0)
                 .clamp(0.0, 1.0);
-            let noise_weight = noise_weight * visible; // Only noise visible gaussians.
+            let noise_weight = noise_weight * visible.inner(); // Only noise visible gaussians.
             let noise_weight = noise_weight.unsqueeze_dim(1);
 
             let samples = quaternion_vec_multiply(
@@ -441,8 +455,8 @@ impl SplatTrainer {
         let stats = TrainStepStats {
             pred_image,
             gt_views: batch.gt_view,
-            num_visible,
-            num_intersections,
+            num_visible: Tensor::from_primitive(num_visible),
+            num_intersections: Tensor::from_primitive(num_intersections),
             loss,
             lr_mean,
             lr_rotation,
@@ -463,9 +477,10 @@ impl SplatTrainer {
             return (splats, None);
         }
 
+        let device = splats.means.device();
+
         // If not refining, update splat to step with gradients applied.
         // Prune dead splats. This ALWAYS happen even if we're not "refining" anymore.
-        let device = splats.means.device();
         let mut record = self
             .optim
             .take()
@@ -480,53 +495,48 @@ impl SplatTrainer {
             .val()
             .inner()
             .lower_elem(inverse_sigmoid(MIN_OPACITY));
+
         let (mut splats, refiner, pruned_count) =
             prune_points(splats, &mut record, refiner, alpha_mask).await;
 
-        let (avg_refine_grad, max_radii) = refiner.into_stats();
         let mut add_indices = HashSet::new();
 
-        let above_threshold = avg_refine_grad
-            .clone()
-            .greater_elem(self.config.densify_grad_thresh)
-            .int();
-        let threshold_count = above_threshold.clone().sum().into_scalar_async().await as u32;
-
-        let (random_sample_count, sample_high_grad) = if iter < self.config.growth_stop_iter {
-            let grow_count =
-                (threshold_count as f32 / self.config.refine_grow_fraction).round() as u32;
-            (pruned_count, grow_count.saturating_sub(pruned_count))
-        } else {
-            (pruned_count, 0)
-        };
-
         // Replace dead gaussians if we're still refining.
-        if random_sample_count > 0 {
+        if pruned_count > 0 {
             // Sample from random opacities.
             //
             // Sampling from _only visible_ splats here perhaps seems to improve things ever so slightly,
             // as I'm guessing it's because that prevents selecting gaussians which are effectively dead already.
-            let resampled_weights =
-                splats.opacities().inner() * max_radii.greater_elem(0.0).float();
+            let resampled_weights = splats.opacities().inner();
             let resampled_weights = resampled_weights
                 .into_data_async()
                 .await
                 .to_vec::<f32>()
                 .expect("Failed to read weights");
-            let resampled_inds = multinomial_sample(&resampled_weights, random_sample_count);
+            let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
             add_indices.extend(resampled_inds);
         }
 
-        // If still growing, sample from indices which are over the threshold.
-        if sample_high_grad > 0 {
-            // Only grow to max nr. of splats.
+        if iter < self.config.growth_stop_iter {
+            let above_threshold = refiner
+                .refine_weight_norm
+                .clone()
+                .greater_elem(self.config.growth_grad_threshold)
+                .int();
+            let threshold_count = above_threshold.clone().sum().into_scalar_async().await as u32;
+
+            let grow_count =
+                (threshold_count as f32 * self.config.growth_select_fraction).round() as u32;
+
+            let sample_high_grad = grow_count.saturating_sub(pruned_count);
+
+            // Only grow to the max nr. of splats.
             let cur_splats = splats.num_splats() + add_indices.len() as u32;
             let grow_count = sample_high_grad.min(self.config.max_splats - cur_splats);
 
+            // If still growing, sample from indices which are over the threshold.
             if grow_count > 0 {
-                // let mut rng = rand::rng();
-                // let growth_inds = threshold_ids.choose_multiple(&mut rng, grow_count);
-                let weights = above_threshold.float() * avg_refine_grad.clone();
+                let weights = above_threshold.float() * refiner.refine_weight_norm;
                 let weights = weights
                     .into_data_async()
                     .await
@@ -566,12 +576,6 @@ impl SplatTrainer {
                 .inner()
                 .select(0, refine_inds.clone());
 
-            let samples = quaternion_vec_multiply(
-                cur_rots.clone(),
-                Tensor::random([refine_count, 3], Distribution::Normal(0.0, 0.5), &device)
-                    * cur_log_scale.clone().exp(),
-            );
-
             // The amount to offset the scale and opacity should maybe depend on how far away we have sampled these gaussians,
             // but a fixed amount seems to work ok. The only note is that divide by _less_ than SQRT(2) seems to exponentially
             // blow up, as more 'mass' is added each refine.
@@ -584,6 +588,12 @@ impl SplatTrainer {
 
             // Scatter needs [N, 3] indices for means and scales.
             let refine_inds_2d = refine_inds.clone().unsqueeze_dim(1).repeat_dim(1, 3);
+
+            let samples = quaternion_vec_multiply(
+                cur_rots.clone(),
+                Tensor::random([refine_count, 3], Distribution::Normal(0.0, 0.5), &device)
+                    * cur_log_scale.clone().exp(),
+            );
 
             // Shrink & offset existing splats.
             splats.means = splats.means.map(|m| {

@@ -13,10 +13,6 @@
 @group(0) @binding(5) var<storage, read_write> global_from_compact_gid: array<u32>;
 @group(0) @binding(6) var<storage, read_write> depths: array<f32>;
 
-@group(0) @binding(7) var<storage, read_write> radii: array<f32>;
-
-const INV_SIGMOID_THRESH: f32 = -5.537334267018537;
-
 @compute
 @workgroup_size(helpers::MAIN_WG, 1, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3u) {
@@ -87,7 +83,4 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     let write_id = atomicAdd(&uniforms.num_visible, 1);
     global_from_compact_gid[write_id] = global_gid;
     depths[write_id] = mean_c.z;
-
-    // Write metadata to global array.
-    radii[global_gid] = radius;
 }

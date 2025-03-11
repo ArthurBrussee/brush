@@ -7,7 +7,7 @@ use brush_rerun::{BurnToImage, BurnToRerun};
 use burn::{
     backend::{Autodiff, Wgpu, wgpu::WgpuDevice},
     prelude::Backend,
-    tensor::{Float, Tensor, TensorPrimitive},
+    tensor::{Float, Int, Tensor, TensorPrimitive},
 };
 use safetensors::SafeTensors;
 use std::{fs::File, io::Read};
@@ -138,7 +138,6 @@ async fn test_reference() -> Result<()> {
             Tensor::from_primitive(TensorPrimitive::Float(diff_out.img)),
             diff_out.aux,
         );
-        let wrapped_aux = aux.clone().into_wrapped();
 
         if let Some(rec) = rec.as_ref() {
             rec.set_time_sequence("test case", i as i64);
@@ -150,20 +149,20 @@ async fn test_reference() -> Result<()> {
             )?;
             rec.log(
                 "images/tile_depth",
-                &wrapped_aux.calc_tile_depth().into_rerun().await,
+                &aux.calc_tile_depth().into_rerun().await,
             )?;
         }
 
-        wrapped_aux.clone().debug_assert_valid();
+        aux.debug_assert_valid();
 
-        let num_visible = wrapped_aux.num_visible.into_scalar_async().await as usize;
+        let num_visible: Tensor<DiffBack, 1, Int> = Tensor::from_primitive(aux.num_visible.clone());
+        let num_visible = num_visible.into_scalar_async().await as usize;
         let projected_splats =
             Tensor::from_primitive(TensorPrimitive::Float(aux.projected_splats.clone()));
 
-        let gs_ids = wrapped_aux
-            .global_from_compact_gid
-            .clone()
-            .slice([0..num_visible]);
+        let global_from_compact_gid: Tensor<DiffBack, 1, Int> =
+            Tensor::from_primitive(aux.global_from_compact_gid.clone());
+        let gs_ids = global_from_compact_gid.clone().slice([0..num_visible]);
 
         let xys: Tensor<DiffBack, 2, Float> =
             projected_splats.clone().slice([0..num_visible, 0..2]);
