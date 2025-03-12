@@ -54,7 +54,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
     sh_coeffs: CubeTensor<WgpuRuntime>,
     opacities: CubeTensor<WgpuRuntime>,
     raster_u32: bool,
-) -> (CubeTensor<WgpuRuntime>, RenderAux<BBase<F, I, BT>>) {
+) -> (CubeTensor<WgpuRuntime>, RenderAux<BBase<BT>>) {
     assert!(
         img_size[0] > 0 && img_size[1] > 0,
         "Can't render images with 0 size."
@@ -284,7 +284,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
         DType::I32,
     );
 
-    let visible = BBase::<F, I, BT>::float_zeros([num_points].into(), device);
+    let visible = BBase::<BT>::float_zeros([total_splats].into(), device);
 
     let mut bindings = vec![
         uniforms_buffer.clone().handle.binding(),

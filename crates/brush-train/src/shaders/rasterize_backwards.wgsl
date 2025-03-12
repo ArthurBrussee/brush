@@ -23,13 +23,13 @@ const BATCH_SIZE = helpers::TILE_SIZE;
 
 // Gaussians gathered in batch.
 var<workgroup> local_batch: array<helpers::ProjectedSplat, BATCH_SIZE>;
-var<workgroup> local_id: array<i32, BATCH_SIZE>;
+var<workgroup> local_id: array<u32, BATCH_SIZE>;
 
 fn add_bitcast(cur: u32, add: f32) -> u32 {
     return bitcast<u32>(bitcast<f32>(cur) + add);
 }
 
-fn write_grads_atomic(id: i32, grads: f32) {
+fn write_grads_atomic(id: u32, grads: f32) {
     let p = &v_splats[id];
 #ifdef HARD_FLOAT
     atomicAdd(p, grads);
@@ -42,7 +42,7 @@ fn write_grads_atomic(id: i32, grads: f32) {
 #endif
 }
 
-fn write_refine_atomic(id: i32, grads: f32) {
+fn write_refine_atomic(id: u32, grads: f32) {
     let p = &v_refine_grad[id];
 #ifdef HARD_FLOAT
     atomicAdd(p, grads);
@@ -98,11 +98,11 @@ fn main(
     // current visibility left to render
     var T = T_final;
 
-    var final_isect = 0;
+    var final_isect = 0u;
     var buffer = vec3f(0.0);
 
     if inside {
-        final_isect = final_index[pix_id];
+        final_isect = u32(final_index[pix_id]);
     }
 
     // df/d_out for this pixel
@@ -115,7 +115,7 @@ fn main(
     // the loss is 0. In that case, can skip gradients entirely as they all depend on v_out.
     let pixel_active = length(v_out) > 0.0;
 
-    for (var b = 0; b < num_batches; b++) {
+    for (var b = 0u; b < num_batches; b++) {
         // each thread fetch 1 gaussian from back to front
         // 0 index will be furthest back in batch
         // index of gaussian to load
@@ -125,7 +125,7 @@ fn main(
         // Each thread first gathers one gaussian.
         if local_idx < remaining {
             let load_isect_id = batch_end - 1 - local_idx;
-            let load_compact_gid = compact_gid_from_isect[load_isect_id];
+            let load_compact_gid = u32(compact_gid_from_isect[load_isect_id]);
             local_id[local_idx] = load_compact_gid;
             local_batch[local_idx] = projected_splats[load_compact_gid];
         }

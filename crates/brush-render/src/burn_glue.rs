@@ -49,7 +49,7 @@ impl<BT: BoolElement> SplatForward<Self> for Fusion<BBase<BT>> {
         opacity: FloatTensor<Self>,
         render_u32_buffer: bool,
     ) -> (FloatTensor<Self>, RenderAux<Self>) {
-        struct CustomOp<F: FloatElement, I: IntElement, BT: BoolElement> {
+        struct CustomOp<BT: BoolElement> {
             cam: Camera,
             img_size: glam::UVec2,
             render_u32_buffer: bool,
@@ -81,11 +81,11 @@ impl<BT: BoolElement> SplatForward<Self> for Fusion<BBase<BT>> {
                 let (img, aux) = BBase::<BT>::render_splats(
                     &self.cam,
                     self.img_size,
-                    h.get_float_tensor::<BBase<F, I, BT>>(&means),
-                    h.get_float_tensor::<BBase<F, I, BT>>(&log_scales),
-                    h.get_float_tensor::<BBase<F, I, BT>>(&quats),
-                    h.get_float_tensor::<BBase<F, I, BT>>(&sh_coeffs),
-                    h.get_float_tensor::<BBase<F, I, BT>>(&opacity),
+                    h.get_float_tensor::<BBase<BT>>(&means),
+                    h.get_float_tensor::<BBase<BT>>(&log_scales),
+                    h.get_float_tensor::<BBase<BT>>(&quats),
+                    h.get_float_tensor::<BBase<BT>>(&sh_coeffs),
+                    h.get_float_tensor::<BBase<BT>>(&opacity),
                     self.render_u32_buffer,
                 );
 
@@ -105,7 +105,7 @@ impl<BT: BoolElement> SplatForward<Self> for Fusion<BBase<BT>> {
                     &global_from_compact_gid.id,
                     aux.global_from_compact_gid,
                 );
-                h.register_float_tensor::<BBase<F, I, BT>>(&visible.id, aux.visible);
+                h.register_float_tensor::<BBase<BT>>(&visible.id, aux.visible);
             }
         }
 

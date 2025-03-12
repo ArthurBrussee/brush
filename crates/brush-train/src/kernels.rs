@@ -60,7 +60,7 @@ pub(crate) fn render_backward<BT: BoolElement>(
         [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
         device,
     );
-    let v_opac = BBase::<F, I, BT>::float_zeros([num_points].into(), device);
+    let v_opac = BBase::<BT>::float_zeros([num_points].into(), device);
 
     let tile_bounds = uvec2(
         img_size

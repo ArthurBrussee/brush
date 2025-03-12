@@ -64,8 +64,8 @@ fn main(
         // process gaussians in the current batch for this pixel
         let remaining = min(helpers::TILE_SIZE, range.y - batch_start);
 
-        if i32(local_idx) < remaining {
-            let load_isect_id = batch_start + i32(local_idx);
+        if local_idx < remaining {
+            let load_isect_id = batch_start + local_idx;
             let compact_gid = compact_gid_from_isect[load_isect_id];
             local_batch[local_idx] = projected_splats[compact_gid];
 

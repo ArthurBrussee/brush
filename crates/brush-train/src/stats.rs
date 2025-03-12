@@ -30,10 +30,10 @@ impl<B: Backend> RefineRecord<B> {
 impl<BT: BoolElement> RefineRecord<Fused<BT>> {
     pub(crate) fn gather_stats(
         &self,
-        refine_weight: Tensor<Fused<F, I, BT>, 1>,
+        refine_weight: Tensor<Fused<BT>, 1>,
         resolution: UVec2,
-        global_from_compact_gid: IntTensor<Fused<F, I, BT>>,
-        num_visible: IntTensor<Fused<F, I, BT>>,
+        global_from_compact_gid: IntTensor<Fused<BT>>,
+        num_visible: IntTensor<Fused<BT>>,
     ) {
         let _span = trace_span!("Gather stats", sync_burn = true);
 
@@ -45,10 +45,10 @@ impl<BT: BoolElement> RefineRecord<Fused<BT>> {
             .tensor()
             .client;
 
-        let compact_gid = client.resolve_tensor_int::<BBase<F, I, BT>>(global_from_compact_gid);
-        let num_visible = client.resolve_tensor_int::<BBase<F, I, BT>>(num_visible);
+        let compact_gid = client.resolve_tensor_int::<BBase<BT>>(global_from_compact_gid);
+        let num_visible = client.resolve_tensor_int::<BBase<BT>>(num_visible);
         let refine_weight =
-            client.resolve_tensor_float::<BBase<F, I, BT>>(refine_weight.into_primitive().tensor());
+            client.resolve_tensor_float::<BBase<BT>>(refine_weight.into_primitive().tensor());
 
         let inner_client = &compact_gid.client;
 
