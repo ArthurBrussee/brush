@@ -131,7 +131,7 @@ async fn test_reference() -> Result<()> {
             splats.log_scales.val().into_primitive().tensor(),
             splats.rotation.val().into_primitive().tensor(),
             splats.sh_coeffs.val().into_primitive().tensor(),
-            splats.raw_opacity.val().into_primitive().tensor(),
+            splats.opacities().into_primitive().tensor(),
         );
 
         let (out, aux) = (

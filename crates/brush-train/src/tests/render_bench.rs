@@ -180,7 +180,7 @@ fn bench_general(
                     splats.log_scales.val().into_primitive().tensor(),
                     splats.rotation.val().into_primitive().tensor(),
                     splats.sh_coeffs.val().into_primitive().tensor(),
-                    splats.raw_opacity.val().into_primitive().tensor(),
+                    splats.opacities().into_primitive().tensor(),
                 );
                 let img: Tensor<DiffBack, 3> =
                     Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
