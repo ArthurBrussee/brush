@@ -69,8 +69,10 @@ fn main(
             let compact_gid = compact_gid_from_isect[load_isect_id];
             local_batch[local_idx] = projected_splats[compact_gid];
 
-            // TODO: Only if actually visible.
-            visible[compact_gid] = 1.0;
+            #ifndef RASTER_U32
+                // TODO: Only if actually visible.
+                visible[compact_gid] = 1.0;
+            #endif
         }
         // Wait for all writes to complete.
         workgroupBarrier();
