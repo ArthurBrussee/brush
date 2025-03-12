@@ -22,7 +22,12 @@ all-features = true
 
 [advisories]
 version = 2
-ignore = []
+ignore = [
+    # Paste is unmaintained, used by Cube and rerun, wait for them to upgrade.
+    "RUSTSEC-2024-0436",
+    # Humantime is unmaintained, used by rerun, wait for them to upgrade.
+    "RUSTSEC-2025-0014",
+]
 
 [bans]
 multiple-versions = "deny"
