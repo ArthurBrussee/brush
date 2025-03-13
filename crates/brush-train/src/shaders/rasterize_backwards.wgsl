@@ -25,6 +25,8 @@ const BATCH_SIZE = helpers::TILE_SIZE;
 var<workgroup> local_batch: array<helpers::ProjectedSplat, BATCH_SIZE>;
 var<workgroup> local_id: array<u32, BATCH_SIZE>;
 
+var<workgroup> max_idx: atomic<u32>;
+
 fn add_bitcast(cur: u32, add: f32) -> u32 {
     return bitcast<u32>(bitcast<f32>(cur) + add);
 }
@@ -88,22 +90,34 @@ fn main(
     // this is the T AFTER the last gaussian in this pixel
     let T_final = 1.0 - output[pix_id].w;
 
-    // Have all threads in tile process the same gaussians in batches
-    // first collect gaussians between bin_start and bin_final in batches
-    // which gaussians to look through in this tile
-    let range = vec2u(u32(tile_offsets[tile_id]), u32(tile_offsets[tile_id + 1]));
+
+
+    var range = vec2u(u32(tile_offsets[tile_id]), u32(tile_offsets[tile_id + 1]));
+
+    var final_isect = range.x;
+    if inside {
+        final_isect = u32(final_index[pix_id]);
+    }
+
+    // Update the actual final end range as determined by final_index.
+    if local_idx == 0 {
+        // TODO: Zero'ing here isn't stricly needed if we're on actual WebGPU where workgroup variables are always zero'ed.
+        atomicStore(&max_idx, 0u);
+    }
+    workgroupBarrier();
+    let sg_max = subgroupMax(final_isect);
+    if subgroup_invocation_id == 0 {
+        atomicMax(&max_idx, sg_max);
+    }
+    workgroupBarrier();
+    range.y = atomicLoad(&max_idx);
+    range.x = min(range.x, range.y);
 
     let num_batches = helpers::ceil_div(range.y - range.x, BATCH_SIZE);
 
     // current visibility left to render
     var T = T_final;
-
-    var final_isect = 0u;
     var buffer = vec3f(0.0);
-
-    if inside {
-        final_isect = u32(final_index[pix_id]);
-    }
 
     // df/d_out for this pixel
     var v_out = vec4f(0.0);
