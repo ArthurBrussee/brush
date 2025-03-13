@@ -5,16 +5,21 @@
 @group(0) @binding(2) var<storage, read> tile_offsets: array<i32>;
 @group(0) @binding(3) var<storage, read> projected_splats: array<helpers::ProjectedSplat>;
 
-#ifdef RASTER_U32
-    @group(0) @binding(4) var<storage, read_write> out_img: array<u32>;
-#else
-    @group(0) @binding(4) var<storage, read_write> out_img: array<vec4f>;
+@group(0) @binding(4) var<storage, read> global_from_compact_gid: array<i32>;
 
-    @group(0) @binding(5) var<storage, read_write> final_index: array<i32>;
-    @group(0) @binding(6) var<storage, read_write> visible: array<f32>;
+#ifdef RASTER_U32
+    @group(0) @binding(5) var<storage, read_write> out_img: array<u32>;
+#else
+    @group(0) @binding(5) var<storage, read_write> out_img: array<vec4f>;
+
+    @group(0) @binding(6) var<storage, read_write> final_index: array<i32>;
+    @group(0) @binding(7) var<storage, read_write> visible: array<f32>;
 #endif
 
 var<workgroup> local_batch: array<helpers::ProjectedSplat, helpers::TILE_SIZE>;
+var<workgroup> load_gid: array<u32, helpers::TILE_SIZE>;
+
+var<workgroup> done_count: atomic<u32>;
 
 // kernel function for rasterizing each tile
 // each thread treats a single pixel
@@ -53,6 +58,8 @@ fn main(
     var t = 0;
     var final_idx = 0u;
 
+    atomicStore(&done_count, 0u);
+
     // each thread loads one gaussian at a time before rasterizing its
     // designated pixel
     for (var b = 0u; b < num_batches; b++) {
@@ -61,18 +68,18 @@ fn main(
         // Wait for all in flight threads.
         workgroupBarrier();
 
+        if atomicLoad(&done_count) >= helpers::TILE_SIZE {
+            break;
+        }
+
         // process gaussians in the current batch for this pixel
         let remaining = min(helpers::TILE_SIZE, range.y - batch_start);
 
         if local_idx < remaining {
             let load_isect_id = batch_start + local_idx;
             let compact_gid = compact_gid_from_isect[load_isect_id];
+            load_gid[local_idx] = u32(global_from_compact_gid[compact_gid]);
             local_batch[local_idx] = projected_splats[compact_gid];
-
-            #ifndef RASTER_U32
-                // TODO: Only if actually visible.
-                visible[compact_gid] = 1.0;
-            #endif
         }
         // Wait for all writes to complete.
         workgroupBarrier();
@@ -95,9 +102,15 @@ fn main(
             let next_T = T * (1.0 - alpha);
 
             if next_T <= 1e-4f {
+                atomicAdd(&done_count, 1u);
                 done = true;
                 break;
             }
+
+            #ifndef RASTER_U32
+                let gid = load_gid[t];
+                visible[gid] = 1.0;
+            #endif
 
             let vis = alpha * T;
             let clamped_rgb = max(color.rgb, vec3f(0.0));

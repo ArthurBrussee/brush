@@ -291,6 +291,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
         compact_gid_from_isect.handle.clone().binding(),
         tile_offsets.handle.clone().binding(),
         projected_splats.handle.clone().binding(),
+        global_from_compact_gid.handle.clone().binding(),
         out_img.handle.clone().binding(),
     ];
 

@@ -4,7 +4,7 @@ use anyhow::Result;
 use brush_render::gaussian_splats::{Splats, inverse_sigmoid};
 
 use brush_render::sh::sh_coeffs_for_degree;
-use burn::backend::wgpu::WgpuDevice;
+use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::backend::{Autodiff, Wgpu};
 use burn::lr_scheduler::LrScheduler;
 use burn::lr_scheduler::exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig};
@@ -17,6 +17,7 @@ use burn::tensor::activation::sigmoid;
 use burn::tensor::backend::AutodiffBackend;
 use burn::tensor::{Bool, Distribution, Int, TensorData, TensorPrimitive};
 use burn::{config::Config, optim::GradientsParams, tensor::Tensor};
+use burn_cubecl::cubecl::Runtime;
 use hashbrown::{HashMap, HashSet};
 use tracing::trace_span;
 
@@ -58,8 +59,8 @@ pub struct TrainConfig {
     lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
-    #[config(default = 5e3)]
-    #[arg(long, help_heading = "Training options", default_value = "5e3")]
+    #[config(default = 1e4)]
+    #[arg(long, help_heading = "Training options", default_value = "1e4")]
     mean_noise_weight: f32,
 
     /// Learning rate for the base SH (RGB) coefficients.
@@ -93,8 +94,8 @@ pub struct TrainConfig {
     lr_rotation: f64,
 
     /// Weight of the opacity loss.
-    #[config(default = 0.01)]
-    #[arg(long, help_heading = "Training options", default_value = "0.01")]
+    #[config(default = 1e-8)]
+    #[arg(long, help_heading = "Training options", default_value = "1e-8")]
     opac_loss_weight: f32,
 
     /// Frequency of 'refinement' where gaussians are replaced and densified. This should
@@ -104,8 +105,8 @@ pub struct TrainConfig {
     refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[config(default = 0.0007)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.0007")]
+    #[config(default = 0.00085)]
+    #[arg(long, help_heading = "Refine options", default_value = "0.00085")]
     growth_grad_threshold: f32,
 
     /// What fraction of splats that are deemed as needing to grow do actually grow.
@@ -326,10 +327,12 @@ impl SplatTrainer {
         let opac_loss_weight = self.config.opac_loss_weight;
         let visible: Tensor<_, 1> = Tensor::from_primitive(TensorPrimitive::Float(visible));
 
-        let loss = if opac_loss_weight > 0.0 && iter > 1000 && iter < self.config.total_steps - 5000
-        {
-            let visible_count = visible.clone().sum();
-            loss + (splats.opacities() * visible.clone()).sum() * opac_loss_weight / visible_count
+        let loss = if opac_loss_weight > 0.0 {
+            // let visible_count = visible.clone().sum();
+            // Invisible splats still have a tiny bit of loss. Otherwise,
+            // they would never die off.
+            let visible = visible.clone() + 1e-3;
+            loss + (splats.opacities() * visible).sum() * (opac_loss_weight * (1.0 - train_t))
         } else {
             loss
         };
