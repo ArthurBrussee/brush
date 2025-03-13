@@ -4,7 +4,7 @@ use anyhow::Result;
 use brush_render::gaussian_splats::{Splats, inverse_sigmoid};
 
 use brush_render::sh::sh_coeffs_for_degree;
-use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
+use burn::backend::wgpu::WgpuDevice;
 use burn::backend::{Autodiff, Wgpu};
 use burn::lr_scheduler::LrScheduler;
 use burn::lr_scheduler::exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig};
@@ -17,7 +17,6 @@ use burn::tensor::activation::sigmoid;
 use burn::tensor::backend::AutodiffBackend;
 use burn::tensor::{Bool, Distribution, Int, TensorData, TensorPrimitive};
 use burn::{config::Config, optim::GradientsParams, tensor::Tensor};
-use burn_cubecl::cubecl::Runtime;
 use hashbrown::{HashMap, HashSet};
 use tracing::trace_span;
 
