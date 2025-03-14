@@ -101,7 +101,7 @@ fn main(
 
     // Update the actual final end range as determined by final_index.
     if local_idx == 0 {
-        // TODO: Zero'ing here isn't stricly needed if we're on actual WebGPU where workgroup variables are always zero'ed.
+        // TODO: Zero'ing here isn't strictly needed if we're on actual WebGPU where workgroup variables are always zero'ed.
         atomicStore(&max_idx, 0u);
     }
     workgroupBarrier();
