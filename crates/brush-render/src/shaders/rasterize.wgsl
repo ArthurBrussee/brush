@@ -22,6 +22,7 @@ var<workgroup> local_batch: array<helpers::ProjectedSplat, helpers::TILE_SIZE>;
 #endif
 
 var<workgroup> done_count: atomic<u32>;
+var<workgroup> done_count_uniform: u32;
 
 // kernel function for rasterizing each tile
 // each thread treats a single pixel
@@ -67,10 +68,11 @@ fn main(
     for (var b = 0u; b < num_batches; b++) {
         let batch_start = range.x + b * helpers::TILE_SIZE;
 
-        // Wait for all in flight threads.
-        workgroupBarrier();
-
-        if atomicLoad(&done_count) >= helpers::TILE_SIZE {
+        // Wait for all in flight threads and check whether we're all done.
+        //
+        // HACK: Annoyingly workgroupUniformLoad doesn't work for atomics...
+        done_count_uniform = atomicLoad(&done_count);
+        if workgroupUniformLoad(&done_count_uniform) >= helpers::TILE_SIZE {
             break;
         }
 

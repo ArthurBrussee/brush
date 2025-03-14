@@ -26,6 +26,7 @@ var<workgroup> local_batch: array<helpers::ProjectedSplat, BATCH_SIZE>;
 var<workgroup> local_id: array<u32, BATCH_SIZE>;
 
 var<workgroup> max_idx: atomic<u32>;
+var<workgroup> max_idx_uniform: u32;
 
 fn add_bitcast(cur: u32, add: f32) -> u32 {
     return bitcast<u32>(bitcast<f32>(cur) + add);
@@ -90,8 +91,6 @@ fn main(
     // this is the T AFTER the last gaussian in this pixel
     let T_final = 1.0 - output[pix_id].w;
 
-
-
     var range = vec2u(u32(tile_offsets[tile_id]), u32(tile_offsets[tile_id + 1]));
 
     var final_isect = range.x;
@@ -110,7 +109,9 @@ fn main(
         atomicMax(&max_idx, sg_max);
     }
     workgroupBarrier();
-    range.y = atomicLoad(&max_idx);
+    max_idx_uniform = atomicLoad(&max_idx);
+
+    range.y = workgroupUniformLoad(&max_idx_uniform);
     range.x = min(range.x, range.y);
 
     let num_batches = helpers::ceil_div(range.y - range.x, BATCH_SIZE);
