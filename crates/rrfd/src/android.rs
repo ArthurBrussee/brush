@@ -82,7 +82,7 @@ pub(crate) async fn pick_file() -> Result<File> {
     file.context("No file selected")
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "system" fn Java_com_splats_app_FilePicker_onFilePickerResult<'local>(
     _env: JNIEnv<'local>,
     _class: JClass<'local>,
