@@ -4,7 +4,7 @@ use anyhow::Result;
 use brush_render::gaussian_splats::{Splats, inverse_sigmoid};
 
 use brush_render::sh::sh_coeffs_for_degree;
-use burn::backend::wgpu::WgpuDevice;
+use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::backend::{Autodiff, Wgpu};
 use burn::lr_scheduler::LrScheduler;
 use burn::lr_scheduler::exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig};
@@ -17,6 +17,7 @@ use burn::tensor::activation::sigmoid;
 use burn::tensor::backend::AutodiffBackend;
 use burn::tensor::{Bool, Distribution, Int, TensorData, TensorPrimitive};
 use burn::{config::Config, optim::GradientsParams, tensor::Tensor};
+use burn_cubecl::cubecl::Runtime;
 use hashbrown::{HashMap, HashSet};
 use tracing::trace_span;
 
@@ -482,6 +483,8 @@ impl SplatTrainer {
         }
 
         let device = splats.means.device();
+        let client = WgpuRuntime::client(&device);
+        client.memory_cleanup();
 
         // If not refining, update splat to step with gradients applied.
         // Prune dead splats. This ALWAYS happen even if we're not "refining" anymore.
@@ -639,6 +642,8 @@ impl SplatTrainer {
         }
 
         self.optim = Some(create_default_optimizer().load_record(record));
+
+        client.memory_cleanup();
 
         (
             splats,
