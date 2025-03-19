@@ -171,7 +171,7 @@ mod embedded {
                 start_distance,
                 focus_distance,
                 speed_scale,
-                // TODO: Could make this a seperate JS object.
+                // TODO: Could make this a separate JS object.
                 clamping: brush_app::camera_controls::CameraClamping {
                     min_focus_distance,
                     max_focus_distance,
