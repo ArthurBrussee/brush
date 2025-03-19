@@ -128,7 +128,7 @@ pub struct TrainConfig {
     /// Max nr. of splats. This is an upper bound, but the actual final number of splats might be lower than this.
     #[config(default = 10000000)]
     #[arg(long, help_heading = "Refine options", default_value = "10000000")]
-    max_splats: u32,
+    pub max_splats: u32,
 }
 
 pub type TrainBack = Autodiff<Wgpu>;

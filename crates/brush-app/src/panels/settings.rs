@@ -45,6 +45,16 @@ impl AppPanel for SettingsPanel {
                     .clamping(egui::SliderClamping::Never),
             );
 
+            ui.label("Max Splats");
+            ui.add(
+                Slider::new(&mut self.args.train_config.max_splats, 1000000..=10000000)
+                    .custom_formatter(|n, _| {
+                        let k_value = n as f32 / 1000.0;
+                        format!("{:.0}k", k_value)
+                    })
+                    .clamping(egui::SliderClamping::Never),
+            );
+
             let mut limit_frames = self.args.load_config.max_frames.is_some();
             if ui.checkbox(&mut limit_frames, "Limit max frames").clicked() {
                 self.args.load_config.max_frames = if limit_frames { Some(32) } else { None };
