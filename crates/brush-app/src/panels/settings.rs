@@ -50,7 +50,7 @@ impl AppPanel for SettingsPanel {
                 Slider::new(&mut self.args.train_config.max_splats, 1000000..=10000000)
                     .custom_formatter(|n, _| {
                         let k_value = n as f32 / 1000.0;
-                        format!("{:.0}k", k_value)
+                        format!("{k_value:.0}k")
                     })
                     .clamping(egui::SliderClamping::Never),
             );
