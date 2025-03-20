@@ -42,7 +42,7 @@ pub struct LoadDataseConfig {
 
 #[derive(Config, Debug, Args)]
 pub struct ModelConfig {
-    /// SH degree of spalts.
+    /// SH degree of splats.
     #[arg(long, help_heading = "Model Options", default_value = "3")]
     #[config(default = 3)]
     pub sh_degree: u32,
