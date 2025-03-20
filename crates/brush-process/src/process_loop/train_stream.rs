@@ -226,22 +226,22 @@ pub(crate) async fn train_stream(
 
         visualize.log_splat_stats(iter, &splats)?;
 
-        // Log out train stats.1
-        if iter % process_args.rerun_config.rerun_log_train_stats_every == 0 || is_last_step {
-            visualize.log_train_stats(iter, stats.clone()).await?;
-        }
-
         // How frequently to update the UI after a training step.
         const UPDATE_EVERY: u32 = 5;
 
         if iter % UPDATE_EVERY == 0 || is_last_step {
             let message = ProcessMessage::TrainStep {
                 splats: Box::new(splats.valid()),
-                stats: Box::new(stats),
+                stats: Box::new(stats.clone()),
                 iter,
                 total_elapsed: train_duration,
             };
             emitter.emit(message).await;
+        }
+
+        // Log out train stats.
+        if iter % process_args.rerun_config.rerun_log_train_stats_every == 0 || is_last_step {
+            visualize.log_train_stats(iter, stats).await?;
         }
 
         if is_last_step {
