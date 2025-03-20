@@ -38,7 +38,7 @@ pub struct ProcessConfig {
     #[config(default = "String::from(\"./export_{iter}.ply\")")]
     pub export_name: String,
 
-    /// Iterationto resume from
+    /// Iteration to resume from
     #[config(default = 0)]
     #[arg(long, help_heading = "Process options", default_value = "0")]
     pub start_iter: u32,
