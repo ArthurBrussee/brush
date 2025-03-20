@@ -842,6 +842,7 @@ dependencies = [
 name = "brush-app"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "brush-cli",
  "brush-dataset",
  "brush-process",
@@ -883,8 +884,10 @@ name = "brush-cli"
 version = "0.2.0"
 dependencies = [
  "brush-process",
+ "burn-wgpu",
  "clap",
  "indicatif",
+ "tokio-stream",
 ]
 
 [[package]]

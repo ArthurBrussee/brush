@@ -1,10 +1,16 @@
 use std::time::Duration;
 
-use brush_process::process_loop::{ProcessMessage, RunningProcess};
+use brush_process::{
+    data_source::DataSource,
+    process_loop::{ProcessArgs, ProcessMessage, process_stream},
+};
+use burn_wgpu::WgpuDevice;
 use indicatif::{ProgressBar, ProgressStyle};
+use tokio_stream::StreamExt;
 
-pub async fn process_ui(process: RunningProcess) {
-    let mut process = process;
+pub async fn process_ui(source: DataSource, process_args: ProcessArgs, device: WgpuDevice) {
+    let mut stream = process_stream(source, process_args.clone(), device);
+    let mut stream = std::pin::pin!(stream);
 
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
@@ -46,7 +52,7 @@ pub async fn process_ui(process: RunningProcess) {
             .tick_strings(&["✅", "✅"]),
     );
 
-    let train_progress = ProgressBar::new(process.start_args.train_config.total_steps as u64)
+    let train_progress = ProgressBar::new(process_args.train_config.total_steps as u64)
         .with_style(
             ProgressStyle::with_template(
                 "[{elapsed}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} ({per_sec}, {eta} remaining)",
@@ -65,7 +71,7 @@ pub async fn process_ui(process: RunningProcess) {
 
     eval_spinner.set_message(format!(
         "evaluating every {} steps",
-        process.start_args.process_config.eval_every,
+        process_args.process_config.eval_every,
     ));
 
     stats_spinner.set_message("Starting up");
@@ -75,7 +81,15 @@ pub async fn process_ui(process: RunningProcess) {
             sp.println("ℹ️  running in debug mode, compile with --release for best performance");
     }
 
-    while let Some(msg) = process.messages.recv().await {
+    while let Some(msg) = stream.next().await {
+        let msg = match msg {
+            Ok(msg) => msg,
+            Err(error) => {
+                let _ = sp.println(format!("❌ Error: {error:?}"));
+                break;
+            }
+        };
+
         match msg {
             ProcessMessage::NewSource => {
                 main_spinner.set_message("Starting process...");
@@ -88,10 +102,7 @@ pub async fn process_ui(process: RunningProcess) {
                 }
                 main_spinner.set_message("Loading data...");
             }
-            ProcessMessage::Error(error) => {
-                let _ = sp.println(format!("❌ Error: {error:?}"));
-                break;
-            }
+
             ProcessMessage::ViewSplats { .. } => {
                 // I guess we're already showing a warning.
             }
@@ -106,19 +117,14 @@ pub async fn process_ui(process: RunningProcess) {
                     eval_spinner.set_message(format!(
                         "evaluating {} views every {} steps",
                         val.views.len(),
-                        process.start_args.process_config.eval_every,
+                        process_args.process_config.eval_every,
                     ));
                 }
             }
             ProcessMessage::DoneLoading { .. } => {
                 main_spinner.set_message("Dataset loaded");
             }
-            ProcessMessage::TrainStep {
-                splats,
-                stats: _,
-                iter,
-                timestamp: _,
-            } => {
+            ProcessMessage::TrainStep { splats, iter, .. } => {
                 main_spinner.set_message("Training");
                 train_progress.set_position(iter as u64);
                 stats_spinner.set_message(format!("Current splat count {}", splats.num_splats()));

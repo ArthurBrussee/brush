@@ -9,6 +9,8 @@ license.workspace = true
 indicatif.workspace = true
 clap.workspace = true
 brush-process.path = "../brush-process"
+tokio-stream.workspace = true
+burn-wgpu.workspace = true
 
 [lints]
 workspace = true

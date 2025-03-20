@@ -31,6 +31,11 @@ pub(crate) trait AppPanel {
         let _ = context;
     }
 
+    fn on_error(&mut self, error: &anyhow::Error, context: &mut AppContext) {
+        let _ = error;
+        let _ = context;
+    }
+
     /// Override the inner margin for this panel.
     fn inner_margin(&self) -> f32 {
         12.0
@@ -455,38 +460,53 @@ impl App {
 
         for message in messages {
             match message {
-                ProcessMessage::Dataset { data: _ } => {
-                    // Show the dataset panel if we've loaded one.
-                    if self.datasets.is_none() {
-                        let pane_id = self.tree.tiles.insert_pane(Box::new(DatasetPanel::new()));
-                        self.datasets = Some(pane_id);
-                        if let Some(Tile::Container(Container::Linear(lin))) = self
-                            .tree
-                            .tiles
-                            .get_mut(self.tree.root().expect("UI must have a root"))
-                        {
-                            lin.add_child(pane_id);
+                Ok(message) => {
+                    match message {
+                        ProcessMessage::Dataset { data: _ } => {
+                            // Show the dataset panel if we've loaded one.
+                            if self.datasets.is_none() {
+                                let pane_id =
+                                    self.tree.tiles.insert_pane(Box::new(DatasetPanel::new()));
+                                self.datasets = Some(pane_id);
+                                if let Some(Tile::Container(Container::Linear(lin))) = self
+                                    .tree
+                                    .tiles
+                                    .get_mut(self.tree.root().expect("UI must have a root"))
+                                {
+                                    lin.add_child(pane_id);
+                                }
+                            }
+                        }
+                        ProcessMessage::StartLoading { training } => {
+                            context.training = training;
+                            context.loading = true;
+                        }
+                        ProcessMessage::DoneLoading { training: _ } => {
+                            context.loading = false;
+                        }
+                        _ => (),
+                    }
+
+                    for (_, pane) in self.tree.tiles.iter_mut() {
+                        match pane {
+                            Tile::Pane(pane) => {
+                                pane.on_message(&message, &mut context);
+                            }
+                            Tile::Container(_) => {}
                         }
                     }
                 }
-                ProcessMessage::StartLoading { training } => {
-                    context.training = training;
-                    context.loading = true;
-                }
-                ProcessMessage::DoneLoading { training: _ } => {
-                    context.loading = false;
-                }
-                _ => (),
-            }
-
-            for (_, pane) in self.tree.tiles.iter_mut() {
-                match pane {
-                    Tile::Pane(pane) => {
-                        pane.on_message(&message, &mut context);
+                Err(e) => {
+                    for (_, pane) in self.tree.tiles.iter_mut() {
+                        match pane {
+                            Tile::Pane(pane) => {
+                                pane.on_error(&e, &mut context);
+                            }
+                            Tile::Container(_) => {}
+                        }
                     }
-                    Tile::Container(_) => {}
                 }
-            }
+            };
         }
     }
 }

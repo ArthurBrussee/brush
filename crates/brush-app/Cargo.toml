@@ -42,6 +42,7 @@ humantime.workspace = true
 web-time.workspace = true
 
 log.workspace = true
+anyhow.workspace = true
 
 # Default to wayland on linux. Change this to x11 if needed.
 # this perhaps could use a feature on our side as well,

@@ -79,10 +79,8 @@ fn main() -> MainResult {
                 let Some(source) = args.source else {
                     panic!("Validation of args failed?");
                 };
-
                 let device = brush_render::burn_init_setup().await;
-                let process = start_process(source, args.process, device);
-                brush_cli::ui::process_ui(process).await;
+                brush_cli::ui::process_ui(source, args.process, device).await;
             }
         });
     }

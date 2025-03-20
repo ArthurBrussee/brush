@@ -201,27 +201,25 @@ impl AppPanel for ScenePanel {
                 self.frame_count = *total_frames;
                 self.last_state = None;
             }
-            ProcessMessage::TrainStep {
-                splats,
-                stats: _,
-                iter: _,
-                timestamp: _,
-            } => {
+            ProcessMessage::TrainStep { splats, .. } => {
                 self.last_state = None;
-
                 let splats = *splats.clone();
-
                 if self.live_update {
                     self.view_splats = vec![splats];
                 }
             }
-            ProcessMessage::Error(e) => {
-                let headline = e.to_string();
-                let context = e.chain().skip(1).map(|cause| format!("{cause}")).collect();
-                self.err = Some(ErrorDisplay { headline, context });
-            }
             _ => {}
         }
+    }
+
+    fn on_error(&mut self, error: &anyhow::Error, _: &mut AppContext) {
+        let headline = error.to_string();
+        let context = error
+            .chain()
+            .skip(1)
+            .map(|cause| format!("{cause}"))
+            .collect();
+        self.err = Some(ErrorDisplay { headline, context });
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, context: &mut AppContext) {

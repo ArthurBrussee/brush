@@ -3,14 +3,13 @@ use brush_process::process_loop::ProcessMessage;
 
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
-use std::time::Duration;
-use web_time::Instant;
+use web_time::Duration;
 use wgpu::AdapterInfo;
 
 pub(crate) struct StatsPanel {
     device: WgpuDevice,
 
-    last_train_step: (Instant, u32),
+    last_train_step: (Duration, u32),
     train_iter_per_s: f32,
     last_eval: Option<String>,
     cur_sh_degree: u32,
@@ -18,8 +17,6 @@ pub(crate) struct StatsPanel {
     training_started: bool,
     num_splats: u32,
     frames: u32,
-
-    start_load_time: Instant,
     adapter_info: AdapterInfo,
 }
 
@@ -27,14 +24,13 @@ impl StatsPanel {
     pub(crate) fn new(device: WgpuDevice, adapter_info: AdapterInfo) -> Self {
         Self {
             device,
-            last_train_step: (Instant::now(), 0),
+            last_train_step: (Duration::from_secs(0), 0),
             train_iter_per_s: 0.0,
             last_eval: None,
             training_started: false,
             num_splats: 0,
             frames: 0,
             cur_sh_degree: 0,
-            start_load_time: Instant::now(),
             adapter_info,
         }
     }
@@ -71,8 +67,6 @@ impl AppPanel for StatsPanel {
                 *self = Self::new(self.device.clone(), self.adapter_info.clone());
             }
             ProcessMessage::StartLoading { training } => {
-                self.start_load_time = Instant::now();
-                self.last_train_step = (Instant::now(), 0);
                 self.train_iter_per_s = 0.0;
                 self.num_splats = 0;
                 self.cur_sh_degree = 0;
@@ -93,14 +87,14 @@ impl AppPanel for StatsPanel {
                 splats,
                 stats: _,
                 iter,
-                timestamp,
+                total_elapsed,
             } => {
                 self.cur_sh_degree = splats.sh_degree();
                 self.num_splats = splats.num_splats();
                 let current_iter_per_s = (iter - self.last_train_step.1) as f32
-                    / (*timestamp - self.last_train_step.0).as_secs_f32();
+                    / (*total_elapsed - self.last_train_step.0).as_secs_f32();
                 self.train_iter_per_s = 0.95 * self.train_iter_per_s + 0.05 * current_iter_per_s;
-                self.last_train_step = (*timestamp, *iter);
+                self.last_train_step = (*total_elapsed, *iter);
             }
             ProcessMessage::EvalResult {
                 iter: _,
@@ -151,9 +145,13 @@ impl AppPanel for StatsPanel {
                     ui.end_row();
 
                     ui.label("Training time");
-                    // Round duration to seconds.
-                    let elapsed = Duration::from_secs(self.start_load_time.elapsed().as_secs());
-                    ui.label(format!("{}", humantime::Duration::from(elapsed)));
+                    ui.label(format!(
+                        "{}",
+                        // Format in at most whole seconds.
+                        humantime::format_duration(Duration::from_secs(
+                            self.last_train_step.0.as_secs()
+                        ))
+                    ));
                     ui.end_row();
                 }
 
