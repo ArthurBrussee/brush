@@ -9,9 +9,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use tokio_stream::StreamExt;
 
 pub async fn process_ui(source: DataSource, process_args: ProcessArgs, device: WgpuDevice) {
-    let mut stream = process_stream(source, process_args.clone(), device);
-    let mut stream = std::pin::pin!(stream);
-
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
             .expect("Invalid indacitif config")
@@ -68,12 +65,10 @@ pub async fn process_ui(source: DataSource, process_args: ProcessArgs, device: W
     let stats_spinner = sp.add(stats_spinner);
 
     main_spinner.enable_steady_tick(Duration::from_millis(120));
-
     eval_spinner.set_message(format!(
         "evaluating every {} steps",
         process_args.process_config.eval_every,
     ));
-
     stats_spinner.set_message("Starting up");
 
     if cfg!(debug_assertions) {
@@ -81,6 +76,8 @@ pub async fn process_ui(source: DataSource, process_args: ProcessArgs, device: W
             sp.println("ℹ️  running in debug mode, compile with --release for best performance");
     }
 
+    let mut stream = process_stream(source, process_args.clone(), device);
+    let mut stream = std::pin::pin!(stream);
     while let Some(msg) = stream.next().await {
         let msg = match msg {
             Ok(msg) => msg,
@@ -102,7 +99,6 @@ pub async fn process_ui(source: DataSource, process_args: ProcessArgs, device: W
                 }
                 main_spinner.set_message("Loading data...");
             }
-
             ProcessMessage::ViewSplats { .. } => {
                 // I guess we're already showing a warning.
             }
@@ -124,13 +120,14 @@ pub async fn process_ui(source: DataSource, process_args: ProcessArgs, device: W
             ProcessMessage::DoneLoading { .. } => {
                 main_spinner.set_message("Dataset loaded");
             }
-            ProcessMessage::TrainStep { splats, iter, .. } => {
+            ProcessMessage::TrainStep { iter, .. } => {
                 main_spinner.set_message("Training");
                 train_progress.set_position(iter as u64);
-                stats_spinner.set_message(format!("Current splat count {}", splats.num_splats()));
-                // Progress bar.
             }
-            ProcessMessage::RefineStep { .. } => {
+            ProcessMessage::RefineStep {
+                cur_splat_count, ..
+            } => {
+                stats_spinner.set_message(format!("Current splat count {cur_splat_count}"));
                 // Do we show this info somewhere?
             }
             ProcessMessage::EvalResult {
@@ -141,7 +138,6 @@ pub async fn process_ui(source: DataSource, process_args: ProcessArgs, device: W
                 eval_spinner.set_message(format!(
                     "Eval iter {iter}: PSNR {avg_psnr}, ssim {avg_ssim}"
                 ));
-                // Show eval results.
             }
         }
     }

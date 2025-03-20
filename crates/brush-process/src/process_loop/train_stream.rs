@@ -95,14 +95,13 @@ pub(crate) async fn train_stream(
     };
 
     let mut splats = splats.with_sh_degree(process_args.model_config.sh_degree);
+
     let eval_scene = dataset.eval.clone();
     let train_scene = dataset.train.clone();
+    let scene_extent = train_scene.estimate_extent().unwrap_or(1.0);
 
     let mut train_duration = Duration::from_secs(0);
-
     let mut dataloader = SceneLoader::new(&train_scene, 42, &device);
-
-    let scene_extent = train_scene.estimate_extent().unwrap_or(1.0);
     let mut trainer = SplatTrainer::new(&process_args.train_config, &device);
 
     for iter in process_args.process_config.start_iter..process_args.train_config.total_steps {
@@ -110,7 +109,8 @@ pub(crate) async fn train_stream(
 
         let batch = dataloader.next_batch().await;
         let (new_splats, stats) = trainer.step(scene_extent, iter, batch, splats);
-        let (new_splats, refine) = trainer.refine_if_needed(iter, new_splats).await;
+        splats = new_splats;
+        let (new_splats, refine) = trainer.refine_if_needed(iter, splats).await;
         splats = new_splats;
 
         if let Some(stats) = refine {
@@ -118,6 +118,7 @@ pub(crate) async fn train_stream(
             emitter
                 .emit(ProcessMessage::RefineStep {
                     stats: Box::new(stats),
+                    cur_splat_count: splats.num_splats(),
                     iter,
                 })
                 .await;

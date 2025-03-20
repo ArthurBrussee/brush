@@ -52,6 +52,7 @@ pub enum ProcessMessage {
     #[allow(unused)]
     RefineStep {
         stats: Box<RefineStats>,
+        cur_splat_count: u32,
         iter: u32,
     },
     /// Eval was run successfully with these results.
