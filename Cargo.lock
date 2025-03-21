@@ -886,6 +886,7 @@ dependencies = [
  "brush-process",
  "burn-wgpu",
  "clap",
+ "humantime",
  "indicatif",
  "tokio-stream",
 ]

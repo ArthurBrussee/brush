@@ -78,6 +78,9 @@ pub async fn process_ui(source: DataSource, process_args: ProcessArgs, device: W
 
     let mut stream = process_stream(source, process_args.clone(), device);
     let mut stream = std::pin::pin!(stream);
+
+    let mut duration = Duration::from_secs(0);
+
     while let Some(msg) = stream.next().await {
         let msg = match msg {
             Ok(msg) => msg,
@@ -120,9 +123,14 @@ pub async fn process_ui(source: DataSource, process_args: ProcessArgs, device: W
             ProcessMessage::DoneLoading { .. } => {
                 main_spinner.set_message("Dataset loaded");
             }
-            ProcessMessage::TrainStep { iter, .. } => {
+            ProcessMessage::TrainStep {
+                iter,
+                total_elapsed,
+                ..
+            } => {
                 main_spinner.set_message("Training");
                 train_progress.set_position(iter as u64);
+                duration = total_elapsed;
             }
             ProcessMessage::RefineStep {
                 cur_splat_count, ..
@@ -141,4 +149,10 @@ pub async fn process_ui(source: DataSource, process_args: ProcessArgs, device: W
             }
         }
     }
+
+    let duration_secs = Duration::from_secs(duration.as_secs());
+    let _ = sp.println(format!(
+        "Training took {}",
+        humantime::format_duration(duration_secs)
+    ));
 }

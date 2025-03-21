@@ -11,6 +11,7 @@ clap.workspace = true
 brush-process.path = "../brush-process"
 tokio-stream.workspace = true
 burn-wgpu.workspace = true
+humantime.workspace = true
 
 [lints]
 workspace = true
