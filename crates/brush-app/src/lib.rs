@@ -4,7 +4,7 @@ pub mod camera_controls;
 mod panels;
 
 mod app;
-mod channel;
+pub mod running_process;
 
 pub use app::*;
 use burn::backend::Autodiff;

@@ -1,6 +1,5 @@
 use async_fn_stream::try_fn_stream;
 use burn::tensor::backend::AutodiffBackend;
-use tokio::sync::mpsc::{Receiver, UnboundedSender};
 use web_time::Duration;
 
 use crate::{data_source::DataSource, process_loop::view_stream::view_stream};
@@ -9,7 +8,7 @@ use brush_render::gaussian_splats::Splats;
 use brush_train::train::{RefineStats, TrainBack, TrainStepStats};
 use burn_wgpu::WgpuDevice;
 use glam::Vec3;
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::Stream;
 
 #[allow(unused)]
 use brush_dataset::splat_export;
@@ -103,40 +102,4 @@ pub fn process_stream(
 #[derive(Debug, Clone)]
 pub enum ControlMessage {
     Paused(bool),
-}
-
-pub struct RunningProcess {
-    pub start_args: ProcessArgs,
-    pub messages: Receiver<Result<ProcessMessage, anyhow::Error>>,
-    pub control: UnboundedSender<ControlMessage>,
-}
-
-pub fn start_process(source: DataSource, args: ProcessArgs, device: WgpuDevice) -> RunningProcess {
-    let (sender, receiver) = tokio::sync::mpsc::channel(1);
-    let (train_sender, mut train_receiver) = tokio::sync::mpsc::unbounded_channel();
-
-    let args_loop = args.clone();
-
-    tokio_with_wasm::alias::task::spawn(async move {
-        let stream = process_stream(source, args_loop, device);
-        let mut stream = std::pin::pin!(stream);
-
-        while let Some(msg) = stream.next().await {
-            sender.send(msg).await.ok();
-
-            // Pause if needed.
-            if matches!(train_receiver.try_recv(), Ok(ControlMessage::Paused(true))) {
-                while !matches!(
-                    train_receiver.recv().await,
-                    Some(ControlMessage::Paused(false))
-                ) {}
-            }
-        }
-    });
-
-    RunningProcess {
-        start_args: args,
-        messages: receiver,
-        control: train_sender,
-    }
 }

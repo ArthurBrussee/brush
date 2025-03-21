@@ -48,6 +48,7 @@ anyhow.workspace = true
 # this perhaps could use a feature on our side as well,
 # so you could run with cargo run --no-default-features --features=11
 tokio_with_wasm = { workspace = true, features = ["rt"] }
+tokio-stream.workspace = true
 
 tracing.workspace = true
 tracing-subscriber = { workspace = true, optional = true }

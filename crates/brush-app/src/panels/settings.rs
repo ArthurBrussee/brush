@@ -1,8 +1,11 @@
-use crate::app::{AppContext, AppPanel};
+use crate::{
+    app::{AppContext, AppPanel},
+    running_process::start_process,
+};
 use brush_dataset::{LoadDataseConfig, ModelConfig};
 use brush_process::{
     data_source::DataSource,
-    process_loop::{ProcessArgs, ProcessConfig, RerunConfig, start_process},
+    process_loop::{ProcessArgs, ProcessConfig, RerunConfig},
 };
 use brush_train::train::TrainConfig;
 use egui::Slider;
@@ -194,6 +197,7 @@ impl AppPanel for SettingsPanel {
                     source,
                     self.args.clone(),
                     context.device.clone(),
+                    ui.ctx().clone(),
                 ));
             }
 

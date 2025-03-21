@@ -865,6 +865,7 @@ dependencies = [
  "rrfd",
  "sync-span",
  "tokio",
+ "tokio-stream",
  "tokio_with_wasm",
  "tracing",
  "tracing-subscriber",

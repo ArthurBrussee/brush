@@ -3,7 +3,8 @@
 #[allow(unused)]
 use brush_app::{App, AppCreateCb};
 
-use brush_process::process_loop::start_process;
+use brush_app::running_process::start_process;
+
 #[allow(unused)]
 use tokio::sync::oneshot::error::RecvError;
 
@@ -56,8 +57,12 @@ fn main() -> MainResult {
                         let context: Result<AppCreateCb, RecvError> = rec.await;
                         if let Ok(context) = context {
                             let mut context = context.context.write().expect("Lock poisoned");
-                            let process =
-                                start_process(source, args.process, context.device.clone());
+                            let process = start_process(
+                                source,
+                                args.process,
+                                context.device.clone(),
+                                context.egui_ctx.clone(),
+                            );
                             context.connect_to(process);
                         }
                     });

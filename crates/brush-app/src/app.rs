@@ -1,14 +1,12 @@
 use std::sync::{Arc, RwLock};
 
 use crate::camera_controls::{self, CameraController};
-use crate::channel::reactive_receiver;
 use crate::panels::SettingsPanel;
 use crate::panels::{DatasetPanel, PresetsPanel, ScenePanel, StatsPanel, TracingPanel};
+use crate::running_process::{RunningProcess, start_process};
 use brush_dataset::Dataset;
 use brush_process::data_source::DataSource;
-use brush_process::process_loop::{
-    ControlMessage, ProcessArgs, ProcessMessage, RunningProcess, start_process,
-};
+use brush_process::process_loop::{ControlMessage, ProcessArgs, ProcessMessage};
 use brush_render::camera::Camera;
 use brush_train::scene::SceneView;
 use burn_wgpu::WgpuDevice;
@@ -124,13 +122,13 @@ pub struct AppContext {
     pub controls: CameraController,
     pub model_local_to_world: Affine3A,
     pub device: WgpuDevice,
+    pub egui_ctx: egui::Context,
 
     loading: bool,
     training: bool,
 
     cam_settings: CameraSettings,
 
-    ctx: egui::Context,
     running_process: Option<RunningProcess>,
 }
 
@@ -159,7 +157,7 @@ impl AppContext {
             controls,
             model_local_to_world: model_transform,
             device,
-            ctx,
+            egui_ctx: ctx,
             view_aspect: None,
             loading: false,
             training: false,
@@ -217,15 +215,10 @@ impl AppContext {
         // reset context & view.
         *self = Self::new(
             self.device.clone(),
-            self.ctx.clone(),
+            self.egui_ctx.clone(),
             self.cam_settings.clone(),
         );
-
-        // Convert the receiver to a "reactive" receiver that wakes up the UI.
-        self.running_process = Some(RunningProcess {
-            messages: reactive_receiver(process.messages, self.ctx.clone()),
-            ..process
-        });
+        self.running_process = Some(process);
     }
 
     pub(crate) fn control_message(&self, msg: ControlMessage) {
@@ -428,6 +421,7 @@ impl App {
                 DataSource::Url(url.to_owned()),
                 ProcessArgs::default(),
                 device,
+                cc.egui_ctx.clone(),
             );
             tree_ctx
                 .context
