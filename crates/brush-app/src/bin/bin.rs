@@ -243,6 +243,7 @@ mod embedded {
                                 data_source,
                                 ProcessArgs::default(),
                                 ctx.device.clone(),
+                                ctx.egui_ctx.clone(),
                             );
                             ctx.connect_to(process);
                         }
