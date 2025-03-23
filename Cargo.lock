@@ -1030,6 +1030,7 @@ name = "brush-train"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "assert_approx_eq",
  "brush-kernel",
  "brush-render",
  "brush-rerun",

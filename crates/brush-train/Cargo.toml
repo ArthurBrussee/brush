@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 brush-render.path = "../brush-render"
 brush-kernel.path = "../brush-kernel"
+assert_approx_eq.workspace = true
 
 anyhow.workspace = true
 image.workspace = true
