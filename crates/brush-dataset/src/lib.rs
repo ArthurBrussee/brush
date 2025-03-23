@@ -26,7 +26,7 @@ pub struct LoadDataseConfig {
     #[arg(long, help_heading = "Dataset Options")]
     pub max_frames: Option<usize>,
     /// Max resolution of images to load.
-    #[arg(long, help_heading = "Dataset Options", default_value = "1800")]
+    #[arg(long, help_heading = "Dataset Options", default_value = "1920")]
     #[config(default = 1920)]
     pub max_resolution: u32,
     /// Create an eval dataset by selecting every nth image
