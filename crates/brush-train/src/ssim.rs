@@ -36,7 +36,7 @@ impl<B: Backend> Ssim<B> {
             .clone()
             .reshape([channels, 1, 1, window_size]);
 
-        let v_blur = conv2d(img.clone(), kernel_v, None, conv_options_v);
+        let v_blur = conv2d(img, kernel_v, None, conv_options_v);
         conv2d(v_blur, kernel_h, None, conv_options_h)
     }
 
