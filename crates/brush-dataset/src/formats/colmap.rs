@@ -228,9 +228,15 @@ pub(crate) async fn load_dataset<B: Backend>(
             if !points_data.is_empty() {
                 log::info!("Starting from colmap points {}", points_data.len());
 
-                let mut positions: Vec<Vec3> = points_data.values().map(|p| p.xyz).collect();
-                let mut colors: Vec<f32> = points_data
+                // The ply importer handles subsampling normally. Here just
+                // do it manually, maybe nice to unify at some point.
+                let step = load_args.subsample_points.unwrap_or(1) as usize;
+
+                let positions: Vec<Vec3> =
+                    points_data.values().step_by(step).map(|p| p.xyz).collect();
+                let colors: Vec<f32> = points_data
                     .values()
+                    .step_by(step)
                     .flat_map(|p| {
                         let sh = rgb_to_sh(glam::vec3(
                             p.rgb[0] as f32 / 255.0,
@@ -240,13 +246,6 @@ pub(crate) async fn load_dataset<B: Backend>(
                         [sh.x, sh.y, sh.z]
                     })
                     .collect();
-
-                // Other dataloaders handle subsampling in the ply import. Here just
-                // do it manually, maybe nice to unify at some point.
-                if let Some(subsample) = load_args.subsample_points {
-                    positions = positions.into_iter().step_by(subsample as usize).collect();
-                    colors = colors.into_iter().step_by(subsample as usize * 3).collect();
-                }
 
                 let init_splat =
                     Splats::from_raw(&positions, None, None, Some(&colors), None, &device);
