@@ -97,8 +97,6 @@ impl<B: Backend> SceneLoader<B> {
                         sample
                     };
 
-                    println!("Sending new image");
-
                     if send_img
                         .send((sample_data, view.image.is_masked(), view.camera.clone()))
                         .await
@@ -107,8 +105,6 @@ impl<B: Backend> SceneLoader<B> {
                         break;
                     }
                 }
-
-                println!("Shutting down data image loading");
             });
         }
         let (send_batch, rec_batch) = mpsc::channel(2);
@@ -130,8 +126,6 @@ impl<B: Backend> SceneLoader<B> {
                     break;
                 }
             }
-
-            println!("Shutting down data tensor loading");
         });
 
         Self {
