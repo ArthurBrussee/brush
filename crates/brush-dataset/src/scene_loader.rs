@@ -50,7 +50,7 @@ impl<B: Backend> SceneLoader<B> {
         // On wasm, there is little point to spawning multiple of these. In theory there would be
         // IF file reading truly was async, but since the zip archive is just in memory it isn't really
         // any faster.
-        let paralellism = if cfg!(target_family = "wasm") {
+        let parallelism = if cfg!(target_family = "wasm") {
             1
         } else {
             std::thread::available_parallelism()
@@ -62,7 +62,7 @@ impl<B: Backend> SceneLoader<B> {
         let load_cache = Arc::new(RwLock::new(ImageCache::new(MAX_CACHE)));
         let views = Arc::new(scene.views);
 
-        for i in 0..paralellism {
+        for i in 0..parallelism {
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed + i);
             let send_img = send_img.clone();
             let views = views.clone();
@@ -90,7 +90,7 @@ impl<B: Backend> SceneLoader<B> {
                             .image
                             .load()
                             .await
-                            .expect("Scene loader encoutered an error while loading an image");
+                            .expect("Scene loader encountered an error while loading an image");
 
                         // Don't premultiply the image if it's a mask - treat as fully opaque.
                         let sample = view_to_sample_data(&image, view.image.is_masked());
