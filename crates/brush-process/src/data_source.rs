@@ -64,9 +64,7 @@ impl DataSource {
                 .await
                 .map_err(|e| anyhow::anyhow!(e))
         } else if peek.starts_with(b"<!DOCTYPE html>") {
-            anyhow::bail!(
-                "Failed to download data (are you trying to download from Google Drive? You might have to use the proxy."
-            )
+            anyhow::bail!("Failed to download data.")
         } else if let Some(path_bytes) = peek.strip_prefix(b"BRUSH_PATH") {
             let string = String::from_utf8(path_bytes.to_vec())?;
             let path = Path::new(&string);
@@ -90,9 +88,29 @@ impl DataSource {
             }
             Self::Url(url) => {
                 let mut url = url.clone();
-                if !url.starts_with("http://") && !url.starts_with("https://") {
+
+                url = url.replace("https://", "");
+
+                if url.starts_with("https://") || url.starts_with("http://") {
+                    // fine, can use as is.
+                } else if url.starts_with('/') {
+                    #[cfg(target_family = "wasm")]
+                    {
+                        // Assume that this instead points to a GET request for the server.
+                        url = web_sys::window()
+                            .expect("No window object available")
+                            .location()
+                            .origin()
+                            .expect("Coultn't figure out origin")
+                            + &url;
+                    }
+
+                    // On non-wasm... not much we can do here, what server would we ask?
+                } else {
+                    // Just try to add https:// and hope for the best. Eg. if someone specifies google.com/splat.ply.
                     url = format!("https://{url}");
                 }
+
                 let response = reqwest::get(url)
                     .await
                     .map_err(|e| anyhow!(e))?

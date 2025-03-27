@@ -69,7 +69,7 @@ pub fn process_stream(
     device: WgpuDevice,
 ) -> impl Stream<Item = Result<ProcessMessage, anyhow::Error>> + 'static {
     try_fn_stream(|emitter| async move {
-        log::info!("Starting process with source {:?}", source);
+        log::info!("Starting process with source {source:?}");
 
         emitter.emit(ProcessMessage::NewSource).await;
 

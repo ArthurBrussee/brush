@@ -40,5 +40,9 @@ clap.workspace = true
 rerun.workspace = true
 brush-rerun.path = "../brush-rerun"
 
+[target.'cfg(target_family = "wasm")'.dependencies]
+web-sys.workspace = true
+
+
 [lints]
 workspace = true
