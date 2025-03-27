@@ -1,4 +1,4 @@
-use brush_dataset::{scene::ViewImageType, splat_export};
+use brush_dataset::splat_export;
 use brush_process::process_loop::ProcessMessage;
 
 use brush_train::train::TrainBack;
@@ -140,20 +140,19 @@ impl ScenePanel {
         }
 
         ui.scope(|ui| {
-            let mut background = false;
-            if let Some(view) = context.dataset.train.views.first() {
-                if view.image.color().has_alpha() && view.img_type == ViewImageType::Alpha {
-                    background = true;
-                    // if training views have alpha, show a background checker. Masked images
-                    // should still use a black background.
-                    brush_ui::draw_checkerboard(ui, rect, Color32::WHITE);
-                }
-            }
+            // TODO: Restore this, or make a toggle maybe.
+            // let mut background = false;
+            // if let Some(view) = context.dataset.train.views.first() {
+            //     if view.img_type == ViewImageType::Alpha {
+            //         background = true;
+            //         // if training views have alpha, show a background checker. Masked images
+            //         // should still use a black background.
+            //         brush_ui::draw_checkerboard(ui, rect, Color32::WHITE);
+            //     }
+            // }
 
             // If a scene is opaque, it assumes a black background.
-            if !background {
-                ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
-            }
+            ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
 
             if let Some(id) = self.backbuffer.id() {
                 ui.painter().image(

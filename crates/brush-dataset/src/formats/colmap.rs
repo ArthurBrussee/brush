@@ -1,5 +1,4 @@
 use std::{
-    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -8,10 +7,9 @@ use super::DataStream;
 use crate::{
     Dataset, LoadDataseConfig,
     brush_vfs::BrushVfs,
-    formats::{clamp_img_to_max_size, find_mask_path, load_image},
-    scene::SceneView,
+    formats::find_mask_path,
+    scene::{LoadImage, SceneView},
     splat_import::SplatMessage,
-    stream_fut_parallel,
 };
 use anyhow::{Context, Result};
 use async_fn_stream::try_fn_stream;
@@ -23,7 +21,6 @@ use brush_render::{
 use burn::prelude::Backend;
 use glam::Vec3;
 use std::collections::HashMap;
-use tokio_stream::StreamExt;
 
 fn find_base_path(archive: &BrushVfs, search_path: &str) -> Option<PathBuf> {
     for path in archive.file_names() {
@@ -64,12 +61,8 @@ fn find_mask_and_img(vfs: &BrushVfs, paths: &[PathBuf]) -> Result<(PathBuf, Opti
         .context("No candidates found")
 }
 
-async fn read_views(
-    vfs: BrushVfs,
-    load_args: LoadDataseConfig,
-) -> Result<Vec<impl Future<Output = Result<SceneView>>>> {
+async fn read_views(vfs: Arc<BrushVfs>, load_args: LoadDataseConfig) -> Result<Vec<SceneView>> {
     log::info!("Loading colmap dataset");
-    let mut vfs = vfs;
 
     let (is_binary, base_path) = if let Some(path) = find_base_path(&vfs, "cameras.bin") {
         (true, path)
@@ -86,12 +79,12 @@ async fn read_views(
     };
 
     let cam_model_data = {
-        let mut cam_file = vfs.open_path(&cam_path).await?;
+        let mut cam_file = vfs.reader_at_path(&cam_path).await?;
         colmap_reader::read_cameras(&mut cam_file, is_binary).await?
     };
 
     let img_infos = {
-        let img_file = vfs.open_path(&img_path).await?;
+        let img_file = vfs.reader_at_path(&img_path).await?;
         let mut buf_reader = tokio::io::BufReader::new(img_file);
         colmap_reader::read_images(&mut buf_reader, is_binary).await?
     };
@@ -103,85 +96,68 @@ async fn read_views(
     // Sort by image name. This is important to match the exact eval images mipnerf uses.
     img_info_list.sort_by_key(|key_img| key_img.1.name.clone());
 
-    let handles = img_info_list
+    let mut views = vec![];
+
+    for (_, img_info) in img_info_list
         .into_iter()
         .take(load_args.max_frames.unwrap_or(usize::MAX))
-        .map(move |(_, img_info)| {
-            let cam_data = cam_model_data[&img_info.camera_id].clone();
-            let mut vfs = vfs.clone();
+        .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
+    {
+        let cam_data = cam_model_data[&img_info.camera_id].clone();
+        let vfs = vfs.clone();
 
-            // Create a future to handle loading the image.
-            async move {
-                let focal = cam_data.focal();
+        // Create a future to handle loading the image.
+        let focal = cam_data.focal();
 
-                let fovx = camera::focal_to_fov(focal.0, cam_data.width as u32);
-                let fovy = camera::focal_to_fov(focal.1, cam_data.height as u32);
+        let fovx = camera::focal_to_fov(focal.0, cam_data.width as u32);
+        let fovy = camera::focal_to_fov(focal.1, cam_data.height as u32);
 
-                let center = cam_data.principal_point();
-                let center_uv = center / glam::vec2(cam_data.width as f32, cam_data.height as f32);
+        let center = cam_data.principal_point();
+        let center_uv = center / glam::vec2(cam_data.width as f32, cam_data.height as f32);
 
-                // Colmap only specifies an image name, not a full path. We brute force
-                // search for the image in the archive.
-                let img_paths: Vec<_> = vfs
-                    .file_names()
-                    .filter(|p| p.ends_with(&img_info.name))
-                    .collect();
+        // Colmap only specifies an image name, not a full path. We brute force
+        // search for the image in the archive.
+        let img_paths: Vec<_> = vfs
+            .file_names()
+            .filter(|p| p.ends_with(&img_info.name))
+            .collect();
 
-                let (path, mask_path) = find_mask_and_img(&vfs, &img_paths)
-                    .with_context(|| format!("Failed to find image {}", img_info.name))?;
+        let (path, mask_path) = find_mask_and_img(&vfs, &img_paths)
+            .with_context(|| format!("Failed to find image {}", img_info.name))?;
 
-                let (image, img_type) = load_image(&mut vfs, &path, mask_path.as_deref())
-                    .await
-                    .with_context(|| format!("Failed to load image {}", img_info.name))?;
+        // Convert w2c to c2w.
+        let world_to_cam = glam::Affine3A::from_rotation_translation(img_info.quat, img_info.tvec);
+        let cam_to_world = world_to_cam.inverse();
+        let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
 
-                let image = clamp_img_to_max_size(Arc::new(image), load_args.max_resolution);
+        let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
 
-                // Convert w2c to c2w.
-                let world_to_cam =
-                    glam::Affine3A::from_rotation_translation(img_info.quat, img_info.tvec);
-                let cam_to_world = world_to_cam.inverse();
-                let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
+        log::info!("Loaded COLMAP image at path {path:?}");
 
-                let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
-                let path = path.to_string_lossy().to_string();
+        let load_img = LoadImage::new(vfs.clone(), path, mask_path, load_args.max_resolution)
+            .await
+            .context("Failed to construct loadable image")?;
 
-                log::info!("Loaded COLMAP image at path {path}");
-
-                let view = SceneView {
-                    path,
-                    camera,
-                    image,
-                    img_type,
-                };
-                Ok(view)
-            }
-        })
-        .collect();
-
-    Ok(handles)
+        let view = SceneView {
+            camera,
+            image: load_img,
+        };
+        views.push(view);
+    }
+    Ok(views)
 }
 
 pub(crate) async fn load_dataset<B: Backend>(
-    mut vfs: BrushVfs,
+    vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
     device: &B::Device,
-) -> Result<(DataStream<SplatMessage<B>>, DataStream<Dataset>)> {
-    let mut handles = read_views(vfs.clone(), load_args.clone()).await?;
-
-    if let Some(subsample) = load_args.subsample_frames {
-        handles = handles.into_iter().step_by(subsample as usize).collect();
-    }
+) -> Result<(DataStream<SplatMessage<B>>, Dataset)> {
+    let views = read_views(vfs.clone(), load_args.clone()).await?;
 
     let mut train_views = vec![];
     let mut eval_views = vec![];
 
-    let load_args = load_args.clone();
-    let device = device.clone();
-
-    let mut i = 0;
-    let stream = stream_fut_parallel(handles).map(move |view| {
-        let view = view.context("Failed to load COLMAP view")?;
-
+    for (i, view) in views.into_iter().enumerate() {
         if let Some(eval_period) = load_args.eval_split_every {
             if i % eval_period == 0 {
                 eval_views.push(view);
@@ -191,11 +167,12 @@ pub(crate) async fn load_dataset<B: Backend>(
         } else {
             train_views.push(view);
         }
+    }
 
-        i += 1;
-        Ok(Dataset::from_views(train_views.clone(), eval_views.clone()))
-    });
+    let dataset = Dataset::from_views(train_views, eval_views);
 
+    let device = device.clone();
+    let load_args = load_args.clone();
     let init_stream = try_fn_stream(|emitter| async move {
         let points_path = vfs.file_names().find(|p| {
             if let Some(path) = p.to_str().map(|p| p.to_lowercase()) {
@@ -217,7 +194,7 @@ pub(crate) async fn load_dataset<B: Backend>(
         // Extract COLMAP sfm points.
         let points_data = {
             let mut points_file = vfs
-                .open_path(&points_path)
+                .reader_at_path(&points_path)
                 .await
                 .context("Failed to read COLMAP points file")?;
             colmap_reader::read_points3d(&mut points_file, is_binary).await
@@ -266,5 +243,5 @@ pub(crate) async fn load_dataset<B: Backend>(
         Ok(())
     });
 
-    Ok((Box::pin(init_stream), Box::pin(stream)))
+    Ok((Box::pin(init_stream), dataset))
 }

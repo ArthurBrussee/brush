@@ -1,10 +1,15 @@
+use anyhow::{Context, Result};
 use brush_render::{bounding_box::BoundingBox, camera::Camera};
 use burn::{
     prelude::Backend,
     tensor::{Tensor, TensorData},
 };
 use glam::{Affine3A, Vec3, vec3};
-use std::sync::Arc;
+use image::{ColorType, DynamicImage, ImageDecoder, ImageReader};
+use std::{path::PathBuf, sync::Arc};
+use tokio::io::{AsyncRead, AsyncReadExt};
+
+use crate::{brush_vfs::BrushVfs, clamp_img_to_max_size};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ViewType {
@@ -13,19 +18,134 @@ pub enum ViewType {
     Test,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+pub struct LoadImage {
+    pub vfs: Arc<BrushVfs>,
+    pub path: PathBuf,
+    pub mask_path: Option<PathBuf>,
+
+    color: image::ColorType,
+    size: glam::UVec2,
+    max_resolution: u32,
+}
+
+/// Gets the dimensions of an image from an [`AsyncRead`] source
+pub async fn get_image_data<R>(reader: &mut R) -> Result<(u32, u32, ColorType)>
+where
+    R: AsyncRead + Unpin,
+{
+    // 4kb should be PLENTY to guess the size of the image (at least for jpg and png). Don't need to read the full image.
+    let mut buffer = Vec::with_capacity(4096);
+    let mut temp_buf = [0u8; 4096];
+
+    let n = reader.read(&mut temp_buf).await?;
+    buffer.extend_from_slice(&temp_buf[..n]);
+
+    // Now get a normal cursor.
+    let cursor = std::io::Cursor::new(buffer);
+    let dimensions = ImageReader::new(cursor.clone())
+        .with_guessed_format()
+        .context("Failed to guess format")?
+        .into_dimensions()
+        .context("Failed to read dimensions")?;
+    let decoder = ImageReader::new(cursor)
+        .with_guessed_format()
+        .context("Failed to guess format")?
+        .into_decoder()
+        .context("Failed to read color type")?;
+
+    Ok((dimensions.0, dimensions.1, decoder.color_type()))
+}
+
+impl LoadImage {
+    pub async fn new(
+        vfs: Arc<BrushVfs>,
+        path: PathBuf,
+        mask_path: Option<PathBuf>,
+        max_resolution: u32,
+    ) -> Result<Self> {
+        let reader = &mut vfs.reader_at_path(&path).await?;
+        let data = get_image_data(reader).await?;
+
+        Ok(Self {
+            vfs,
+            path,
+            mask_path,
+            max_resolution,
+            size: glam::uvec2(data.0, data.1),
+            color: data.2,
+        })
+    }
+
+    pub fn color(&self) -> image::ColorType {
+        self.color
+    }
+
+    pub fn width(&self) -> u32 {
+        self.size.x
+    }
+
+    pub fn height(&self) -> u32 {
+        self.size.y
+    }
+
+    pub async fn load(&self) -> Result<Arc<DynamicImage>> {
+        let mut img_bytes = vec![];
+        self.vfs
+            .reader_at_path(&self.path)
+            .await?
+            .read_to_end(&mut img_bytes)
+            .await?;
+        let mut img = image::load_from_memory(&img_bytes)?;
+
+        // Copy over mask
+        if let Some(mask_path) = &self.mask_path {
+            let mut mask_bytes = vec![];
+            self.vfs
+                .reader_at_path(mask_path)
+                .await?
+                .read_to_end(&mut mask_bytes)
+                .await?;
+            let mask_img = image::load_from_memory(&mask_bytes)?;
+
+            let mut img_masked = img.to_rgba8();
+
+            if mask_img.color().has_alpha() {
+                let mask_img = mask_img.to_rgba8();
+                for (buf, mask) in img_masked.pixels_mut().zip(mask_img.pixels()) {
+                    buf[3] = mask[0];
+                }
+            } else {
+                let mask_img = mask_img.grayscale().to_rgb8();
+                for (buf, mask) in img_masked.pixels_mut().zip(mask_img.pixels()) {
+                    buf[3] = mask[0];
+                }
+            }
+
+            img = img_masked.into();
+        }
+
+        let img = clamp_img_to_max_size(img, self.max_resolution);
+        let img = Arc::new(img);
+        Ok(img)
+    }
+
+    pub fn is_masked(&self) -> bool {
+        self.mask_path.is_some()
+    }
+}
+
+#[derive(Clone)]
 pub struct SceneView {
-    pub path: String,
+    pub image: LoadImage,
     pub camera: Camera,
-    pub image: Arc<image::DynamicImage>,
-    pub img_type: ViewImageType,
 }
 
 // Encapsulates a multi-view scene including cameras and the splats.
 // Also provides methods for checkpointing the training process.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Scene {
-    pub views: Arc<Vec<SceneView>>,
+    pub views: Vec<SceneView>,
 }
 
 fn camera_distance_penalty(cam_local_to_world: Affine3A, reference: Affine3A) -> f32 {
@@ -49,9 +169,7 @@ fn find_two_smallest(v: Vec3) -> (f32, f32) {
 
 impl Scene {
     pub fn new(views: Vec<SceneView>) -> Self {
-        Self {
-            views: Arc::new(views),
-        }
+        Self { views }
     }
 
     // Returns the extent of the cameras in the scene.
@@ -100,23 +218,17 @@ impl Scene {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ViewImageType {
-    Alpha,
-    Masked,
-}
-
 // Converts an image to a train sample. The tensor will be a floating point image with a [0, 1] image.
 //
 // This assume the input image has un-premultiplied alpha, whereas the output has pre-multiplied alpha.
-pub fn view_to_sample<B: Backend>(view: &SceneView, device: &B::Device) -> Tensor<B, 3> {
-    let image = &view.image;
+pub fn view_to_sample_data(image: &DynamicImage, alpha_is_mask: bool) -> TensorData {
     let (w, h) = (image.width(), image.height());
 
-    let tensor_data = if image.color().has_alpha() {
-        // Assume image has un-multiplied alpha and convert it to pre-multiplied.
+    if image.color().has_alpha() {
         let mut rgba = image.to_rgba32f();
-        if view.img_type == ViewImageType::Alpha {
+
+        if !alpha_is_mask {
+            // Assume image has un-multiplied alpha and convert it to pre-multiplied.
             for pixel in rgba.pixels_mut() {
                 let a = pixel[3];
                 pixel[0] *= a;
@@ -127,13 +239,26 @@ pub fn view_to_sample<B: Backend>(view: &SceneView, device: &B::Device) -> Tenso
         TensorData::new(rgba.into_vec(), [h as usize, w as usize, 4])
     } else {
         TensorData::new(image.to_rgb32f().into_vec(), [h as usize, w as usize, 3])
-    };
+    }
+}
 
-    Tensor::from_data(tensor_data, device)
+pub fn view_to_sample<B: Backend>(
+    image: &DynamicImage,
+    alpha_is_mask: bool,
+    device: &B::Device,
+) -> Tensor<B, 3> {
+    Tensor::from_data(view_to_sample_data(image, alpha_is_mask), device)
 }
 
 #[derive(Clone, Debug)]
 pub struct SceneBatch<B: Backend> {
-    pub gt_image: Tensor<B, 3>,
-    pub gt_view: SceneView,
+    pub img_tensor: Tensor<B, 3>,
+    pub alpha_is_mask: bool,
+    pub camera: Camera,
+}
+
+impl<B: Backend> SceneBatch<B> {
+    pub fn has_alpha(&self) -> bool {
+        self.img_tensor.shape().dims[2] == 4
+    }
 }

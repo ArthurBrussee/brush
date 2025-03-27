@@ -1,11 +1,12 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Context;
 /// A default training loop for Brush.
 use async_fn_stream::TryStreamEmitter;
 
 use brush_dataset::brush_vfs::BrushVfs;
-use brush_dataset::{Dataset, scene_loader::SceneLoader};
+use brush_dataset::scene_loader::SceneLoader;
 use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
 use brush_train::train::SplatTrainer;
 use brush_train::train::TrainBack;
@@ -23,7 +24,7 @@ use crate::rerun_tools::VisualizeTools;
 use super::{ProcessArgs, ProcessMessage};
 
 pub(crate) async fn train_stream(
-    vfs: BrushVfs,
+    vfs: Arc<BrushVfs>,
     process_args: ProcessArgs,
     device: WgpuDevice,
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
@@ -43,20 +44,14 @@ pub(crate) async fn train_stream(
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     log::info!("Loading dataset");
-    let mut dataset = Dataset::empty();
-    let (mut splat_stream, mut data_stream) =
+    let (mut splat_stream, dataset) =
         brush_dataset::load_dataset(vfs.clone(), &process_args.load_config, &device).await?;
     log::info!("Dataset loaded");
-
-    // Read dataset stream.
-    while let Some(d) = data_stream.next().await {
-        dataset = d.context("Failed to parse dataset. \n")?;
-        emitter
-            .emit(ProcessMessage::Dataset {
-                data: dataset.clone(),
-            })
-            .await;
-    }
+    emitter
+        .emit(ProcessMessage::Dataset {
+            dataset: dataset.clone(),
+        })
+        .await;
 
     visualize.log_scene(&dataset.train, process_args.rerun_config.rerun_max_img_size)?;
 
@@ -104,12 +99,11 @@ pub(crate) async fn train_stream(
 
     let mut splats = splats.with_sh_degree(process_args.model_config.sh_degree);
 
-    let eval_scene = dataset.eval.clone();
-    let train_scene = dataset.train.clone();
-    let scene_extent = train_scene.estimate_extent().unwrap_or(1.0);
+    let mut eval_scene = dataset.eval;
+    let scene_extent = dataset.train.estimate_extent().unwrap_or(1.0);
 
     let mut train_duration = Duration::from_secs(0);
-    let mut dataloader = SceneLoader::new(&train_scene, 42, &device);
+    let mut dataloader = SceneLoader::new(dataset.train, 42, &device);
     let mut trainer = SplatTrainer::new(&process_args.train_config, &device);
 
     log::info!("Start training loop.");
@@ -117,7 +111,7 @@ pub(crate) async fn train_stream(
         let step_time = Instant::now();
 
         let batch = dataloader.next_batch().await;
-        let (new_splats, stats) = trainer.step(scene_extent, iter, batch, splats);
+        let (new_splats, stats) = trainer.step(scene_extent, iter, &batch, splats);
         splats = new_splats;
         let (new_splats, refine) = trainer.refine_if_needed(iter, splats).await;
         splats = new_splats;
@@ -133,24 +127,22 @@ pub(crate) async fn train_stream(
         // Check if we want to evaluate _next iteration_. Small detail, but this ensures we evaluate
         // before doing a refine.
         if iter % process_config.eval_every == 0 || is_last_step {
-            if let Some(eval_scene) = eval_scene.as_ref() {
+            if let Some(eval_scene) = eval_scene.as_mut() {
                 let mut psnr = 0.0;
                 let mut ssim = 0.0;
                 let mut count = 0;
 
                 log::info!("Running evaluation for iteration {iter}");
 
-                for sample in brush_train::eval::eval_stats(
-                    splats.valid(),
-                    eval_scene,
-                    None,
-                    &mut rng,
-                    &device,
-                ) {
+                for (i, view) in eval_scene.views.iter_mut().enumerate() {
+                    let sample = brush_train::eval::eval_stats(splats.valid(), view, &device)
+                        .await
+                        .context("Failed to run eval for sample.")?;
+
                     count += 1;
                     psnr += sample.psnr.clone().into_scalar_async().await;
                     ssim += sample.ssim.clone().into_scalar_async().await;
-                    visualize.log_eval_sample(iter, &sample).await?;
+                    visualize.log_eval_sample(iter, i as u32, &sample).await?;
 
                     #[cfg(not(target_family = "wasm"))]
                     if process_args.process_config.eval_save_to_disk {
@@ -161,7 +153,7 @@ pub(crate) async fn train_stream(
                         );
                         let rendered: image::DynamicImage = eval_render.to_rgb8().into();
 
-                        let img_name = Path::new(&sample.view.path)
+                        let img_name = Path::new(&view.image.path)
                             .file_stem()
                             .expect("No file name for eval view.")
                             .to_string_lossy();

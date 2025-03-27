@@ -203,7 +203,6 @@ impl AppContext {
         self.match_controls_to(&view.camera);
         self.controls.stop_movement();
         self.view_aspect = Some(view.image.width() as f32 / view.image.height() as f32);
-
         if let Some(extent) = self.dataset.train.estimate_extent() {
             self.controls.focus_distance = extent / 3.0;
         } else {
@@ -456,7 +455,7 @@ impl App {
             match message {
                 Ok(message) => {
                     match message {
-                        ProcessMessage::Dataset { data: _ } => {
+                        ProcessMessage::Dataset { dataset: _ } => {
                             // Show the dataset panel if we've loaded one.
                             if self.datasets.is_none() {
                                 let pane_id =

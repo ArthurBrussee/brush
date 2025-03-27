@@ -1,7 +1,7 @@
 use std::f64::consts::SQRT_2;
 
 use anyhow::Result;
-use brush_dataset::scene::{SceneBatch, SceneView, ViewImageType};
+use brush_dataset::scene::SceneBatch;
 use brush_render::gaussian_splats::{Splats, inverse_sigmoid};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 
@@ -20,13 +20,9 @@ use burn::tensor::backend::AutodiffBackend;
 use burn::tensor::{Bool, Distribution, Int, TensorData, TensorPrimitive};
 use burn::{config::Config, optim::GradientsParams, tensor::Tensor};
 use burn_cubecl::cubecl::Runtime;
+use clap::Args;
 use hashbrown::{HashMap, HashSet};
 use tracing::trace_span;
-
-// use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
-// use crate::multinomial::multinomial_sample;
-// use crate::stats::RefineRecord;
-use clap::Args;
 
 use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
 use crate::multinomial::multinomial_sample;
@@ -148,8 +144,6 @@ pub struct RefineStats {
 pub struct TrainStepStats<B: Backend> {
     pub pred_image: Tensor<B, 3>,
 
-    pub gt_views: SceneView,
-
     pub num_intersections: Tensor<B, 1, Int>,
     pub num_visible: Tensor<B, 1, Int>,
     pub loss: Tensor<B, 1>,
@@ -204,14 +198,13 @@ impl SplatTrainer {
         &mut self,
         scene_extent: f32,
         iter: u32,
-        batch: SceneBatch<TrainBack>,
+        batch: &SceneBatch<TrainBack>,
         splats: Splats<TrainBack>,
     ) -> (Splats<TrainBack>, TrainStepStats<TrainBack>) {
         let mut splats = splats;
 
-        let [img_h, img_w, _] = batch.gt_image.dims();
-
-        let camera = &batch.gt_view.camera;
+        let [img_h, img_w, _] = batch.img_tensor.dims();
+        let camera = &batch.camera;
 
         let current_opacity = splats.opacities();
 
@@ -248,30 +241,27 @@ impl SplatTrainer {
         let _span = trace_span!("Calculate losses", sync_burn = true).entered();
 
         let pred_rgb = pred_image.clone().slice([0..img_h, 0..img_w, 0..3]);
-        let gt_rgb = batch.gt_image.clone().slice([0..img_h, 0..img_w, 0..3]);
+        let gt_rgb = batch.img_tensor.clone().slice([0..img_h, 0..img_w, 0..3]);
 
         let l1_rgb = (pred_rgb.clone() - gt_rgb).abs();
 
         let total_err = if self.config.ssim_weight > 0.0 {
-            let gt_rgb = batch.gt_image.clone().slice([0..img_h, 0..img_w, 0..3]);
+            let gt_rgb = batch.img_tensor.clone().slice([0..img_h, 0..img_w, 0..3]);
             let ssim_err = -self.ssim.ssim(pred_rgb, gt_rgb);
             l1_rgb * (1.0 - self.config.ssim_weight) + ssim_err * self.config.ssim_weight
         } else {
             l1_rgb
         };
 
-        let loss = if batch.gt_view.image.color().has_alpha() {
-            let alpha_input = batch.gt_image.clone().slice([0..img_h, 0..img_w, 3..4]);
+        let loss = if batch.has_alpha() {
+            let alpha_input = batch.img_tensor.clone().slice([0..img_h, 0..img_w, 3..4]);
 
-            match batch.gt_view.img_type {
-                // In masked mode, weigh the errors by the alpha channel.
-                ViewImageType::Masked => (total_err * alpha_input).mean(),
-                // In alpha mode, add the l1 error of the alpha channel to the total error.
-                ViewImageType::Alpha => {
-                    let pred_alpha = pred_image.clone().slice([0..img_h, 0..img_w, 3..4]);
-                    total_err.mean()
-                        + (alpha_input - pred_alpha).abs().mean() * self.config.match_alpha_weight
-                }
+            if batch.alpha_is_mask {
+                (total_err * alpha_input).mean()
+            } else {
+                let pred_alpha = pred_image.clone().slice([0..img_h, 0..img_w, 3..4]);
+                total_err.mean()
+                    + (alpha_input - pred_alpha).abs().mean() * self.config.match_alpha_weight
             }
         } else {
             total_err.mean()
@@ -409,7 +399,6 @@ impl SplatTrainer {
 
         let stats = TrainStepStats {
             pred_image,
-            gt_views: batch.gt_view,
             num_visible: Tensor::from_primitive(num_visible),
             num_intersections: Tensor::from_primitive(num_intersections),
             loss,

@@ -60,14 +60,13 @@ impl PathReader {
         );
     }
 
-    async fn open(&mut self, path: &Path) -> anyhow::Result<Box<dyn DynRead>> {
-        let entry = self.paths.remove(path).context("File not found")?;
+    async fn open(&self, path: &Path) -> anyhow::Result<Box<dyn DynRead>> {
+        let entry = self.paths.get(path).context("File not found")?;
         let reader = entry.lock().await.take();
         reader.context("Missing reader")
     }
 }
 
-#[derive(Clone)]
 pub enum BrushVfs {
     Zip(ZipArchive<Cursor<ZipData>>),
     Manual(PathReader),
@@ -160,7 +159,7 @@ impl BrushVfs {
         })
     }
 
-    pub async fn open_path(&mut self, path: &Path) -> anyhow::Result<Box<dyn DynRead>> {
+    pub async fn reader_at_path(&self, path: &Path) -> anyhow::Result<Box<dyn DynRead>> {
         match self {
             Self::Zip(archive) => {
                 let name = archive
@@ -169,7 +168,8 @@ impl BrushVfs {
                     .ok_or(ZipError::FileNotFound)?;
                 let name = name.to_owned();
                 let mut buffer = vec![];
-                archive.by_name(&name)?.read_to_end(&mut buffer)?;
+                // Archive is cheap to clone, as the data is an Arc<[u8]>.
+                archive.clone().by_name(&name)?.read_to_end(&mut buffer)?;
                 Ok(Box::new(Cursor::new(buffer)))
             }
             Self::Manual(map) => map.open(path).await,

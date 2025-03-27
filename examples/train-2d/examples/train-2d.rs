@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use brush_dataset::scene::{SceneBatch, SceneView, ViewImageType, view_to_sample};
+use brush_dataset::scene::{SceneBatch, view_to_sample};
 use brush_render::{
     bounding_box::BoundingBox,
     camera::{Camera, focal_to_fov, fov_to_focal},
@@ -17,6 +17,7 @@ use burn::{
 };
 use egui::{ImageSource, TextureHandle, TextureOptions, load::SizedTexture};
 use glam::{Quat, Vec2, Vec3};
+use image::DynamicImage;
 use rand::SeedableRng;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -26,7 +27,8 @@ struct TrainStep {
 }
 
 fn spawn_train_loop(
-    gt_view: SceneView,
+    image: Arc<DynamicImage>,
+    cam: Camera,
     config: TrainConfig,
     device: WgpuDevice,
     ctx: egui::Context,
@@ -52,14 +54,15 @@ fn spawn_train_loop(
 
         // One batch of training data, it's the same every step so can just cosntruct it once.
         let batch = SceneBatch {
-            gt_image: view_to_sample(&gt_view, &device).unsqueeze(),
-            gt_view,
+            img_tensor: view_to_sample(&image, false, &device).unsqueeze(),
+            alpha_is_mask: false,
+            camera: cam,
         };
 
         let mut iter = 0;
 
         loop {
-            let (new_splats, _) = trainer.step(1.0, iter, batch.clone(), splats);
+            let (new_splats, _) = trainer.step(1.0, iter, &batch, splats);
             let (new_splats, _) = trainer.refine_if_needed(iter, new_splats).await;
 
             splats = new_splats;
@@ -81,7 +84,8 @@ fn spawn_train_loop(
 }
 
 struct App {
-    view: SceneView,
+    image: Arc<image::DynamicImage>,
+    camera: Camera,
     tex_handle: TextureHandle,
     backbuffer: BurnTexture,
     receiver: Receiver<TrainStep>,
@@ -100,7 +104,7 @@ impl App {
             state.queue.clone(),
         );
 
-        let image = image::open("./crab.jpg").expect("Failed to open image");
+        let image = Arc::new(image::open("./crab.jpg").expect("Failed to open image"));
 
         let fov_x = 0.5 * std::f64::consts::PI;
         let fov_y = focal_to_fov(fov_to_focal(fov_x, image.width()), image.height());
@@ -115,25 +119,25 @@ impl App {
             center_uv,
         );
 
-        let view = SceneView {
-            path: "crabby".to_owned(),
-            camera,
-            image: Arc::new(image),
-            img_type: ViewImageType::Alpha,
-        };
-
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
 
         let color_img = egui::ColorImage::from_rgb(
-            [view.image.width() as usize, view.image.height() as usize],
-            &view.image.to_rgb8().into_vec(),
+            [image.width() as usize, image.height() as usize],
+            &image.to_rgb8().into_vec(),
         );
         let handle =
             cc.egui_ctx
                 .load_texture("nearest_view_tex", color_img, TextureOptions::default());
 
         let config = TrainConfig::new();
-        spawn_train_loop(view.clone(), config, device, cc.egui_ctx.clone(), sender);
+        spawn_train_loop(
+            image.clone(),
+            camera.clone(),
+            config,
+            device,
+            cc.egui_ctx.clone(),
+            sender,
+        );
 
         let renderer = cc
             .wgpu_render_state
@@ -143,7 +147,8 @@ impl App {
             .clone();
 
         Self {
-            view,
+            image,
+            camera,
             tex_handle: handle,
             backbuffer: BurnTexture::new(renderer, state.device.clone(), state.queue.clone()),
             receiver,
@@ -163,15 +168,13 @@ impl eframe::App for App {
                 return;
             };
 
-            let image = &self.view.image;
-
             let (img, _) = msg.splats.render(
-                &self.view.camera,
-                glam::uvec2(image.width(), image.height()),
+                &self.camera,
+                glam::uvec2(self.image.width(), self.image.height()),
                 false,
             );
 
-            let size = egui::vec2(image.width() as f32, image.height() as f32);
+            let size = egui::vec2(self.image.width() as f32, self.image.height() as f32);
 
             ui.horizontal(|ui| {
                 let texture_id = self.backbuffer.update_texture(img);

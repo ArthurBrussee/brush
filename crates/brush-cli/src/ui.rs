@@ -111,15 +111,14 @@ pub async fn process_ui(
             ProcessMessage::ViewSplats { .. } => {
                 // I guess we're already showing a warning.
             }
-            ProcessMessage::Dataset { data } => {
-                let train_views = data.train.views.len();
-                let eval_views = data.eval.as_ref().map_or(0, |v| v.views.len());
+            ProcessMessage::Dataset { dataset } => {
+                let train_views = dataset.train.views.len();
+                let eval_views = dataset.eval.as_ref().map_or(0, |v| v.views.len());
                 log::info!("Loading data... {train_views} training, {eval_views} eval views",);
                 main_spinner.set_message(format!(
                     "Loading data... {train_views} training, {eval_views} eval views",
                 ));
-
-                if let Some(val) = data.eval.as_ref() {
+                if let Some(val) = dataset.eval.as_ref() {
                     eval_spinner.set_message(format!(
                         "evaluating {} views every {} steps",
                         val.views.len(),

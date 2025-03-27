@@ -107,7 +107,6 @@ pub(crate) fn render_forward<BT: BoolElement>(
         tile_bounds: tile_bounds.into(),
         sh_degree,
         total_splats: total_splats as u32,
-
         // Nb: Bit of a hack as these aren't _really_ uniforms but are written to by the shaders.
         num_visible: 0,
         num_intersections: 0,

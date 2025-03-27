@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::ProcessMessage;
 use async_fn_stream::TryStreamEmitter;
 use brush_dataset::{brush_vfs::BrushVfs, splat_import};
@@ -5,11 +7,10 @@ use burn_wgpu::WgpuDevice;
 use tokio_stream::StreamExt;
 
 pub(crate) async fn view_stream(
-    vfs: BrushVfs,
+    vfs: Arc<BrushVfs>,
     device: WgpuDevice,
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
 ) -> anyhow::Result<()> {
-    let mut vfs = vfs;
     let paths: Vec<_> = vfs.file_names().collect();
 
     for (i, path) in paths.iter().enumerate() {
@@ -21,7 +22,7 @@ pub(crate) async fn view_stream(
 
         let sub_sample = None; // Subsampling a trained ply doesn't really make sense.
         let splat_stream = splat_import::load_splat_from_ply(
-            vfs.open_path(path).await?,
+            vfs.reader_at_path(path).await?,
             sub_sample,
             device.clone(),
         );

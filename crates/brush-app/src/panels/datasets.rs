@@ -1,12 +1,13 @@
 use crate::app::{AppContext, AppPanel};
-use brush_dataset::scene::{Scene, SceneView, ViewImageType, ViewType};
+use brush_dataset::scene::{Scene, SceneView, ViewType};
 use brush_process::process_loop::ProcessMessage;
-use egui::{Slider, TextureHandle, TextureOptions, pos2};
+use egui::{Color32, Slider, TextureHandle, TextureOptions, pos2};
+use tokio::sync::oneshot::Receiver;
 
 struct SelectedView {
     index: usize,
     view_type: ViewType,
-    texture_handle: TextureHandle,
+    handle: Receiver<TextureHandle>,
 }
 
 fn selected_scene(t: ViewType, context: &AppContext) -> &Scene {
@@ -29,6 +30,7 @@ impl SelectedView {
 pub(crate) struct DatasetPanel {
     view_type: ViewType,
     selected_view: Option<SelectedView>,
+    last_handle: Option<TextureHandle>,
 }
 
 impl DatasetPanel {
@@ -36,6 +38,7 @@ impl DatasetPanel {
         Self {
             view_type: ViewType::Train,
             selected_view: None,
+            last_handle: None,
         }
     }
 }
@@ -50,12 +53,11 @@ impl AppPanel for DatasetPanel {
             ProcessMessage::NewSource => {
                 *self = Self::new();
             }
-            ProcessMessage::Dataset { data: d } => {
-                // Set train view to last loaded camera.
-                if let Some(view) = d.train.views.last() {
+            ProcessMessage::Dataset { dataset } => {
+                if let Some(view) = dataset.train.views.first() {
                     context.focus_view(view);
                 }
-                context.dataset = d.clone();
+                context.dataset = dataset.clone();
             }
             _ => {}
         }
@@ -78,62 +80,94 @@ impl AppPanel for DatasetPanel {
             }
 
             if dirty {
+                let (sender, handle) = tokio::sync::oneshot::channel();
+
                 let view = &pick_scene.views[*nearest];
-                let image = &view.image;
-                let img_size = [image.width() as usize, image.height() as usize];
-                let color_img = if image.color().has_alpha() {
-                    let data = image.to_rgba8().into_vec();
-                    egui::ColorImage::from_rgba_unmultiplied(img_size, &data)
-                } else {
-                    egui::ColorImage::from_rgb(img_size, &image.to_rgb8().into_vec())
-                };
+                let image = view.image.clone();
+                let ctx = ui.ctx().clone();
+
+                tokio_with_wasm::alias::spawn(async move {
+                    // When selecting images super rapidly, might happen, don't waste resources loading.
+                    if sender.is_closed() {
+                        return;
+                    }
+                    let image = image.load().await.expect("Failed to load dataset image");
+                    if sender.is_closed() {
+                        return;
+                    }
+                    let img_size = [image.width() as usize, image.height() as usize];
+                    let color_img = if image.color().has_alpha() {
+                        let data = image.to_rgba8().into_vec();
+                        egui::ColorImage::from_rgba_unmultiplied(img_size, &data)
+                    } else {
+                        egui::ColorImage::from_rgb(img_size, &image.to_rgb8().into_vec())
+                    };
+
+                    // If channel is gone, that's fine.
+                    let _ = sender.send(ctx.load_texture(
+                        "nearest_view_tex",
+                        color_img,
+                        TextureOptions::default(),
+                    ));
+                    // Show updated texture asap.
+                    ctx.request_repaint();
+                });
 
                 self.selected_view = Some(SelectedView {
                     index: *nearest,
                     view_type: self.view_type,
-                    texture_handle: ui.ctx().load_texture(
-                        "nearest_view_tex",
-                        color_img,
-                        TextureOptions::default(),
-                    ),
+                    handle,
                 });
             }
 
             let view_count = pick_scene.views.len();
 
-            if let Some(selected) = self.selected_view.as_ref() {
-                let selected_view = selected.get_view(context).clone();
-                let texture_handle = &selected.texture_handle;
-
-                let img_size = texture_handle.size();
-                let size = brush_ui::size_for_splat_view(ui);
-
-                let size = egui::Image::new(texture_handle).shrink_to_fit().calc_size(
-                    size,
-                    Some(egui::vec2(img_size[0] as f32, img_size[1] as f32)),
-                );
-                let min = ui.cursor().min;
-                let size = size.round();
-
-                let rect = egui::Rect::from_min_size(min, size);
-
-                match selected_view.img_type {
-                    ViewImageType::Alpha => {
-                        brush_ui::draw_checkerboard(ui, rect, egui::Color32::WHITE);
-                    }
-                    ViewImageType::Masked => {
-                        brush_ui::draw_checkerboard(ui, rect, egui::Color32::DARK_RED);
-                    }
+            if let Some(selected) = self.selected_view.as_mut() {
+                if let Ok(texture_handle) = selected.handle.try_recv() {
+                    self.last_handle = Some(texture_handle);
                 }
 
-                ui.painter().image(
-                    texture_handle.id(),
-                    rect,
-                    egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
+                if let Some(texture_handle) = &mut self.last_handle {
+                    let selected_view = selected.get_view(context);
 
-                ui.allocate_rect(rect, egui::Sense::click());
+                    let size = brush_ui::size_for_splat_view(ui);
+                    let mut size = size.floor();
+                    let aspect_ratio =
+                        selected_view.image.width() as f32 / selected_view.image.height() as f32;
+
+                    if size.x / size.y > aspect_ratio {
+                        size.x = size.y * aspect_ratio;
+                    } else {
+                        size.y = size.x / aspect_ratio;
+                    }
+                    let min = ui.cursor().min;
+                    let rect = egui::Rect::from_min_size(min, size);
+
+                    if selected_view.image.color().has_alpha() {
+                        if selected_view.image.is_masked() {
+                            brush_ui::draw_checkerboard(ui, rect, egui::Color32::DARK_RED);
+                        } else {
+                            brush_ui::draw_checkerboard(ui, rect, egui::Color32::WHITE);
+                        }
+                    }
+
+                    ui.painter().image(
+                        texture_handle.id(),
+                        rect,
+                        egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+
+                    if !selected.handle.is_terminated() {
+                        ui.painter().rect_filled(
+                            rect,
+                            0.0,
+                            Color32::from_rgba_unmultiplied(100, 100, 120, 100),
+                        );
+                    }
+
+                    ui.allocate_rect(rect, egui::Sense::click());
+                }
 
                 ui.horizontal(|ui| {
                     let mut interacted = false;
@@ -178,8 +212,9 @@ impl AppPanel for DatasetPanel {
 
                     ui.add_space(10.0);
 
+                    let selected_view = selected.get_view(context);
                     let mask_info = if selected_view.image.color().has_alpha() {
-                        if selected_view.img_type == ViewImageType::Alpha {
+                        if !selected_view.image.is_masked() {
                             "rgb + alpha transparency"
                         } else {
                             "rgb, masked"
@@ -190,7 +225,7 @@ impl AppPanel for DatasetPanel {
 
                     let info = format!(
                         "{} ({}x{} {})",
-                        selected_view.path,
+                        selected_view.image.path.to_string_lossy(),
                         selected_view.image.width(),
                         selected_view.image.height(),
                         mask_info

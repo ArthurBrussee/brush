@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_fn_stream::try_fn_stream;
 use burn::tensor::backend::AutodiffBackend;
 use web_time::Duration;
@@ -32,7 +34,7 @@ pub enum ProcessMessage {
     },
     /// Loaded a bunch of viewpoints to train on.
     Dataset {
-        data: Dataset,
+        dataset: Dataset,
     },
     /// Splat, or dataset and initial splat, are done loading.
     #[allow(unused)]
@@ -76,7 +78,7 @@ pub fn process_stream(
         let vfs = source.into_vfs().await;
 
         let vfs = match vfs {
-            Ok(vfs) => vfs,
+            Ok(vfs) => Arc::new(vfs),
             Err(e) => {
                 anyhow::bail!(e);
             }

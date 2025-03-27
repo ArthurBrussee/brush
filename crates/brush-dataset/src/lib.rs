@@ -9,19 +9,13 @@ pub mod splat_export;
 pub mod splat_import;
 
 use burn::config::Config;
+use clap::Args;
+use core::f32;
 pub use formats::clamp_img_to_max_size;
 pub use formats::load_dataset;
-
-use async_fn_stream::fn_stream;
-use core::f32;
+use glam::{Mat3, Mat4, Vec3};
 use scene::Scene;
 use scene::SceneView;
-use std::future::Future;
-
-use clap::Args;
-use glam::{Mat3, Mat4, Vec3};
-use tokio_stream::Stream;
-use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(Config, Debug, Args)]
 pub struct LoadDataseConfig {
@@ -219,37 +213,6 @@ impl Dataset {
 
         Vec3::new(-transform.col(0).z, -transform.col(1).z, transform.col(2).z)
     }
-}
-
-pub(crate) fn stream_fut_parallel<T: Send + 'static>(
-    futures: Vec<impl Future<Output = T> + WasmNotSend + 'static>,
-) -> impl Stream<Item = T> {
-    let parallel = if cfg!(target_family = "wasm") {
-        1
-    } else {
-        std::thread::available_parallelism()
-            .map(|x| x.get())
-            .unwrap_or(8)
-    };
-
-    log::info!("Loading dataset stream with {parallel} threads");
-
-    let mut futures = futures;
-    fn_stream(|emitter| async move {
-        while !futures.is_empty() {
-            // Spawn a batch of threads.
-            let handles: Vec<_> = futures
-                .drain(..futures.len().min(parallel))
-                .map(|fut| tokio_wasm::spawn(fut))
-                .collect();
-            // Stream each of them.
-            for handle in handles {
-                emitter
-                    .emit(handle.await.expect("Underlying stream panicked"))
-                    .await;
-            }
-        }
-    })
 }
 
 // On wasm, lots of things aren't Send that are send on non-wasm.

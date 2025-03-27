@@ -21,12 +21,18 @@ log.workspace = true
 ply-rs.workspace = true
 rand.workspace = true
 
-tokio = { workspace = true, features = ["io-util"] }
+
 tokio_with_wasm.workspace = true
 tokio-stream.workspace = true
 async-fn-stream.workspace = true
 clap.workspace = true
 path-clean = "1.0.1"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+tokio = { workspace = true, features = ["io-util"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true, features = ["io-util", "fs"] }
 
 [lints]
 workspace = true

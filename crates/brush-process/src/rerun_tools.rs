@@ -17,6 +17,7 @@ use anyhow::Result;
 #[cfg(not(target_family = "wasm"))]
 use brush_rerun::BurnToRerun;
 use burn_cubecl::cubecl::MemoryUsage;
+use image::DynamicImage;
 
 use crate::process_loop::tensor_into_image;
 
@@ -122,21 +123,16 @@ impl VisualizeTools {
         if let Some(rec) = self.rec.as_ref() {
             if rec.is_enabled() {
                 rec.log_static("world", &rerun::ViewCoordinates::RIGHT_HAND_Y_DOWN())?;
-                // Only log 200 views at most, to not take down rerun for super large datasets. Bit sad that
-                // it can't handle more!
-                let view_step = (scene.views.len() / 200).max(1);
-
-                for (i, view) in scene.views.iter().step_by(view_step).enumerate() {
+                for (i, view) in scene.views.iter().enumerate() {
                     let path = format!("world/dataset/camera/{i}");
-                    let log_img = clamp_img_to_max_size(view.image.clone(), max_img_size);
 
-                    let img_size = glam::uvec2(log_img.width(), log_img.height());
+                    let focal = view.camera.focal(glam::uvec2(1, 1));
 
                     rec.log_static(
                         path.clone(),
-                        &rerun::Pinhole::from_focal_length_and_resolution(
-                            view.camera.focal(img_size),
-                            img_size.as_vec2(),
+                        &rerun::Pinhole::from_fov_and_aspect_ratio(
+                            view.camera.fov_y as f32,
+                            focal.x / focal.y,
                         ),
                     )?;
                     rec.log_static(
@@ -145,10 +141,6 @@ impl VisualizeTools {
                             view.camera.position,
                             view.camera.rotation,
                         ),
-                    )?;
-                    rec.log_static(
-                        path + "/image",
-                        &rerun::Image::from_dynamic_image(log_img.as_ref().clone())?,
                     )?;
                 }
             }
@@ -171,41 +163,45 @@ impl VisualizeTools {
     }
 
     #[allow(unused_variables)]
-    pub async fn log_eval_sample<B: Backend>(&self, iter: u32, view: &EvalSample<B>) -> Result<()> {
+    pub async fn log_eval_sample<B: Backend>(
+        &self,
+        iter: u32,
+        index: u32,
+        eval: &EvalSample<B>,
+    ) -> Result<()> {
         #[cfg(not(target_family = "wasm"))]
         if let Some(rec) = self.rec.as_ref() {
             if rec.is_enabled() {
                 rec.set_time_sequence("iterations", iter);
 
-                let eval_render = tensor_into_image(view.rendered.clone().into_data_async().await);
+                let eval_render = tensor_into_image(eval.rendered.clone().into_data_async().await);
                 let rendered = eval_render.to_rgb8();
 
                 let [w, h] = [rendered.width(), rendered.height()];
-                let gt_img = &view.view.image;
-                let gt_rerun_img = if gt_img.color().has_alpha() {
-                    rerun::Image::from_rgba32(gt_img.to_rgba8().into_vec(), [w, h])
+                let gt_rerun_img = if eval.gt_img.color().has_alpha() {
+                    rerun::Image::from_rgba32(eval.gt_img.to_rgba8().into_vec(), [w, h])
                 } else {
-                    rerun::Image::from_rgb24(gt_img.to_rgb8().into_vec(), [w, h])
+                    rerun::Image::from_rgb24(eval.gt_img.to_rgb8().into_vec(), [w, h])
                 };
 
                 rec.log(
-                    format!("world/eval/view_{}/ground_truth", view.index),
+                    format!("world/eval/view_{index}/ground_truth"),
                     &gt_rerun_img,
                 )?;
                 rec.log(
-                    format!("world/eval/view_{}/render", view.index),
+                    format!("world/eval/view_{index}/render"),
                     &rerun::Image::from_rgb24(rendered.to_vec(), [w, h]),
                 )?;
                 rec.log(
-                    format!("psnr/eval_{}", view.index),
+                    format!("psnr/eval_{index}"),
                     &rerun::Scalar::new(
-                        view.psnr.clone().into_scalar_async().await.elem::<f32>() as f64
+                        eval.psnr.clone().into_scalar_async().await.elem::<f32>() as f64
                     ),
                 )?;
                 rec.log(
-                    format!("ssim/eval_{}", view.index),
+                    format!("ssim/eval_{index}"),
                     &rerun::Scalar::new(
-                        view.ssim.clone().into_scalar_async().await.elem::<f32>() as f64
+                        eval.ssim.clone().into_scalar_async().await.elem::<f32>() as f64
                     ),
                 )?;
             }
