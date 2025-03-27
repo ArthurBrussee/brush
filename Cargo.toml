@@ -122,15 +122,6 @@ hashbrown = "0.15"
 # cubecl-std = { path = "../cubecl/crates/cubecl-std" }
 # cubecl-linalg = { path = "../cubecl/crates/cubecl-linalg" }
 
-# # Temporary until CubeCL update lands - need https://github.com/tracel-ai/cubecl/commit/a2607ebd940f90aeaa01c54ef764942c8e3014e8 to not
-# # crash loading on WASM for some bigger models.
-# [patch."https://github.com/tracel-ai/cubecl"]
-# cubecl = { git = "https://github.com/ArthurBrussee/cubecl", branch = "main" }
-# cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl", branch = "main" }
-# cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl", branch = "main" }
-# cubecl-linalg = { git = "https://github.com/ArthurBrussee/cubecl", branch = "main" }
-
-
 [patch.crates-io]
 # Use wgpu and naga at head
 wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v24" }
