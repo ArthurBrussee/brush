@@ -38,7 +38,11 @@ pub fn start_process(
             ctx.request_repaint();
 
             let is_train_step = matches!(msg, Ok(ProcessMessage::TrainStep { .. }));
-            sender.send(msg).await.ok();
+
+            // Stop the process if noone is listening anymore.
+            if sender.send(msg).await.is_err() {
+                break;
+            }
 
             // Check if training is paused. Don't care about other messages as pausing loading
             // doesn't make much sense.
@@ -56,7 +60,9 @@ pub fn start_process(
             // This only really matters in the browser:
             // on native, receiving also yields. In the browser that doesn't yield
             // back control fully though whereas yield_now() does.
-            tokio_wasm::task::yield_now().await;
+            if cfg!(target_family = "wasm") {
+                tokio_wasm::task::yield_now().await;
+            }
         }
     });
 

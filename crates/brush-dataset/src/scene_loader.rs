@@ -43,7 +43,7 @@ impl ImageCache {
 }
 
 impl<B: Backend> SceneLoader<B> {
-    pub fn new(scene: Scene, seed: u64, device: &B::Device) -> Self {
+    pub fn new(scene: &Scene, seed: u64, device: &B::Device) -> Self {
         // The bounded size == number of batches to prefetch.
         let (send_img, mut rec_imag) = mpsc::channel(64);
 
@@ -60,12 +60,11 @@ impl<B: Backend> SceneLoader<B> {
         let num_views = scene.views.len();
 
         let load_cache = Arc::new(RwLock::new(ImageCache::new(MAX_CACHE)));
-        let views = Arc::new(scene.views);
 
         for i in 0..parallelism {
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed + i);
             let send_img = send_img.clone();
-            let views = views.clone();
+            let views = scene.views.clone();
 
             let load_cache = load_cache.clone();
 
@@ -98,6 +97,8 @@ impl<B: Backend> SceneLoader<B> {
                         sample
                     };
 
+                    println!("Sending new image");
+
                     if send_img
                         .send((sample_data, view.image.is_masked(), view.camera.clone()))
                         .await
@@ -106,6 +107,8 @@ impl<B: Backend> SceneLoader<B> {
                         break;
                     }
                 }
+
+                println!("Shutting down data image loading");
             });
         }
         let (send_batch, rec_batch) = mpsc::channel(2);
@@ -115,15 +118,20 @@ impl<B: Backend> SceneLoader<B> {
             while let Some(rec) = rec_imag.recv().await {
                 let (sample, alpha_is_mask, camera) = rec;
 
-                send_batch
+                if send_batch
                     .send(SceneBatch {
                         img_tensor: Tensor::from_data(sample, &device),
                         alpha_is_mask,
                         camera,
                     })
                     .await
-                    .expect("Failed to send tensor");
+                    .is_err()
+                {
+                    break;
+                }
             }
+
+            println!("Shutting down data tensor loading");
         });
 
         Self {

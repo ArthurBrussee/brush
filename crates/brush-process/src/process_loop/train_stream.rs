@@ -103,7 +103,7 @@ pub(crate) async fn train_stream(
     let scene_extent = dataset.train.estimate_extent().unwrap_or(1.0);
 
     let mut train_duration = Duration::from_secs(0);
-    let mut dataloader = SceneLoader::new(dataset.train, 42, &device);
+    let mut dataloader = SceneLoader::new(&dataset.train, 42, &device);
     let mut trainer = SplatTrainer::new(&process_args.train_config, &device);
 
     log::info!("Start training loop.");
