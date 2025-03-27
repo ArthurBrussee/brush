@@ -21,7 +21,13 @@ struct ImageCache {
 
 // Cache at most some nr. of gigs of data.
 // TODO: Not sure if this should be configurable or not.
-const MAX_CACHE: usize = 6 * 1024 * 1024 * 1024;
+#[cfg(not(target_family = "wasm"))]
+const MAX_CACHE_MB: usize = 6 * 1024;
+
+// On WASM, not much hope a big dataset will work anyway but let's not
+// cache more than what fits in memory.
+#[cfg(target_family = "wasm")]
+const MAX_CACHE_MB: usize = 2 * 1024;
 
 impl ImageCache {
     fn new(max_size: usize, n_images: usize) -> Self {
@@ -37,9 +43,11 @@ impl ImageCache {
     }
 
     fn insert(&mut self, index: usize, data: &TensorData) {
-        if self.size < self.max_size && self.states[index].is_none() {
+        let data_size_mb = data.as_bytes().len() / (1024 * 1024);
+
+        if self.size + data_size_mb < self.max_size && self.states[index].is_none() {
             self.states[index] = Some(data.clone());
-            self.size += data.as_bytes().len();
+            self.size += data_size_mb;
         }
     }
 }
@@ -61,7 +69,7 @@ impl<B: Backend> SceneLoader<B> {
         };
         let num_views = scene.views.len();
 
-        let load_cache = Arc::new(RwLock::new(ImageCache::new(MAX_CACHE, num_views)));
+        let load_cache = Arc::new(RwLock::new(ImageCache::new(MAX_CACHE_MB, num_views)));
 
         for i in 0..parallelism {
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed + i);
