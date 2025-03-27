@@ -82,16 +82,24 @@ impl AppPanel for DatasetPanel {
             if dirty {
                 let (sender, handle) = tokio::sync::oneshot::channel();
 
-                let view = &pick_scene.views[*nearest];
-                let image = view.image.clone();
                 let ctx = ui.ctx().clone();
 
+                // Clone the arc to send to the task.
+                let views = pick_scene.views.clone();
+                let cur_nearest = *nearest;
+
                 tokio_with_wasm::alias::spawn(async move {
+                    let view = &views[cur_nearest];
+
                     // When selecting images super rapidly, might happen, don't waste resources loading.
                     if sender.is_closed() {
                         return;
                     }
-                    let image = image.load().await.expect("Failed to load dataset image");
+                    let image = view
+                        .image
+                        .load()
+                        .await
+                        .expect("Failed to load dataset image");
                     if sender.is_closed() {
                         return;
                     }
@@ -114,7 +122,7 @@ impl AppPanel for DatasetPanel {
                 });
 
                 self.selected_view = Some(SelectedView {
-                    index: *nearest,
+                    index: cur_nearest,
                     view_type: self.view_type,
                     handle,
                 });

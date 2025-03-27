@@ -134,7 +134,7 @@ pub(crate) async fn train_stream(
 
                 log::info!("Running evaluation for iteration {iter}");
 
-                for (i, view) in eval_scene.views.iter_mut().enumerate() {
+                for (i, view) in eval_scene.views.iter().enumerate() {
                     let sample = brush_train::eval::eval_stats(splats.valid(), view, &device)
                         .await
                         .context("Failed to run eval for sample.")?;

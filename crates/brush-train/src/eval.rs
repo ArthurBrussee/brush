@@ -20,7 +20,7 @@ pub struct EvalSample<B: Backend> {
 
 pub async fn eval_stats<B: Backend + SplatForward<B>>(
     splats: Splats<B>,
-    eval_view: &mut SceneView,
+    eval_view: &SceneView,
     device: &B::Device,
 ) -> Result<EvalSample<B>> {
     let image = eval_view.image.load().await?;

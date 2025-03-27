@@ -18,12 +18,10 @@ pub enum ViewType {
     Test,
 }
 
-#[derive(Clone)]
 pub struct LoadImage {
     pub vfs: Arc<BrushVfs>,
     pub path: PathBuf,
     pub mask_path: Option<PathBuf>,
-
     color: image::ColorType,
     size: glam::UVec2,
     max_resolution: u32,
@@ -135,7 +133,6 @@ impl LoadImage {
     }
 }
 
-#[derive(Clone)]
 pub struct SceneView {
     pub image: LoadImage,
     pub camera: Camera,
@@ -145,7 +142,7 @@ pub struct SceneView {
 // Also provides methods for checkpointing the training process.
 #[derive(Clone)]
 pub struct Scene {
-    pub views: Vec<SceneView>,
+    pub views: Arc<Vec<SceneView>>,
 }
 
 fn camera_distance_penalty(cam_local_to_world: Affine3A, reference: Affine3A) -> f32 {
@@ -169,7 +166,9 @@ fn find_two_smallest(v: Vec3) -> (f32, f32) {
 
 impl Scene {
     pub fn new(views: Vec<SceneView>) -> Self {
-        Self { views }
+        Self {
+            views: Arc::new(views),
+        }
     }
 
     // Returns the extent of the cameras in the scene.
