@@ -24,9 +24,9 @@ struct ImageCache {
 const MAX_CACHE: usize = 6 * 1024 * 1024 * 1024;
 
 impl ImageCache {
-    fn new(max_size: usize) -> Self {
+    fn new(max_size: usize, n_images: usize) -> Self {
         Self {
-            states: vec![None; max_size],
+            states: vec![None; n_images],
             max_size,
             size: 0,
         }
@@ -61,7 +61,7 @@ impl<B: Backend> SceneLoader<B> {
         };
         let num_views = scene.views.len();
 
-        let load_cache = Arc::new(RwLock::new(ImageCache::new(MAX_CACHE)));
+        let load_cache = Arc::new(RwLock::new(ImageCache::new(MAX_CACHE, num_views)));
 
         for i in 0..parallelism {
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed + i);
