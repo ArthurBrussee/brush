@@ -16,17 +16,19 @@ pub struct SceneLoader<B: Backend> {
 struct ImageCache {
     states: Vec<Option<TensorData>>,
     max_size: usize,
-    active: usize,
+    size: usize,
 }
 
-const MAX_CACHE: usize = 512;
+// Cache at most some nr. of gigs of data.
+// TODO: Not sure if this should be configurable or not.
+const MAX_CACHE: usize = 6 * 1024 * 1024 * 1024;
 
 impl ImageCache {
     fn new(max_size: usize) -> Self {
         Self {
             states: vec![None; max_size],
             max_size,
-            active: 0,
+            size: 0,
         }
     }
 
@@ -35,9 +37,9 @@ impl ImageCache {
     }
 
     fn insert(&mut self, index: usize, data: &TensorData) {
-        if self.active < self.max_size && self.states[index].is_none() {
+        if self.size < self.max_size && self.states[index].is_none() {
             self.states[index] = Some(data.clone());
-            self.active += 1;
+            self.size += data.as_bytes().len();
         }
     }
 }
