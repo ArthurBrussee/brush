@@ -105,10 +105,10 @@ impl AppPanel for DatasetPanel {
                     }
                     let img_size = [image.width() as usize, image.height() as usize];
                     let color_img = if image.color().has_alpha() {
-                        let data = image.to_rgba8().into_vec();
+                        let data = image.into_rgba8().into_vec();
                         egui::ColorImage::from_rgba_unmultiplied(img_size, &data)
                     } else {
-                        egui::ColorImage::from_rgb(img_size, &image.to_rgb8().into_vec())
+                        egui::ColorImage::from_rgb(img_size, &image.into_rgb8().into_vec())
                     };
 
                     // If channel is gone, that's fine.
@@ -151,7 +151,7 @@ impl AppPanel for DatasetPanel {
                     let min = ui.cursor().min;
                     let rect = egui::Rect::from_min_size(min, size);
 
-                    if selected_view.image.color().has_alpha() {
+                    if selected_view.image.has_alpha() {
                         if selected_view.image.is_masked() {
                             brush_ui::draw_checkerboard(ui, rect, egui::Color32::DARK_RED);
                         } else {
@@ -221,7 +221,7 @@ impl AppPanel for DatasetPanel {
                     ui.add_space(10.0);
 
                     let selected_view = selected.get_view(context);
-                    let mask_info = if selected_view.image.color().has_alpha() {
+                    let mask_info = if selected_view.image.has_alpha() {
                         if !selected_view.image.is_masked() {
                             "rgb + alpha transparency"
                         } else {

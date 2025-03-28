@@ -142,7 +142,7 @@ impl ScenePanel {
         ui.scope(|ui| {
             let mut background = false;
             if let Some(view) = context.dataset.train.views.first() {
-                if view.image.color().has_alpha() && !view.image.is_masked() {
+                if view.image.has_alpha() && !view.image.is_masked() {
                     background = true;
                     // if training views have alpha, show a background checker. Masked images
                     // should still use a black background.

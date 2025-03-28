@@ -75,8 +75,8 @@ impl LoadImage {
         })
     }
 
-    pub fn color(&self) -> image::ColorType {
-        self.color
+    pub fn has_alpha(&self) -> bool {
+        self.color.has_alpha() || self.is_masked()
     }
 
     pub fn width(&self) -> u32 {
@@ -96,8 +96,11 @@ impl LoadImage {
             .await?;
         let mut img = image::load_from_memory(&img_bytes)?;
 
-        // Copy over mask
+        // Copy over mask.
+        // TODO: Interleave this work better & speed things up here.
         if let Some(mask_path) = &self.mask_path {
+            // Add in alpha channel if needed to the image to copy the mask into.
+            let mut masked_img = img.into_rgba8();
             let mut mask_bytes = vec![];
             self.vfs
                 .reader_at_path(mask_path)
@@ -105,22 +108,18 @@ impl LoadImage {
                 .read_to_end(&mut mask_bytes)
                 .await?;
             let mask_img = image::load_from_memory(&mask_bytes)?;
-
-            let mut img_masked = img.to_rgba8();
-
             if mask_img.color().has_alpha() {
-                let mask_img = mask_img.to_rgba8();
-                for (buf, mask) in img_masked.pixels_mut().zip(mask_img.pixels()) {
-                    buf[3] = mask[0];
+                let mask_img = mask_img.into_rgba8();
+                for (pixel, mask_pixel) in masked_img.pixels_mut().zip(mask_img.pixels()) {
+                    pixel[3] = mask_pixel[3];
                 }
             } else {
-                let mask_img = mask_img.grayscale().to_rgb8();
-                for (buf, mask) in img_masked.pixels_mut().zip(mask_img.pixels()) {
-                    buf[3] = mask[0];
+                let mask_img = mask_img.into_rgb8();
+                for (pixel, mask_pixel) in masked_img.pixels_mut().zip(mask_img.pixels()) {
+                    pixel[3] = mask_pixel[0];
                 }
             }
-
-            img = img_masked.into();
+            img = masked_img.into();
         }
 
         let img = clamp_img_to_max_size(img, self.max_resolution);
@@ -219,7 +218,7 @@ impl Scene {
 // Converts an image to a train sample. The tensor will be a floating point image with a [0, 1] image.
 //
 // This assume the input image has un-premultiplied alpha, whereas the output has pre-multiplied alpha.
-pub fn view_to_sample_image(image: Arc<DynamicImage>, alpha_is_mask: bool) -> Arc<DynamicImage> {
+pub fn view_to_sample_image(image: DynamicImage, alpha_is_mask: bool) -> DynamicImage {
     if image.color().has_alpha() && !alpha_is_mask {
         let mut rgba_bytes = image.to_rgba8();
 
@@ -236,7 +235,7 @@ pub fn view_to_sample_image(image: Arc<DynamicImage>, alpha_is_mask: bool) -> Ar
             pixel[2] = ((b as u16 * a as u16 + 127) / 255) as u8;
             pixel[3] = a;
         }
-        Arc::new(DynamicImage::ImageRgba8(rgba_bytes))
+        DynamicImage::ImageRgba8(rgba_bytes)
     } else {
         image
     }

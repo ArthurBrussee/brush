@@ -167,7 +167,7 @@ impl VisualizeTools {
         &self,
         iter: u32,
         index: u32,
-        eval: &EvalSample<B>,
+        eval: EvalSample<B>,
     ) -> Result<()> {
         #[cfg(not(target_family = "wasm"))]
         if let Some(rec) = self.rec.as_ref() {
@@ -175,13 +175,13 @@ impl VisualizeTools {
                 rec.set_time_sequence("iterations", iter);
 
                 let eval_render = tensor_into_image(eval.rendered.clone().into_data_async().await);
-                let rendered = eval_render.to_rgb8();
+                let rendered = eval_render.into_rgb8();
 
                 let [w, h] = [rendered.width(), rendered.height()];
                 let gt_rerun_img = if eval.gt_img.color().has_alpha() {
-                    rerun::Image::from_rgba32(eval.gt_img.to_rgba8().into_vec(), [w, h])
+                    rerun::Image::from_rgba32(eval.gt_img.into_rgba8().into_vec(), [w, h])
                 } else {
-                    rerun::Image::from_rgb24(eval.gt_img.to_rgb8().into_vec(), [w, h])
+                    rerun::Image::from_rgb24(eval.gt_img.into_rgb8().into_vec(), [w, h])
                 };
 
                 rec.log(
@@ -190,7 +190,7 @@ impl VisualizeTools {
                 )?;
                 rec.log(
                     format!("world/eval/view_{index}/render"),
-                    &rerun::Image::from_rgb24(rendered.to_vec(), [w, h]),
+                    &rerun::Image::from_rgb24(rendered.into_vec(), [w, h]),
                 )?;
                 rec.log(
                     format!("psnr/eval_{index}"),

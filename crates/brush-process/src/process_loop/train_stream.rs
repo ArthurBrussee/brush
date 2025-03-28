@@ -142,7 +142,6 @@ pub(crate) async fn train_stream(
                     count += 1;
                     psnr += sample.psnr.clone().into_scalar_async().await;
                     ssim += sample.ssim.clone().into_scalar_async().await;
-                    visualize.log_eval_sample(iter, i as u32, &sample).await?;
 
                     #[cfg(not(target_family = "wasm"))]
                     if process_args.process_config.eval_save_to_disk {
@@ -151,7 +150,7 @@ pub(crate) async fn train_stream(
                         let eval_render = crate::process_loop::tensor_into_image(
                             sample.rendered.clone().into_data_async().await,
                         );
-                        let rendered: image::DynamicImage = eval_render.to_rgb8().into();
+                        let rendered: image::DynamicImage = eval_render.into_rgb8().into();
 
                         let img_name = Path::new(&view.image.path)
                             .file_stem()
@@ -169,6 +168,8 @@ pub(crate) async fn train_stream(
 
                         rendered.save(path)?;
                     }
+
+                    visualize.log_eval_sample(iter, i as u32, sample).await?;
                 }
 
                 psnr /= count as f32;

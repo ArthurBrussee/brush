@@ -105,9 +105,8 @@ impl<B: Backend> SceneLoader<B> {
                             .load()
                             .await
                             .expect("Scene loader encountered an error while loading an image");
-                        let image = Arc::new(image);
                         // Don't premultiply the image if it's a mask - treat as fully opaque.
-                        let sample = view_to_sample_image(image, view.image.is_masked());
+                        let sample = Arc::new(view_to_sample_image(image, view.image.is_masked()));
                         load_cache.write().await.insert(index, sample.clone());
                         sample
                     };
