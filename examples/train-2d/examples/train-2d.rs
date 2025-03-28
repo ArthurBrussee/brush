@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use brush_dataset::scene::{SceneBatch, view_to_sample};
+use brush_dataset::scene::{SceneBatch, sample_to_tensor};
 use brush_render::{
     bounding_box::BoundingBox,
     camera::{Camera, focal_to_fov, fov_to_focal},
@@ -54,7 +54,7 @@ fn spawn_train_loop(
 
         // One batch of training data, it's the same every step so can just cosntruct it once.
         let batch = SceneBatch {
-            img_tensor: view_to_sample(&image, false, &device).unsqueeze(),
+            img_tensor: sample_to_tensor(&image, &device).unsqueeze(),
             alpha_is_mask: false,
             camera: cam,
         };

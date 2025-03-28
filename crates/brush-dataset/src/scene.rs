@@ -87,7 +87,7 @@ impl LoadImage {
         self.size.y
     }
 
-    pub async fn load(&self) -> Result<Arc<DynamicImage>> {
+    pub async fn load(&self) -> Result<DynamicImage> {
         let mut img_bytes = vec![];
         self.vfs
             .reader_at_path(&self.path)
@@ -124,7 +124,6 @@ impl LoadImage {
         }
 
         let img = clamp_img_to_max_size(img, self.max_resolution);
-        let img = Arc::new(img);
         Ok(img)
     }
 
@@ -220,33 +219,37 @@ impl Scene {
 // Converts an image to a train sample. The tensor will be a floating point image with a [0, 1] image.
 //
 // This assume the input image has un-premultiplied alpha, whereas the output has pre-multiplied alpha.
-pub fn view_to_sample_data(image: &DynamicImage, alpha_is_mask: bool) -> TensorData {
-    let (w, h) = (image.width(), image.height());
+pub fn view_to_sample_image(image: Arc<DynamicImage>, alpha_is_mask: bool) -> Arc<DynamicImage> {
+    if image.color().has_alpha() && !alpha_is_mask {
+        let mut rgba_bytes = image.to_rgba8();
 
-    if image.color().has_alpha() {
-        let mut rgba = image.to_rgba32f();
+        // Assume image has un-multiplied alpha and convert it to pre-multiplied.
+        // Perform multiplication in byte space before converting to float.
+        for pixel in rgba_bytes.chunks_exact_mut(4) {
+            let r = pixel[0];
+            let g = pixel[1];
+            let b = pixel[2];
+            let a = pixel[3];
 
-        if !alpha_is_mask {
-            // Assume image has un-multiplied alpha and convert it to pre-multiplied.
-            for pixel in rgba.pixels_mut() {
-                let a = pixel[3];
-                pixel[0] *= a;
-                pixel[1] *= a;
-                pixel[2] *= a;
-            }
+            pixel[0] = ((r as u16 * a as u16 + 127) / 255) as u8;
+            pixel[1] = ((g as u16 * a as u16 + 127) / 255) as u8;
+            pixel[2] = ((b as u16 * a as u16 + 127) / 255) as u8;
+            pixel[3] = a;
         }
-        TensorData::new(rgba.into_vec(), [h as usize, w as usize, 4])
+        Arc::new(DynamicImage::ImageRgba8(rgba_bytes))
     } else {
-        TensorData::new(image.to_rgb32f().into_vec(), [h as usize, w as usize, 3])
+        image
     }
 }
 
-pub fn view_to_sample<B: Backend>(
-    image: &DynamicImage,
-    alpha_is_mask: bool,
-    device: &B::Device,
-) -> Tensor<B, 3> {
-    Tensor::from_data(view_to_sample_data(image, alpha_is_mask), device)
+pub fn sample_to_tensor<B: Backend>(sample: &DynamicImage, device: &B::Device) -> Tensor<B, 3> {
+    let (w, h) = (sample.width(), sample.height());
+    let data = if sample.color().has_alpha() {
+        TensorData::new(sample.to_rgba32f().into_vec(), [h as usize, w as usize, 4])
+    } else {
+        TensorData::new(sample.to_rgb32f().into_vec(), [h as usize, w as usize, 3])
+    };
+    Tensor::from_data(data, device)
 }
 
 #[derive(Clone, Debug)]

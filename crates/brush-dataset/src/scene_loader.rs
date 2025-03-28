@@ -1,20 +1,20 @@
 use std::sync::Arc;
 
 use burn::prelude::Backend;
-use burn::tensor::{Tensor, TensorData};
+use image::DynamicImage;
 use rand::{SeedableRng, seq::SliceRandom};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::{RwLock, mpsc};
 use tokio_with_wasm::alias as tokio_wasm;
 
-use crate::scene::{Scene, SceneBatch, view_to_sample_data};
+use crate::scene::{Scene, SceneBatch, sample_to_tensor, view_to_sample_image};
 
 pub struct SceneLoader<B: Backend> {
     receiver: Receiver<SceneBatch<B>>,
 }
 
 struct ImageCache {
-    states: Vec<Option<TensorData>>,
+    states: Vec<Option<Arc<DynamicImage>>>,
     max_size: usize,
     size: usize,
 }
@@ -38,15 +38,15 @@ impl ImageCache {
         }
     }
 
-    fn try_get(&self, index: usize) -> Option<TensorData> {
+    fn try_get(&self, index: usize) -> Option<Arc<DynamicImage>> {
         self.states[index].clone()
     }
 
-    fn insert(&mut self, index: usize, data: &TensorData) {
+    fn insert(&mut self, index: usize, data: Arc<DynamicImage>) {
         let data_size_mb = data.as_bytes().len() / (1024 * 1024);
 
         if self.size + data_size_mb < self.max_size && self.states[index].is_none() {
-            self.states[index] = Some(data.clone());
+            self.states[index] = Some(data);
             self.size += data_size_mb;
         }
     }
@@ -54,8 +54,10 @@ impl ImageCache {
 
 impl<B: Backend> SceneLoader<B> {
     pub fn new(scene: &Scene, seed: u64, device: &B::Device) -> Self {
+        let num_img_queue = 32;
+
         // The bounded size == number of batches to prefetch.
-        let (send_img, mut rec_imag) = mpsc::channel(64);
+        let (send_img, mut rec_imag) = mpsc::channel(num_img_queue);
 
         // On wasm, there is little point to spawning multiple of these. In theory there would be
         // IF file reading truly was async, but since the zip archive is just in memory it isn't really
@@ -65,7 +67,10 @@ impl<B: Backend> SceneLoader<B> {
         } else {
             std::thread::available_parallelism()
                 .map(|x| x.get())
-                .unwrap_or(8) as u64
+                .unwrap_or(8)
+                // Don't need more threads than the image queue can hold, most
+                // threads would just sit around idling!
+                .min(num_img_queue) as u64
         };
         let num_views = scene.views.len();
 
@@ -92,23 +97,23 @@ impl<B: Backend> SceneLoader<B> {
 
                     let view = &views[index];
 
-                    let sample_data = if let Some(data) = load_cache.read().await.try_get(index) {
-                        data
+                    let sample = if let Some(image) = load_cache.read().await.try_get(index) {
+                        image
                     } else {
                         let image = view
                             .image
                             .load()
                             .await
                             .expect("Scene loader encountered an error while loading an image");
-
+                        let image = Arc::new(image);
                         // Don't premultiply the image if it's a mask - treat as fully opaque.
-                        let sample = view_to_sample_data(&image, view.image.is_masked());
-                        load_cache.write().await.insert(index, &sample);
+                        let sample = view_to_sample_image(image, view.image.is_masked());
+                        load_cache.write().await.insert(index, sample.clone());
                         sample
                     };
 
                     if send_img
-                        .send((sample_data, view.image.is_masked(), view.camera.clone()))
+                        .send((sample, view.image.is_masked(), view.camera.clone()))
                         .await
                         .is_err()
                     {
@@ -123,10 +128,11 @@ impl<B: Backend> SceneLoader<B> {
         tokio_wasm::spawn(async move {
             while let Some(rec) = rec_imag.recv().await {
                 let (sample, alpha_is_mask, camera) = rec;
+                let img_tensor = sample_to_tensor(&sample, &device);
 
                 if send_batch
                     .send(SceneBatch {
-                        img_tensor: Tensor::from_data(sample, &device),
+                        img_tensor,
                         alpha_is_mask,
                         camera,
                     })

@@ -170,7 +170,7 @@ impl AppPanel for DatasetPanel {
                         ui.painter().rect_filled(
                             rect,
                             0.0,
-                            Color32::from_rgba_unmultiplied(100, 100, 120, 100),
+                            Color32::from_rgba_unmultiplied(100, 100, 120, 30),
                         );
                     }
 
