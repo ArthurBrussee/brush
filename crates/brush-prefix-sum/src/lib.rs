@@ -4,6 +4,11 @@ use brush_kernel::calc_cube_count;
 use brush_kernel::create_tensor;
 use brush_kernel::kernel_source_gen;
 use burn::tensor::DType;
+use burn_cubecl::cubecl;
+use burn_cubecl::cubecl::CubeCount;
+use burn_cubecl::cubecl::CubeDim;
+use burn_cubecl::cubecl::prelude::CUBE_DIM_X;
+use burn_cubecl::cubecl::prelude::*;
 use burn_wgpu::WgpuRuntime;
 use shaders::prefix_sum_add_scanned_sums;
 use shaders::prefix_sum_scan;
@@ -15,7 +20,99 @@ kernel_source_gen!(PrefixSumAddScannedSums {}, prefix_sum_add_scanned_sums);
 
 use burn_wgpu::CubeTensor;
 
+#[cube(launch)]
+pub fn kernel_inclusive_sum(output: &mut Tensor<i32>) {
+    let mut val = 0i32;
+    if ABSOLUTE_POS < output.len() {
+        val = output[ABSOLUTE_POS];
+    }
+    sync_units();
+    val = plane_inclusive_sum(val);
+    if ABSOLUTE_POS < output.len() {
+        output[ABSOLUTE_POS] = val;
+    }
+}
+#[cube(launch)]
+fn prefix_sum_scan_sums_k<F: Int>(input: &Tensor<F>, output: &mut Tensor<F>) {
+    let val = input[ABSOLUTE_POS * CUBE_DIM_X - 1];
+    output[ABSOLUTE_POS] = plane_inclusive_sum(val);
+}
+#[cube(launch)]
+fn prefix_sum_add_scanned_sums_k(input: &Tensor<i32>, output: &mut Tensor<i32>) {
+    if ABSOLUTE_POS < output.len() {
+        output[ABSOLUTE_POS] += input[CUBE_POS_X];
+    }
+}
+
+/// Perform an prefix sum operation across all elements of the input tensor.
+/// This sums all values to the "left" of the unit, including this unit's value.
+/// Also known as "inclusive sum" or "inclusive scan".
+///
+/// # Example
+/// `prefix_sum([1, 2, 3, 4, 5]) == [1, 3, 6, 10, 15]`
 pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
+    const CUBE_SIZE: u32 = 256;
+    assert!(CUBE_SIZE >= 2);
+
+    let client = &input.client;
+    let input_size = input.shape.dims[0] as u32;
+
+    // Allocate temporary buffers for intermediate results
+    let temp_tensors: Vec<CubeTensor<WgpuRuntime>> =
+        std::iter::successors(Some(input_size), |&prev| {
+            let next = prev.div_ceil(CUBE_SIZE);
+            (next > 1).then_some(next)
+        })
+        .map(|work_size| {
+            create_tensor::<1, WgpuRuntime>([work_size as usize], &input.device, client, DType::I32)
+        })
+        .collect();
+
+    let mut group_buffers: Vec<&CubeTensor<WgpuRuntime>> = temp_tensors.iter().collect();
+    group_buffers.insert(0, &input);
+
+    // Calculate inclusive sum for each plane
+    // E.g. for CUBE_DIM_X=3: [1, 1, 1, 1, 1, 1] -> [1, 2, 3, 1, 2, 3]
+    let block_count = input_size.div_ceil(CUBE_SIZE);
+    kernel_inclusive_sum::launch::<WgpuRuntime>(
+        client,
+        CubeCount::Static(block_count, 1, 1),
+        CubeDim::new(CUBE_SIZE, 1, 1),
+        input.as_tensor_arg::<u32>(1),
+    );
+
+    // Hierarchical prefix sum computation
+    // Phase 1: Compute block-level prefix sums going up the hierarchy
+    let mut last_buffer = &input;
+    for &buffer in group_buffers.iter().skip(1) {
+        let block_count = (last_buffer.shape.num_elements() as u32).div_ceil(CUBE_SIZE);
+        prefix_sum_scan_sums_k::launch::<u32, WgpuRuntime>(
+            client,
+            CubeCount::Static(block_count, 1, 1),
+            CubeDim::new(CUBE_SIZE, 1, 1),
+            last_buffer.as_tensor_arg::<u32>(1),
+            buffer.as_tensor_arg::<u32>(1),
+        );
+        last_buffer = buffer;
+    }
+
+    // Phase 2: Propagate block-level sums down the hierarchy
+    for &buffer in group_buffers.iter().rev().skip(1) {
+        let block_count = (last_buffer.shape.num_elements() as u32).div_ceil(CUBE_SIZE);
+        prefix_sum_add_scanned_sums_k::launch::<WgpuRuntime>(
+            client,
+            CubeCount::Static(block_count, 1, 1),
+            CubeDim::new(CUBE_SIZE, 1, 1),
+            last_buffer.as_tensor_arg::<u32>(1),
+            buffer.as_tensor_arg::<u32>(1),
+        );
+        last_buffer = buffer;
+    }
+
+    input
+}
+
+pub fn prefix_sum_wgsl(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     let threads_per_group = shaders::prefix_sum_helpers::THREADS_PER_GROUP as usize;
     let num = input.shape.dims[0];
     let client = &input.client;
