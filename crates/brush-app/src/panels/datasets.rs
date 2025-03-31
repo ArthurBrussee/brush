@@ -140,8 +140,7 @@ impl AppPanel for DatasetPanel {
 
                     let size = brush_ui::size_for_splat_view(ui);
                     let mut size = size.floor();
-                    let aspect_ratio =
-                        selected_view.image.width() as f32 / selected_view.image.height() as f32;
+                    let aspect_ratio = texture_handle.aspect_ratio();
 
                     if size.x / size.y > aspect_ratio {
                         size.x = size.y * aspect_ratio;

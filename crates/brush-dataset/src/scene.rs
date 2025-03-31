@@ -6,7 +6,7 @@ use burn::{
 };
 use glam::{Affine3A, Vec3, vec3};
 use image::{ColorType, DynamicImage, ImageDecoder, ImageReader};
-use std::{path::PathBuf, sync::Arc};
+use std::{io::Cursor, path::PathBuf, sync::Arc};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::brush_vfs::BrushVfs;
@@ -28,31 +28,40 @@ pub struct LoadImage {
 }
 
 /// Gets the dimensions of an image from an [`AsyncRead`] source
-pub async fn get_image_data<R>(reader: &mut R) -> Result<(u32, u32, ColorType)>
+pub async fn get_image_data<R>(reader: &mut R) -> Result<(glam::UVec2, ColorType)>
 where
     R: AsyncRead + Unpin,
 {
-    // 4kb should be PLENTY to guess the size of the image (at least for jpg and png). Don't need to read the full image.
-    let mut temp_buf = [0u8; 4096];
+    // The maximum size before the entire SOF of JPEG is read is 65548 bytes. Read 20kb to start, and grow if needed. More exotic image formats
+    // might need even more data, so loop below will keep reading until we can figure out the dimensions
+    // of the image.
+    let mut temp_buf = vec![0; 16387];
 
-    let n = reader
-        .read(&mut temp_buf)
-        .await
-        .context("Failed to read from buffer")?;
+    let mut n = 0;
+    loop {
+        let read = reader
+            .read_exact(&mut temp_buf[n..])
+            .await
+            .context("Failed to read from buffer")?;
 
-    // Now get a normal cursor.
-    let cursor = std::io::Cursor::new(&temp_buf[..n]);
-    let dimensions = ImageReader::new(cursor.clone())
-        .with_guessed_format()
-        .context("Failed to guess format")?
-        .into_dimensions()
-        .context("Failed to read dimensions")?;
-    let decoder = ImageReader::new(cursor)
-        .with_guessed_format()
-        .context("Failed to guess format")?
-        .into_decoder()
-        .context("Failed to read color type")?;
-    Ok((dimensions.0, dimensions.1, decoder.color_type()))
+        if read == 0 {
+            // We've hit EOF, bail.
+            anyhow::bail!("Could not decode image format after reading entire file");
+        }
+
+        n += read;
+
+        // Try to decode with what we have (nb, no copying happens here).
+        if let Ok(decoder) = ImageReader::new(Cursor::new(&temp_buf[..n]))
+            .with_guessed_format()
+            .context("Failed to guess format")?
+            .into_decoder()
+        {
+            return Ok((decoder.dimensions().into(), decoder.color_type()));
+        }
+        // Try reading up to double the size.
+        temp_buf.resize(temp_buf.len() * 2, 0);
+    }
 }
 
 impl LoadImage {
@@ -75,8 +84,8 @@ impl LoadImage {
             path,
             mask_path,
             max_resolution,
-            size: glam::uvec2(data.0, data.1),
-            color: data.2,
+            size: data.0,
+            color: data.1,
         })
     }
 
