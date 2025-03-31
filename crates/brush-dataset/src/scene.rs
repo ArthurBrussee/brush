@@ -33,17 +33,15 @@ where
     R: AsyncRead + Unpin,
 {
     // 4kb should be PLENTY to guess the size of the image (at least for jpg and png). Don't need to read the full image.
-    let mut buffer = Vec::with_capacity(4096);
     let mut temp_buf = [0u8; 4096];
 
     let n = reader
         .read(&mut temp_buf)
         .await
         .context("Failed to read from buffer")?;
-    buffer.extend_from_slice(&temp_buf[..n]);
 
     // Now get a normal cursor.
-    let cursor = std::io::Cursor::new(buffer);
+    let cursor = std::io::Cursor::new(&temp_buf[..n]);
     let dimensions = ImageReader::new(cursor.clone())
         .with_guessed_format()
         .context("Failed to guess format")?
@@ -54,7 +52,6 @@ where
         .context("Failed to guess format")?
         .into_decoder()
         .context("Failed to read color type")?;
-
     Ok((dimensions.0, dimensions.1, decoder.color_type()))
 }
 

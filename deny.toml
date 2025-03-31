@@ -83,6 +83,9 @@ skip = [
     { name = 'windows' },   # Wgpu & kiddo
     { name = 'hashbrown' },
 
+    { name = 'colored' },
+    { name = 'spin' },
+
     { name = 'tower' },
     { name = 'indexmap' },
 
