@@ -91,7 +91,7 @@ pub async fn process_ui(
             Ok(msg) => msg,
             Err(error) => {
                 // Don't print the error here. It'll bubble up and be printed as output.
-                let _ = sp.println(format!("❌ Encountered an error"));
+                let _ = sp.println("❌ Encountered an error");
                 return Err(error);
             }
         };
