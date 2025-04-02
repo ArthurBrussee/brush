@@ -6,9 +6,11 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
 brush-kernel.path = "../brush-kernel"
 burn.workspace = true
 burn-wgpu.workspace = true
+burn-cubecl.workspace = true
 naga_oil.workspace = true
 wgpu.workspace = true
 
@@ -18,3 +20,7 @@ miette.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "prefix_sum_benchmark"
+harness = false
