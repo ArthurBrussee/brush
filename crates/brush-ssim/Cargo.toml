@@ -1,0 +1,13 @@
+[package]
+name = "brush-ssim"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+
+[dependencies]
+burn.workspace = true
+wgpu.workspace = true
+
+[lints]
+workspace = true

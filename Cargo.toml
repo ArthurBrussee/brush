@@ -303,9 +303,5 @@ too_many_lines = "allow"
 too_many_arguments = "allow"
 needless_range_loop = "allow"
 
-
-# Annoying: this one is just worse imho
-# manual_range_contains = "allow"
-
 # This doesn't quite work with Burn:
 single_range_in_vec_init = "allow"

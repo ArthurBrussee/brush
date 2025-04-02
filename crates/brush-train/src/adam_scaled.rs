@@ -55,10 +55,6 @@ pub struct AdamState<B: Backend, const D: usize> {
 
 impl AdamScaledConfig {
     /// Initialize Adam optimizer.
-    ///
-    /// # Returns
-    ///
-    /// Returns an optimizer that can be used to optimize a module.
     pub fn init<B: AutodiffBackend, M: AutodiffModule<B>>(
         &self,
     ) -> OptimizerAdaptor<AdamScaled, M, B> {

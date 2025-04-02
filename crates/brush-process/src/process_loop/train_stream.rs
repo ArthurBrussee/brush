@@ -7,6 +7,7 @@ use async_fn_stream::TryStreamEmitter;
 
 use brush_dataset::brush_vfs::BrushVfs;
 use brush_dataset::scene_loader::SceneLoader;
+use brush_eval::eval_stats;
 use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
 use brush_train::train::SplatTrainer;
 use brush_train::train::TrainBack;
@@ -135,7 +136,7 @@ pub(crate) async fn train_stream(
                 log::info!("Running evaluation for iteration {iter}");
 
                 for (i, view) in eval_scene.views.iter().enumerate() {
-                    let sample = brush_train::eval::eval_stats(splats.valid(), view, &device)
+                    let sample = eval_stats(splats.valid(), view, &device)
                         .await
                         .context("Failed to run eval for sample.")?;
 

@@ -1,5 +1,5 @@
 use brush_dataset::{LoadDataseConfig, ModelConfig};
-use brush_train::train::TrainConfig;
+use brush_train::config::TrainConfig;
 use burn::config::Config;
 use clap::Args;
 

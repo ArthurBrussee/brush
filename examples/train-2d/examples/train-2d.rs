@@ -9,7 +9,8 @@ use brush_render::{
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::{RandomSplatsConfig, Splats},
 };
-use brush_train::train::{SplatTrainer, TrainBack, TrainConfig};
+use brush_train::config::TrainConfig;
+use brush_train::train::{SplatTrainer, TrainBack};
 use brush_ui::burn_texture::BurnTexture;
 use burn::{
     backend::wgpu::WgpuDevice, module::AutodiffModule, prelude::Backend,

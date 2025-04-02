@@ -882,6 +882,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "brush-bench-test"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "brush-render",
+ "brush-render-bwd",
+ "brush-rerun",
+ "burn",
+ "bytemuck",
+ "divan",
+ "glam",
+ "image",
+ "log",
+ "rerun",
+ "safetensors 0.5.3",
+ "tokio",
+ "wgpu",
+]
+
+[[package]]
 name = "brush-cli"
 version = "0.2.0"
 dependencies = [
@@ -922,6 +942,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "brush-eval"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "brush-dataset",
+ "brush-render",
+ "brush-ssim",
+ "burn",
+ "glam",
+ "image",
+]
+
+[[package]]
 name = "brush-kernel"
 version = "0.2.0"
 dependencies = [
@@ -954,6 +987,7 @@ dependencies = [
  "anyhow",
  "async-fn-stream",
  "brush-dataset",
+ "brush-eval",
  "brush-render",
  "brush-rerun",
  "brush-train",
@@ -1044,30 +1078,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "brush-ssim"
+version = "0.2.0"
+dependencies = [
+ "burn",
+ "wgpu",
+]
+
+[[package]]
 name = "brush-train"
 version = "0.2.0"
 dependencies = [
- "anyhow",
- "assert_approx_eq",
  "brush-dataset",
  "brush-kernel",
  "brush-render",
  "brush-render-bwd",
- "brush-rerun",
+ "brush-ssim",
  "burn",
  "burn-cubecl",
  "burn-fusion",
- "bytemuck",
  "clap",
- "divan",
  "glam",
  "hashbrown 0.15.2",
- "image",
  "log",
  "rand 0.9.0",
- "rerun",
- "safetensors 0.5.3",
- "tokio",
  "tracing",
  "wgpu",
 ]

@@ -7,7 +7,7 @@ use brush_process::{
     data_source::DataSource,
     process_loop::{ProcessArgs, ProcessConfig, RerunConfig},
 };
-use brush_train::train::TrainConfig;
+use brush_train::config::TrainConfig;
 use egui::Slider;
 
 pub(crate) struct SettingsPanel {

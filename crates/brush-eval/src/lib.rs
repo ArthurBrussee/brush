@@ -2,11 +2,10 @@ use anyhow::Result;
 use brush_dataset::scene::{SceneView, sample_to_tensor, view_to_sample_image};
 use brush_render::gaussian_splats::Splats;
 use brush_render::{RenderAux, SplatForward};
+use brush_ssim::Ssim;
 use burn::prelude::Backend;
 use burn::tensor::Tensor;
 use image::DynamicImage;
-
-use crate::ssim::Ssim;
 
 pub struct EvalSample<B: Backend> {
     pub gt_img: DynamicImage,
@@ -36,7 +35,7 @@ pub async fn eval_stats<B: Backend + SplatForward<B>>(
     let (rendered, aux) = splats.render(&eval_view.camera, res, true);
     let render_rgb = rendered.slice([0..res.y as usize, 0..res.x as usize, 0..3]);
 
-    // Simulate 8-bit roundtrip for fair comparison.
+    // Simulate an 8-bit roundtrip for fair comparison.
     let render_rgb = (render_rgb * 255.0).round() / 255.0;
 
     let mse = (render_rgb.clone() - gt_rgb.clone())

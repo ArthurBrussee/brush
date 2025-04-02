@@ -13,7 +13,7 @@ use burn::{
 use safetensors::SafeTensors;
 use std::{fs::File, io::Read};
 
-use crate::tests::safetensor_utils::{safetensor_to_burn, splats_from_safetensors};
+use crate::safetensor_utils::{safetensor_to_burn, splats_from_safetensors};
 
 type DiffBack = Autodiff<Wgpu>;
 

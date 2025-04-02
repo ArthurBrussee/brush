@@ -30,3 +30,5 @@ images/
 # Ignore bench files by now, need a better solution.
 /crates/brush-train/test_cases/bench_*.safetensors
 crates/brush-render/test_cases/bench_data.safetensors
+crates/brush-bench-test/test_cases/bench_data.safetensors
+crates/brush-bench-test/test_cases/mix_case.safetensors

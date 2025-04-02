@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 brush-render.path = "../brush-render"
 brush-train.path = "../brush-train"
+brush-eval.path = "../brush-eval"
 brush-dataset.path = "../brush-dataset"
 
 rrfd.path = "../rrfd"

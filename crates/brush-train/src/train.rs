@@ -1,138 +1,41 @@
+use burn::{
+    backend::{
+        Autodiff, Wgpu,
+        wgpu::{WgpuDevice, WgpuRuntime},
+    },
+    lr_scheduler::{
+        LrScheduler,
+        exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig},
+    },
+    module::ParamId,
+    optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
+    prelude::Backend,
+    tensor::{
+        Bool, Distribution, Int, Tensor, TensorData, TensorPrimitive, activation::sigmoid,
+        backend::AutodiffBackend,
+    },
+};
+use burn_cubecl::cubecl::Runtime;
 use std::f64::consts::SQRT_2;
 
-use anyhow::Result;
 use brush_dataset::scene::SceneBatch;
 use brush_render::gaussian_splats::{Splats, inverse_sigmoid};
-use brush_render_bwd::burn_glue::SplatForwardDiff;
-
 use brush_render::sh::sh_coeffs_for_degree;
-use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
-use burn::backend::{Autodiff, Wgpu};
-use burn::lr_scheduler::LrScheduler;
-use burn::lr_scheduler::exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig};
-use burn::module::ParamId;
-use burn::optim::Optimizer;
-use burn::optim::adaptor::OptimizerAdaptor;
-use burn::optim::record::AdaptorRecord;
-use burn::prelude::Backend;
-use burn::tensor::activation::sigmoid;
-use burn::tensor::backend::AutodiffBackend;
-use burn::tensor::{Bool, Distribution, Int, TensorData, TensorPrimitive};
-use burn::{config::Config, optim::GradientsParams, tensor::Tensor};
-use burn_cubecl::cubecl::Runtime;
-use clap::Args;
+use brush_render_bwd::burn_glue::SplatForwardDiff;
+use brush_ssim::Ssim;
 use hashbrown::{HashMap, HashSet};
 use tracing::trace_span;
 
 use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
+use crate::config::TrainConfig;
 use crate::multinomial::multinomial_sample;
 use crate::quat_vec::quaternion_vec_multiply;
-use crate::ssim::Ssim;
 use crate::stats::RefineRecord;
 
 const MIN_OPACITY: f32 = 0.9 / 255.0;
 
-#[derive(Config, Args)]
-pub struct TrainConfig {
-    /// Total number of steps to train for.
-    #[config(default = 30000)]
-    #[arg(long, help_heading = "Training options", default_value = "30000")]
-    pub total_steps: u32,
-
-    /// Weight of SSIM loss (compared to l1 loss)
-    #[config(default = 0.2)]
-    #[clap(long, help_heading = "Training options", default_value = "0.2")]
-    pub ssim_weight: f32,
-
-    /// SSIM window size
-    #[config(default = 11)]
-    #[clap(long, help_heading = "Training options", default_value = "11")]
-    pub ssim_window_size: usize,
-
-    /// Start learning rate for the mean parameters.
-    #[config(default = 4e-5)]
-    #[arg(long, help_heading = "Training options", default_value = "4e-5")]
-    pub lr_mean: f64,
-
-    /// Start learning rate for the mean parameters.
-    #[config(default = 4e-7)]
-    #[arg(long, help_heading = "Training options", default_value = "4e-7")]
-    pub lr_mean_end: f64,
-
-    /// How much noise to add to the mean parameters of low opacity gaussians.
-    #[config(default = 1e4)]
-    #[arg(long, help_heading = "Training options", default_value = "1e4")]
-    pub mean_noise_weight: f32,
-
-    /// Learning rate for the base SH (RGB) coefficients.
-    #[config(default = 3e-3)]
-    #[arg(long, help_heading = "Training options", default_value = "3e-3")]
-    pub lr_coeffs_dc: f64,
-
-    /// How much to divide the learning rate by for higher SH orders.
-    #[config(default = 20.0)]
-    #[arg(long, help_heading = "Training options", default_value = "20.0")]
-    pub lr_coeffs_sh_scale: f32,
-
-    /// Learning rate for the opacity parameter.
-    #[config(default = 3e-2)]
-    #[arg(long, help_heading = "Training options", default_value = "3e-2")]
-    pub lr_opac: f64,
-
-    /// Learning rate for the scale parameters.
-    #[config(default = 1e-2)]
-    #[arg(long, help_heading = "Training options", default_value = "1e-2")]
-    pub lr_scale: f64,
-
-    /// Learning rate for the scale parameters.
-    #[config(default = 6e-3)]
-    #[arg(long, help_heading = "Training options", default_value = "6e-3")]
-    pub lr_scale_end: f64,
-
-    /// Learning rate for the rotation parameters.
-    #[config(default = 1e-3)]
-    #[arg(long, help_heading = "Training options", default_value = "1e-3")]
-    pub lr_rotation: f64,
-
-    /// Weight of the opacity loss.
-    #[config(default = 1e-8)]
-    #[arg(long, help_heading = "Training options", default_value = "1e-8")]
-    pub opac_loss_weight: f32,
-
-    /// Frequency of 'refinement' where gaussians are replaced and densified. This should
-    /// roughly be the number of images it takes to properly "cover" your scene.
-    #[config(default = 150)]
-    #[arg(long, help_heading = "Refine options", default_value = "150")]
-    pub refine_every: u32,
-
-    /// Threshold to control splat growth. Lower means faster growth.
-    #[config(default = 0.00085)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.00085")]
-    pub growth_grad_threshold: f32,
-
-    /// What fraction of splats that are deemed as needing to grow do actually grow.
-    /// Increase this to make splats grow more aggressively.
-    #[config(default = 0.1)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.1")]
-    pub growth_select_fraction: f32,
-
-    /// Period after which splat growth stops.
-    #[config(default = 12500)]
-    #[arg(long, help_heading = "Refine options", default_value = "12500")]
-    pub growth_stop_iter: u32,
-
-    /// Weight of l1 loss on alpha if input view has transparency.
-    #[config(default = 0.1)]
-    #[arg(long, help_heading = "Refine options", default_value = "0.1")]
-    pub match_alpha_weight: f32,
-
-    /// Max nr. of splats. This is an upper bound, but the actual final number of splats might be lower than this.
-    #[config(default = 10000000)]
-    #[arg(long, help_heading = "Refine options", default_value = "10000000")]
-    pub max_splats: u32,
-}
-
-pub type TrainBack = Autodiff<Wgpu>;
+pub type InnerBack = Wgpu;
+pub type TrainBack = Autodiff<InnerBack>;
 
 #[derive(Clone)]
 pub struct RefineStats {
@@ -162,7 +65,7 @@ pub struct SplatTrainer {
     sched_mean: ExponentialLrScheduler,
     sched_scale: ExponentialLrScheduler,
     ssim: Ssim<TrainBack>,
-    refine_record: Option<RefineRecord<<TrainBack as AutodiffBackend>::InnerBackend>>,
+    refine_record: Option<RefineRecord<InnerBack>>,
     optim: Option<OptimizerType>,
 }
 
@@ -319,7 +222,6 @@ impl SplatTrainer {
                     GradientsParams::from_params(&mut grads, &splats, &[splats.sh_coeffs.id]);
                 optimizer.step(lr_coeffs, splats, grad_coeff)
             });
-
             splats = trace_span!("Rotation step", sync_burn = true).in_scope(|| {
                 let grad_rot =
                     GradientsParams::from_params(&mut grads, &splats, &[splats.rotation.id]);
@@ -594,21 +496,21 @@ impl SplatTrainer {
     }
 }
 
-fn map_splats_and_opt<B: AutodiffBackend>(
-    mut splats: Splats<B>,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, B>>,
-    map_mean: impl FnOnce(Tensor<B::InnerBackend, 2>) -> Tensor<B::InnerBackend, 2>,
-    map_rotation: impl FnOnce(Tensor<B::InnerBackend, 2>) -> Tensor<B::InnerBackend, 2>,
-    map_scale: impl FnOnce(Tensor<B::InnerBackend, 2>) -> Tensor<B::InnerBackend, 2>,
-    map_coeffs: impl FnOnce(Tensor<B::InnerBackend, 3>) -> Tensor<B::InnerBackend, 3>,
-    map_opac: impl FnOnce(Tensor<B::InnerBackend, 1>) -> Tensor<B::InnerBackend, 1>,
+fn map_splats_and_opt(
+    mut splats: Splats<TrainBack>,
+    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, TrainBack>>,
+    map_mean: impl FnOnce(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
+    map_rotation: impl FnOnce(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
+    map_scale: impl FnOnce(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
+    map_coeffs: impl FnOnce(Tensor<InnerBack, 3>) -> Tensor<InnerBack, 3>,
+    map_opac: impl FnOnce(Tensor<InnerBack, 1>) -> Tensor<InnerBack, 1>,
 
-    map_opt_mean: impl Fn(Tensor<B::InnerBackend, 2>) -> Tensor<B::InnerBackend, 2>,
-    map_opt_rotation: impl Fn(Tensor<B::InnerBackend, 2>) -> Tensor<B::InnerBackend, 2>,
-    map_opt_scale: impl Fn(Tensor<B::InnerBackend, 2>) -> Tensor<B::InnerBackend, 2>,
-    map_opt_coeffs: impl Fn(Tensor<B::InnerBackend, 3>) -> Tensor<B::InnerBackend, 3>,
-    map_opt_opac: impl Fn(Tensor<B::InnerBackend, 1>) -> Tensor<B::InnerBackend, 1>,
-) -> Splats<B> {
+    map_opt_mean: impl Fn(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
+    map_opt_rotation: impl Fn(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
+    map_opt_scale: impl Fn(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
+    map_opt_coeffs: impl Fn(Tensor<InnerBack, 3>) -> Tensor<InnerBack, 3>,
+    map_opt_opac: impl Fn(Tensor<InnerBack, 1>) -> Tensor<InnerBack, 1>,
+) -> Splats<TrainBack> {
     splats.means = splats
         .means
         .map(|x| Tensor::from_inner(map_mean(x.inner())).require_grad());
@@ -660,12 +562,12 @@ fn map_opt<B: AutodiffBackend, const D: usize>(
 //
 // Args:
 //   mask: bool[n]. If True, prune this Gaussian.
-async fn prune_points<B: AutodiffBackend>(
-    mut splats: Splats<B>,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, B>>,
-    mut refiner: RefineRecord<B::InnerBackend>,
-    prune: Tensor<B::InnerBackend, 1, Bool>,
-) -> (Splats<B>, RefineRecord<B::InnerBackend>, u32) {
+async fn prune_points(
+    mut splats: Splats<TrainBack>,
+    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, TrainBack>>,
+    mut refiner: RefineRecord<InnerBack>,
+    prune: Tensor<InnerBack, 1, Bool>,
+) -> (Splats<TrainBack>, RefineRecord<InnerBack>, u32) {
     assert_eq!(
         prune.dims()[0] as u32,
         splats.num_splats(),

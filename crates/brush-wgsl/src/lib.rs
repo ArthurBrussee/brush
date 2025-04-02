@@ -111,7 +111,7 @@ fn alignment_of(ty: Handle<Type>, ctx: &GlobalCtx) -> usize {
 #[derive(Debug, Error)]
 pub enum GenError {
     #[error("Failed to generate shader module.\n{1}")]
-    ImportError(#[source] ComposerError, String),
+    ImportError(#[source] Box<ComposerError>, String),
     #[error("Failed to read/write input files {0}")]
     IoError(#[from] io::Error),
 }
@@ -189,7 +189,7 @@ pub fn build_modules(paths: &[&str], includes: &[&str], output_path: &str) -> Re
             Ok(m) => m,
             Err(e) => {
                 let str = e.emit_to_string(&composer);
-                return Err(GenError::ImportError(e, str));
+                return Err(GenError::ImportError(Box::new(e), str));
             }
         };
 
