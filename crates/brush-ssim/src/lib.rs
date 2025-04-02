@@ -1,4 +1,4 @@
-use burn::tensor::{backend::Backend, module::conv2d, ops::ConvOptions, Tensor};
+use burn::tensor::{Tensor, backend::Backend, module::conv2d, ops::ConvOptions};
 
 pub struct Ssim<B: Backend> {
     weights_1d_v: Tensor<B, 4>,
@@ -68,7 +68,7 @@ impl<B: Backend> Ssim<B> {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use burn::{
-        backend::{wgpu::WgpuDevice, Wgpu},
+        backend::{Wgpu, wgpu::WgpuDevice},
         tensor::{Float, Tensor},
     };
     type Backend = Wgpu;
