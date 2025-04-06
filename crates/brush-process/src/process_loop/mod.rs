@@ -1,19 +1,12 @@
-mod process;
-mod process_args;
+pub mod process;
 
 mod train_stream;
 mod view_stream;
 
 use burn::tensor::{DType, TensorData};
 use image::{DynamicImage, Rgb32FImage, Rgba32FImage};
-pub use process::*;
-pub use process_args::*;
 
-pub trait TensorDataToImage {
-    fn into_image(self) -> DynamicImage;
-}
-
-pub fn tensor_into_image(data: TensorData) -> DynamicImage {
+pub(crate) fn tensor_into_image(data: TensorData) -> DynamicImage {
     let [h, w, c] = [data.shape[0], data.shape[1], data.shape[2]];
 
     let img: DynamicImage = match data.dtype {

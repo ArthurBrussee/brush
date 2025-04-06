@@ -8,12 +8,14 @@ use async_fn_stream::TryStreamEmitter;
 use brush_dataset::brush_vfs::BrushVfs;
 use brush_dataset::scene_loader::SceneLoader;
 use brush_eval::eval_stats;
-use brush_render::gaussian_splats::{RandomSplatsConfig, Splats};
+use brush_msg::{ProcessMessage, config::ProcessArgs};
+use brush_render::{
+    MainBackend,
+    gaussian_splats::{RandomSplatsConfig, Splats},
+};
 use brush_train::train::SplatTrainer;
-use brush_train::train::TrainBack;
 
-use burn::module::AutodiffModule;
-use burn::prelude::Backend;
+use burn::{module::AutodiffModule, prelude::Backend};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
@@ -21,8 +23,6 @@ use tokio_stream::StreamExt;
 use web_time::{Duration, Instant};
 
 use crate::rerun_tools::VisualizeTools;
-
-use super::{ProcessArgs, ProcessMessage};
 
 pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
@@ -41,7 +41,7 @@ pub(crate) async fn train_stream(
         .await;
 
     log::info!("Using seed {}", process_config.seed);
-    <TrainBack as Backend>::seed(process_config.seed);
+    <MainBackend as Backend>::seed(process_config.seed);
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     log::info!("Loading dataset");

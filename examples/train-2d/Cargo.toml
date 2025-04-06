@@ -11,6 +11,7 @@ brush-train.path = "../../crates/brush-train"
 brush-dataset.path = "../../crates/brush-dataset"
 brush-render.path = "../../crates/brush-render"
 brush-ui.path = "../../crates/brush-ui"
+brush-msg.path = "../../crates/brush-msg"
 
 tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros"] }
 rand.workspace = true

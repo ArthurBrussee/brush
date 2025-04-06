@@ -6,11 +6,12 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+
 burn.workspace = true
 burn-fusion.workspace = true
 burn-cubecl.workspace = true
 brush-render.path = "../brush-render"
-
 glam.workspace = true
 eframe.workspace = true
 egui.workspace = true

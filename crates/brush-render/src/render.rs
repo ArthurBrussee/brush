@@ -1,8 +1,9 @@
 use crate::{
-    BBase, INTERSECTS_UPPER_BOUND, RenderAux,
+    BBase, INTERSECTS_UPPER_BOUND,
     camera::Camera,
     dim_check::DimCheck,
     kernels::{MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
+    render_aux::RenderAux,
     sh::sh_degree_from_coeffs,
 };
 

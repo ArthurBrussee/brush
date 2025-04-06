@@ -1,6 +1,7 @@
 use brush_render::{
-    BBase, RenderAux, SplatForward,
+    BBase, SplatForward,
     camera::Camera,
+    render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
 use burn::{

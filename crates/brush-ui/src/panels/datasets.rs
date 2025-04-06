@@ -1,6 +1,6 @@
 use crate::app::{AppContext, AppPanel};
 use brush_dataset::scene::{Scene, SceneView, ViewType};
-use brush_process::process_loop::ProcessMessage;
+use brush_msg::ProcessMessage;
 use egui::{Color32, Slider, TextureHandle, TextureOptions, pos2};
 use tokio::sync::oneshot::Receiver;
 

@@ -1,6 +1,7 @@
+use brush_msg::{RefineStats, TrainStepStats, config::TrainConfig};
 use burn::{
     backend::{
-        Autodiff, Wgpu,
+        Autodiff,
         wgpu::{WgpuDevice, WgpuRuntime},
     },
     lr_scheduler::{
@@ -11,7 +12,7 @@ use burn::{
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
     prelude::Backend,
     tensor::{
-        Bool, Distribution, Int, Tensor, TensorData, TensorPrimitive, activation::sigmoid,
+        Bool, Distribution, Tensor, TensorData, TensorPrimitive, activation::sigmoid,
         backend::AutodiffBackend,
     },
 };
@@ -19,53 +20,32 @@ use burn_cubecl::cubecl::Runtime;
 use std::f64::consts::SQRT_2;
 
 use brush_dataset::scene::SceneBatch;
-use brush_render::gaussian_splats::{Splats, inverse_sigmoid};
 use brush_render::sh::sh_coeffs_for_degree;
+use brush_render::{
+    MainBackend,
+    gaussian_splats::{Splats, inverse_sigmoid},
+};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 use brush_ssim::Ssim;
 use hashbrown::{HashMap, HashSet};
 use tracing::trace_span;
 
 use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
-use crate::config::TrainConfig;
 use crate::multinomial::multinomial_sample;
 use crate::quat_vec::quaternion_vec_multiply;
 use crate::stats::RefineRecord;
 
 const MIN_OPACITY: f32 = 0.9 / 255.0;
 
-pub type InnerBack = Wgpu;
-pub type TrainBack = Autodiff<InnerBack>;
-
-#[derive(Clone)]
-pub struct RefineStats {
-    pub num_added: u32,
-    pub num_pruned: u32,
-}
-
-#[derive(Clone)]
-pub struct TrainStepStats<B: Backend> {
-    pub pred_image: Tensor<B, 3>,
-
-    pub num_intersections: Tensor<B, 1, Int>,
-    pub num_visible: Tensor<B, 1, Int>,
-    pub loss: Tensor<B, 1>,
-
-    pub lr_mean: f64,
-    pub lr_rotation: f64,
-    pub lr_scale: f64,
-    pub lr_coeffs: f64,
-    pub lr_opac: f64,
-}
-
-type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<TrainBack>, TrainBack>;
+type OptimizerType =
+    OptimizerAdaptor<AdamScaled, Splats<Autodiff<MainBackend>>, Autodiff<MainBackend>>;
 
 pub struct SplatTrainer {
     config: TrainConfig,
     sched_mean: ExponentialLrScheduler,
     sched_scale: ExponentialLrScheduler,
-    ssim: Ssim<TrainBack>,
-    refine_record: Option<RefineRecord<InnerBack>>,
+    ssim: Ssim<Autodiff<MainBackend>>,
+    refine_record: Option<RefineRecord<MainBackend>>,
     optim: Option<OptimizerType>,
 }
 
@@ -101,9 +81,9 @@ impl SplatTrainer {
         &mut self,
         scene_extent: f32,
         iter: u32,
-        batch: &SceneBatch<TrainBack>,
-        splats: Splats<TrainBack>,
-    ) -> (Splats<TrainBack>, TrainStepStats<TrainBack>) {
+        batch: &SceneBatch<Autodiff<MainBackend>>,
+        splats: Splats<Autodiff<MainBackend>>,
+    ) -> (Splats<Autodiff<MainBackend>>, TrainStepStats<MainBackend>) {
         let mut splats = splats;
 
         let [img_h, img_w, _] = batch.img_tensor.dims();
@@ -119,7 +99,7 @@ impl SplatTrainer {
             num_intersections,
             refine_weight_holder,
         ) = {
-            let diff_out = <TrainBack as SplatForwardDiff<TrainBack>>::render_splats(
+            let diff_out = <Autodiff<MainBackend> as SplatForwardDiff<_>>::render_splats(
                 camera,
                 glam::uvec2(img_w as u32, img_h as u32),
                 splats.means.val().into_primitive().tensor(),
@@ -300,10 +280,10 @@ impl SplatTrainer {
         }
 
         let stats = TrainStepStats {
-            pred_image,
+            pred_image: pred_image.inner(),
             num_visible: Tensor::from_primitive(num_visible),
             num_intersections: Tensor::from_primitive(num_intersections),
-            loss,
+            loss: loss.inner(),
             lr_mean,
             lr_rotation,
             lr_scale,
@@ -317,8 +297,8 @@ impl SplatTrainer {
     pub async fn refine_if_needed(
         &mut self,
         iter: u32,
-        splats: Splats<TrainBack>,
-    ) -> (Splats<TrainBack>, Option<RefineStats>) {
+        splats: Splats<Autodiff<MainBackend>>,
+    ) -> (Splats<Autodiff<MainBackend>>, Option<RefineStats>) {
         if iter == 0 || iter % self.config.refine_every != 0 {
             return (splats, None);
         }
@@ -346,7 +326,6 @@ impl SplatTrainer {
 
         let (mut splats, refiner, pruned_count) =
             prune_points(splats, &mut record, refiner, alpha_mask).await;
-
         let mut add_indices = HashSet::new();
 
         // Replace dead gaussians if we're still refining.
@@ -497,20 +476,20 @@ impl SplatTrainer {
 }
 
 fn map_splats_and_opt(
-    mut splats: Splats<TrainBack>,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, TrainBack>>,
-    map_mean: impl FnOnce(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
-    map_rotation: impl FnOnce(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
-    map_scale: impl FnOnce(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
-    map_coeffs: impl FnOnce(Tensor<InnerBack, 3>) -> Tensor<InnerBack, 3>,
-    map_opac: impl FnOnce(Tensor<InnerBack, 1>) -> Tensor<InnerBack, 1>,
+    mut splats: Splats<Autodiff<MainBackend>>,
+    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, Autodiff<MainBackend>>>,
+    map_mean: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
+    map_rotation: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
+    map_scale: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
+    map_coeffs: impl FnOnce(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
+    map_opac: impl FnOnce(Tensor<MainBackend, 1>) -> Tensor<MainBackend, 1>,
 
-    map_opt_mean: impl Fn(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
-    map_opt_rotation: impl Fn(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
-    map_opt_scale: impl Fn(Tensor<InnerBack, 2>) -> Tensor<InnerBack, 2>,
-    map_opt_coeffs: impl Fn(Tensor<InnerBack, 3>) -> Tensor<InnerBack, 3>,
-    map_opt_opac: impl Fn(Tensor<InnerBack, 1>) -> Tensor<InnerBack, 1>,
-) -> Splats<TrainBack> {
+    map_opt_mean: impl Fn(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
+    map_opt_rotation: impl Fn(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
+    map_opt_scale: impl Fn(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
+    map_opt_coeffs: impl Fn(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
+    map_opt_opac: impl Fn(Tensor<MainBackend, 1>) -> Tensor<MainBackend, 1>,
+) -> Splats<Autodiff<MainBackend>> {
     splats.means = splats
         .means
         .map(|x| Tensor::from_inner(map_mean(x.inner())).require_grad());
@@ -563,11 +542,15 @@ fn map_opt<B: AutodiffBackend, const D: usize>(
 // Args:
 //   mask: bool[n]. If True, prune this Gaussian.
 async fn prune_points(
-    mut splats: Splats<TrainBack>,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, TrainBack>>,
-    mut refiner: RefineRecord<InnerBack>,
-    prune: Tensor<InnerBack, 1, Bool>,
-) -> (Splats<TrainBack>, RefineRecord<InnerBack>, u32) {
+    mut splats: Splats<Autodiff<MainBackend>>,
+    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, Autodiff<MainBackend>>>,
+    mut refiner: RefineRecord<MainBackend>,
+    prune: Tensor<MainBackend, 1, Bool>,
+) -> (
+    Splats<Autodiff<MainBackend>>,
+    RefineRecord<MainBackend>,
+    u32,
+) {
     assert_eq!(
         prune.dims()[0] as u32,
         splats.num_splats(),
@@ -606,6 +589,5 @@ async fn prune_points(
         );
         refiner = refiner.keep(valid_inds);
     }
-
     (splats, refiner, start_splats - new_points)
 }

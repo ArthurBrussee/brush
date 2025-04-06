@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use super::ProcessMessage;
 use async_fn_stream::TryStreamEmitter;
 use brush_dataset::{brush_vfs::BrushVfs, splat_import};
+use brush_msg::ProcessMessage;
 use burn_wgpu::WgpuDevice;
 use tokio_stream::StreamExt;
 

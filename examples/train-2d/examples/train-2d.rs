@@ -5,17 +5,14 @@ use std::sync::Arc;
 
 use brush_dataset::scene::{SceneBatch, sample_to_tensor};
 use brush_render::{
+    MainBackend,
     bounding_box::BoundingBox,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::{RandomSplatsConfig, Splats},
 };
-use brush_train::config::TrainConfig;
-use brush_train::train::{SplatTrainer, TrainBack};
+use brush_train::train::SplatTrainer;
 use brush_ui::burn_texture::BurnTexture;
-use burn::{
-    backend::wgpu::WgpuDevice, module::AutodiffModule, prelude::Backend,
-    tensor::backend::AutodiffBackend,
-};
+use burn::{backend::wgpu::WgpuDevice, module::AutodiffModule, prelude::Backend};
 use egui::{ImageSource, TextureHandle, TextureOptions, load::SizedTexture};
 use glam::{Quat, Vec2, Vec3};
 use image::DynamicImage;
@@ -23,7 +20,7 @@ use rand::SeedableRng;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 struct TrainStep {
-    splats: Splats<<TrainBack as AutodiffBackend>::InnerBackend>,
+    splats: Splats<MainBackend>,
     iter: u32,
 }
 
@@ -39,7 +36,7 @@ fn spawn_train_loop(
     tokio::spawn(async move {
         let seed = 42;
 
-        <TrainBack as Backend>::seed(seed);
+        <MainBackend as Backend>::seed(seed);
         let mut rng = rand::rngs::StdRng::from_seed([seed as u8; 32]);
 
         let init_bounds = BoundingBox::from_min_max(-Vec3::ONE * 5.0, Vec3::ONE * 5.0);

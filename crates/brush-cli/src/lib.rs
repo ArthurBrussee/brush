@@ -2,7 +2,7 @@
 
 pub mod ui;
 
-use brush_process::{data_source::DataSource, process_loop::ProcessArgs};
+use brush_msg::{DataSource, config::ProcessArgs};
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
 
 #[derive(Parser)]

@@ -301,7 +301,7 @@ impl CameraController {
         glam::Affine3A::from_rotation_translation(self.rotation, self.position)
     }
 
-    pub(crate) fn stop_movement(&mut self) {
+    pub fn stop_movement(&mut self) {
         self.orbit_velocity = Vec2::ZERO;
         self.fly_velocity = Vec3::ZERO;
     }

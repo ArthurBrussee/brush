@@ -1,14 +1,12 @@
 use brush_dataset::splat_export;
-use brush_process::process_loop::ProcessMessage;
-
-use brush_train::train::TrainBack;
+use brush_msg::ProcessMessage;
 use brush_ui::burn_texture::BurnTexture;
-use burn::tensor::backend::AutodiffBackend;
 use core::f32;
 use egui::{Area, epaint::mutex::RwLock as EguiRwLock};
 use std::sync::Arc;
 
 use brush_render::{
+    MainBackend,
     camera::{focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
 };
@@ -42,7 +40,7 @@ pub(crate) struct ScenePanel {
     pub(crate) backbuffer: BurnTexture,
     pub(crate) last_draw: Option<Instant>,
 
-    view_splats: Vec<Splats<<TrainBack as AutodiffBackend>::InnerBackend>>,
+    view_splats: Vec<Splats<MainBackend>>,
     frame_count: u32,
     frame: f32,
 
@@ -81,7 +79,7 @@ impl ScenePanel {
         &mut self,
         ui: &mut egui::Ui,
         context: &mut AppContext,
-        splats: Option<Splats<<TrainBack as AutodiffBackend>::InnerBackend>>,
+        splats: Option<Splats<MainBackend>>,
     ) -> egui::Rect {
         let size = brush_ui::size_for_splat_view(ui);
 

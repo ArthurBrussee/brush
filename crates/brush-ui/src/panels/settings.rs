@@ -3,11 +3,10 @@ use crate::{
     running_process::start_process,
 };
 use brush_dataset::{LoadDataseConfig, ModelConfig};
-use brush_process::{
-    data_source::DataSource,
-    process_loop::{ProcessArgs, ProcessConfig, RerunConfig},
+use brush_msg::{
+    DataSource,
+    config::{ProcessArgs, ProcessConfig, RerunConfig, TrainConfig},
 };
-use brush_train::config::TrainConfig;
 use egui::Slider;
 
 pub(crate) struct SettingsPanel {

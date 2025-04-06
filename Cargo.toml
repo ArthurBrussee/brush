@@ -68,16 +68,16 @@ wgpu = { version = "24", features = ["naga-ir"] }
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
 ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 
-burn = { git = "https://github.com/tracel-ai/burn", features = [
+burn = { git = "https://github.com/tracel-ai/burn", branch = "refactor/reduce-compilation-speed", features = [
     'wgpu',
     'autodiff',
 ] } # Various burn packages. Currently need to use burn at head.
-burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
-burn-ir = { git = "https://github.com/tracel-ai/burn" }
+burn-cubecl = { git = "https://github.com/tracel-ai/burn", branch = "refactor/reduce-compilation-speed" }
+burn-ir = { git = "https://github.com/tracel-ai/burn", branch = "refactor/reduce-compilation-speed" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
-] }
-burn-fusion = { git = "https://github.com/tracel-ai/burn" }
+], branch = "refactor/reduce-compilation-speed" }
+burn-fusion = { git = "https://github.com/tracel-ai/burn", branch = "refactor/reduce-compilation-speed" }
 
 egui = "0.31.0"
 eframe = { version = "0.31.0", default-features = false, features = [
@@ -128,7 +128,7 @@ hashbrown = "0.15"
 # naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v24" }
 
 [profile.dev]
-opt-level = 1
+opt-level = 0
 debug = true
 
 # The profile that 'dist' will build with

@@ -10,6 +10,7 @@ brush-render.path = "../brush-render"
 brush-kernel.path = "../brush-kernel"
 brush-dataset.path = "../brush-dataset"
 brush-render-bwd.path = "../brush-render-bwd"
+brush-msg.path = "../brush-msg"
 brush-ssim.path = "../brush-ssim"
 
 glam.workspace = true

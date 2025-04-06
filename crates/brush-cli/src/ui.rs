@@ -1,9 +1,7 @@
 use std::time::Duration;
 
-use brush_process::{
-    data_source::DataSource,
-    process_loop::{ProcessArgs, ProcessMessage, process_stream},
-};
+use brush_msg::{DataSource, ProcessMessage, config::ProcessArgs};
+use brush_process::process_loop::process::process_stream;
 use burn_wgpu::WgpuDevice;
 use indicatif::{ProgressBar, ProgressStyle};
 use tokio_stream::StreamExt;

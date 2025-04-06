@@ -1,7 +1,8 @@
 use crate::{
-    RenderAux, SplatForward,
+    SplatForward,
     bounding_box::BoundingBox,
     camera::Camera,
+    render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
 use ball_tree::BallTree;

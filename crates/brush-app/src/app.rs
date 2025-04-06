@@ -1,14 +1,14 @@
 use std::sync::{Arc, RwLock};
 
-use crate::camera_controls::{self, CameraController};
 use crate::panels::SettingsPanel;
 use crate::panels::{DatasetPanel, PresetsPanel, ScenePanel, StatsPanel, TracingPanel};
 use crate::running_process::{ControlMessage, RunningProcess, start_process};
 use brush_dataset::Dataset;
 use brush_dataset::scene::SceneView;
-use brush_process::data_source::DataSource;
-use brush_process::process_loop::{ProcessArgs, ProcessMessage};
+use brush_msg::config::ProcessArgs;
+use brush_msg::{DataSource, ProcessMessage};
 use brush_render::camera::Camera;
+use brush_ui::camera_controls::{self, CameraController};
 use burn_wgpu::WgpuDevice;
 use eframe::egui;
 use egui::ThemePreference;
@@ -126,9 +126,7 @@ pub struct AppContext {
 
     loading: bool,
     training: bool,
-
     cam_settings: CameraSettings,
-
     running_process: Option<RunningProcess>,
 }
 

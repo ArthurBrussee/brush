@@ -1,7 +1,4 @@
-use brush_process::{
-    data_source::DataSource,
-    process_loop::{ProcessArgs, ProcessMessage, process_stream},
-};
+use brush_msg::{DataSource, ProcessMessage, config::ProcessArgs};
 use burn_wgpu::WgpuDevice;
 use tokio::sync::mpsc::{Receiver, UnboundedSender};
 use tokio_stream::StreamExt;

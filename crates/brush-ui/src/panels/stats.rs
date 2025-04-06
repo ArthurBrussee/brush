@@ -1,6 +1,6 @@
 use crate::app::{AppContext, AppPanel};
-use brush_process::process_loop::ProcessMessage;
 
+use brush_msg::ProcessMessage;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use web_time::Duration;

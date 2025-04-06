@@ -1,5 +1,4 @@
 use crate::app::{AppContext, AppPanel};
-use brush_process::process_loop::ProcessMessage;
 use egui::Hyperlink;
 
 pub(crate) struct PresetsPanel {}
@@ -18,8 +17,6 @@ impl AppPanel for PresetsPanel {
     fn title(&self) -> String {
         "Presets".to_owned()
     }
-
-    fn on_message(&mut self, _: &ProcessMessage, _: &mut AppContext) {}
 
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut AppContext) {
         ui.heading("Mipnerf scenes");

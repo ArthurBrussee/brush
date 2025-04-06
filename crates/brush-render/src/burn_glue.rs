@@ -7,9 +7,10 @@ use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
 use burn_wgpu::WgpuRuntime;
 
 use crate::{
-    BBase, RenderAux, SplatForward,
+    BBase, SplatForward,
     camera::Camera,
     render::{calc_tile_bounds, max_intersections, render_forward},
+    render_aux::RenderAux,
     shaders,
 };
 

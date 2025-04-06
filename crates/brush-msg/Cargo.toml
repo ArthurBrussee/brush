@@ -1,6 +1,6 @@
 
 [package]
-name = "brush-process"
+name = "brush-msg"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -8,10 +8,8 @@ license.workspace = true
 
 [dependencies]
 brush-render.path = "../brush-render"
-brush-train.path = "../brush-train"
 brush-eval.path = "../brush-eval"
 brush-dataset.path = "../brush-dataset"
-brush-msg.path = "../brush-msg"
 
 rrfd.path = "../rrfd"
 
@@ -45,6 +43,7 @@ brush-rerun.path = "../brush-rerun"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 web-sys.workspace = true
+
 
 [lints]
 workspace = true

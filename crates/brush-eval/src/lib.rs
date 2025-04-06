@@ -1,7 +1,8 @@
 use anyhow::Result;
 use brush_dataset::scene::{SceneView, sample_to_tensor, view_to_sample_image};
+use brush_render::SplatForward;
 use brush_render::gaussian_splats::Splats;
-use brush_render::{RenderAux, SplatForward};
+use brush_render::render_aux::RenderAux;
 use brush_ssim::Ssim;
 use burn::prelude::Backend;
 use burn::tensor::Tensor;
@@ -22,7 +23,7 @@ pub async fn eval_stats<B: Backend + SplatForward<B>>(
 ) -> Result<EvalSample<B>> {
     let gt_img = eval_view.image.load().await?;
 
-    // Compare MSE in RGB only, not sure if this should include alpha.
+    // Compare MSE in RGB only.
     let res = glam::uvec2(gt_img.width(), gt_img.height());
 
     let gt_tensor = sample_to_tensor(
@@ -43,7 +44,6 @@ pub async fn eval_stats<B: Backend + SplatForward<B>>(
         .mean();
 
     let psnr = mse.recip().log() * 10.0 / std::f32::consts::LN_10;
-
     let ssim_measure = Ssim::new(11, 3, device);
     let ssim = ssim_measure.ssim(render_rgb.clone(), gt_rgb).mean();
 
