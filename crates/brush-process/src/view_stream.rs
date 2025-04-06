@@ -11,6 +11,8 @@ pub(crate) async fn view_stream(
     device: WgpuDevice,
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
 ) -> anyhow::Result<()> {
+    emitter.emit(ProcessMessage::NewSource).await;
+
     let paths: Vec<_> = vfs.file_names().collect();
 
     for (i, path) in paths.iter().enumerate() {
@@ -51,9 +53,7 @@ pub(crate) async fn view_stream(
         }
     }
 
-    emitter
-        .emit(ProcessMessage::DoneLoading { training: false })
-        .await;
+    emitter.emit(ProcessMessage::DoneLoading).await;
 
     Ok(())
 }

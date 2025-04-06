@@ -18,6 +18,7 @@ pub enum ViewType {
     Test,
 }
 
+#[derive(Clone)]
 pub struct LoadImage {
     pub vfs: Arc<BrushVfs>,
     pub path: PathBuf,
@@ -162,8 +163,14 @@ impl LoadImage {
     pub fn is_masked(&self) -> bool {
         self.mask_path.is_some()
     }
+
+    pub fn aspect_ratio(&self) -> f32 {
+        let dim = self.dimensions();
+        dim.x as f32 / dim.y as f32
+    }
 }
 
+#[derive(Clone)]
 pub struct SceneView {
     pub image: LoadImage,
     pub camera: Camera,

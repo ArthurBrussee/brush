@@ -9,16 +9,40 @@ use brush_render::gaussian_splats::Splats;
 use brush_render::shaders::project_visible::SH_C0;
 use burn::prelude::Backend;
 use burn::tensor::backend::AutodiffBackend;
+use burn::tensor::{DType, TensorData};
 use burn::tensor::{ElementConversion, activation::sigmoid};
 
 use anyhow::Result;
 
 #[cfg(not(target_family = "wasm"))]
-use brush_rerun::BurnToRerun;
 use burn_cubecl::cubecl::MemoryUsage;
 use image::DynamicImage;
+use rerun::external::glam;
+use rerun::external::image::{Rgb32FImage, Rgba32FImage};
 
-use crate::process_loop::tensor_into_image;
+fn tensor_into_image(data: TensorData) -> DynamicImage {
+    let [h, w, c] = [data.shape[0], data.shape[1], data.shape[2]];
+
+    let img: DynamicImage = match data.dtype {
+        DType::F32 => {
+            let data = data.into_vec::<f32>().expect("Wrong type");
+            if c == 3 {
+                Rgb32FImage::from_raw(w as u32, h as u32, data)
+                    .expect("Failed to create image from tensor")
+                    .into()
+            } else if c == 4 {
+                Rgba32FImage::from_raw(w as u32, h as u32, data)
+                    .expect("Failed to create image from tensor")
+                    .into()
+            } else {
+                panic!("Unsupported number of channels: {c}");
+            }
+        }
+        _ => panic!("unsupported dtype {:?}", data.dtype),
+    };
+
+    img
+}
 
 pub struct VisualizeTools {
     #[cfg(not(target_family = "wasm"))]

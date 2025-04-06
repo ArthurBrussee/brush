@@ -1,9 +1,8 @@
 #![recursion_limit = "256"]
 
-#[allow(unused)]
-use brush_app::{App, AppCreateCb};
+mod ui_process;
 
-use brush_app::running_process::start_process;
+use brush_ui::{BrushUiProcess, app::App};
 
 #[allow(unused)]
 use tokio::sync::oneshot::error::RecvError;
@@ -12,8 +11,7 @@ use tokio::sync::oneshot::error::RecvError;
 fn main() -> Result<(), anyhow::Error> {
     let wgpu_options = brush_ui::create_egui_options();
 
-    #[allow(unused)]
-    let (send, rec) = tokio::sync::oneshot::channel();
+    let mut context = UiProcess::new();
 
     #[cfg(not(target_family = "wasm"))]
     {
@@ -34,7 +32,7 @@ fn main() -> Result<(), anyhow::Error> {
 
             if args.with_viewer {
                 let icon = eframe::icon_data::from_png_bytes(
-                    &include_bytes!("../../assets/icon-256.png")[..],
+                    &include_bytes!("../assets/icon-256.png")[..],
                 )
                 .expect("Failed to load icon");
 
@@ -49,19 +47,7 @@ fn main() -> Result<(), anyhow::Error> {
                 };
 
                 if let Some(source) = args.source {
-                    tokio::spawn(async move {
-                        let context: Result<AppCreateCb, RecvError> = rec.await;
-                        if let Ok(context) = context {
-                            let mut context = context.context.write().expect("Lock poisoned");
-                            let process = start_process(
-                                source,
-                                args.process,
-                                context.device.clone(),
-                                context.egui_ctx.clone(),
-                            );
-                            context.connect_to(process);
-                        }
-                    });
+                    context.start_new_process(source, args.process);
                 }
 
                 let title = if cfg!(debug_assertions) {
@@ -73,14 +59,14 @@ fn main() -> Result<(), anyhow::Error> {
                 eframe::run_native(
                     title,
                     native_options,
-                    Box::new(move |cc| Ok(Box::new(App::new(cc, send, None)))),
+                    Box::new(move |cc| Ok(Box::new(App::new(cc, None, Box::new(context))))),
                 )?;
             } else {
                 let Some(source) = args.source else {
                     panic!("Validation of args failed?");
                 };
                 let device = brush_render::burn_init_setup().await;
-                brush_cli::ui::process_ui(source, args.process, device).await?;
+                brush_cli::process_ui(source, args.process, device).await?;
             }
 
             anyhow::Result::<(), anyhow::Error>::Ok(())
@@ -111,12 +97,11 @@ fn main() -> Result<(), anyhow::Error> {
                     wgpu_options,
                     ..Default::default()
                 };
-
                 eframe::WebRunner::new()
                     .start(
                         canvas,
                         web_options,
-                        Box::new(|cc| Ok(Box::new(App::new(cc, send, None)))),
+                        Box::new(|cc| Ok(Box::new(App::new(cc, None, context)))),
                     )
                     .await
                     .expect("failed to start eframe"); // Ideally reported as a result but doesn't really matter.
@@ -275,3 +260,4 @@ mod embedded {
 
 #[cfg(target_family = "wasm")]
 pub use embedded::*;
+use ui_process::UiProcess;

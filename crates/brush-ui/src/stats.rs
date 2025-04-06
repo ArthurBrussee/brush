@@ -1,4 +1,4 @@
-use crate::app::{AppContext, AppPanel};
+use crate::{BrushUiProcess, panels::AppPanel};
 
 use brush_msg::ProcessMessage;
 use burn_cubecl::cubecl::Runtime;
@@ -6,7 +6,7 @@ use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use web_time::Duration;
 use wgpu::AdapterInfo;
 
-pub(crate) struct StatsPanel {
+pub struct StatsPanel {
     device: WgpuDevice,
 
     last_train_step: (Duration, u32),
@@ -61,7 +61,7 @@ impl AppPanel for StatsPanel {
         "Stats".to_owned()
     }
 
-    fn on_message(&mut self, message: &ProcessMessage, _: &mut AppContext) {
+    fn on_message(&mut self, message: &ProcessMessage, _: &mut dyn BrushUiProcess) {
         match message {
             ProcessMessage::NewSource => {
                 *self = Self::new(self.device.clone(), self.adapter_info.clone());
@@ -107,7 +107,7 @@ impl AppPanel for StatsPanel {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _: &mut AppContext) {
+    fn ui(&mut self, ui: &mut egui::Ui, _: &mut dyn BrushUiProcess) {
         egui::Grid::new("stats_grid")
             .num_columns(2)
             .spacing([40.0, 4.0])

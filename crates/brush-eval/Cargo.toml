@@ -14,7 +14,10 @@ anyhow.workspace = true
 image.workspace = true
 glam.workspace = true
 burn.workspace = true
+log.workspace = true
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true, features = ["io-util", "rt", "fs"] }
 
 [lints]
 workspace = true

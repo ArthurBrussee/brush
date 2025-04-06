@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use brush_dataset::scene::{SceneBatch, sample_to_tensor};
+use brush_msg::config::TrainConfig;
 use brush_render::{
     MainBackend,
     bounding_box::BoundingBox,

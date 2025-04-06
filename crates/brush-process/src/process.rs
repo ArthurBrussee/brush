@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::process_loop::view_stream::view_stream;
 use async_fn_stream::try_fn_stream;
 use brush_msg::{DataSource, ProcessMessage, config::ProcessArgs};
 use burn_wgpu::WgpuDevice;
@@ -9,7 +8,7 @@ use tokio_stream::Stream;
 #[allow(unused)]
 use brush_dataset::splat_export;
 
-use super::train_stream::train_stream;
+use crate::{train_stream::train_stream, view_stream::view_stream};
 
 pub fn process_stream(
     source: DataSource,
@@ -18,17 +17,7 @@ pub fn process_stream(
 ) -> impl Stream<Item = Result<ProcessMessage, anyhow::Error>> + 'static {
     try_fn_stream(|emitter| async move {
         log::info!("Starting process with source {source:?}");
-
-        emitter.emit(ProcessMessage::NewSource).await;
-
-        let vfs = source.into_vfs().await;
-
-        let vfs = match vfs {
-            Ok(vfs) => Arc::new(vfs),
-            Err(e) => {
-                anyhow::bail!(e);
-            }
-        };
+        let vfs = Arc::new(source.into_vfs().await?);
 
         let paths: Vec<_> = vfs.file_names().collect();
         log::info!("Mounted VFS with {} files", paths.len());

@@ -1,8 +1,24 @@
-use crate::app::{AppContext, AppPanel};
-use brush_dataset::scene::{Scene, SceneView, ViewType};
+use crate::{BrushUiProcess, draw_checkerboard, panels::AppPanel, size_for_splat_view};
+use brush_dataset::{
+    Dataset,
+    scene::{Scene, SceneView, ViewType},
+};
 use brush_msg::ProcessMessage;
 use egui::{Color32, Slider, TextureHandle, TextureOptions, pos2};
-use tokio::sync::oneshot::Receiver;
+use tokio_with_wasm::alias::sync::oneshot::{Receiver, channel};
+
+fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
+    match t {
+        ViewType::Train => &dataset.train,
+        _ => {
+            if let Some(eval_scene) = dataset.eval.as_ref() {
+                eval_scene
+            } else {
+                &dataset.train
+            }
+        }
+    }
+}
 
 struct SelectedView {
     index: usize,
@@ -10,27 +26,18 @@ struct SelectedView {
     handle: Receiver<TextureHandle>,
 }
 
-fn selected_scene(t: ViewType, context: &AppContext) -> &Scene {
-    if let Some(eval_scene) = context.dataset.eval.as_ref() {
-        match t {
-            ViewType::Train => &context.dataset.train,
-            _ => eval_scene,
-        }
-    } else {
-        &context.dataset.train
-    }
-}
-
 impl SelectedView {
-    fn get_view<'a>(&'a self, context: &'a AppContext) -> &'a SceneView {
-        &selected_scene(self.view_type, context).views[self.index]
+    fn get_view<'b>(&self, dataset: &'b Dataset) -> &'b SceneView {
+        let scene = selected_scene(self.view_type, dataset);
+        &scene.views[self.index]
     }
 }
 
-pub(crate) struct DatasetPanel {
+pub struct DatasetPanel {
     view_type: ViewType,
     selected_view: Option<SelectedView>,
     last_handle: Option<TextureHandle>,
+    cur_dataset: Dataset,
 }
 
 impl DatasetPanel {
@@ -39,6 +46,7 @@ impl DatasetPanel {
             view_type: ViewType::Train,
             selected_view: None,
             last_handle: None,
+            cur_dataset: Dataset::empty(),
         }
     }
 }
@@ -48,25 +56,28 @@ impl AppPanel for DatasetPanel {
         "Dataset".to_owned()
     }
 
-    fn on_message(&mut self, message: &ProcessMessage, context: &mut AppContext) {
+    fn on_message(&mut self, message: &ProcessMessage, process: &mut dyn BrushUiProcess) {
         match message {
             ProcessMessage::NewSource => {
                 *self = Self::new();
             }
             ProcessMessage::Dataset { dataset } => {
                 if let Some(view) = dataset.train.views.first() {
-                    context.focus_view(view);
+                    process.set_camera(view.camera.clone());
+                    process.focus_view(view);
                 }
-                context.dataset = dataset.clone();
+                self.cur_dataset = dataset.clone();
             }
             _ => {}
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, context: &mut AppContext) {
-        let pick_scene = selected_scene(self.view_type, context).clone();
+    fn ui(&mut self, ui: &mut egui::Ui, process: &mut dyn BrushUiProcess) {
+        let pick_scene = selected_scene(self.view_type, &self.cur_dataset).clone();
 
-        let mut nearest_view_ind = pick_scene.get_nearest_view(context.camera.local_to_world());
+        // TODO: Read camera.
+        let mut nearest_view_ind =
+            pick_scene.get_nearest_view(process.current_camera().local_to_world());
 
         if let Some(nearest) = nearest_view_ind.as_mut() {
             // Update image if dirty.
@@ -80,7 +91,7 @@ impl AppPanel for DatasetPanel {
             }
 
             if dirty {
-                let (sender, handle) = tokio::sync::oneshot::channel();
+                let (sender, handle) = channel();
 
                 let ctx = ui.ctx().clone();
 
@@ -136,9 +147,9 @@ impl AppPanel for DatasetPanel {
                 }
 
                 if let Some(texture_handle) = &mut self.last_handle {
-                    let selected_view = selected.get_view(context);
+                    let selected_view = selected.get_view(&self.cur_dataset);
 
-                    let size = brush_ui::size_for_splat_view(ui);
+                    let size = size_for_splat_view(ui);
                     let mut size = size.floor();
                     let aspect_ratio = texture_handle.aspect_ratio();
 
@@ -152,9 +163,9 @@ impl AppPanel for DatasetPanel {
 
                     if selected_view.image.has_alpha() {
                         if selected_view.image.is_masked() {
-                            brush_ui::draw_checkerboard(ui, rect, egui::Color32::DARK_RED);
+                            draw_checkerboard(ui, rect, egui::Color32::DARK_RED);
                         } else {
-                            brush_ui::draw_checkerboard(ui, rect, egui::Color32::WHITE);
+                            draw_checkerboard(ui, rect, egui::Color32::WHITE);
                         }
                     }
 
@@ -200,7 +211,7 @@ impl AppPanel for DatasetPanel {
 
                     ui.add_space(10.0);
 
-                    if context.dataset.eval.is_some() {
+                    if self.cur_dataset.eval.is_some() {
                         for (t, l) in [ViewType::Train, ViewType::Eval]
                             .into_iter()
                             .zip(["train", "eval"])
@@ -214,12 +225,13 @@ impl AppPanel for DatasetPanel {
                     }
 
                     if interacted {
-                        context.focus_view(&pick_scene.views[*nearest]);
+                        // TODO: Focus view.
+                        process.focus_view(&pick_scene.views[*nearest]);
                     }
 
                     ui.add_space(10.0);
 
-                    let selected_view = selected.get_view(context);
+                    let selected_view = selected.get_view(&self.cur_dataset);
                     let mask_info = if selected_view.image.has_alpha() {
                         if !selected_view.image.is_masked() {
                             "rgb + alpha transparency"
@@ -242,7 +254,7 @@ impl AppPanel for DatasetPanel {
             }
         }
 
-        if context.loading() && context.training() {
+        if process.is_loading() && process.is_training() {
             ui.label("Loading...");
         }
     }

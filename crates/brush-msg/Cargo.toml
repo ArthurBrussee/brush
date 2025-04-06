@@ -36,11 +36,6 @@ tokio-stream.workspace = true
 reqwest.workspace = true
 clap.workspace = true
 
-
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-rerun.workspace = true
-brush-rerun.path = "../brush-rerun"
-
 [target.'cfg(target_family = "wasm")'.dependencies]
 web-sys.workspace = true
 

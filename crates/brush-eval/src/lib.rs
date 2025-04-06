@@ -7,6 +7,7 @@ use brush_ssim::Ssim;
 use burn::prelude::Backend;
 use burn::tensor::Tensor;
 use image::DynamicImage;
+use std::path::Path;
 
 pub struct EvalSample<B: Backend> {
     pub gt_img: DynamicImage,
@@ -54,4 +55,35 @@ pub async fn eval_stats<B: Backend + SplatForward<B>>(
         rendered: render_rgb,
         aux,
     })
+}
+
+impl<B: Backend> EvalSample<B> {
+    pub async fn save_to_disk(&self, path: &Path) -> Result<()> {
+        // TODO: FIgure out how to do this on WASM.
+        #[cfg(not(target_family = "wasm"))]
+        {
+            use image::Rgb32FImage;
+            log::info!("Saving eval image to disk.");
+
+            let img = self.rendered.clone();
+            let [h, w, _] = [img.dims()[0], img.dims()[1], img.dims()[2]];
+            let data = self
+                .rendered
+                .clone()
+                .into_data_async()
+                .await
+                .into_vec::<f32>()
+                .expect("Wrong type");
+
+            let img: DynamicImage = Rgb32FImage::from_raw(w as u32, h as u32, data)
+                .expect("Failed to create image from tensor")
+                .into();
+
+            let parent = path.parent().expect("Eval must have a filename");
+            tokio::fs::create_dir_all(parent).await?;
+            log::info!("Saving eval view to {path:?}");
+            img.save(path)?;
+        }
+        Ok(())
+    }
 }

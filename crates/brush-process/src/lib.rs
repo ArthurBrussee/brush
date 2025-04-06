@@ -1,6 +1,5 @@
 #![recursion_limit = "256"]
 
-pub mod rerun_tools;
-
-pub mod data_source;
-pub mod process_loop;
+pub mod process;
+pub mod train_stream;
+pub mod view_stream;

@@ -13,6 +13,7 @@ use brush_render::{
     MainBackend,
     gaussian_splats::{RandomSplatsConfig, Splats},
 };
+use brush_rerun::visualize_tools::VisualizeTools;
 use brush_train::train::SplatTrainer;
 
 use burn::{module::AutodiffModule, prelude::Backend};
@@ -22,8 +23,6 @@ use rand::SeedableRng;
 use tokio_stream::StreamExt;
 use web_time::{Duration, Instant};
 
-use crate::rerun_tools::VisualizeTools;
-
 pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
     process_args: ProcessArgs,
@@ -31,6 +30,8 @@ pub(crate) async fn train_stream(
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
+
+    emitter.emit(ProcessMessage::NewSource).await;
 
     log::info!("Create rerun {}", process_args.rerun_config.rerun_enabled);
     let visualize = VisualizeTools::new(process_args.rerun_config.rerun_enabled);
@@ -76,9 +77,7 @@ pub(crate) async fn train_stream(
         initial_splats = Some(message.splats);
     }
 
-    emitter
-        .emit(ProcessMessage::DoneLoading { training: true })
-        .await;
+    emitter.emit(ProcessMessage::DoneLoading).await;
 
     let splats = if let Some(splats) = initial_splats {
         splats
@@ -144,30 +143,15 @@ pub(crate) async fn train_stream(
                     psnr += sample.psnr.clone().into_scalar_async().await;
                     ssim += sample.ssim.clone().into_scalar_async().await;
 
-                    #[cfg(not(target_family = "wasm"))]
                     if process_args.process_config.eval_save_to_disk {
-                        log::info!("Saving eval image to disk.");
-
-                        let eval_render = crate::process_loop::tensor_into_image(
-                            sample.rendered.clone().into_data_async().await,
-                        );
-                        let rendered: image::DynamicImage = eval_render.into_rgb8().into();
-
                         let img_name = Path::new(&view.image.path)
                             .file_stem()
                             .expect("No file name for eval view.")
                             .to_string_lossy();
-
                         let path = Path::new(&export_path)
                             .join(format!("eval_{iter}"))
                             .join(format!("{img_name}.png"));
-
-                        let parent = path.parent().expect("Eval must have a filename");
-                        tokio::fs::create_dir_all(parent).await?;
-
-                        log::info!("Saving eval view to {path:?}");
-
-                        rendered.save(path)?;
+                        sample.save_to_disk(&path).await?;
                     }
 
                     visualize.log_eval_sample(iter, i as u32, sample).await?;

@@ -1,6 +1,5 @@
 use brush_dataset::splat_export;
 use brush_msg::ProcessMessage;
-use brush_ui::burn_texture::BurnTexture;
 use core::f32;
 use egui::{Area, epaint::mutex::RwLock as EguiRwLock};
 use std::sync::Arc;
@@ -18,8 +17,8 @@ use tracing::trace_span;
 use web_time::Instant;
 
 use crate::{
-    app::{AppContext, AppPanel},
-    running_process::ControlMessage,
+    BrushUiProcess, burn_texture::BurnTexture, draw_checkerboard, panels::AppPanel,
+    size_for_splat_view,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,7 +35,7 @@ struct ErrorDisplay {
     context: Vec<String>,
 }
 
-pub(crate) struct ScenePanel {
+pub struct ScenePanel {
     pub(crate) backbuffer: BurnTexture,
     pub(crate) last_draw: Option<Instant>,
 
@@ -78,22 +77,27 @@ impl ScenePanel {
     pub(crate) fn draw_splats(
         &mut self,
         ui: &mut egui::Ui,
-        context: &mut AppContext,
+        process: &mut dyn BrushUiProcess,
         splats: Option<Splats<MainBackend>>,
     ) -> egui::Rect {
-        let size = brush_ui::size_for_splat_view(ui);
+        let size = size_for_splat_view(ui);
 
         let mut size = size.floor();
 
-        if let Some(aspect_ratio) = context.view_aspect {
+        let mut camera = process.current_camera();
+        let view = process.selected_view();
+
+        if let Some(view) = view {
+            let aspect_ratio = view.image.aspect_ratio();
+
             if size.x / size.y > aspect_ratio {
                 size.x = size.y * aspect_ratio;
             } else {
                 size.y = size.x / aspect_ratio;
             }
         } else {
-            let focal_y = fov_to_focal(context.camera.fov_y, size.y as u32) as f32;
-            context.camera.fov_x = focal_to_fov(focal_y as f64, size.x as u32);
+            let focal_y = fov_to_focal(camera.fov_y, size.y as u32) as f32;
+            camera.fov_x = focal_to_fov(focal_y as f64, size.x as u32);
         }
         let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
 
@@ -102,13 +106,10 @@ impl ScenePanel {
             egui::Sense::drag(),
         );
 
-        context.controls.tick(&response, ui);
-
-        let camera = &mut context.camera;
+        process.controls().tick(&response, ui);
 
         // Create a camera that incorporates the model transform.
-        let total_transform = context.model_local_to_world * context.controls.local_to_world();
-
+        let total_transform = process.model_local_to_world() * process.controls().local_to_world();
         camera.position = total_transform.translation.into();
         camera.rotation = Quat::from_mat3a(&total_transform.matrix3);
 
@@ -132,19 +133,21 @@ impl ScenePanel {
             // If this viewport is re-rendering.
             if size.x > 8 && size.y > 8 && dirty {
                 let _span = trace_span!("Render splats").entered();
-                let (img, _) = splats.render(&context.camera, size, false);
+                let (img, _) = splats.render(&camera, size, false);
                 self.backbuffer.update_texture(img);
             }
         }
 
         ui.scope(|ui| {
             let mut background = false;
-            if let Some(view) = context.dataset.train.views.first() {
+
+            let view = process.selected_view();
+            if let Some(view) = view {
+                // if training views have alpha, show a background checker. Masked images
+                // should still use a black background.
                 if view.image.has_alpha() && !view.image.is_masked() {
                     background = true;
-                    // if training views have alpha, show a background checker. Masked images
-                    // should still use a black background.
-                    brush_ui::draw_checkerboard(ui, rect, Color32::WHITE);
+                    draw_checkerboard(ui, rect, Color32::WHITE);
                 }
             }
 
@@ -175,7 +178,7 @@ impl AppPanel for ScenePanel {
         "Scene".to_owned()
     }
 
-    fn on_message(&mut self, message: &ProcessMessage, context: &mut AppContext) {
+    fn on_message(&mut self, message: &ProcessMessage, context: &mut dyn BrushUiProcess) {
         match message {
             ProcessMessage::NewSource => {
                 self.view_splats = vec![];
@@ -214,7 +217,7 @@ impl AppPanel for ScenePanel {
         }
     }
 
-    fn on_error(&mut self, error: &anyhow::Error, _: &mut AppContext) {
+    fn on_error(&mut self, error: &anyhow::Error, _: &mut dyn BrushUiProcess) {
         let headline = error.to_string();
         let context = error
             .chain()
@@ -224,13 +227,14 @@ impl AppPanel for ScenePanel {
         self.err = Some(ErrorDisplay { headline, context });
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, context: &mut AppContext) {
+    fn ui(&mut self, ui: &mut egui::Ui, process: &mut dyn BrushUiProcess) {
         let cur_time = Instant::now();
 
         self.last_draw = Some(cur_time);
 
         // Empty scene, nothing to show.
-        if !context.training() && self.view_splats.is_empty() && self.err.is_none() && !self.zen {
+        if !process.is_training() && self.view_splats.is_empty() && self.err.is_none() && !self.zen
+        {
             ui.heading("Load a ply file or dataset to get started.");
             ui.add_space(5.0);
             ui.label(
@@ -295,9 +299,9 @@ For bigger training runs consider using the native app."#,
                 .floor() as usize;
 
             let splats = self.view_splats.get(frame).cloned();
-            let rect = self.draw_splats(ui, context, splats.clone());
+            let rect = self.draw_splats(ui, process, splats.clone());
 
-            if context.loading() {
+            if process.is_loading() {
                 let id = ui.auto_id_with("loading_bar");
                 Area::new(id)
                     .order(egui::Order::Foreground)
@@ -327,7 +331,7 @@ For bigger training runs consider using the native app."#,
             }
 
             ui.horizontal(|ui| {
-                if context.training() {
+                if process.is_training() {
                     ui.add_space(15.0);
 
                     let label = if self.paused {
@@ -338,7 +342,7 @@ For bigger training runs consider using the native app."#,
 
                     if ui.selectable_label(!self.paused, label).clicked() {
                         self.paused = !self.paused;
-                        context.control_message(ControlMessage::Paused(self.paused));
+                        process.set_train_paused(self.paused);
                     }
 
                     ui.add_space(15.0);

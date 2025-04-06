@@ -1,7 +1,4 @@
-use crate::{
-    app::{AppContext, AppPanel},
-    running_process::start_process,
-};
+use crate::{BrushUiProcess, panels::AppPanel};
 use brush_dataset::{LoadDataseConfig, ModelConfig};
 use brush_msg::{
     DataSource,
@@ -9,7 +6,7 @@ use brush_msg::{
 };
 use egui::Slider;
 
-pub(crate) struct SettingsPanel {
+pub struct SettingsPanel {
     args: ProcessArgs,
     url: String,
 }
@@ -35,7 +32,7 @@ impl AppPanel for SettingsPanel {
         "Settings".to_owned()
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, context: &mut AppContext) {
+    fn ui(&mut self, ui: &mut egui::Ui, process: &mut dyn BrushUiProcess) {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.heading("Model Settings");
             ui.label("Spherical Harmonics Degree:");
@@ -192,14 +189,8 @@ impl AppPanel for SettingsPanel {
                 } else {
                     DataSource::Url(self.url.clone())
                 };
-                context.connect_to(start_process(
-                    source,
-                    self.args.clone(),
-                    context.device.clone(),
-                    ui.ctx().clone(),
-                ));
+                process.start_new_process(source, self.args.clone());
             }
-
             ui.add_space(10.0);
         });
     }

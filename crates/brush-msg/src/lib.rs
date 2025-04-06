@@ -63,9 +63,7 @@ pub enum ProcessMessage {
     },
     /// Splat, or dataset and initial splat, are done loading.
     #[allow(unused)]
-    DoneLoading {
-        training: bool,
-    },
+    DoneLoading,
     /// Some number of training steps are done.
     #[allow(unused)]
     TrainStep {

@@ -24,7 +24,6 @@ burn-cubecl.workspace = true
 
 web-time.workspace = true
 
-image.workspace = true
 anyhow.workspace = true
 rand.workspace = true
 log.workspace = true
@@ -37,7 +36,6 @@ tokio-stream.workspace = true
 
 reqwest.workspace = true
 clap.workspace = true
-
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 rerun.workspace = true

@@ -4,7 +4,7 @@ use brush_render::{
     gaussian_splats::Splats,
 };
 use brush_render_bwd::burn_glue::SplatForwardDiff;
-use brush_rerun::{BurnToImage, BurnToRerun};
+use brush_rerun::burn_to_rerun::{BurnToImage, BurnToRerun};
 use burn::{
     backend::{Autodiff, Wgpu, wgpu::WgpuDevice},
     prelude::Backend,

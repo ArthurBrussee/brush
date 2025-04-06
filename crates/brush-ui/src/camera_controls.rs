@@ -27,6 +27,7 @@ pub struct CameraController {
     orbit_velocity: Vec2,
     speed_scale: f32,
 }
+
 pub fn smooth_orbit(
     position: Vec3,
     rotation: Quat,

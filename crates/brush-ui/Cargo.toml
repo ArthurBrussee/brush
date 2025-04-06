@@ -6,16 +6,46 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
-anyhow.workspace = true
+brush-msg.path = "../brush-msg"
+brush-dataset.path = "../brush-dataset"
+brush-render.path = "../brush-render"
+rrfd.path = "../rrfd"
+sync-span.path = "../sync-span"
 
+log.workspace = true
+anyhow.workspace = true
 burn.workspace = true
 burn-fusion.workspace = true
 burn-cubecl.workspace = true
-brush-render.path = "../brush-render"
+burn-wgpu.workspace = true
 glam.workspace = true
-eframe.workspace = true
 egui.workspace = true
+egui_tiles.workspace = true
+eframe.workspace = true
 wgpu.workspace = true
+urlencoding.workspace = true
+tokio_with_wasm = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+web-time.workspace = true
+humantime.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tracing-tracy = { workspace = true, optional = true }
+env_logger.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+tracing-wasm.workspace = true
+wasm-bindgen.workspace = true
+console_error_panic_hook.workspace = true
+web-sys.workspace = true
+wasm-logger.workspace = true
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+
+[features]
+tracy = ["tracing", "dep:tracing-tracy"]
+tracing = ["tracing-subscriber"]
