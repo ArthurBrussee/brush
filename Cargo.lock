@@ -826,25 +826,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "brush-android"
-version = "0.2.0"
-dependencies = [
- "android_logger",
- "brush-app",
- "brush-ui",
- "eframe",
- "egui",
- "jni",
- "log",
- "rrfd",
- "tokio",
- "winit",
-]
-
-[[package]]
 name = "brush-app"
 version = "0.2.0"
 dependencies = [
+ "android_logger",
  "anyhow",
  "brush-cli",
  "brush-dataset",
@@ -860,7 +845,10 @@ dependencies = [
  "env_logger",
  "getrandom 0.3.2",
  "glam",
+ "jni",
+ "log",
  "parking_lot",
+ "rrfd",
  "sync-span",
  "tokio",
  "tokio-stream",

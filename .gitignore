@@ -29,3 +29,15 @@ images/
 
 # Ignore bench files by now, need a better solution.
 crates/brush-bench-test/test_cases/bench_data.safetensors
+
+# Android files.
+*.iml
+.gradle
+/local.properties
+/.idea
+brush-app/build
+brush-app/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.so

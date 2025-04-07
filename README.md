@@ -62,7 +62,28 @@ This project uses [`trunk`](https://github.com/trunk-rs/trunk) to build for the 
 WebGPU is still a new standard, and as such, only the latest versions of Chrome work currently. The public web demo is registered for the [subgroups origin trial](https://chromestatus.com/feature/5126409856221184). To run it yourself, please enable the "Unsafe WebGPU support" flag in Chrome.
 
 ### Android
-See the more detailed README instructions at crates/brush-android.
+
+As a one time setup, make sure you have the Android SDK & NDK installed.
+- Check if ANDROID_NDK_HOME and ANDROID_HOME are set
+- Add the Android target to rust `rustup target add aarch64-linux-android`
+- Install cargo-ndk to manage building a lib `cargo install cargo-ndk`
+
+Each time you change the rust code, run
+- `cargo ndk -t arm64-v8a -o app/src/main/jniLibs/ build`
+- Nb:  Nb, for best performance, build in release mode. This is separate
+  from the Android Studio app build configuration.
+- `cargo ndk -t arm64-v8a -o app/src/main/jniLibs/  build --release`
+
+You can now either run the project from Android Studio (Android Studio does NOT build the rust code), or run it from the command line:
+```
+./gradlew build
+./gradlew installDebug
+adb shell am start -n com.splats.app/.MainActivity
+```
+
+You can also open this folder as a project in Android Studio and run things from there.
+
+Nb: Running in Android Studio does _not_ rebuild the rust code automatically.
 
 ## Results
 

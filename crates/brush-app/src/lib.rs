@@ -1,8 +1,13 @@
+#![recursion_limit = "256"]
 #![cfg(target_os = "android")]
 
+mod ui_process;
+
+use brush_ui::app::App;
 use jni::sys::{JNI_VERSION_1_6, jint};
 use std::os::raw::c_void;
 use std::sync::Arc;
+use ui_process::UiProcess;
 
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
@@ -14,8 +19,6 @@ pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _: *mut c_void) -> jint {
 
 #[unsafe(no_mangle)]
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
-    use winit::platform::android::EventLoopBuilderExtAndroid;
-
     let context = Arc::new(UiProcess::new());
 
     let wgpu_options = brush_ui::create_egui_options();
@@ -38,7 +41,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
                 wgpu_options,
                 ..Default::default()
             },
-            Box::new(|cc| Ok(Box::new(brush_app::App::new(cc, None, context)))),
+            Box::new(|cc| Ok(Box::new(App::new(cc, None, context)))),
         )
         .unwrap();
     });
