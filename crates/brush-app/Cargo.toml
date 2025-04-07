@@ -33,12 +33,16 @@ tokio_with_wasm = { workspace = true, features = ["rt"] }
 tokio-stream.workspace = true
 parking_lot.workspace = true
 
+tracing-subscriber = { workspace = true, optional = true }
+
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 brush-cli.path = "../brush-cli"
 clap.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 env_logger.workspace = true
+
+tracing-tracy = { workspace = true, optional = true }
 
 # Default to wayland on linux. Change this to x11 if needed.
 # this perhaps could use a feature on our side as well,
@@ -68,5 +72,5 @@ workspace = true
 
 
 [features]
-tracy = ["brush-ui/tracy"]
-tracing = ["brush-ui/tracing"]
+tracy = ["brush-ui/tracy", "dep:tracing-tracy"]
+tracing = ["brush-ui/tracing", "dep:tracing-subscriber"]

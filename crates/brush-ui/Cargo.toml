@@ -29,18 +29,14 @@ tokio = { workspace = true }
 tracing.workspace = true
 web-time.workspace = true
 humantime.workspace = true
-tracing-subscriber = { workspace = true, optional = true }
 
 [lints]
 workspace = true
-
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-tracing-tracy = { workspace = true, optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 tracing-wasm.workspace = true
 web-sys.workspace = true
 
 [features]
-tracy = ["tracing", "dep:tracing-tracy"]
-tracing = ["tracing-subscriber"]
+tracy = ["tracing"]
+tracing = []
