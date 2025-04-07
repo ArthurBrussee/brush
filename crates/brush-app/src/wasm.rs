@@ -1,12 +1,15 @@
+use crate::ui_process::UiProcess;
 use brush_process::config::ProcessArgs;
 use brush_ui::BrushUiProcess;
+use brush_ui::app::App;
 use brush_vfs::DataSource;
 use glam::Quat;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_with_wasm::alias as tokio_wasm;
 use wasm_bindgen::prelude::*;
 
-fn wasm_app(canvas_name: &str, start_uri: Option<&str>) -> anyhow::Result<Arc<UiProcess>> {
+pub fn wasm_app(canvas_name: &str, start_uri: Option<&str>) -> anyhow::Result<Arc<UiProcess>> {
     use anyhow::Context;
     use wasm_bindgen::JsCast;
 
