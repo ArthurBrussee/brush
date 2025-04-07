@@ -82,9 +82,9 @@ impl CameraSettings {
         CameraSettings(brush_ui::app::CameraSettings {
             focal,
             // TODO: Allow vecs?
-            position: glam::vec3(x, y, z),
+            init_position: glam::vec3(x, y, z),
             // TODO: How to handle rotations?
-            rotation: Quat::IDENTITY,
+            init_rotation: Quat::IDENTITY,
             focus_distance,
             speed_scale,
             // TODO: Could make this a separate JS object.
