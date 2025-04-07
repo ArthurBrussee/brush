@@ -77,7 +77,7 @@ impl<BT: BoolElement> RefineRecord<Fused<BT>> {
 }
 
 impl<B: Backend> RefineRecord<B> {
-    pub fn keep(self, indices: Tensor<B, 1, Int>) -> Self {
+    pub(crate) fn keep(self, indices: Tensor<B, 1, Int>) -> Self {
         Self {
             refine_weight_norm: self.refine_weight_norm.select(0, indices),
         }

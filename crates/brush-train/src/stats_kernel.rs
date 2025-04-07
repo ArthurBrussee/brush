@@ -3,7 +3,7 @@ use burn_cubecl::cubecl::{cube, prelude::*};
 
 #[cube(launch)]
 #[allow(clippy::useless_conversion)]
-pub fn stats_gather_kernel(
+pub(crate) fn stats_gather_kernel(
     gs_ids: &Tensor<u32>,
     num_visible: &Tensor<u32>,
     refine_weight: &Tensor<Line<f32>>,

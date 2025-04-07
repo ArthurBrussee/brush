@@ -15,14 +15,14 @@ use burn::{
 
 /// Adam optimizer as described in the paper [Adam: A Method for Stochastic Optimization](https://arxiv.org/pdf/1412.6980.pdf).
 #[derive(Clone)]
-pub struct AdamScaled {
+pub(crate) struct AdamScaled {
     momentum: AdaptiveMomentum,
     weight_decay: Option<WeightDecay>,
 }
 
 /// Adam configuration.
 #[derive(Config)]
-pub struct AdamScaledConfig {
+pub(crate) struct AdamScaledConfig {
     /// Parameter for Adam.
     #[config(default = 0.9)]
     beta_1: f32,
@@ -47,7 +47,7 @@ struct AdaptiveMomentum {
 
 /// Adam state.
 #[derive(Record, Clone)]
-pub struct AdamState<B: Backend, const D: usize> {
+pub(crate) struct AdamState<B: Backend, const D: usize> {
     /// The current adaptive momentum.
     pub momentum: Option<AdaptiveMomentumState<B, D>>,
     pub scaling: Option<Tensor<B, D>>,
@@ -55,7 +55,7 @@ pub struct AdamState<B: Backend, const D: usize> {
 
 impl AdamScaledConfig {
     /// Initialize Adam optimizer.
-    pub fn init<B: AutodiffBackend, M: AutodiffModule<B>>(
+    pub(crate) fn init<B: AutodiffBackend, M: AutodiffModule<B>>(
         &self,
     ) -> OptimizerAdaptor<AdamScaled, M, B> {
         let optim = AdamScaled {

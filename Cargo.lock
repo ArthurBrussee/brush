@@ -860,7 +860,6 @@ dependencies = [
  "env_logger",
  "getrandom 0.3.2",
  "glam",
- "log",
  "parking_lot",
  "sync-span",
  "tokio",

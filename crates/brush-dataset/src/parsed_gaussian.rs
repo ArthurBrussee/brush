@@ -1,8 +1,8 @@
+use crate::quant::{decode_quat, decode_vec_8_8_8_8, decode_vec_11_10_11};
+
 use brush_render::sh::channel_to_sh;
 use glam::{Quat, Vec3};
 use ply_rs::ply::{Property, PropertyAccess};
-
-use crate::quant::{decode_quat, decode_vec_8_8_8_8, decode_vec_11_10_11};
 
 /// A gaussian as it parsed in the ply.
 ///

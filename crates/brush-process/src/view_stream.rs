@@ -1,3 +1,5 @@
+use crate::message::ProcessMessage;
+
 use std::sync::Arc;
 
 use async_fn_stream::TryStreamEmitter;
@@ -5,8 +7,6 @@ use brush_dataset::splat_import;
 use brush_vfs::BrushVfs;
 use burn_wgpu::WgpuDevice;
 use tokio_stream::StreamExt;
-
-use crate::message::ProcessMessage;
 
 pub(crate) async fn view_stream(
     vfs: Arc<BrushVfs>,

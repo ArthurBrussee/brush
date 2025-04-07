@@ -1,3 +1,3 @@
 pub mod burn_glue;
-mod kernels;
+mod render_bwd;
 mod shaders;

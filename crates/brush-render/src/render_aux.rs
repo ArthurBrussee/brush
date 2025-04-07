@@ -51,18 +51,6 @@ impl<B: Backend> RenderAux<B> {
         let num_points = compact_gid_from_isect.dims()[0] as u32;
         let num_visible = num_visible.into_scalar().elem::<i32>();
 
-        // let [h, w] = self.final_index.dims();
-        // let [ty, tx] = [
-        //     (h as u32).div_ceil(TILE_WIDTH),
-        //     (w as u32).div_ceil(TILE_WIDTH),
-        // ];
-
-        // 'Visible' gaussians seemingly can still generate 0 intersections.
-        // assert!(
-        //     num_visible <= num_intersections,
-        //     "somehow there are more gaussian visible than intersections."
-        // );
-
         assert!(
             num_intersections >= 0 && num_intersections < INTERSECTS_UPPER_BOUND as i32,
             "Too many intersections, Brush currently can't handle this. {num_intersections} > {INTERSECTS_UPPER_BOUND}"

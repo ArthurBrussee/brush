@@ -25,7 +25,7 @@ use burn_cubecl::{BoolElement, fusion::FusionCubeRuntime};
 use burn_fusion::{Fusion, FusionHandle, client::FusionClient, stream::Operation};
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
 
-use crate::kernels::{SplatGrads, render_backward};
+use crate::render_bwd::{SplatGrads, render_backward};
 
 /// Like [`SplatForward`], but for backends that support differentiation.
 ///
@@ -86,31 +86,28 @@ pub struct GaussianBackwardState<B: Backend> {
     quats: FloatTensor<B>,
     log_scales: FloatTensor<B>,
     raw_opac: FloatTensor<B>,
-
     out_img: FloatTensor<B>,
-
     projected_splats: FloatTensor<B>,
     uniforms_buffer: IntTensor<B>,
     compact_gid_from_isect: IntTensor<B>,
     global_from_compact_gid: IntTensor<B>,
     tile_offsets: IntTensor<B>,
     final_index: IntTensor<B>,
-
     sh_degree: u32,
 }
 
 #[derive(Debug)]
 struct RenderBackwards;
 
-const NUM_ARGS: usize = 6;
+const NUM_BWD_ARGS: usize = 6;
 
 // Implement gradient registration when rendering backwards.
-impl<B: Backend + SplatBackwardOps<B>> Backward<B, NUM_ARGS> for RenderBackwards {
+impl<B: Backend + SplatBackwardOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
     type State = GaussianBackwardState<B>;
 
     fn backward(
         self,
-        ops: Ops<Self::State, NUM_ARGS>,
+        ops: Ops<Self::State, NUM_BWD_ARGS>,
         grads: &mut Gradients,
         _checkpointer: &mut Checkpointer,
     ) {

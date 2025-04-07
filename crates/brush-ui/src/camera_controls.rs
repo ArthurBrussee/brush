@@ -3,6 +3,8 @@ use core::f32;
 use egui::Response;
 use glam::{Quat, Vec2, Vec3};
 
+use crate::app::CameraSettings;
+
 #[derive(Clone, Default)]
 pub struct CameraClamping {
     pub min_focus_distance: Option<f32>,
@@ -114,22 +116,16 @@ fn smooth_clamp(val: f32, min: Option<f32>, max: Option<f32>, dt: f32, lambda: f
 }
 
 impl CameraController {
-    pub fn new(
-        position: Vec3,
-        rotation: Quat,
-        focus_distance: f32,
-        speed_scale: f32,
-        clamping: CameraClamping,
-    ) -> Self {
+    pub fn new(settings: CameraSettings) -> Self {
         Self {
-            position,
-            rotation,
+            position: settings.init_position,
+            rotation: settings.init_rotation,
             roll: Quat::IDENTITY,
             fly_velocity: Vec3::ZERO,
             orbit_velocity: Vec2::ZERO,
-            focus_distance,
-            clamping,
-            speed_scale,
+            focus_distance: settings.focus_distance,
+            clamping: settings.clamping,
+            speed_scale: settings.speed_scale,
         }
     }
 

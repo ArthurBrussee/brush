@@ -1,3 +1,7 @@
+use crate::{
+    BrushUiProcess, camera_controls::CameraClamping, datasets::DatasetPanel, panels::PaneType,
+    scene::ScenePanel, settings::SettingsPanel, stats::StatsPanel, tracing_debug::TracingPanel,
+};
 use brush_process::config::ProcessArgs;
 use brush_process::message::ProcessMessage;
 use brush_vfs::DataSource;
@@ -7,15 +11,6 @@ use egui_tiles::{Container, SimplificationOptions, Tile, TileId, Tiles};
 use glam::{Quat, Vec3};
 use std::collections::HashMap;
 use std::sync::Arc;
-
-use crate::BrushUiProcess;
-use crate::camera_controls::CameraClamping;
-use crate::datasets::DatasetPanel;
-use crate::panels::PaneType;
-use crate::scene::ScenePanel;
-use crate::settings::SettingsPanel;
-use crate::stats::StatsPanel;
-use crate::tracing_debug::TracingPanel;
 
 fn parse_search(search: &str) -> HashMap<String, String> {
     let mut params = HashMap::new();
@@ -76,8 +71,8 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
 #[derive(Clone)]
 pub struct CameraSettings {
     pub focal: f64,
-    pub position: Vec3,
-    pub rotation: Quat,
+    pub init_position: Vec3,
+    pub init_rotation: Quat,
     pub focus_distance: f32,
     pub speed_scale: f32,
     pub clamping: CameraClamping,
@@ -87,8 +82,8 @@ impl Default for CameraSettings {
     fn default() -> Self {
         Self {
             focal: 0.8,
-            position: -Vec3::Z * 2.5,
-            rotation: Quat::IDENTITY,
+            init_position: -Vec3::Z * 2.5,
+            init_rotation: Quat::IDENTITY,
             focus_distance: 4.0,
             speed_scale: 1.0,
             clamping: CameraClamping::default(),
@@ -193,8 +188,8 @@ impl App {
             .unwrap_or(1.0);
         context.set_cam_settings(CameraSettings {
             focal,
-            position,
-            rotation,
+            init_position: position,
+            init_rotation: rotation,
             focus_distance,
             speed_scale,
             clamping: Default::default(),

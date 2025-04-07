@@ -93,13 +93,7 @@ impl BrushUiProcess for UiProcess {
 
     fn set_cam_settings(&self, settings: CameraSettings) {
         let mut inner = self.inner.write();
-        inner.controls = CameraController::new(
-            settings.position,
-            settings.rotation,
-            settings.focus_distance,
-            settings.speed_scale,
-            settings.clamping.clone(),
-        );
+        inner.controls = CameraController::new(CameraSettings::default());
         inner.cam_settings = settings;
         let cam = inner.camera.clone();
         inner.match_controls_to(&cam);
@@ -283,13 +277,7 @@ struct UiProcessInner {
 impl UiProcessInner {
     pub fn new() -> Self {
         let cam_settings = CameraSettings::default();
-        let controls = CameraController::new(
-            cam_settings.position,
-            cam_settings.rotation,
-            cam_settings.focus_distance,
-            cam_settings.speed_scale,
-            cam_settings.clamping.clone(),
-        );
+        let controls = CameraController::new(CameraSettings::default());
 
         // Camera position will be controlled by the orbit controls.
         let camera = Camera::new(

@@ -1,3 +1,13 @@
+use crate::{
+    adam_scaled::{AdamScaled, AdamScaledConfig, AdamState},
+    config::TrainConfig,
+    msg::{RefineStats, TrainStepStats},
+    multinomial::multinomial_sample,
+    quat_vec::quaternion_vec_multiply,
+    ssim::Ssim,
+    stats::RefineRecord,
+};
+
 use brush_dataset::scene::SceneBatch;
 use brush_render::sh::sh_coeffs_for_degree;
 use brush_render::{
@@ -27,14 +37,6 @@ use hashbrown::{HashMap, HashSet};
 use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
-use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
-use crate::config::TrainConfig;
-use crate::msg::{RefineStats, TrainStepStats};
-use crate::multinomial::multinomial_sample;
-use crate::quat_vec::quaternion_vec_multiply;
-use crate::ssim::Ssim;
-use crate::stats::RefineRecord;
-
 const MIN_OPACITY: f32 = 0.9 / 255.0;
 
 type OptimizerType =
@@ -49,7 +51,7 @@ pub struct SplatTrainer {
     optim: Option<OptimizerType>,
 }
 
-pub fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
+fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
     (x.clone() / (-x + 1.0)).log()
 }
 

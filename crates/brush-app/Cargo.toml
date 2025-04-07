@@ -26,7 +26,6 @@ glam.workspace = true
 
 egui.workspace = true
 eframe.workspace = true
-log.workspace = true
 
 anyhow.workspace = true
 tracing.workspace = true
@@ -55,6 +54,7 @@ tracing-wasm.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt"] }
 wasm-bindgen.workspace = true
 web-sys.workspace = true
+# wasm_js random backend needs to be enabled explicitly.
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [package.metadata.wasm-pack.profile.release.wasm-bindgen]

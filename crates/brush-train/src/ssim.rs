@@ -1,6 +1,6 @@
 use burn::tensor::{Tensor, backend::Backend, module::conv2d, ops::ConvOptions};
 
-pub struct Ssim<B: Backend> {
+pub(crate) struct Ssim<B: Backend> {
     weights_1d_v: Tensor<B, 4>,
 }
 

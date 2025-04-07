@@ -88,7 +88,6 @@ impl DataSource {
             }
             Self::Url(url) => {
                 let mut url = url.clone();
-
                 url = url.replace("https://", "");
 
                 if url.starts_with("https://") || url.starts_with("http://") {
@@ -104,7 +103,6 @@ impl DataSource {
                             .expect("Coultn't figure out origin")
                             + &url;
                     }
-
                     // On non-wasm... not much we can do here, what server would we ask?
                 } else {
                     // Just try to add https:// and hope for the best. Eg. if someone specifies google.com/splat.ply.

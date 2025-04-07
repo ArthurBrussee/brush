@@ -1,11 +1,11 @@
 use super::DataStream;
 use super::find_mask_path;
-use crate::Dataset;
-use crate::config::LoadDataseConfig;
-use crate::scene::LoadImage;
-use crate::scene::SceneView;
-use crate::splat_import::SplatMessage;
-use crate::splat_import::load_splat_from_ply;
+use crate::{
+    Dataset,
+    config::LoadDataseConfig,
+    scene::{LoadImage, SceneView},
+    splat_import::{SplatMessage, load_splat_from_ply},
+};
 use anyhow::Result;
 use async_fn_stream::try_fn_stream;
 use brush_render::camera::fov_to_focal;
