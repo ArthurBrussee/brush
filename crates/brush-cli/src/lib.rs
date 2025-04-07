@@ -161,6 +161,7 @@ pub async fn process_ui(
             ProcessMessage::DoneLoading => {
                 log::info!("Dataset loaded.");
                 main_spinner.set_message("Dataset loaded");
+                stats_spinner.set_message("Done loading");
             }
             ProcessMessage::TrainStep {
                 iter,
