@@ -4,14 +4,13 @@
 use std::sync::Arc;
 
 use brush_dataset::scene::{SceneBatch, sample_to_tensor};
-use brush_msg::config::TrainConfig;
 use brush_render::{
     MainBackend,
     bounding_box::BoundingBox,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::{RandomSplatsConfig, Splats},
 };
-use brush_train::train::SplatTrainer;
+use brush_train::{config::TrainConfig, train::SplatTrainer};
 use brush_ui::burn_texture::BurnTexture;
 use burn::{backend::wgpu::WgpuDevice, module::AutodiffModule, prelude::Backend};
 use egui::{ImageSource, TextureHandle, TextureOptions, load::SizedTexture};

@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use brush_render::{bounding_box::BoundingBox, camera::Camera};
+use brush_vfs::BrushVfs;
 use burn::{
     prelude::Backend,
     tensor::{Tensor, TensorData},
@@ -8,8 +9,6 @@ use glam::{Affine3A, Vec3, vec3};
 use image::{ColorType, DynamicImage, ImageDecoder, ImageReader};
 use std::{io::Cursor, path::PathBuf, sync::Arc};
 use tokio::io::{AsyncRead, AsyncReadExt};
-
-use crate::brush_vfs::BrushVfs;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ViewType {

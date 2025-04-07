@@ -3,7 +3,7 @@ use brush_dataset::{
     Dataset,
     scene::{Scene, SceneView, ViewType},
 };
-use brush_msg::ProcessMessage;
+use brush_process::message::ProcessMessage;
 use egui::{Color32, Slider, TextureHandle, TextureOptions, pos2};
 use tokio::sync::oneshot::{Receiver, channel};
 

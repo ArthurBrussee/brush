@@ -1,4 +1,4 @@
-use brush_msg::ProcessMessage;
+use brush_process::message::ProcessMessage;
 
 use crate::BrushUiProcess;
 

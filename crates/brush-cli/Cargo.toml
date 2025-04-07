@@ -8,10 +8,10 @@ license.workspace = true
 [dependencies]
 indicatif.workspace = true
 clap.workspace = true
-brush-msg.path = "../brush-msg"
+brush-process.path = "../brush-process"
+brush-vfs.path = "../brush-vfs"
 
 tokio-stream.workspace = true
-burn-wgpu.workspace = true
 humantime.workspace = true
 log.workspace = true
 anyhow.workspace = true

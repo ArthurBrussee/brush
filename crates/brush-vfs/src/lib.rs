@@ -1,4 +1,5 @@
-//
+mod data_source;
+
 // This class helps working with an archive as a somewhat more regular filesystem.
 //
 // [1] really we want to just read directories.
@@ -23,7 +24,21 @@ use zip::{
     result::{ZipError, ZipResult},
 };
 
-use crate::WasmNotSend;
+// On wasm, lots of things aren't Send that are send on non-wasm.
+// Non-wasm tokio requires :Send for futures, tokio_with_wasm doesn't.
+// So, it can help to annotate futures/objects as send only on not-wasm.
+#[cfg(target_family = "wasm")]
+mod wasm_send {
+    pub trait WasmNotSend {}
+    impl<T> WasmNotSend for T {}
+}
+#[cfg(not(target_family = "wasm"))]
+mod wasm_send {
+    pub trait WasmNotSend: Send {}
+    impl<T: Send> WasmNotSend for T {}
+}
+pub use data_source::DataSource;
+pub use wasm_send::*;
 
 pub trait DynRead: AsyncRead + WasmNotSend + Unpin {}
 impl<T: AsyncRead + WasmNotSend + Unpin> DynRead for T {}

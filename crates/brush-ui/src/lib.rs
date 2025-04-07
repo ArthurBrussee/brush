@@ -8,8 +8,9 @@ use std::sync::Arc;
 
 use app::CameraSettings;
 use brush_dataset::scene::SceneView;
-use brush_msg::{DataSource, ProcessMessage, config::ProcessArgs};
+use brush_process::{config::ProcessArgs, message::ProcessMessage};
 use brush_render::camera::Camera;
+use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use eframe::egui_wgpu::WgpuConfiguration;
 use egui::Response;

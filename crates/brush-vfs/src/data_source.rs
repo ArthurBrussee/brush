@@ -1,92 +1,14 @@
-pub mod config;
-
-use std::str::FromStr;
-
-use brush_dataset::Dataset;
-use brush_render::{MainBackend, gaussian_splats::Splats};
-use burn::{
-    prelude::Backend,
-    tensor::{Int, Tensor},
-};
-use glam::Vec3;
-use std::io::Cursor;
-use std::path::{Path, PathBuf};
-use web_time::Duration;
-
+use crate::{BrushVfs, PathReader, WasmNotSend};
 use anyhow::anyhow;
-
-use brush_dataset::WasmNotSend;
-use brush_dataset::brush_vfs::{BrushVfs, PathReader};
-use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
+use std::{
+    io::Cursor,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, BufReader};
 use tokio_stream::StreamExt;
 use tokio_util::io::StreamReader;
-
-#[derive(Clone)]
-pub struct RefineStats {
-    pub num_added: u32,
-    pub num_pruned: u32,
-}
-
-#[derive(Clone)]
-pub struct TrainStepStats<B: Backend> {
-    pub pred_image: Tensor<B, 3>,
-
-    pub num_intersections: Tensor<B, 1, Int>,
-    pub num_visible: Tensor<B, 1, Int>,
-    pub loss: Tensor<B, 1>,
-
-    pub lr_mean: f64,
-    pub lr_rotation: f64,
-    pub lr_scale: f64,
-    pub lr_coeffs: f64,
-    pub lr_opac: f64,
-}
-
-pub enum ProcessMessage {
-    NewSource,
-    StartLoading {
-        training: bool,
-    },
-    /// Loaded a splat from a ply file.
-    ///
-    /// Nb: This includes all the intermediately loaded splats.
-    /// Nb: Animated splats will have the 'frame' number set.
-    ViewSplats {
-        up_axis: Option<Vec3>,
-        splats: Box<Splats<MainBackend>>,
-        frame: u32,
-        total_frames: u32,
-    },
-    /// Loaded a bunch of viewpoints to train on.
-    Dataset {
-        dataset: Dataset,
-    },
-    /// Splat, or dataset and initial splat, are done loading.
-    #[allow(unused)]
-    DoneLoading,
-    /// Some number of training steps are done.
-    #[allow(unused)]
-    TrainStep {
-        splats: Box<Splats<MainBackend>>,
-        stats: Box<TrainStepStats<MainBackend>>,
-        iter: u32,
-        total_elapsed: Duration,
-    },
-    /// Some number of training steps are done.
-    #[allow(unused)]
-    RefineStep {
-        stats: Box<RefineStats>,
-        cur_splat_count: u32,
-        iter: u32,
-    },
-    /// Eval was run successfully with these results.
-    #[allow(unused)]
-    EvalResult {
-        iter: u32,
-        avg_psnr: f32,
-        avg_ssim: f32,
-    },
-}
 
 #[derive(Clone, Debug)]
 pub enum DataSource {
@@ -131,7 +53,7 @@ impl DataSource {
         // and add them at the start again.
         let mut data = BufReader::new(reader);
         let peek = read_at_most(&mut data, 64).await?;
-        let reader = std::io::Cursor::new(peek.clone()).chain(data);
+        let reader = Cursor::new(peek.clone()).chain(data);
 
         if peek.as_slice().starts_with(b"ply") {
             let mut path_reader = PathReader::default();

@@ -1,10 +1,10 @@
 #![recursion_limit = "256"]
 
-use std::time::Duration;
-
-use brush_msg::{DataSource, ProcessMessage, config::ProcessArgs};
+use brush_process::{config::ProcessArgs, message::ProcessMessage};
+use brush_vfs::DataSource;
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
 use indicatif::{ProgressBar, ProgressStyle};
+use std::time::Duration;
 use tokio_stream::{Stream, StreamExt};
 
 #[derive(Parser)]

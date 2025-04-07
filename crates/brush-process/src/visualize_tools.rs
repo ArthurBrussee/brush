@@ -10,10 +10,10 @@ mod visualize_tools_impl {
     use std::sync::Arc;
 
     use brush_dataset::scene::Scene;
-    use brush_eval::EvalSample;
-    use brush_msg::{RefineStats, TrainStepStats};
     use brush_render::gaussian_splats::Splats;
     use brush_render::shaders::project_visible::SH_C0;
+    use brush_train::eval::EvalSample;
+    use brush_train::msg::{RefineStats, TrainStepStats};
     use burn::prelude::Backend;
     use burn::tensor::backend::AutodiffBackend;
     use burn::tensor::{DType, TensorData};
@@ -22,8 +22,8 @@ mod visualize_tools_impl {
     use anyhow::Result;
 
     use burn_cubecl::cubecl::MemoryUsage;
-    use rerun::external::glam;
     use rerun::external::image::{Rgb32FImage, Rgba32FImage};
+    use rerun::external::{glam, image};
 
     use super::VisualizeTools;
 
@@ -286,20 +286,19 @@ mod visualize_tools_impl {
         pub fn log_refine_stats(&self, iter: u32, refine: &RefineStats) -> Result<()> {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
-                let _ = self.rec.log(
+                self.rec.log(
                     "refine/num_added",
                     &rerun::Scalar::new(refine.num_added as f64),
-                );
-                let _ = self.rec.log(
+                )?;
+                self.rec.log(
                     "refine/num_pruned",
                     &rerun::Scalar::new(refine.num_pruned as f64),
-                );
-                let _ = self.rec.log(
+                )?;
+                self.rec.log(
                     "refine/effective_growth",
                     &rerun::Scalar::new(refine.num_added as f64 - refine.num_pruned as f64),
-                );
+                )?;
             }
-
             Ok(())
         }
 
@@ -307,22 +306,21 @@ mod visualize_tools_impl {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
 
-                let _ = self.rec.log(
+                self.rec.log(
                     "memory/used",
                     &rerun::Scalar::new(memory.bytes_in_use as f64),
-                );
+                )?;
 
-                let _ = self.rec.log(
+                self.rec.log(
                     "memory/reserved",
                     &rerun::Scalar::new(memory.bytes_reserved as f64),
-                );
+                )?;
 
-                let _ = self.rec.log(
+                self.rec.log(
                     "memory/allocs",
                     &rerun::Scalar::new(memory.number_allocs as f64),
-                );
+                )?;
             }
-
             Ok(())
         }
     }
@@ -333,9 +331,9 @@ mod visualize_tools_impl {
     use std::sync::Arc;
 
     use brush_dataset::scene::Scene;
-    use brush_eval::EvalSample;
-    use brush_msg::{RefineStats, TrainStepStats};
     use brush_render::gaussian_splats::Splats;
+    use brush_train::eval::EvalSample;
+    use brush_train::msg::{RefineStats, TrainStepStats};
     use burn::prelude::Backend;
     use burn::tensor::backend::AutodiffBackend;
     use burn::tensor::{DType, TensorData};

@@ -1,5 +1,5 @@
 use brush_dataset::splat_export;
-use brush_msg::ProcessMessage;
+use brush_process::message::ProcessMessage;
 use core::f32;
 use egui::{Area, epaint::mutex::RwLock as EguiRwLock};
 use std::sync::Arc;

@@ -7,12 +7,12 @@ license.workspace = true
 
 [dependencies]
 brush-render.path = "../brush-render"
+brush-vfs.path = "../brush-vfs"
 colmap-reader.path = "../colmap-reader"
 anyhow.workspace = true
 image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-zip.workspace = true
 glam.workspace = true
 burn.workspace = true
 tracing.workspace = true

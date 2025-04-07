@@ -16,15 +16,13 @@ pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _: *mut c_void) -> jint {
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
     use winit::platform::android::EventLoopBuilderExtAndroid;
 
+    let context = Arc::new(UiProcess::new());
+
     let wgpu_options = brush_ui::create_egui_options();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
-
-    // Unused.
-    #[allow(unused)]
-    let (send, rec) = tokio::sync::oneshot::channel();
 
     runtime.block_on(async {
         android_logger::init_once(
@@ -40,7 +38,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
                 wgpu_options,
                 ..Default::default()
             },
-            Box::new(|cc| Ok(Box::new(brush_app::App::new(cc, send, None)))),
+            Box::new(|cc| Ok(Box::new(brush_app::App::new(cc, None, context)))),
         )
         .unwrap();
     });

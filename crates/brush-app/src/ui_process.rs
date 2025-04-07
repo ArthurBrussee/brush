@@ -1,14 +1,12 @@
 use anyhow::Result;
 use brush_dataset::{Dataset, scene::SceneView};
-use brush_msg::{DataSource, config::ProcessArgs};
+use brush_process::{config::ProcessArgs, message::ProcessMessage, process::process_stream};
 use brush_render::camera::Camera;
 use brush_ui::{BrushUiProcess, app::CameraSettings, camera_controls::CameraController};
+use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use egui::Response;
 use glam::{Affine3A, Quat, Vec3};
-
-use brush_msg::ProcessMessage;
-use brush_process::process::process_stream;
 use parking_lot::RwLock;
 use tokio::sync;
 use tokio_stream::StreamExt;
@@ -47,27 +45,27 @@ impl UiProcess {
 
 impl BrushUiProcess for UiProcess {
     fn is_loading(&self) -> bool {
-        self.inner.read().is_loading()
+        self.inner.read().is_loading
     }
 
     fn is_training(&self) -> bool {
-        self.inner.read().is_training()
+        self.inner.read().is_training
     }
 
     fn tick_controls(&self, response: &Response, ui: &egui::Ui) {
-        self.inner.write().tick_controls(response, ui);
+        self.inner.write().controls.tick(response, ui);
     }
 
     fn model_local_to_world(&self) -> glam::Affine3A {
-        self.inner.read().model_local_to_world()
+        self.inner.read().model_local_to_world
     }
 
     fn current_camera(&self) -> Camera {
-        self.inner.read().current_camera()
+        self.inner.read().camera.clone()
     }
 
     fn selected_view(&self) -> Option<SceneView> {
-        self.inner.read().selected_view()
+        self.inner.read().selected_view.clone()
     }
 
     fn set_train_paused(&self, paused: bool) {
@@ -104,9 +102,9 @@ impl BrushUiProcess for UiProcess {
 }
 
 struct UiProcessInner {
-    loading: bool,
-    training: bool,
     dataset: Dataset,
+    is_loading: bool,
+    is_training: bool,
     camera: Camera,
     view_aspect: Option<f32>,
     controls: CameraController,
@@ -143,9 +141,9 @@ impl UiProcessInner {
             controls,
             model_local_to_world: model_transform,
             view_aspect: None,
-            loading: false,
-            training: false,
             dataset: Dataset::empty(),
+            is_loading: false,
+            is_training: false,
             selected_view: None,
             running_process: None,
             cam_settings,
@@ -159,30 +157,6 @@ impl UiProcessInner {
         let transform = self.model_local_to_world.inverse() * cam.local_to_world();
         self.controls.position = transform.translation.into();
         self.controls.rotation = Quat::from_mat3a(&transform.matrix3);
-    }
-
-    fn is_loading(&self) -> bool {
-        self.loading
-    }
-
-    fn is_training(&self) -> bool {
-        self.training
-    }
-
-    fn tick_controls(&mut self, response: &Response, ui: &egui::Ui) {
-        self.controls.tick(response, ui);
-    }
-
-    fn model_local_to_world(&self) -> glam::Affine3A {
-        self.model_local_to_world
-    }
-
-    fn current_camera(&self) -> Camera {
-        self.camera.clone()
-    }
-
-    fn selected_view(&self) -> Option<SceneView> {
-        self.selected_view.clone()
     }
 
     fn set_train_paused(&self, paused: bool) {
@@ -218,6 +192,7 @@ impl UiProcessInner {
         } else {
             self.controls.focus_distance = self.cam_settings.focus_distance;
         }
+        self.controls.focus_distance = self.cam_settings.focus_distance;
     }
 
     fn set_model_up(&mut self, up_axis: Vec3) {
@@ -235,6 +210,7 @@ impl UiProcessInner {
         self.cur_device_ctx = Some(ctx.clone());
 
         log::info!("Connecting to device ctx");
+
         #[cfg(feature = "tracing")]
         {
             // TODO: In debug only?
@@ -280,15 +256,11 @@ impl UiProcessInner {
         let (send_dev, rec_rev) = sync::oneshot::channel::<DeviceContext>();
 
         tokio_with_wasm::alias::task::spawn(async move {
-            log::info!("Waiting for device to run process on");
-
             // Wait for device & gui ctx to be available.
             let Ok(device_ctx) = rec_rev.await else {
                 // Closed before we could start the process
                 return;
             };
-
-            log::info!("Got device to run process on");
 
             let stream = process_stream(source, args, device_ctx.device);
             let mut stream = std::pin::pin!(stream);
@@ -327,8 +299,6 @@ impl UiProcessInner {
         });
 
         if let Some(ctx) = &self.cur_device_ctx {
-            log::info!("Running on existing connection");
-
             send_dev
                 .send(ctx.clone())
                 .expect("Failed to send device context");
@@ -354,15 +324,14 @@ impl UiProcessInner {
             // Keep track of things the ui process needs.
             match msg.as_ref() {
                 Ok(ProcessMessage::Dataset { dataset }) => {
-                    self.dataset = dataset.clone();
-                    self.selected_view = self.dataset.train.views.last().cloned();
+                    self.selected_view = dataset.train.views.last().cloned();
                 }
                 Ok(ProcessMessage::StartLoading { training }) => {
-                    self.training = *training;
-                    self.loading = true;
+                    self.is_training = *training;
+                    self.is_loading = true;
                 }
                 Ok(ProcessMessage::DoneLoading) => {
-                    self.loading = false;
+                    self.is_loading = false;
                 }
                 _ => (),
             }

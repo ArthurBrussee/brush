@@ -1,12 +1,10 @@
 use brush_dataset::scene::SceneBatch;
-use brush_msg::{RefineStats, TrainStepStats, config::TrainConfig};
 use brush_render::sh::sh_coeffs_for_degree;
 use brush_render::{
     MainBackend,
     gaussian_splats::{Splats, inverse_sigmoid},
 };
 use brush_render_bwd::burn_glue::SplatForwardDiff;
-use brush_ssim::Ssim;
 use burn::{
     backend::{
         Autodiff,
@@ -30,8 +28,11 @@ use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
 use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};
+use crate::config::TrainConfig;
+use crate::msg::{RefineStats, TrainStepStats};
 use crate::multinomial::multinomial_sample;
 use crate::quat_vec::quaternion_vec_multiply;
+use crate::ssim::Ssim;
 use crate::stats::RefineRecord;
 
 const MIN_OPACITY: f32 = 0.9 / 255.0;
@@ -206,26 +207,21 @@ impl SplatTrainer {
                     GradientsParams::from_params(&mut grads, &splats, &[splats.rotation.id]);
                 optimizer.step(lr_rotation, splats, grad_rot)
             });
-
             splats = trace_span!("Scale step", sync_burn = true).in_scope(|| {
                 let grad_scale =
                     GradientsParams::from_params(&mut grads, &splats, &[splats.log_scales.id]);
                 optimizer.step(lr_scale, splats, grad_scale)
             });
-
             splats = trace_span!("Mean step", sync_burn = true).in_scope(|| {
                 let grad_means =
                     GradientsParams::from_params(&mut grads, &splats, &[splats.means.id]);
                 optimizer.step(lr_mean, splats, grad_means)
             });
-
             splats = trace_span!("Opacity step", sync_burn = true).in_scope(|| {
                 let grad_opac =
                     GradientsParams::from_params(&mut grads, &splats, &[splats.raw_opacity.id]);
                 optimizer.step(lr_opac, splats, grad_opac)
             });
-
-            // Make sure rotations are still valid after optimization step.
             splats
         });
 

@@ -5,8 +5,8 @@ use std::{
 
 use super::DataStream;
 use crate::{
-    Dataset, LoadDataseConfig,
-    brush_vfs::BrushVfs,
+    Dataset,
+    config::LoadDataseConfig,
     formats::find_mask_path,
     scene::{LoadImage, SceneView},
     splat_import::SplatMessage,
@@ -18,6 +18,7 @@ use brush_render::{
     gaussian_splats::Splats,
     sh::rgb_to_sh,
 };
+use brush_vfs::BrushVfs;
 use burn::prelude::Backend;
 use glam::Vec3;
 use std::collections::HashMap;

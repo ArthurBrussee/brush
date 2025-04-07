@@ -55,8 +55,6 @@ tracing-wasm = "0.2.1"
 async-fn-stream = "0.2.2"
 miette = { version = "7.4.0", features = ["fancy"] }
 cfg-if = "1.0.0"
-console_error_panic_hook = "0.1.7"
-
 assert_approx_eq = "1.1.0"
 safetensors = "0.5.3"
 log = "0.4.22"
@@ -102,7 +100,6 @@ web-sys = { version = "0.3.74", features = [
     "Location",
     "UrlSearchParams",
 ] }
-wasm-logger = "0.2.0"
 zip = { version = "2.2.1", default-features = false, features = ["deflate"] }
 urlencoding = "2.1"
 hashbrown = "0.15"

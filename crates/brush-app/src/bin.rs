@@ -2,9 +2,8 @@
 
 mod ui_process;
 
-use std::sync::Arc;
-
 use brush_ui::app::App;
+use std::sync::Arc;
 
 #[allow(clippy::unnecessary_wraps)] // Error isn't need on wasm but that's ok.
 fn main() -> Result<(), anyhow::Error> {
@@ -127,9 +126,9 @@ fn wasm_app(canvas_name: &str, start_uri: Option<&str>) -> anyhow::Result<Arc<Ui
 #[cfg(target_family = "wasm")]
 mod embedded {
     use super::wasm_app;
-    use brush_msg::DataSource;
-    use brush_msg::config::ProcessArgs;
+    use brush_process::config::ProcessArgs;
     use brush_ui::BrushUiProcess;
+    use brush_vfs::DataSource;
     use glam::Quat;
     use tokio::sync::mpsc::UnboundedSender;
     use tokio_with_wasm::alias as tokio_wasm;

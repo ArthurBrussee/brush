@@ -1,9 +1,6 @@
 use crate::{BrushUiProcess, panels::AppPanel};
-use brush_dataset::{LoadDataseConfig, ModelConfig};
-use brush_msg::{
-    DataSource,
-    config::{ProcessArgs, ProcessConfig, RerunConfig, TrainConfig},
-};
+use brush_process::config::ProcessArgs;
+use brush_vfs::DataSource;
 use egui::Slider;
 
 pub struct SettingsPanel {
@@ -15,13 +12,7 @@ impl SettingsPanel {
     pub(crate) fn new() -> Self {
         Self {
             // Nb: Important to just start with the default values here, so CLI and UI match defaults.
-            args: ProcessArgs::new(
-                TrainConfig::new(),
-                ModelConfig::new(),
-                LoadDataseConfig::new(),
-                ProcessConfig::new(),
-                RerunConfig::new(),
-            ),
+            args: ProcessArgs::default(),
             url: "splat.com/example.ply".to_owned(),
         }
     }

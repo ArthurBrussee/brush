@@ -1,9 +1,10 @@
 use crate::{
-    Dataset, LoadDataseConfig, WasmNotSend,
-    brush_vfs::BrushVfs,
+    Dataset,
+    config::LoadDataseConfig,
     splat_import::{SplatMessage, load_splat_from_ply},
 };
 use anyhow::Context;
+use brush_vfs::{BrushVfs, WasmNotSend};
 use burn::prelude::Backend;
 use path_clean::PathClean;
 use std::{

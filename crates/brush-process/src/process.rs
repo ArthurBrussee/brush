@@ -1,14 +1,17 @@
 use std::sync::Arc;
 
 use async_fn_stream::try_fn_stream;
-use brush_msg::{DataSource, ProcessMessage, config::ProcessArgs};
+use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use tokio_stream::Stream;
 
 #[allow(unused)]
 use brush_dataset::splat_export;
 
-use crate::{train_stream::train_stream, view_stream::view_stream};
+use crate::{
+    config::ProcessArgs, message::ProcessMessage, train_stream::train_stream,
+    view_stream::view_stream,
+};
 
 pub fn process_stream(
     source: DataSource,

@@ -1,5 +1,6 @@
-use brush_msg::config::ProcessArgs;
-use brush_msg::{DataSource, ProcessMessage};
+use brush_process::config::ProcessArgs;
+use brush_process::message::ProcessMessage;
+use brush_vfs::DataSource;
 use eframe::egui;
 use egui::ThemePreference;
 use egui_tiles::{Container, SimplificationOptions, Tile, TileId, Tiles};

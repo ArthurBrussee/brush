@@ -6,9 +6,10 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
-brush-msg.path = "../brush-msg"
 brush-dataset.path = "../brush-dataset"
 brush-render.path = "../brush-render"
+brush-vfs.path = "../brush-vfs"
+brush-process.path = "../brush-process"
 rrfd.path = "../rrfd"
 sync-span.path = "../sync-span"
 
@@ -34,7 +35,6 @@ humantime.workspace = true
 workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-tracing-wasm.workspace = true
 web-sys.workspace = true
 
 [features]

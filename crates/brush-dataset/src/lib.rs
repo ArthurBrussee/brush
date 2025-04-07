@@ -1,48 +1,19 @@
-mod formats;
-mod parsed_gaussian;
-mod quant;
-
-pub mod brush_vfs;
+pub mod config;
 pub mod scene;
 pub mod scene_loader;
 pub mod splat_export;
 pub mod splat_import;
 
-use burn::config::Config;
-use clap::Args;
-use core::f32;
+mod formats;
+mod parsed_gaussian;
+mod quant;
+
 pub use formats::load_dataset;
+
+use core::f32;
 use glam::{Mat3, Mat4, Vec3};
 use scene::Scene;
 use scene::SceneView;
-
-#[derive(Config, Debug, Args)]
-pub struct LoadDataseConfig {
-    /// Max nr. of frames of dataset to load
-    #[arg(long, help_heading = "Dataset Options")]
-    pub max_frames: Option<usize>,
-    /// Max resolution of images to load.
-    #[arg(long, help_heading = "Dataset Options", default_value = "1920")]
-    #[config(default = 1920)]
-    pub max_resolution: u32,
-    /// Create an eval dataset by selecting every nth image
-    #[arg(long, help_heading = "Dataset Options")]
-    pub eval_split_every: Option<usize>,
-    /// Load only every nth frame
-    #[arg(long, help_heading = "Dataset Options")]
-    pub subsample_frames: Option<u32>,
-    /// Load only every nth point from the initial sfm data
-    #[arg(long, help_heading = "Dataset Options")]
-    pub subsample_points: Option<u32>,
-}
-
-#[derive(Config, Debug, Args)]
-pub struct ModelConfig {
-    /// SH degree of splats.
-    #[arg(long, help_heading = "Model Options", default_value = "3")]
-    #[config(default = 3)]
-    pub sh_degree: u32,
-}
 
 fn solve_cubic(a: f32, b: f32, c: f32, d: f32) -> (f32, f32, f32) {
     // Convert to depressed cubic t^3 + pt + q = 0
@@ -213,20 +184,3 @@ impl Dataset {
         Vec3::new(-transform.col(0).z, -transform.col(1).z, transform.col(2).z)
     }
 }
-
-// On wasm, lots of things aren't Send that are send on non-wasm.
-// Non-wasm tokio requires :Send for futures, tokio_with_wasm doesn't.
-// So, it can help to annotate futures/objects as send only on not-wasm.
-#[cfg(target_family = "wasm")]
-mod wasm_send {
-    pub trait WasmNotSend {}
-    impl<T> WasmNotSend for T {}
-}
-
-#[cfg(not(target_family = "wasm"))]
-mod wasm_send {
-    pub trait WasmNotSend: Send {}
-    impl<T: Send> WasmNotSend for T {}
-}
-
-pub use wasm_send::*;

@@ -10,9 +10,10 @@ brush-render.path = "../brush-render"
 brush-kernel.path = "../brush-kernel"
 brush-dataset.path = "../brush-dataset"
 brush-render-bwd.path = "../brush-render-bwd"
-brush-msg.path = "../brush-msg"
-brush-ssim.path = "../brush-ssim"
 
+anyhow.workspace = true
+image.workspace = true
+clap.workspace = true
 glam.workspace = true
 rand.workspace = true
 tracing.workspace = true

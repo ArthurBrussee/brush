@@ -1,8 +1,7 @@
 use super::DataStream;
 use super::find_mask_path;
 use crate::Dataset;
-use crate::LoadDataseConfig;
-use crate::brush_vfs::BrushVfs;
+use crate::config::LoadDataseConfig;
 use crate::scene::LoadImage;
 use crate::scene::SceneView;
 use crate::splat_import::SplatMessage;
@@ -11,6 +10,7 @@ use anyhow::Result;
 use async_fn_stream::try_fn_stream;
 use brush_render::camera::fov_to_focal;
 use brush_render::camera::{Camera, focal_to_fov};
+use brush_vfs::BrushVfs;
 use burn::prelude::Backend;
 use std::path::Path;
 use std::sync::Arc;

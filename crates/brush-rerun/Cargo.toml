@@ -5,18 +5,9 @@ version.workspace = true
 readme.workspace = true
 license.workspace = true
 
-[dependencies]
-brush-render.path = "../brush-render"
-brush-eval.path = "../brush-eval"
-brush-dataset.path = "../brush-dataset"
-brush-msg.path = "../brush-msg"
-burn.workspace = true
-burn-cubecl.workspace = true
-anyhow.workspace = true
-
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 rerun.workspace = true
-image.workspace = true
+burn.workspace = true
 
 [lints]
 workspace = true

@@ -9,33 +9,28 @@ license.workspace = true
 [dependencies]
 brush-render.path = "../brush-render"
 brush-train.path = "../brush-train"
-brush-eval.path = "../brush-eval"
 brush-dataset.path = "../brush-dataset"
-brush-msg.path = "../brush-msg"
-brush-rerun.path = "../brush-rerun"
+brush-vfs.path = "../brush-vfs"
 
 burn-wgpu.workspace = true
 
 # Workspace deps.
+anyhow.workspace = true
+async-fn-stream.workspace = true
 burn.workspace = true
 burn-cubecl.workspace = true
-
-web-time.workspace = true
-
-anyhow.workspace = true
+clap.workspace = true
 rand.workspace = true
 log.workspace = true
-
-async-fn-stream.workspace = true
+glam.workspace = true
+web-time.workspace = true
+image.workspace = true
 
 tokio = { workspace = true, features = ["io-util", "rt"] }
 tokio-stream.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 rerun.workspace = true
-
-[target.'cfg(target_family = "wasm")'.dependencies]
-web-sys.workspace = true
 
 [lints]
 workspace = true

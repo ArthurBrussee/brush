@@ -1,21 +1,19 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::{
+    config::ProcessArgs, eval_export::eval_save_to_disk, message::ProcessMessage,
+    visualize_tools::VisualizeTools,
+};
 use anyhow::Context;
-/// A default training loop for Brush.
 use async_fn_stream::TryStreamEmitter;
-
-use brush_dataset::brush_vfs::BrushVfs;
 use brush_dataset::scene_loader::SceneLoader;
-use brush_eval::eval_stats;
-use brush_msg::{ProcessMessage, config::ProcessArgs};
 use brush_render::{
     MainBackend,
     gaussian_splats::{RandomSplatsConfig, Splats},
 };
-use brush_rerun::visualize_tools::VisualizeTools;
-use brush_train::train::SplatTrainer;
-
+use brush_train::{eval::eval_stats, train::SplatTrainer};
+use brush_vfs::BrushVfs;
 use burn::{module::AutodiffModule, prelude::Backend};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
@@ -151,7 +149,7 @@ pub(crate) async fn train_stream(
                         let path = Path::new(&export_path)
                             .join(format!("eval_{iter}"))
                             .join(format!("{img_name}.png"));
-                        sample.save_to_disk(&path).await?;
+                        eval_save_to_disk(&sample, &path).await?;
                     }
 
                     visualize.log_eval_sample(iter, i as u32, sample).await?;

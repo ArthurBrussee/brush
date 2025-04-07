@@ -848,14 +848,13 @@ dependencies = [
  "anyhow",
  "brush-cli",
  "brush-dataset",
- "brush-msg",
  "brush-process",
  "brush-render",
  "brush-ui",
+ "brush-vfs",
  "burn-cubecl",
  "burn-wgpu",
  "clap",
- "console_error_panic_hook",
  "eframe",
  "egui",
  "env_logger",
@@ -871,7 +870,6 @@ dependencies = [
  "tracing-tracy",
  "tracing-wasm",
  "wasm-bindgen",
- "wasm-logger",
  "web-sys",
  "winit",
 ]
@@ -901,8 +899,8 @@ name = "brush-cli"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "brush-msg",
- "burn-wgpu",
+ "brush-process",
+ "brush-vfs",
  "clap",
  "humantime",
  "indicatif",
@@ -917,6 +915,7 @@ dependencies = [
  "anyhow",
  "async-fn-stream",
  "brush-render",
+ "brush-vfs",
  "burn",
  "clap",
  "colmap-reader",
@@ -933,22 +932,6 @@ dependencies = [
  "tokio_with_wasm",
  "tracing",
  "web-time",
- "zip 2.6.1",
-]
-
-[[package]]
-name = "brush-eval"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "brush-dataset",
- "brush-render",
- "brush-ssim",
- "burn",
- "glam",
- "image",
- "log",
- "tokio",
 ]
 
 [[package]]
@@ -962,25 +945,6 @@ dependencies = [
  "miette",
  "naga_oil",
  "wgpu",
-]
-
-[[package]]
-name = "brush-msg"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "brush-dataset",
- "brush-render",
- "burn",
- "clap",
- "glam",
- "reqwest",
- "rrfd",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "web-sys",
- "web-time",
 ]
 
 [[package]]
@@ -1004,20 +968,20 @@ dependencies = [
  "anyhow",
  "async-fn-stream",
  "brush-dataset",
- "brush-eval",
- "brush-msg",
  "brush-render",
- "brush-rerun",
  "brush-train",
+ "brush-vfs",
  "burn",
  "burn-cubecl",
  "burn-wgpu",
+ "clap",
+ "glam",
+ "image",
  "log",
  "rand 0.9.0",
  "rerun",
  "tokio",
  "tokio-stream",
- "web-sys",
  "web-time",
 ]
 
@@ -1068,14 +1032,7 @@ dependencies = [
 name = "brush-rerun"
 version = "0.2.0"
 dependencies = [
- "anyhow",
- "brush-dataset",
- "brush-eval",
- "brush-msg",
- "brush-render",
  "burn",
- "burn-cubecl",
- "image",
  "rerun",
 ]
 
@@ -1097,28 +1054,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "brush-ssim"
-version = "0.2.0"
-dependencies = [
- "burn",
- "wgpu",
-]
-
-[[package]]
 name = "brush-train"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "brush-dataset",
  "brush-kernel",
- "brush-msg",
  "brush-render",
  "brush-render-bwd",
- "brush-ssim",
  "burn",
  "burn-cubecl",
  "burn-fusion",
+ "clap",
  "glam",
  "hashbrown 0.15.2",
+ "image",
  "log",
  "rand 0.9.0",
  "tracing",
@@ -1131,8 +1081,9 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "brush-dataset",
- "brush-msg",
+ "brush-process",
  "brush-render",
+ "brush-vfs",
  "burn",
  "burn-cubecl",
  "burn-fusion",
@@ -1148,11 +1099,25 @@ dependencies = [
  "tokio",
  "tokio_with_wasm",
  "tracing",
- "tracing-wasm",
  "urlencoding",
  "web-sys",
  "web-time",
  "wgpu",
+]
+
+[[package]]
+name = "brush-vfs"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "path-clean",
+ "reqwest",
+ "rrfd",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "web-sys",
+ "zip 2.6.1",
 ]
 
 [[package]]
@@ -1195,7 +1160,7 @@ checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 [[package]]
 name = "burn"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-autodiff",
  "burn-candle",
@@ -1212,7 +1177,7 @@ dependencies = [
 [[package]]
 name = "burn-autodiff"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-common",
  "burn-tensor",
@@ -1227,7 +1192,7 @@ dependencies = [
 [[package]]
 name = "burn-candle"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-tensor",
  "candle-core",
@@ -1238,7 +1203,7 @@ dependencies = [
 [[package]]
 name = "burn-common"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "cubecl-common",
  "rayon",
@@ -1248,7 +1213,7 @@ dependencies = [
 [[package]]
 name = "burn-core"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "ahash",
  "bincode",
@@ -1275,7 +1240,7 @@ dependencies = [
 [[package]]
 name = "burn-cubecl"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-common",
  "burn-cubecl-fusion",
@@ -1300,7 +1265,7 @@ dependencies = [
 [[package]]
 name = "burn-cubecl-fusion"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-common",
  "burn-fusion",
@@ -1315,7 +1280,7 @@ dependencies = [
 [[package]]
 name = "burn-cuda"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-cubecl",
  "burn-fusion",
@@ -1330,7 +1295,7 @@ dependencies = [
 [[package]]
 name = "burn-dataset"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "csv",
  "derive-new 0.7.0",
@@ -1354,7 +1319,7 @@ dependencies = [
 [[package]]
 name = "burn-derive"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "derive-new 0.7.0",
  "proc-macro2",
@@ -1365,7 +1330,7 @@ dependencies = [
 [[package]]
 name = "burn-fusion"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-common",
  "burn-ir",
@@ -1381,7 +1346,7 @@ dependencies = [
 [[package]]
 name = "burn-hip"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-cubecl",
  "burn-fusion",
@@ -1396,7 +1361,7 @@ dependencies = [
 [[package]]
 name = "burn-ir"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-tensor",
  "hashbrown 0.15.2",
@@ -1407,7 +1372,7 @@ dependencies = [
 [[package]]
 name = "burn-ndarray"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "atomic_float",
  "burn-autodiff",
@@ -1432,7 +1397,7 @@ dependencies = [
 [[package]]
 name = "burn-router"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-common",
  "burn-ir",
@@ -1445,7 +1410,7 @@ dependencies = [
 [[package]]
 name = "burn-tch"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-tensor",
  "cc",
@@ -1459,7 +1424,7 @@ dependencies = [
 [[package]]
 name = "burn-tensor"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-common",
  "bytemuck",
@@ -1478,7 +1443,7 @@ dependencies = [
 [[package]]
 name = "burn-train"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "async-channel",
  "burn-core",
@@ -1499,7 +1464,7 @@ dependencies = [
 [[package]]
 name = "burn-wgpu"
 version = "0.17.0"
-source = "git+https://github.com/tracel-ai/burn#3664b362832bd015267815b3ae1ebc3c558e6d99"
+source = "git+https://github.com/tracel-ai/burn#5d16339e6f74b857391da2e44564de6764a07d1a"
 dependencies = [
  "burn-cubecl",
  "burn-fusion",
@@ -1941,16 +1906,6 @@ dependencies = [
  "once_cell",
  "unicode-width 0.2.0",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "console_error_panic_hook"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
-dependencies = [
- "cfg-if",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -3042,7 +2997,6 @@ name = "examples"
 version = "0.2.0"
 dependencies = [
  "brush-dataset",
- "brush-msg",
  "brush-render",
  "brush-train",
  "brush-ui",
@@ -9060,17 +9014,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a05d73b933a847d6cccdda8f838a22ff101ad9bf93e33684f39c1f5f0eece3d"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "wasm-logger"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "074649a66bb306c8f2068c9016395fa65d8e08d2affcbf95acf3c24c3ab19718"
-dependencies = [
- "log",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]
