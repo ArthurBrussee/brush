@@ -31,6 +31,10 @@ struct RunningProcess {
 
 /// A thread-safe wrapper around the UI process.
 /// This allows the UI process to be accessed from multiple threads.
+///
+/// Mixing a sync lock and async code is asking for trouble, but there's no other good way in egui currently.
+/// The "precondition" to avoid deadlocks, is to only holds locks _within the trait functions_. As long as you don't ever hold them
+/// over an await point, things shouldn't be able to deadlock.
 pub struct UiProcess {
     inner: RwLock<UiProcessInner>,
 }
@@ -61,7 +65,13 @@ impl BrushUiProcess for UiProcess {
     }
 
     fn current_camera(&self) -> Camera {
-        self.inner.read().camera.clone()
+        let mut cam = self.inner.read().camera.clone();
+        // Update camera to current position and rotation.
+        let total_transform =
+            self.model_local_to_world() * self.inner.read().controls.local_to_world();
+        cam.position = total_transform.translation.into();
+        cam.rotation = Quat::from_mat3a(&total_transform.matrix3);
+        cam
     }
 
     fn selected_view(&self) -> Option<SceneView> {

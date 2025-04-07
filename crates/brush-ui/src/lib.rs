@@ -31,7 +31,9 @@ pub trait BrushUiProcess {
     fn is_loading(&self) -> bool;
     /// Whether there is a current running training process.
     fn is_training(&self) -> bool;
+    /// Get the current camera state. Nb: This might not have the exact FOV you expect.
     fn current_camera(&self) -> Camera;
+    /// Update the camera controls given an egui response.
     fn tick_controls(&self, response: &Response, ui: &egui::Ui);
     fn model_local_to_world(&self) -> glam::Affine3A;
     fn selected_view(&self) -> Option<SceneView>;

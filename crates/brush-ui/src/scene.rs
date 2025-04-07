@@ -84,20 +84,15 @@ impl ScenePanel {
 
         let mut size = size.floor();
 
-        let mut camera = process.current_camera();
         let view = process.selected_view();
 
         if let Some(view) = view {
             let aspect_ratio = view.image.aspect_ratio();
-
             if size.x / size.y > aspect_ratio {
                 size.x = size.y * aspect_ratio;
             } else {
                 size.y = size.x / aspect_ratio;
             }
-        } else {
-            let focal_y = fov_to_focal(camera.fov_y, size.y as u32) as f32;
-            camera.fov_x = focal_to_fov(focal_y as f64, size.x as u32);
         }
         let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
 
@@ -108,10 +103,10 @@ impl ScenePanel {
 
         process.tick_controls(&response, ui);
 
-        // Create a camera that incorporates the model transform.
-        let total_transform = process.model_local_to_world() * camera.local_to_world();
-        camera.position = total_transform.translation.into();
-        camera.rotation = Quat::from_mat3a(&total_transform.matrix3);
+        // Get camera after modifying the controls.
+        let mut camera = process.current_camera();
+        let focal_y = fov_to_focal(camera.fov_y, size.y) as f32;
+        camera.fov_x = focal_to_fov(focal_y as f64, size.x);
 
         let state = RenderState {
             size,

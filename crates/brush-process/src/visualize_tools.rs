@@ -30,11 +30,11 @@ mod visualize_tools_impl {
     impl VisualizeTools {
         #[allow(unused_variables)]
         pub fn new(enabled: bool) -> Self {
-            // Spawn rerun - creating this is already explicitly done by a user.
             if enabled {
                 Self {
+                    // Spawn rerun - creating this is already explicitly done by a user.
                     rec: rerun::RecordingStreamBuilder::new("Brush")
-                        .connect_tcp()
+                        .spawn()
                         .expect("Failed to connect to rerun"),
                 }
             } else {
