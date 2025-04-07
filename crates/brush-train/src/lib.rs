@@ -5,9 +5,9 @@ pub mod eval;
 pub mod msg;
 pub mod train;
 
-mod ssim;
 mod adam_scaled;
 mod multinomial;
 mod quat_vec;
+mod ssim;
 mod stats;
 mod stats_kernel;
