@@ -3,11 +3,9 @@
 use std::time::Duration;
 
 use brush_msg::{DataSource, ProcessMessage, config::ProcessArgs};
-use brush_process::process::process_stream;
-use burn_wgpu::WgpuDevice;
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
 use indicatif::{ProgressBar, ProgressStyle};
-use tokio_stream::StreamExt;
+use tokio_stream::{Stream, StreamExt};
 
 #[derive(Parser)]
 #[command(
@@ -46,9 +44,8 @@ impl Cli {
 }
 
 pub async fn process_ui(
-    source: DataSource,
+    stream: impl Stream<Item = anyhow::Result<ProcessMessage>>,
     process_args: ProcessArgs,
-    device: WgpuDevice,
 ) -> Result<(), anyhow::Error> {
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
@@ -117,9 +114,7 @@ pub async fn process_ui(
             sp.println("ℹ️  running in debug mode, compile with --release for best performance");
     }
 
-    let mut stream = process_stream(source, process_args.clone(), device);
     let mut stream = std::pin::pin!(stream);
-
     let mut duration = Duration::from_secs(0);
 
     // TODO: Unify logging & CLI UI somehow.

@@ -11,8 +11,8 @@ use brush_dataset::scene::SceneView;
 use brush_msg::{DataSource, ProcessMessage, config::ProcessArgs};
 use brush_render::camera::Camera;
 use burn_wgpu::WgpuDevice;
-use camera_controls::CameraController;
 use eframe::egui_wgpu::WgpuConfiguration;
+use egui::Response;
 use glam::Vec3;
 use wgpu::{Adapter, Features};
 
@@ -31,17 +31,17 @@ pub trait BrushUiProcess {
     /// Whether there is a current running training process.
     fn is_training(&self) -> bool;
     fn current_camera(&self) -> Camera;
-    fn controls(&mut self) -> &mut CameraController;
+    fn tick_controls(&self, response: &Response, ui: &egui::Ui);
     fn model_local_to_world(&self) -> glam::Affine3A;
     fn selected_view(&self) -> Option<SceneView>;
-    fn set_train_paused(&mut self, paused: bool);
-    fn set_camera(&mut self, cam: Camera);
-    fn set_cam_settings(&mut self, settings: CameraSettings);
-    fn focus_view(&mut self, view: &SceneView);
-    fn set_model_up(&mut self, up: Vec3);
-    fn start_new_process(&mut self, source: DataSource, args: ProcessArgs);
-    fn try_recv_message(&mut self) -> Option<anyhow::Result<ProcessMessage>>;
-    fn connect_device(&mut self, device: WgpuDevice, ctx: egui::Context);
+    fn set_train_paused(&self, paused: bool);
+    fn set_camera(&self, cam: Camera);
+    fn set_cam_settings(&self, settings: CameraSettings);
+    fn focus_view(&self, view: &SceneView);
+    fn set_model_up(&self, up: Vec3);
+    fn start_new_process(&self, source: DataSource, args: ProcessArgs);
+    fn try_recv_message(&self) -> Option<anyhow::Result<ProcessMessage>>;
+    fn connect_device(&self, device: WgpuDevice, ctx: egui::Context);
 }
 
 pub fn create_egui_options() -> WgpuConfiguration {

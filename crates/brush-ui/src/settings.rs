@@ -32,7 +32,7 @@ impl AppPanel for SettingsPanel {
         "Settings".to_owned()
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, process: &mut dyn BrushUiProcess) {
+    fn ui(&mut self, ui: &mut egui::Ui, process: &dyn BrushUiProcess) {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.heading("Model Settings");
             ui.label("Spherical Harmonics Degree:");

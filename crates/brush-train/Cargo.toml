@@ -25,7 +25,5 @@ burn-fusion.workspace = true
 
 wgpu.workspace = true
 
-clap.workspace = true
-
 [lints]
 workspace = true

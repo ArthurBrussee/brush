@@ -5,7 +5,7 @@ use brush_dataset::{
 };
 use brush_msg::ProcessMessage;
 use egui::{Color32, Slider, TextureHandle, TextureOptions, pos2};
-use tokio_with_wasm::alias::sync::oneshot::{Receiver, channel};
+use tokio::sync::oneshot::{Receiver, channel};
 
 fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
     match t {
@@ -56,7 +56,7 @@ impl AppPanel for DatasetPanel {
         "Dataset".to_owned()
     }
 
-    fn on_message(&mut self, message: &ProcessMessage, process: &mut dyn BrushUiProcess) {
+    fn on_message(&mut self, message: &ProcessMessage, process: &dyn BrushUiProcess) {
         match message {
             ProcessMessage::NewSource => {
                 *self = Self::new();
@@ -72,10 +72,8 @@ impl AppPanel for DatasetPanel {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, process: &mut dyn BrushUiProcess) {
+    fn ui(&mut self, ui: &mut egui::Ui, process: &dyn BrushUiProcess) {
         let pick_scene = selected_scene(self.view_type, &self.cur_dataset).clone();
-
-        // TODO: Read camera.
         let mut nearest_view_ind =
             pick_scene.get_nearest_view(process.current_camera().local_to_world());
 
@@ -225,7 +223,6 @@ impl AppPanel for DatasetPanel {
                     }
 
                     if interacted {
-                        // TODO: Focus view.
                         process.focus_view(&pick_scene.views[*nearest]);
                     }
 

@@ -18,24 +18,20 @@ brush-dataset.path = "../brush-dataset"
 brush-msg.path = "../brush-msg"
 brush-process.path = "../brush-process"
 
-
 burn-wgpu.workspace = true
-burn.workspace = true
 burn-cubecl.workspace = true
 
 glam.workspace = true
 
 egui.workspace = true
-egui_tiles.workspace = true
 eframe.workspace = true
-
-wgpu.workspace = true
 log.workspace = true
 
 anyhow.workspace = true
 tracing.workspace = true
 tokio_with_wasm = { workspace = true, features = ["rt"] }
 tokio-stream.workspace = true
+parking_lot.workspace = true
 
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

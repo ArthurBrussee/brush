@@ -4,11 +4,13 @@ use brush_msg::{DataSource, config::ProcessArgs};
 use brush_render::camera::Camera;
 use brush_ui::{BrushUiProcess, app::CameraSettings, camera_controls::CameraController};
 use burn_wgpu::WgpuDevice;
+use egui::Response;
 use glam::{Affine3A, Quat, Vec3};
 
 use brush_msg::ProcessMessage;
 use brush_process::process::process_stream;
-use tokio::sync::{self};
+use parking_lot::RwLock;
+use tokio::sync;
 use tokio_stream::StreamExt;
 use tokio_with_wasm::alias as tokio_wasm;
 
@@ -29,11 +31,81 @@ struct RunningProcess {
     send_device: Option<sync::oneshot::Sender<DeviceContext>>,
 }
 
-// TODO: Bit too much random shared state here.
+/// A thread-safe wrapper around the UI process.
+/// This allows the UI process to be accessed from multiple threads.
 pub struct UiProcess {
+    inner: RwLock<UiProcessInner>,
+}
+
+impl UiProcess {
+    pub fn new() -> Self {
+        Self {
+            inner: RwLock::new(UiProcessInner::new()),
+        }
+    }
+}
+
+impl BrushUiProcess for UiProcess {
+    fn is_loading(&self) -> bool {
+        self.inner.read().is_loading()
+    }
+
+    fn is_training(&self) -> bool {
+        self.inner.read().is_training()
+    }
+
+    fn tick_controls(&self, response: &Response, ui: &egui::Ui) {
+        self.inner.write().tick_controls(response, ui);
+    }
+
+    fn model_local_to_world(&self) -> glam::Affine3A {
+        self.inner.read().model_local_to_world()
+    }
+
+    fn current_camera(&self) -> Camera {
+        self.inner.read().current_camera()
+    }
+
+    fn selected_view(&self) -> Option<SceneView> {
+        self.inner.read().selected_view()
+    }
+
+    fn set_train_paused(&self, paused: bool) {
+        self.inner.write().set_train_paused(paused);
+    }
+
+    fn set_camera(&self, cam: Camera) {
+        self.inner.write().set_camera(cam);
+    }
+
+    fn set_cam_settings(&self, settings: CameraSettings) {
+        self.inner.write().set_cam_settings(settings);
+    }
+
+    fn focus_view(&self, view: &SceneView) {
+        self.inner.write().focus_view(view);
+    }
+
+    fn set_model_up(&self, up_axis: Vec3) {
+        self.inner.write().set_model_up(up_axis);
+    }
+
+    fn connect_device(&self, device: WgpuDevice, ctx: egui::Context) {
+        self.inner.write().connect_device(device, ctx);
+    }
+
+    fn start_new_process(&self, source: DataSource, args: ProcessArgs) {
+        self.inner.write().start_new_process(source, args);
+    }
+
+    fn try_recv_message(&self) -> Option<Result<ProcessMessage>> {
+        self.inner.write().try_recv_message()
+    }
+}
+
+struct UiProcessInner {
     loading: bool,
     training: bool,
-
     dataset: Dataset,
     camera: Camera,
     view_aspect: Option<f32>,
@@ -45,7 +117,7 @@ pub struct UiProcess {
     cur_device_ctx: Option<DeviceContext>,
 }
 
-impl UiProcess {
+impl UiProcessInner {
     pub fn new() -> Self {
         let model_transform = Affine3A::IDENTITY;
         let cam_settings = CameraSettings::default();
@@ -88,9 +160,7 @@ impl UiProcess {
         self.controls.position = transform.translation.into();
         self.controls.rotation = Quat::from_mat3a(&transform.matrix3);
     }
-}
 
-impl BrushUiProcess for UiProcess {
     fn is_loading(&self) -> bool {
         self.loading
     }
@@ -99,8 +169,8 @@ impl BrushUiProcess for UiProcess {
         self.training
     }
 
-    fn controls(&mut self) -> &mut CameraController {
-        &mut self.controls
+    fn tick_controls(&mut self, response: &Response, ui: &egui::Ui) {
+        self.controls.tick(response, ui);
     }
 
     fn model_local_to_world(&self) -> glam::Affine3A {
@@ -115,7 +185,7 @@ impl BrushUiProcess for UiProcess {
         self.selected_view.clone()
     }
 
-    fn set_train_paused(&mut self, paused: bool) {
+    fn set_train_paused(&self, paused: bool) {
         if let Some(process) = self.running_process.as_ref() {
             let _ = process.control.send(ControlMessage::Paused(paused));
         }
@@ -165,14 +235,12 @@ impl BrushUiProcess for UiProcess {
         self.cur_device_ctx = Some(ctx.clone());
 
         log::info!("Connecting to device ctx");
-
         #[cfg(feature = "tracing")]
         {
             // TODO: In debug only?
             #[cfg(target_family = "wasm")]
             {
                 use tracing_subscriber::layer::SubscriberExt;
-
                 tracing::subscriber::set_global_default(
                     tracing_subscriber::registry()
                         .with(tracing_wasm::WASMLayer::new(Default::default())),
@@ -298,7 +366,6 @@ impl BrushUiProcess for UiProcess {
                 }
                 _ => (),
             }
-
             // Forward msg.
             Some(msg)
         } else {

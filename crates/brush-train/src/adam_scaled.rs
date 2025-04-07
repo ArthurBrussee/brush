@@ -66,7 +66,6 @@ impl AdamScaledConfig {
             },
             weight_decay: self.weight_decay.as_ref().map(WeightDecay::new),
         };
-
         let mut optim = OptimizerAdaptor::from(optim);
         if let Some(config) = &self.grad_clipping {
             optim = optim.with_grad_clipping(config.init());

@@ -25,6 +25,7 @@ eframe.workspace = true
 wgpu.workspace = true
 urlencoding.workspace = true
 tokio_with_wasm = { workspace = true, features = ["rt"] }
+tokio = { workspace = true }
 tracing.workspace = true
 web-time.workspace = true
 humantime.workspace = true
@@ -35,16 +36,10 @@ workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tracing-tracy = { workspace = true, optional = true }
-env_logger.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 tracing-wasm.workspace = true
-wasm-bindgen.workspace = true
-console_error_panic_hook.workspace = true
 web-sys.workspace = true
-wasm-logger.workspace = true
-getrandom = { version = "0.3", features = ["wasm_js"] }
-
 
 [features]
 tracy = ["tracing", "dep:tracing-tracy"]

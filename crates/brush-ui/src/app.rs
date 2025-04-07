@@ -5,6 +5,7 @@ use egui::ThemePreference;
 use egui_tiles::{Container, SimplificationOptions, Tile, TileId, Tiles};
 use glam::{Quat, Vec3};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::BrushUiProcess;
 use crate::camera_controls::CameraClamping;
@@ -34,7 +35,7 @@ fn parse_search(search: &str) -> HashMap<String, String> {
 
 pub(crate) struct AppTree {
     zen: bool,
-    context: Box<dyn BrushUiProcess>,
+    context: Arc<dyn BrushUiProcess>,
 }
 
 impl egui_tiles::Behavior<PaneType> for AppTree {
@@ -51,7 +52,7 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
         egui::Frame::new()
             .inner_margin(pane.inner_margin())
             .show(ui, |ui| {
-                pane.ui(ui, self.context.as_mut());
+                pane.ui(ui, self.context.as_ref());
             });
         egui_tiles::UiResponse::None
     }
@@ -104,7 +105,7 @@ impl App {
     pub fn new(
         cc: &eframe::CreationContext,
         start_uri_override: Option<String>,
-        mut context: Box<dyn BrushUiProcess>,
+        context: Arc<dyn BrushUiProcess>,
     ) -> Self {
         // For now just assume we're running on the default
         let state = cc
@@ -279,7 +280,7 @@ impl App {
                     for (_, pane) in self.tree.tiles.iter_mut() {
                         match pane {
                             Tile::Pane(pane) => {
-                                pane.on_message(&message, self.tree_ctx.context.as_mut());
+                                pane.on_message(&message, self.tree_ctx.context.as_ref());
                             }
                             Tile::Container(_) => {}
                         }
@@ -289,7 +290,7 @@ impl App {
                     for (_, pane) in self.tree.tiles.iter_mut() {
                         match pane {
                             Tile::Pane(pane) => {
-                                pane.on_error(&e, self.tree_ctx.context.as_mut());
+                                pane.on_error(&e, self.tree_ctx.context.as_ref());
                             }
                             Tile::Container(_) => {}
                         }

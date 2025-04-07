@@ -8,15 +8,16 @@ pub(crate) trait AppPanel {
     fn title(&self) -> String;
 
     /// Draw the pane's UI's content/
-    fn ui(&mut self, ui: &mut egui::Ui, process: &mut dyn BrushUiProcess);
+    fn ui(&mut self, ui: &mut egui::Ui, process: &dyn BrushUiProcess);
 
     /// Handle an incoming message from the UI.
-    fn on_message(&mut self, message: &ProcessMessage, process: &mut dyn BrushUiProcess) {
+    fn on_message(&mut self, message: &ProcessMessage, process: &dyn BrushUiProcess) {
         let _ = message;
         let _ = process;
     }
 
-    fn on_error(&mut self, error: &anyhow::Error, process: &mut dyn BrushUiProcess) {
+    /// Handle an incoming error from the UI.
+    fn on_error(&mut self, error: &anyhow::Error, process: &dyn BrushUiProcess) {
         let _ = error;
         let _ = process;
     }

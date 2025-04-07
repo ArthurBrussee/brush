@@ -58,6 +58,7 @@ pub async fn eval_stats<B: Backend + SplatForward<B>>(
 }
 
 impl<B: Backend> EvalSample<B> {
+    #[allow(unused)]
     pub async fn save_to_disk(&self, path: &Path) -> Result<()> {
         // TODO: FIgure out how to do this on WASM.
         #[cfg(not(target_family = "wasm"))]

@@ -61,7 +61,7 @@ impl AppPanel for StatsPanel {
         "Stats".to_owned()
     }
 
-    fn on_message(&mut self, message: &ProcessMessage, _: &mut dyn BrushUiProcess) {
+    fn on_message(&mut self, message: &ProcessMessage, _: &dyn BrushUiProcess) {
         match message {
             ProcessMessage::NewSource => {
                 *self = Self::new(self.device.clone(), self.adapter_info.clone());
@@ -107,7 +107,7 @@ impl AppPanel for StatsPanel {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _: &mut dyn BrushUiProcess) {
+    fn ui(&mut self, ui: &mut egui::Ui, _: &dyn BrushUiProcess) {
         egui::Grid::new("stats_grid")
             .num_columns(2)
             .spacing([40.0, 4.0])

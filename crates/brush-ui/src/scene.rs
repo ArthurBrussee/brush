@@ -77,7 +77,7 @@ impl ScenePanel {
     pub(crate) fn draw_splats(
         &mut self,
         ui: &mut egui::Ui,
-        process: &mut dyn BrushUiProcess,
+        process: &dyn BrushUiProcess,
         splats: Option<Splats<MainBackend>>,
     ) -> egui::Rect {
         let size = size_for_splat_view(ui);
@@ -106,10 +106,10 @@ impl ScenePanel {
             egui::Sense::drag(),
         );
 
-        process.controls().tick(&response, ui);
+        process.tick_controls(&response, ui);
 
         // Create a camera that incorporates the model transform.
-        let total_transform = process.model_local_to_world() * process.controls().local_to_world();
+        let total_transform = process.model_local_to_world() * camera.local_to_world();
         camera.position = total_transform.translation.into();
         camera.rotation = Quat::from_mat3a(&total_transform.matrix3);
 
@@ -178,7 +178,7 @@ impl AppPanel for ScenePanel {
         "Scene".to_owned()
     }
 
-    fn on_message(&mut self, message: &ProcessMessage, context: &mut dyn BrushUiProcess) {
+    fn on_message(&mut self, message: &ProcessMessage, context: &dyn BrushUiProcess) {
         match message {
             ProcessMessage::NewSource => {
                 self.view_splats = vec![];
@@ -217,7 +217,7 @@ impl AppPanel for ScenePanel {
         }
     }
 
-    fn on_error(&mut self, error: &anyhow::Error, _: &mut dyn BrushUiProcess) {
+    fn on_error(&mut self, error: &anyhow::Error, _: &dyn BrushUiProcess) {
         let headline = error.to_string();
         let context = error
             .chain()
@@ -227,7 +227,7 @@ impl AppPanel for ScenePanel {
         self.err = Some(ErrorDisplay { headline, context });
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, process: &mut dyn BrushUiProcess) {
+    fn ui(&mut self, ui: &mut egui::Ui, process: &dyn BrushUiProcess) {
         let cur_time = Instant::now();
 
         self.last_draw = Some(cur_time);

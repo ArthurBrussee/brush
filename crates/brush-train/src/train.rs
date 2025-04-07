@@ -1,4 +1,12 @@
+use brush_dataset::scene::SceneBatch;
 use brush_msg::{RefineStats, TrainStepStats, config::TrainConfig};
+use brush_render::sh::sh_coeffs_for_degree;
+use brush_render::{
+    MainBackend,
+    gaussian_splats::{Splats, inverse_sigmoid},
+};
+use brush_render_bwd::burn_glue::SplatForwardDiff;
+use brush_ssim::Ssim;
 use burn::{
     backend::{
         Autodiff,
@@ -17,17 +25,8 @@ use burn::{
     },
 };
 use burn_cubecl::cubecl::Runtime;
-use std::f64::consts::SQRT_2;
-
-use brush_dataset::scene::SceneBatch;
-use brush_render::sh::sh_coeffs_for_degree;
-use brush_render::{
-    MainBackend,
-    gaussian_splats::{Splats, inverse_sigmoid},
-};
-use brush_render_bwd::burn_glue::SplatForwardDiff;
-use brush_ssim::Ssim;
 use hashbrown::{HashMap, HashSet};
+use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
 use crate::adam_scaled::{AdamScaled, AdamScaledConfig, AdamState};

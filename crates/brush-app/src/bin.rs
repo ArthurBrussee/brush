@@ -2,19 +2,20 @@
 
 mod ui_process;
 
-use brush_ui::{BrushUiProcess, app::App};
+use std::sync::Arc;
 
-#[allow(unused)]
-use tokio::sync::oneshot::error::RecvError;
+use brush_ui::app::App;
 
 #[allow(clippy::unnecessary_wraps)] // Error isn't need on wasm but that's ok.
 fn main() -> Result<(), anyhow::Error> {
-    let wgpu_options = brush_ui::create_egui_options();
-
-    let mut context = UiProcess::new();
-
     #[cfg(not(target_family = "wasm"))]
     {
+        use brush_process::process::process_stream;
+        use brush_ui::BrushUiProcess;
+
+        let context = Arc::new(UiProcess::new());
+        let wgpu_options = brush_ui::create_egui_options();
+
         use brush_cli::Cli;
         use clap::Parser;
 
@@ -59,66 +60,77 @@ fn main() -> Result<(), anyhow::Error> {
                 eframe::run_native(
                     title,
                     native_options,
-                    Box::new(move |cc| Ok(Box::new(App::new(cc, None, Box::new(context))))),
+                    Box::new(move |cc| Ok(Box::new(App::new(cc, None, context)))),
                 )?;
             } else {
                 let Some(source) = args.source else {
                     panic!("Validation of args failed?");
                 };
                 let device = brush_render::burn_init_setup().await;
-                brush_cli::process_ui(source, args.process, device).await?;
+                let stream = process_stream(source, args.process.clone(), device);
+                brush_cli::process_ui(stream, args.process).await?;
             }
-
             anyhow::Result::<(), anyhow::Error>::Ok(())
         })?;
     }
 
     #[cfg(target_family = "wasm")]
     {
-        use tokio_with_wasm::alias as tokio_wasm;
-        use wasm_bindgen::JsCast;
-
-        if cfg!(debug_assertions) {
-            eframe::WebLogger::init(log::LevelFilter::Debug).ok();
-        }
-
-        let document = web_sys::window()
-            .expect("Failed to find web window (not running in a browser?")
-            .document()
-            .expect("Failed to find document body");
-
-        if let Some(canvas) = document
-            .get_element_by_id("main_canvas")
-            .and_then(|x| x.dyn_into::<web_sys::HtmlCanvasElement>().ok())
-        {
-            // On wasm, run as a local task.
-            tokio_wasm::task::spawn(async {
-                let web_options = eframe::WebOptions {
-                    wgpu_options,
-                    ..Default::default()
-                };
-                eframe::WebRunner::new()
-                    .start(
-                        canvas,
-                        web_options,
-                        Box::new(|cc| Ok(Box::new(App::new(cc, None, context)))),
-                    )
-                    .await
-                    .expect("failed to start eframe"); // Ideally reported as a result but doesn't really matter.
-            });
-        }
+        // Allowed to fail. When using the embedding API main canvas just won't be found.
+        // Ideally it would catch only _that_ error.
+        let _ = wasm_app("main_canvas", None);
     }
 
     Ok(())
 }
 
 #[cfg(target_family = "wasm")]
+fn wasm_app(canvas_name: &str, start_uri: Option<&str>) -> anyhow::Result<Arc<UiProcess>> {
+    use anyhow::Context;
+    use wasm_bindgen::JsCast;
+
+    let context = Arc::new(UiProcess::new());
+
+    let wgpu_options = brush_ui::create_egui_options();
+    let document = web_sys::window()
+        .context("Failed to get winow")?
+        .document()
+        .context("Failed to get document")?;
+    let canvas = document
+        .get_element_by_id(canvas_name)
+        .with_context(|| format!("Failed to find canvas with id: {canvas_name}"))?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .unwrap_or_else(|_| panic!("Found canvas {canvas_name} was in fact not a canvas"));
+
+    let start_uri = start_uri.map(|x| x.to_owned());
+
+    // On wasm, run as a local task.
+    let context_cl = context.clone();
+
+    tokio_with_wasm::task::spawn(async {
+        eframe::WebRunner::new()
+            .start(
+                canvas,
+                eframe::WebOptions {
+                    wgpu_options,
+                    ..Default::default()
+                },
+                Box::new(|cc| Ok(Box::new(App::new(cc, start_uri, context_cl)))),
+            )
+            .await
+            .expect("failed to start eframe");
+    });
+
+    Ok(context)
+}
+
+#[cfg(target_family = "wasm")]
 mod embedded {
-    use super::start_process;
-    use brush_app::App;
-    use brush_process::{data_source::DataSource, process_loop::ProcessArgs};
+    use super::wasm_app;
+    use brush_msg::DataSource;
+    use brush_msg::config::ProcessArgs;
+    use brush_ui::BrushUiProcess;
     use glam::Quat;
-    use std::future::IntoFuture;
     use tokio::sync::mpsc::UnboundedSender;
     use tokio_with_wasm::alias as tokio_wasm;
     use wasm_bindgen::prelude::*;
@@ -135,7 +147,7 @@ mod embedded {
 
     //Wrapper for wasm world.
     #[wasm_bindgen]
-    pub struct CameraSettings(brush_app::CameraSettings);
+    pub struct CameraSettings(brush_ui::app::CameraSettings);
 
     #[wasm_bindgen]
     impl CameraSettings {
@@ -154,7 +166,7 @@ mod embedded {
             min_yaw: Option<f32>,
             max_yaw: Option<f32>,
         ) -> CameraSettings {
-            CameraSettings(brush_app::CameraSettings {
+            CameraSettings(brush_ui::app::CameraSettings {
                 focal,
                 // TODO: Allow vecs?
                 position: glam::vec3(x, y, z),
@@ -163,7 +175,7 @@ mod embedded {
                 focus_distance,
                 speed_scale,
                 // TODO: Could make this a separate JS object.
-                clamping: brush_app::camera_controls::CameraClamping {
+                clamping: brush_ui::camera_controls::CameraClamping {
                     min_focus_distance,
                     max_focus_distance,
                     min_pitch,
@@ -178,66 +190,27 @@ mod embedded {
     #[wasm_bindgen]
     impl EmbeddedApp {
         #[wasm_bindgen(constructor)]
-        pub fn new(canvas_name: &str, start_uri: &str) -> Self {
-            let wgpu_options = brush_ui::create_egui_options();
-            let document = web_sys::window()
-                .expect("Failed to get winow")
-                .document()
-                .expect("Failed to get document");
-            let canvas = document
-                .get_element_by_id(canvas_name)
-                .unwrap_or_else(|| panic!("Failed to find canvas with id: {canvas_name}"))
-                .dyn_into::<web_sys::HtmlCanvasElement>()
-                .unwrap_or_else(|_| panic!("Found canvas {canvas_name} was in fact not a canvas"));
+        pub fn new(canvas_name: &str, start_uri: &str) -> Result<Self, JsError> {
+            let context = wasm_app(canvas_name, Some(start_uri)).map_err(|e| JsError::from(&*e))?;
 
-            let (send, rec) = tokio::sync::oneshot::channel();
             let (cmd_send, mut cmd_rec) = tokio::sync::mpsc::unbounded_channel();
-            let start_uri = start_uri.to_owned();
-
-            // On wasm, run as a local task.
-            tokio_wasm::spawn(async {
-                eframe::WebRunner::new()
-                    .start(
-                        canvas,
-                        eframe::WebOptions {
-                            wgpu_options,
-                            ..Default::default()
-                        },
-                        Box::new(|cc| Ok(Box::new(App::new(cc, send, Some(start_uri))))),
-                    )
-                    .await
-                    .expect("failed to start eframe");
-            });
 
             tokio_wasm::spawn(async move {
-                let context = rec
-                    .into_future()
-                    .await
-                    .expect("Failed to start Brush, failed to receive context")
-                    .context;
-
                 while let Some(command) = cmd_rec.recv().await {
-                    let mut ctx = context.write().expect("Failed to lock context (poisoned)");
-
                     match command {
                         EmbeddedCommands::LoadDataSource(data_source) => {
-                            let process = start_process(
-                                data_source,
-                                ProcessArgs::default(),
-                                ctx.device.clone(),
-                                ctx.egui_ctx.clone(),
-                            );
-                            ctx.connect_to(process);
+                            context.start_new_process(data_source, ProcessArgs::default());
                         }
                         EmbeddedCommands::SetCamSettings(settings) => {
-                            ctx.set_cam_settings(settings.0);
+                            context.set_cam_settings(settings.0);
                         }
                     }
                 }
             });
-            Self {
+
+            Ok(Self {
                 command_channel: cmd_send,
-            }
+            })
         }
 
         #[wasm_bindgen]
@@ -260,4 +233,5 @@ mod embedded {
 
 #[cfg(target_family = "wasm")]
 pub use embedded::*;
+
 use ui_process::UiProcess;

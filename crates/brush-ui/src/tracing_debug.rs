@@ -10,7 +10,7 @@ impl AppPanel for TracingPanel {
         "Load data".to_owned()
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _: &mut dyn BrushUiProcess) {
+    fn ui(&mut self, ui: &mut egui::Ui, _: &dyn BrushUiProcess) {
         let mut checked = sync_span::is_enabled();
         ui.checkbox(&mut checked, "Sync scopes");
         sync_span::set_enabled(checked);
