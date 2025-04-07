@@ -1,4 +1,4 @@
-// Noop on wasm but usefuly to have the types.
+// Noop on wasm but useful to have the type available.
 pub mod visualize_tools;
 
 // Exclude entirely on wasm.

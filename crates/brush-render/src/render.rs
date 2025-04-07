@@ -114,7 +114,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
     };
 
     // Nb: This contains both static metadata and some dynamic data so can't pass this as metadata to execute. In the future
-    // should seperate the two.
+    // should separate the two.
     let uniforms_buffer = create_uniform_buffer(uniforms, device, &client);
 
     let client = &means.client.clone();
