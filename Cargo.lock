@@ -862,6 +862,7 @@ dependencies = [
  "glam",
  "log",
  "parking_lot",
+ "sync-span",
  "tokio",
  "tokio-stream",
  "tokio_with_wasm",

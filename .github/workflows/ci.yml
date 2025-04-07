@@ -116,6 +116,3 @@ jobs:
 
       - name: Run tests
         run: cargo test --all
-
-      - name: Run doc-tests
-        run: cargo test --doc

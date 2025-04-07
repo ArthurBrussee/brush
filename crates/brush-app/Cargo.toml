@@ -17,6 +17,7 @@ brush-render.path = "../brush-render"
 brush-dataset.path = "../brush-dataset"
 brush-process.path = "../brush-process"
 brush-vfs.path = "../brush-vfs"
+sync-span.path = "../sync-span"
 
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
