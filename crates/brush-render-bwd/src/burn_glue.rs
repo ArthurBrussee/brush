@@ -1,5 +1,5 @@
 use brush_render::{
-    BBase, SplatForward,
+    MainBackendBase, SplatForward,
     camera::Camera,
     render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
@@ -58,7 +58,7 @@ pub trait SplatBackwardOps<B: Backend> {
     ) -> SplatGrads<B>;
 }
 
-impl<BT: BoolElement> SplatBackwardOps<Self> for BBase<BT> {
+impl SplatBackwardOps<Self> for MainBackendBase {
     fn render_splats_bwd(
         state: GaussianBackwardState<Self>,
         v_output: FloatTensor<Self>,
@@ -261,17 +261,17 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
     }
 }
 
-impl<BT: BoolElement> SplatBackwardOps<Self> for Fusion<BBase<BT>> {
+impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
     fn render_splats_bwd(
         state: GaussianBackwardState<Self>,
         v_output: FloatTensor<Self>,
     ) -> SplatGrads<Self> {
-        struct CustomOp<BT: BoolElement> {
+        struct CustomOp {
             desc: CustomOpIr,
-            state: GaussianBackwardState<Fusion<BBase<BT>>>,
+            state: GaussianBackwardState<Fusion<MainBackendBase>>,
         }
 
-        impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp<BT> {
+        impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp {
             fn execute(
                 self: Box<Self>,
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
@@ -282,36 +282,39 @@ impl<BT: BoolElement> SplatBackwardOps<Self> for Fusion<BBase<BT>> {
                 let state = self.state;
 
                 let inner_state = GaussianBackwardState {
-                    means: h.get_float_tensor::<BBase<BT>>(&state.means.into_ir()),
-                    log_scales: h.get_float_tensor::<BBase<BT>>(&state.log_scales.into_ir()),
-                    quats: h.get_float_tensor::<BBase<BT>>(&state.quats.into_ir()),
-                    raw_opac: h.get_float_tensor::<BBase<BT>>(&state.raw_opac.into_ir()),
-                    out_img: h.get_float_tensor::<BBase<BT>>(&state.out_img.into_ir()),
+                    means: h.get_float_tensor::<MainBackendBase>(&state.means.into_ir()),
+                    log_scales: h.get_float_tensor::<MainBackendBase>(&state.log_scales.into_ir()),
+                    quats: h.get_float_tensor::<MainBackendBase>(&state.quats.into_ir()),
+                    raw_opac: h.get_float_tensor::<MainBackendBase>(&state.raw_opac.into_ir()),
+                    out_img: h.get_float_tensor::<MainBackendBase>(&state.out_img.into_ir()),
                     projected_splats: h
-                        .get_float_tensor::<BBase<BT>>(&state.projected_splats.into_ir()),
+                        .get_float_tensor::<MainBackendBase>(&state.projected_splats.into_ir()),
                     uniforms_buffer: h
-                        .get_int_tensor::<BBase<BT>>(&state.uniforms_buffer.into_ir()),
-                    final_index: h.get_int_tensor::<BBase<BT>>(&state.final_index.into_ir()),
-                    tile_offsets: h.get_int_tensor::<BBase<BT>>(&state.tile_offsets.into_ir()),
+                        .get_int_tensor::<MainBackendBase>(&state.uniforms_buffer.into_ir()),
+                    final_index: h.get_int_tensor::<MainBackendBase>(&state.final_index.into_ir()),
+                    tile_offsets: h
+                        .get_int_tensor::<MainBackendBase>(&state.tile_offsets.into_ir()),
                     compact_gid_from_isect: h
-                        .get_int_tensor::<BBase<BT>>(&state.compact_gid_from_isect.into_ir()),
-                    global_from_compact_gid: h
-                        .get_int_tensor::<BBase<BT>>(&state.global_from_compact_gid.into_ir()),
+                        .get_int_tensor::<MainBackendBase>(&state.compact_gid_from_isect.into_ir()),
+                    global_from_compact_gid: h.get_int_tensor::<MainBackendBase>(
+                        &state.global_from_compact_gid.into_ir(),
+                    ),
                     sh_degree: state.sh_degree,
                 };
 
-                let grads = <BBase<BT> as SplatBackwardOps<BBase<BT>>>::render_splats_bwd(
-                    inner_state,
-                    h.get_float_tensor::<BBase<BT>>(&v_output),
-                );
+                let grads =
+                    <MainBackendBase as SplatBackwardOps<MainBackendBase>>::render_splats_bwd(
+                        inner_state,
+                        h.get_float_tensor::<MainBackendBase>(&v_output),
+                    );
 
                 // // Register output.
-                h.register_float_tensor::<BBase<BT>>(&v_means.id, grads.v_means);
-                h.register_float_tensor::<BBase<BT>>(&v_quats.id, grads.v_quats);
-                h.register_float_tensor::<BBase<BT>>(&v_scales.id, grads.v_scales);
-                h.register_float_tensor::<BBase<BT>>(&v_coeffs.id, grads.v_coeffs);
-                h.register_float_tensor::<BBase<BT>>(&v_raw_opac.id, grads.v_raw_opac);
-                h.register_float_tensor::<BBase<BT>>(&v_refine.id, grads.v_refine_weight);
+                h.register_float_tensor::<MainBackendBase>(&v_means.id, grads.v_means);
+                h.register_float_tensor::<MainBackendBase>(&v_quats.id, grads.v_quats);
+                h.register_float_tensor::<MainBackendBase>(&v_scales.id, grads.v_scales);
+                h.register_float_tensor::<MainBackendBase>(&v_coeffs.id, grads.v_coeffs);
+                h.register_float_tensor::<MainBackendBase>(&v_raw_opac.id, grads.v_raw_opac);
+                h.register_float_tensor::<MainBackendBase>(&v_refine.id, grads.v_refine_weight);
             }
         }
 

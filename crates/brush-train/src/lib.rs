@@ -10,4 +10,3 @@ mod multinomial;
 mod quat_vec;
 mod ssim;
 mod stats;
-mod stats_kernel;

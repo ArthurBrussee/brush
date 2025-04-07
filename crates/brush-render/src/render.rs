@@ -1,5 +1,5 @@
 use crate::{
-    BBase, INTERSECTS_UPPER_BOUND,
+    INTERSECTS_UPPER_BOUND, MainBackendBase,
     camera::Camera,
     dim_check::DimCheck,
     kernels::{MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
@@ -21,7 +21,7 @@ use burn::tensor::{
     ops::{FloatTensorOps, IntTensorOps},
 };
 
-use burn_cubecl::{BoolElement, cubecl::server::Bindings};
+use burn_cubecl::cubecl::server::Bindings;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
 use glam::uvec2;
@@ -49,7 +49,7 @@ pub(crate) fn max_intersections(img_size: glam::UVec2, num_splats: u32) -> u32 {
     max.min(INTERSECTS_UPPER_BOUND)
 }
 
-pub(crate) fn render_forward<BT: BoolElement>(
+pub(crate) fn render_forward(
     camera: &Camera,
     img_size: glam::UVec2,
     means: CubeTensor<WgpuRuntime>,
@@ -58,7 +58,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
     sh_coeffs: CubeTensor<WgpuRuntime>,
     opacities: CubeTensor<WgpuRuntime>,
     bwd_info: bool,
-) -> (CubeTensor<WgpuRuntime>, RenderAux<BBase<BT>>) {
+) -> (CubeTensor<WgpuRuntime>, RenderAux<MainBackendBase>) {
     assert!(
         img_size[0] > 0 && img_size[1] > 0,
         "Can't render images with 0 size."
@@ -120,7 +120,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
     let client = &means.client.clone();
 
     let (global_from_compact_gid, num_visible) = {
-        let global_from_presort_gid = BBase::<BT>::int_zeros([total_splats].into(), device);
+        let global_from_presort_gid = MainBackendBase::int_zeros([total_splats].into(), device);
         let depths = create_tensor([total_splats], device, client, DType::F32);
 
         tracing::trace_span!("ProjectSplats", sync_burn = true).in_scope(||
@@ -144,7 +144,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
 
         // Get just the number of visible splats from the uniforms buffer.
         let num_vis_field_offset = offset_of!(shaders::helpers::RenderUniforms, num_visible) / 4;
-        let num_visible = BBase::<BT>::int_slice(
+        let num_visible = MainBackendBase::int_slice(
             uniforms_buffer.clone(),
             &[num_vis_field_offset..num_vis_field_offset + 1],
         );
@@ -167,7 +167,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
 
     let max_intersects = max_intersections(img_size, total_splats as u32);
     // 1 extra length to make this an exclusive sum.
-    let tiles_hit_per_splat = BBase::<BT>::int_zeros([total_splats + 1].into(), device);
+    let tiles_hit_per_splat = MainBackendBase::int_zeros([total_splats + 1].into(), device);
     let isect_info =
         create_tensor::<2, WgpuRuntime>([max_intersects as usize, 2], device, client, DType::I32);
 
@@ -199,7 +199,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
     // Create a tensor containing just the number of intersections.
     let num_intersections_offset =
         offset_of!(shaders::helpers::RenderUniforms, num_intersections) / 4;
-    let num_intersections = BBase::<BT>::int_slice(
+    let num_intersections = MainBackendBase::int_slice(
         uniforms_buffer.clone(),
         &[num_intersections_offset..num_intersections_offset + 1],
     );
@@ -215,7 +215,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
 
         // Number of intersections per tile. Range ID's are later derived from this
         // by a prefix sum.
-        let tile_counts = BBase::<BT>::int_zeros(
+        let tile_counts = MainBackendBase::int_zeros(
             [(tile_bounds.y * tile_bounds.x) as usize + 1].into(),
             device,
         );
@@ -227,7 +227,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
 
         tracing::trace_span!("MapGaussiansToIntersect", sync_burn = true).in_scope(|| {
             // The workgroup size is [256, 2] to be an effective 512 threads.
-            let num_intersects: Tensor<BBase<BT>, 1, Int> =
+            let num_intersects: Tensor<MainBackendBase, 1, Int> =
                 Tensor::from_primitive(num_intersections.clone());
             let dispatch = (num_intersects + 1) / 2;
             let intersect_wg_buf = create_dispatch_buffer(
@@ -298,7 +298,7 @@ pub(crate) fn render_forward<BT: BoolElement>(
     ]);
 
     let (visible, final_index) = if bwd_info {
-        let visible = BBase::<BT>::float_zeros([total_splats].into(), device);
+        let visible = MainBackendBase::float_zeros([total_splats].into(), device);
 
         // Buffer containing the final visible splat per tile.
         let final_index = create_tensor::<2, _>(

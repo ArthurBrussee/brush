@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use brush_render::{BBase, BFused};
+use brush_render::{MainBackend, MainBackendBase};
 use burn::tensor::{Int, Tensor};
-use burn_cubecl::BoolElement;
 use burn_fusion::client::FusionClient;
 use eframe::egui_wgpu::Renderer;
 use egui::TextureId;
@@ -52,7 +51,7 @@ impl BurnTexture {
         }
     }
 
-    pub fn update_texture<BT: BoolElement>(&mut self, img: Tensor<BFused<BT>, 3>) -> TextureId {
+    pub fn update_texture(&mut self, img: Tensor<MainBackend, 3>) -> TextureId {
         let mut encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor {
@@ -101,13 +100,14 @@ impl BurnTexture {
 
         let img_prim = img.into_primitive().tensor();
         let fusion_client = img_prim.client.clone();
-        let img = fusion_client.resolve_tensor_int::<BBase<BT>>(img_prim);
-        let img: Tensor<BBase<BT>, 3, Int> = Tensor::from_primitive(img);
+        let img = fusion_client.resolve_tensor_int::<MainBackendBase>(img_prim);
+        let img: Tensor<MainBackendBase, 3, Int> = Tensor::from_primitive(img);
 
         // Create padded tensor if needed. The bytes_per_row needs to be divisible
         // by 256 in WebGPU, so 4 bytes per pixel means width needs to be divisible by 64.
         let img = if width % 64 != 0 {
-            let padded: Tensor<BBase<BT>, 3, Int> = Tensor::zeros(&padded_shape, &img.device());
+            let padded: Tensor<MainBackendBase, 3, Int> =
+                Tensor::zeros(&padded_shape, &img.device());
             padded.slice_assign([0..height, 0..width], img)
         } else {
             img

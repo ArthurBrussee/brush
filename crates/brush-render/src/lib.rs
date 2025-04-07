@@ -26,7 +26,8 @@ pub mod camera;
 pub mod gaussian_splats;
 pub mod render;
 
-pub type MainBackend = burn::backend::Wgpu;
+pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u32>;
+pub type MainBackend = Fusion<MainBackendBase>;
 
 #[derive(Debug, Clone)]
 pub struct RenderStats {
@@ -41,11 +42,6 @@ const fn total_size(wg_size: [u32; 3]) -> u32 {
 const INTERSECTS_UPPER_BOUND: u32 =
     total_size(shaders::map_gaussian_to_intersects::WORKGROUP_SIZE) * 65535;
 const GAUSSIANS_UPPER_BOUND: u32 = 256 * 65535;
-
-/// The base WGPU backend these extension are written against. The bool type varies
-/// between the native vulkan and WebGPU backend.
-pub type BBase<BT> = CubeBackend<WgpuRuntime, f32, i32, BT>;
-pub type BFused<BT> = Fusion<BBase<BT>>;
 
 pub trait SplatForward<B: Backend> {
     /// Render splats to a buffer.
