@@ -59,6 +59,7 @@ pub fn create_egui_options() -> WgpuConfiguration {
                         .difference(Features::MAPPABLE_PRIMARY_BUFFERS),
                     required_limits: adapter.limits(),
                     memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    trace: wgpu::Trace::Off,
                 }),
                 ..Default::default()
             },

@@ -36,8 +36,6 @@ deny = [
 
 skip = [
     # common small deps.
-    { name = "bit-set" },
-    { name = "bit-vec" },
     { name = "bitflags" },
     { name = 'itertools' },
     { name = 'derive-new' },

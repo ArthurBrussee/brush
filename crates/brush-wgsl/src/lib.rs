@@ -9,7 +9,7 @@ use naga_oil::compose::{
 use regex::Regex;
 use std::{borrow::Cow, collections::HashMap, io, path::Path, sync::OnceLock};
 use thiserror::Error;
-use wgpu::naga;
+use wgpu::naga::{self, common::wgsl::TypeContext};
 
 const DECORATION_PRE: &str = "X_naga_oil_mod_X";
 const DECORATION_POST: &str = "X";
@@ -79,7 +79,7 @@ fn mod_name_from_mangled(string: &str) -> (String, String) {
 }
 
 fn rust_type_name(ty: Handle<naga::Type>, ctx: &GlobalCtx) -> String {
-    let wgsl_name = ty.to_wgsl(ctx);
+    let wgsl_name = ctx.type_to_string(ty);
 
     match wgsl_name.as_str() {
         "i32" | "u32" | "f32" => wgsl_name,
@@ -98,7 +98,7 @@ fn rust_type_name(ty: Handle<naga::Type>, ctx: &GlobalCtx) -> String {
 }
 
 fn alignment_of(ty: Handle<Type>, ctx: &GlobalCtx) -> usize {
-    let wgsl_name = ty.to_wgsl(ctx);
+    let wgsl_name = ctx.type_to_string(ty);
 
     match wgsl_name.as_str() {
         "i32" | "u32" | "f32" | "atomic<u32>" | "atomic<i32>" => 4,
@@ -215,6 +215,7 @@ pub fn build_modules(paths: &[&str], includes: &[&str], output_path: &str) -> Re
                     naga::Literal::U64(v) => Some(format!("u64 = {v}")),
                     naga::Literal::AbstractInt(v) => Some(format!("i64 = {v}")),
                     naga::Literal::AbstractFloat(v) => Some(format!("f64 = {v}")),
+                    naga::Literal::F16(v) => Some(format!("f16 = {v}")),
                 },
                 _ => continue,
             };
