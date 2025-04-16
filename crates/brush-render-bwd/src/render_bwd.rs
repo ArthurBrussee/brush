@@ -84,26 +84,25 @@ pub(crate) fn render_backward(
                 AtomicFeature::Add,
             ));
 
-    tracing::trace_span!("RasterizeBackwards", sync_burn = true).in_scope(||
-            // SAFETY: Kernel has to contain no OOB indexing.
-            unsafe {
-                client.execute_unchecked(
-                    RasterizeBackwards::task(hard_floats),
-                    CubeCount::Static(invocations, 1, 1),
-                    Bindings::new().with_buffers(
-                    vec![
-                        uniforms_buffer.clone().handle.binding(),
-                        compact_gid_from_isect.handle.binding(),
-                        tile_offsets.handle.binding(),
-                        projected_splats.handle.binding(),
-                        final_index.handle.binding(),
-                        out_img.handle.binding(),
-                        v_output.handle.binding(),
-                        v_grads.clone().handle.binding(),
-                        v_refine_weight.clone().handle.binding(),
-                    ]),
-                );
-            });
+    // Use checked execution, as the atomic loops are potentially unbounded.
+    tracing::trace_span!("RasterizeBackwards", sync_burn = true).in_scope(|| {
+        client.execute(
+            RasterizeBackwards::task(hard_floats),
+            CubeCount::Static(invocations, 1, 1),
+            Bindings::new().with_buffers(vec![
+                uniforms_buffer.clone().handle.binding(),
+                compact_gid_from_isect.handle.binding(),
+                tile_offsets.handle.binding(),
+                projected_splats.handle.binding(),
+                final_index.handle.binding(),
+                out_img.handle.binding(),
+                v_output.handle.binding(),
+                v_grads.clone().handle.binding(),
+                v_refine_weight.clone().handle.binding(),
+            ]),
+        );
+    });
+
     let _span = tracing::trace_span!("GatherGrads", sync_burn = true).entered();
 
     // SAFETY: Kernel has to contain no OOB indexing.

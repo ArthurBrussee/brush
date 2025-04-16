@@ -328,14 +328,13 @@ pub(crate) fn render_forward(
     // see the BWD_INFO define in the rasterize shader.
     let raster_task = Rasterize::task(bwd_info);
 
-    // SAFETY: Kernel has to contain no OOB indexing.
-    unsafe {
-        client.execute_unchecked(
-            raster_task,
-            calc_cube_count([img_size.x, img_size.y], Rasterize::WORKGROUP_SIZE),
-            bindings,
-        );
-    }
+    // Use safe execution as kernel has some looping which might be unbounded (depending on overflow rules?
+    // idk, the slow down seems tiny anyway so might as well).
+    client.execute(
+        raster_task,
+        calc_cube_count([img_size.x, img_size.y], Rasterize::WORKGROUP_SIZE),
+        bindings,
+    );
 
     (
         out_img,
