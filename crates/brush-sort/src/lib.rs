@@ -108,7 +108,7 @@ pub fn radix_argsort(
                 );
             }
 
-            // SAFETY: Kernel has to contain no OOB indexin, bounded loops..
+            // SAFETY: Kernel has to contain no OOB indexing, bounded loops..
             unsafe {
                 client.execute_unchecked(
                     SortScan::task(),
