@@ -49,7 +49,7 @@ rrfd.path = "../rrfd"
 brush-ui.path = "../brush-ui"
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 
-android_logger = "0.14.1"
+android_logger = "0.15.0"
 jni = "0.21.1"
 
 
