@@ -105,7 +105,7 @@ pub(crate) fn render_backward(
 
     let _span = tracing::trace_span!("GatherGrads", sync_burn = true).entered();
 
-    // SAFETY: Kernel has to contain no OOB indexing.
+    // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
         client.execute_unchecked(
             GatherGrads::task(),
@@ -123,7 +123,7 @@ pub(crate) fn render_backward(
     }
 
     tracing::trace_span!("ProjectBackwards", sync_burn = true).in_scope(||
-        // SAFETY: Kernel has to contain no OOB indexing.
+        // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
         unsafe {
         client.execute_unchecked(
             ProjectBackwards::task(),

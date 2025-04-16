@@ -77,7 +77,7 @@ pub fn radix_argsort(
             DType::I32,
         );
 
-        // SAFETY: wgsl FFI, kernel checked to have no OOB.
+        // SAFETY: wgsl FFI, kernel checked to have no OOB, bounded loops.
         unsafe {
             client.execute_unchecked(
                 SortCount::task(),
@@ -95,7 +95,7 @@ pub fn radix_argsort(
             let reduced_buf =
                 create_tensor::<1, WgpuRuntime>([BLOCK_SIZE as usize], device, client, DType::I32);
 
-            // SAFETY: Kernel has to contain no OOB indexing.
+            // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
             unsafe {
                 client.execute_unchecked(
                     SortReduce::task(),
@@ -108,7 +108,7 @@ pub fn radix_argsort(
                 );
             }
 
-            // SAFETY: Kernel has to contain no OOB indexing.
+            // SAFETY: Kernel has to contain no OOB indexin, bounded loops..
             unsafe {
                 client.execute_unchecked(
                     SortScan::task(),
@@ -120,7 +120,7 @@ pub fn radix_argsort(
                 );
             }
 
-            // SAFETY: Kernel has to contain no OOB indexing.
+            // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
             unsafe {
                 client.execute_unchecked(
                     SortScanAdd::task(),
@@ -138,7 +138,7 @@ pub fn radix_argsort(
         let output_values =
             create_tensor::<1, _>([max_n as usize], device, client, cur_vals.dtype());
 
-        // SAFETY: Kernel has to contain no OOB indexing.
+        // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
         unsafe {
             client.execute_unchecked(
                 SortScatter::task(),

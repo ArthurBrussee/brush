@@ -220,7 +220,7 @@ pub fn create_dispatch_buffer<R: CubeRuntime>(
         wg_size_z: wg_size[2] as i32,
     });
 
-    // SAFETY: wgsl FFI, kernel checked to have no OOB.
+    // SAFETY: wgsl FFI, kernel checked to have no OOB, bounded loops.
     unsafe {
         client.execute_unchecked(
             Box::new(CreateDispatchBuffer {}),

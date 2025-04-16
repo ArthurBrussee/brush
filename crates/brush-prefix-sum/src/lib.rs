@@ -22,7 +22,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     let client = &input.client;
     let outputs = create_tensor(input.shape.dims::<1>(), &input.device, client, DType::I32);
 
-    // SAFETY: Kernel has to contain no OOB indexing.
+    // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
         client.execute_unchecked(
             PrefixSumScan::task(),
@@ -52,7 +52,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
         work_size.push(work_sz);
     }
 
-    // SAFETY: Kernel has to contain no OOB indexing.
+    // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
         client.execute_unchecked(
             PrefixSumScanSums::task(),
@@ -65,7 +65,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     }
 
     for l in 0..(group_buffer.len() - 1) {
-        // SAFETY: Kernel has to contain no OOB indexing.
+        // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
         unsafe {
             client.execute_unchecked(
                 PrefixSumScanSums::task(),
@@ -81,7 +81,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     for l in (1..group_buffer.len()).rev() {
         let work_sz = work_size[l - 1];
 
-        // SAFETY: Kernel has to contain no OOB indexing.
+        // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
         unsafe {
             client.execute_unchecked(
                 PrefixSumAddScannedSums::task(),
@@ -94,7 +94,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
         }
     }
 
-    // SAFETY: Kernel has to contain no OOB indexing.
+    // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
         client.execute_unchecked(
             PrefixSumAddScannedSums::task(),
