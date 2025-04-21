@@ -15,7 +15,7 @@ pub(crate) async fn view_stream(
 ) -> anyhow::Result<()> {
     emitter.emit(ProcessMessage::NewSource).await;
 
-    let paths: Vec<_> = vfs.file_names().collect();
+    let paths: Vec<_> = vfs.file_paths().collect();
 
     for (i, path) in paths.iter().enumerate() {
         log::info!("Loading single ply file");

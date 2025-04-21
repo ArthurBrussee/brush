@@ -35,10 +35,7 @@ pub async fn load_dataset(
     };
 
     // If there's an initial ply file, override the init stream with that.
-    let path: Vec<_> = vfs
-        .file_names()
-        .filter(|x| x.extension().is_some_and(|ext| ext == "ply"))
-        .collect();
+    let path: Vec<_> = vfs.files_with_extension("ply").collect();
 
     let init_stream = if path.len() == 1 {
         let main_path = path.first().expect("unreachable");
@@ -60,23 +57,14 @@ pub async fn load_dataset(
 fn find_mask_path(vfs: &BrushVfs, path: &Path) -> Option<PathBuf> {
     let parent = path.parent()?.clean();
     let file_stem = path.file_stem()?.to_str()?;
-    let masked_name = format!("{file_stem}_mask");
     let masks_dir = parent.parent()?.join("masks").clean();
-
-    vfs.file_names().find(|file| {
-        let Some(file_parent) = file.parent() else {
-            return false;
+    for candidate in vfs.files_with_stem(file_stem) {
+        let Some(file_parent) = candidate.parent() else {
+            continue;
         };
-
-        let Some(stem) = file.file_stem().and_then(|p| p.to_str()) else {
-            return false;
-        };
-
-        // Compare stems in lowercase. Fine if image is Image.jpg and mask is image_mask.png.
-        let stem = stem.to_lowercase();
-        let masked_name = masked_name.to_lowercase();
-
-        file_parent == parent && stem == masked_name
-            || file_parent == masks_dir && stem == file_stem
-    })
+        if file_parent == masks_dir {
+            return Some(candidate);
+        }
+    }
+    None
 }

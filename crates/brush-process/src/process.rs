@@ -22,13 +22,20 @@ pub fn process_stream(
         log::info!("Starting process with source {source:?}");
         let vfs = Arc::new(source.into_vfs().await?);
 
-        let paths: Vec<_> = vfs.file_names().collect();
-        log::info!("Mounted VFS with {} files", paths.len());
+        let vfs_counts = vfs.file_count();
+        let ply_count = vfs.files_with_extension("ply").count();
 
-        if paths
-            .iter()
-            .all(|p| p.extension().is_some_and(|p| p == "ply"))
-        {
+        for file in vfs.file_paths() {
+            log::info!("Processing file: {:?}", file);
+        }
+
+        log::info!(
+            "Mounted VFS with {} files. (plys: {})",
+            vfs.file_count(),
+            ply_count
+        );
+
+        if vfs_counts == ply_count {
             view_stream(vfs, device, emitter).await?;
         } else {
             train_stream(vfs, process_args, device, emitter).await?;

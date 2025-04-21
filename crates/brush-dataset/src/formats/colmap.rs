@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use super::DataStream;
 use crate::{
@@ -22,23 +19,6 @@ use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
 use glam::Vec3;
 use std::collections::HashMap;
-
-fn find_base_path(archive: &BrushVfs, search_path: &str) -> Option<PathBuf> {
-    for path in archive.file_names() {
-        let lower_name = path.to_str().map(|s| s.to_lowercase());
-
-        if let Some(lower_name) = lower_name {
-            // Nb: This will use case sensitivity from the OS.
-            if lower_name.ends_with(search_path) {
-                return path
-                    .ancestors()
-                    .nth(Path::new(search_path).components().count())
-                    .map(|x| x.to_owned());
-            }
-        }
-    }
-    None
-}
 
 fn find_mask_and_img(vfs: &BrushVfs, paths: &[PathBuf]) -> Result<(PathBuf, Option<PathBuf>)> {
     let mut path_masks = HashMap::new();
@@ -72,9 +52,11 @@ pub(crate) async fn load_dataset(
 ) -> Option<Result<(DataStream<SplatMessage>, Dataset)>> {
     log::info!("Loading colmap dataset");
 
-    let (cam_path, img_path) = if let Some(path) = find_base_path(&vfs, "cameras.bin") {
+    let (cam_path, img_path) = if let Some(path) = vfs.files_with_filename("cameras.bin").next() {
+        let path = path.parent().expect("unreachable");
         (path.join("cameras.bin"), path.join("images.bin"))
-    } else if let Some(path) = find_base_path(&vfs, "cameras.txt") {
+    } else if let Some(path) = vfs.files_with_filename("cameras.txt").next() {
+        let path = path.parent().expect("unreachable");
         (path.join("cameras.txt"), path.join("images.txt"))
     } else {
         return None;
@@ -131,11 +113,7 @@ async fn load_dataset_inner(
 
         // Colmap only specifies an image name, not a full path. We brute force
         // search for the image in the archive.
-        let img_paths: Vec<_> = vfs
-            .file_names()
-            .filter(|p| p.ends_with(&img_info.name))
-            .collect();
-
+        let img_paths: Vec<_> = vfs.files_with_filename(&img_info.name).collect();
         let (path, mask_path) = find_mask_and_img(&vfs, &img_paths)
             .with_context(|| format!("Failed to find image {}", img_info.name))?;
 
@@ -170,13 +148,8 @@ async fn load_dataset_inner(
     let device = device.clone();
     let load_args = load_args.clone();
     let init_stream = try_fn_stream(|emitter| async move {
-        let points_path = vfs.file_names().find(|p| {
-            if let Some(path) = p.to_str().map(|p| p.to_lowercase()) {
-                path.ends_with("points3d.txt") || path.ends_with("points3d.bin")
-            } else {
-                false
-            }
-        });
+        let points_path = { vfs.files_with_filename("points3d.txt").next() }
+            .or_else(|| vfs.files_with_filename("points3d.bin").next());
 
         let Some(points_path) = points_path else {
             return Ok(());

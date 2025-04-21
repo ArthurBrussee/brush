@@ -20,10 +20,7 @@ use tokio::{
 };
 
 use tokio_stream::Stream;
-use zip::{
-    ZipArchive,
-    result::{ZipError, ZipResult},
-};
+use zip::ZipArchive;
 
 // On wasm, lots of things aren't Send that are send on non-wasm.
 // Non-wasm tokio requires :Send for futures, tokio_with_wasm doesn't.
@@ -53,8 +50,19 @@ type SharedRead = Arc<Mutex<Option<Box<dyn DynRead>>>>;
 // New type to keep track that this string-y path might not correspond to
 // a physical file path.
 //
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Debug, Eq, PartialEq, Hash)]
 struct PathKey(String);
+
+impl PathKey {
+    fn from_path(path: &Path) -> Self {
+        Self(
+            path.clean()
+                .to_str()
+                .expect("Path is not valid ascii")
+                .to_lowercase(),
+        )
+    }
+}
 
 #[derive(Clone)]
 pub struct ZipData {
@@ -77,61 +85,87 @@ async fn read_at_most<R: AsyncRead + Unpin>(
     Ok(buffer)
 }
 
-fn compare_paths_lowercase(path_a: &Path, path_b: &Path) -> bool {
-    path_to_key(path_a) == path_to_key(path_b)
-}
-
-fn path_to_key(path: &Path) -> PathKey {
-    PathKey(
-        path.to_str()
-            .expect("Path is not valid ascii")
-            .to_lowercase(),
-    )
-}
-
-pub enum BrushVfs {
-    Zip(ZipArchive<Cursor<ZipData>>),
-    Manual(HashMap<PathKey, SharedRead>),
+enum VfsContainer {
+    Zip {
+        archive: ZipArchive<Cursor<ZipData>>,
+    },
+    Manual {
+        readers: HashMap<PathBuf, SharedRead>,
+    },
     #[cfg(not(target_family = "wasm"))]
-    Directory(PathBuf, HashMap<PathBuf, PathKey>),
+    Directory { base_path: PathBuf },
+}
+
+pub struct BrushVfs {
+    lookup: HashMap<PathKey, PathBuf>,
+    container: VfsContainer,
+}
+
+fn lookup_from_paths(paths: &[PathBuf]) -> HashMap<PathKey, PathBuf> {
+    let mut result = HashMap::new();
+    for path in paths {
+        let path = path.clean();
+
+        // Only consider files with extensions for now. Zip files report directories as paths with no extension (not ending in '/')
+        // so can't really differentiate extensionless files from directories. We don't need any files without extensions
+        // so just skip them.
+        if path.extension().is_some() && !path.components().any(|c| c.as_os_str() == "__MACOSX") {
+            let key = PathKey::from_path(&path);
+            assert!(
+                result.insert(key, path.clone()).is_none(),
+                "Duplicate path found: {}. Paths must be unique (case non-sensitive)",
+                path.display()
+            );
+        }
+    }
+    result
 }
 
 impl BrushVfs {
-    pub async fn from_zip_reader(reader: impl AsyncRead + Unpin) -> ZipResult<Self> {
-        let mut bytes = vec![];
-        let mut reader = reader;
-        reader.read_to_end(&mut bytes).await?;
-
-        let zip_data = ZipData {
-            data: Arc::new(bytes),
-        };
-        let archive = ZipArchive::new(Cursor::new(zip_data))?;
-        Ok(Self::Zip(archive))
+    pub fn file_count(&self) -> usize {
+        self.lookup.len()
     }
 
-    async fn from_reader(
+    pub fn file_paths(&self) -> impl Iterator<Item = PathBuf> {
+        self.lookup.values().cloned()
+    }
+
+    pub async fn from_reader(
         reader: impl AsyncRead + SendNotWasm + Unpin + 'static,
     ) -> anyhow::Result<Self> {
         // Small hack to peek some bytes: Read them
         // and add them at the start again.
         let mut data = BufReader::new(reader);
         let peek = read_at_most(&mut data, 64).await?;
-        let reader: Box<dyn DynRead> =
+        let mut reader: Box<dyn DynRead> =
             Box::new(AsyncReadExt::chain(Cursor::new(peek.clone()), data));
 
         if peek.as_slice().starts_with(b"ply") {
-            let mut map = HashMap::new();
-            let key = PathKey("input.ply".to_owned());
+            let path = PathBuf::from("input.ply");
             let reader = Arc::new(Mutex::new(Some(reader)));
-            map.insert(key, reader);
-            Ok(Self::Manual(map))
+            Ok(Self {
+                lookup: lookup_from_paths(&[path.clone()]),
+                container: VfsContainer::Manual {
+                    readers: HashMap::from([(path, reader)]),
+                },
+            })
         } else if peek.starts_with(b"PK") {
-            Self::from_zip_reader(reader)
-                .await
-                .map_err(|e| anyhow::anyhow!(e))
+            let mut bytes = vec![];
+            reader.read_to_end(&mut bytes).await?;
+            let archive = ZipArchive::new(Cursor::new(ZipData {
+                data: Arc::new(bytes),
+            }))?;
+            let file_names: Vec<_> = archive.file_names().map(PathBuf::from).collect();
+            Ok(Self {
+                lookup: lookup_from_paths(&file_names),
+                container: VfsContainer::Zip { archive },
+            })
         } else if peek.starts_with(b"<!DOCTYPE html>") {
-            // TODO: Display HTML page on WASM maybe?
-            anyhow::bail!("Failed to download data.")
+            let mut html = String::new();
+            reader.read_to_string(&mut html).await?;
+
+            // TODO: On WASM, display the actual HTML? Idk.
+            anyhow::bail!("Failed to download data. \n\n {html}")
         } else {
             anyhow::bail!("only zip and ply files are supported. Unknown data type.")
         }
@@ -159,18 +193,25 @@ impl BrushVfs {
                             let path = entry.path();
                             if path.is_dir() {
                                 stack.push(path.clone());
-                            }
-                            paths.push(
-                                path.strip_prefix(dir.clone())
+                            } else {
+                                let path = path
+                                    .strip_prefix(dir.clone())
                                     .map_err(|_e| std::io::ErrorKind::InvalidInput)?
-                                    .to_path_buf(),
-                            );
+                                    .to_path_buf();
+                                paths.push(path);
+                            }
                         }
                     }
                     Ok(paths)
                 }
 
-                Ok(Self::Directory(dir.to_path_buf(), walk_dir(dir).await?))
+                let files = walk_dir(dir).await?;
+                Ok(Self {
+                    lookup: lookup_from_paths(&files),
+                    container: VfsContainer::Directory {
+                        base_path: dir.to_path_buf(),
+                    },
+                })
             }
         }
 
@@ -181,48 +222,71 @@ impl BrushVfs {
         }
     }
 
-    // pub fn file_names(&self) -> impl Iterator<Item = PathBuf> + '_ {
-    //     let iterator: Box<dyn Iterator<Item = &Path>> = match self {
-    //         Self::Zip(archive) => Box::new(archive.file_names().map(Path::new)),
-    //         Self::Manual(map) => Box::new(map.keys()),
-    //         #[cfg(not(target_family = "wasm"))]
-    //         Self::Directory(_, paths) => Box::new(paths.iter().map(|p| p.as_path())),
-    //     };
-    //     iterator.filter_map(|p| {
-    //         if !p.starts_with("__MACOSX") {
-    //             Some(p.clean())
-    //         } else {
-    //             None
-    //         }
-    //     })
-    // }
+    pub fn files_with_extension<'a>(
+        &'a self,
+        extension: &'a str,
+    ) -> impl Iterator<Item = PathBuf> + 'a {
+        let extension = extension.to_lowercase();
+
+        self.lookup.values().filter_map(move |path| {
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())?
+                .to_lowercase();
+            (ext == extension).then(|| path.clone())
+        })
+    }
+
+    pub fn files_with_filename<'a>(
+        &'a self,
+        filename: &'a str,
+    ) -> impl Iterator<Item = PathBuf> + 'a {
+        let filename = filename.to_lowercase();
+        self.lookup.values().filter_map(move |path| {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())?
+                .to_lowercase();
+            (name == filename).then(|| path.clone())
+        })
+    }
+
+    pub fn files_with_stem<'a>(&'a self, filestem: &'a str) -> impl Iterator<Item = PathBuf> + 'a {
+        let filestem = filestem.to_lowercase();
+        self.lookup.values().filter_map(move |path| {
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())?
+                .to_lowercase();
+            (stem == filestem).then(|| path.clone())
+        })
+    }
 
     pub async fn reader_at_path(&self, path: &Path) -> anyhow::Result<Box<dyn DynRead>> {
-        match self {
-            Self::Zip(archive) => {
-                // Zip file doesn't have a quick lookup. Maybe should add a HashMap<String, String> to go from
-                // path key to name in zip file.
-                let name = archive
-                    .file_names()
-                    .find(|name| compare_paths_lowercase(Path::new(name), path))
-                    .ok_or(ZipError::FileNotFound)?;
-                let name = name.to_owned();
+        let key = PathKey::from_path(path);
+        let path = self.lookup.get(&key).context("File not found")?;
+
+        match &self.container {
+            VfsContainer::Zip { archive } => {
+                let name = path
+                    .to_str()
+                    .expect("Invalid UTF-8 in zip file")
+                    .replace('\\', "/");
                 let mut buffer = vec![];
                 // Archive is cheap to clone, as the data is an Arc<[u8]>.
                 archive.clone().by_name(&name)?.read_to_end(&mut buffer)?;
                 Ok(Box::new(Cursor::new(buffer)))
             }
-            Self::Manual(map) => {
-                let key = path_to_key(path);
+            VfsContainer::Manual { readers } => {
                 // Readers get taken out of the map as they are not cloneable.
                 // This means that unlike other methods this path can only be loaded
                 // once.
-                let reader_mut = map.get(&key).context("File not found")?;
+                let reader_mut = readers.get(path).context("File not found")?;
                 let reader = reader_mut.lock().await.take();
                 reader.context("Missing reader")
             }
             #[cfg(not(target_family = "wasm"))]
-            Self::Directory(dir, _) => {
+            VfsContainer::Directory { base_path: dir } => {
                 // TODO: Use a string -> PathBuf cache.
                 let total_path = dir.join(path);
                 let file = tokio::fs::File::open(total_path).await?;

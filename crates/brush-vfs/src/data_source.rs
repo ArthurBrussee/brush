@@ -71,7 +71,7 @@ impl DataSource {
                 let reader = StreamReader::new(response);
                 BrushVfs::from_reader(reader).await
             }
-            Self::Path(path) => BrushVfs::from_path(&Path::new(&path)).await,
+            Self::Path(path) => BrushVfs::from_path(Path::new(&path)).await,
         }
     }
 }

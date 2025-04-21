@@ -184,21 +184,16 @@ pub async fn read_dataset(
 ) -> Option<Result<(DataStream<SplatMessage>, Dataset)>> {
     log::info!("Loading nerfstudio dataset");
 
-    let json_files: Vec<_> = vfs
-        .file_names()
-        .filter(|n| n.extension().is_some_and(|p| p == "json"))
-        .collect();
+    let json_files: Vec<_> = vfs.files_with_extension("json").collect();
 
     let transforms_path = if json_files.len() == 1 {
-        json_files.first().cloned().expect("Must have 1 json file")
+        json_files.first().cloned()?
     } else {
         // If there's multiple options, only pick files which are either exactly
         // transforms.json or end with transforms_train.json (a la transforms_train.json)
-        json_files
-            .iter()
-            // Nb: this is using Path functions which means case sensitivity is platform-dependent
-            .find(|x| x.ends_with("transforms.json") || x.ends_with("transforms_train.json"))?
-            .clone()
+        vfs.files_with_filename("transforms.json")
+            .next()
+            .or_else(|| vfs.files_with_filename("transforms_train.json").next())?
     };
 
     Some(read_dataset_inner(vfs, load_args, device, json_files, transforms_path).await)
