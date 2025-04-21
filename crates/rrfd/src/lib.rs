@@ -5,7 +5,7 @@ pub mod android;
 use anyhow::Context;
 use anyhow::Result;
 use std::path::PathBuf;
-use tokio::io::{AsyncRead, BufReader};
+use tokio::io::AsyncRead;
 
 /// Pick a file and return the name & bytes of the file.
 pub async fn pick_file() -> Result<impl AsyncRead + Unpin> {
@@ -18,7 +18,7 @@ pub async fn pick_file() -> Result<impl AsyncRead + Unpin> {
 
         #[cfg(target_family = "wasm")]
         {
-            Ok(Cursor::new(file.read().await))
+            Ok(std::io::Cursor::new(file.read().await))
         }
 
         #[cfg(not(target_family = "wasm"))]
@@ -26,14 +26,14 @@ pub async fn pick_file() -> Result<impl AsyncRead + Unpin> {
             let file = tokio::fs::File::open(file.path())
                 .await
                 .expect("Internal file picking error");
-            Ok(BufReader::new(file))
+            Ok(tokio::io::BufReader::new(file))
         }
     }
 
     #[cfg(target_os = "android")]
     {
         let file = android::pick_file().await?;
-        BufReader::new(file)
+        tokio::io::BufReader::new(file)
     }
 }
 
@@ -70,7 +70,7 @@ pub async fn save_file(default_name: &str, data: Vec<u8>) -> Result<()> {
         tokio::fs::write(file.path(), data).await?;
 
         #[cfg(target_family = "wasm")]
-        file.write(data);
+        file.write(&data);
 
         Ok(())
     }

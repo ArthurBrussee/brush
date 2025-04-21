@@ -25,10 +25,6 @@ pub fn process_stream(
         let vfs_counts = vfs.file_count();
         let ply_count = vfs.files_with_extension("ply").count();
 
-        for file in vfs.file_paths() {
-            log::info!("Processing file: {:?}", file);
-        }
-
         log::info!(
             "Mounted VFS with {} files. (plys: {})",
             vfs.file_count(),
