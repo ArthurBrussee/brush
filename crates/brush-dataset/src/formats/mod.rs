@@ -4,34 +4,31 @@ use crate::{
     splat_import::{SplatMessage, load_splat_from_ply},
 };
 use anyhow::Context;
-use brush_vfs::{BrushVfs, WasmNotSend};
-use burn::prelude::Backend;
+use brush_vfs::{BrushVfs, DynStream};
+use burn::backend::wgpu::WgpuDevice;
 use path_clean::PathClean;
 use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
 };
-use tokio_stream::Stream;
 
 pub mod colmap;
 pub mod nerfstudio;
 
-pub trait DynStream<Item>: Stream<Item = Item> + WasmNotSend {}
-impl<Item, T: Stream<Item = Item> + WasmNotSend> DynStream<Item> for T {}
-pub type DataStream<T> = Pin<Box<dyn DynStream<anyhow::Result<T>> + 'static>>;
+pub type DataStream<T> = Pin<Box<dyn DynStream<anyhow::Result<T>>>>;
 
-pub async fn load_dataset<B: Backend>(
+pub async fn load_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-    device: &B::Device,
-) -> anyhow::Result<(DataStream<SplatMessage<B>>, Dataset)> {
+    device: &WgpuDevice,
+) -> anyhow::Result<(DataStream<SplatMessage>, Dataset)> {
     let data_read = nerfstudio::read_dataset(vfs.clone(), load_args, device).await;
 
     let data_read = if let Some(data_read) = data_read {
         data_read.context("Failed to load as json format.")?
     } else {
-        let stream = colmap::load_dataset::<B>(vfs.clone(), load_args, device)
+        let stream = colmap::load_dataset(vfs.clone(), load_args, device)
             .await
             .context("Dataset was neither in nerfstudio or COLMAP format.")?;
         stream.context("Failed to load as COLMAP format.")?
@@ -74,6 +71,10 @@ fn find_mask_path(vfs: &BrushVfs, path: &Path) -> Option<PathBuf> {
         let Some(stem) = file.file_stem().and_then(|p| p.to_str()) else {
             return false;
         };
+
+        // Compare stems in lowercase. Fine if image is Image.jpg and mask is image_mask.png.
+        let stem = stem.to_lowercase();
+        let masked_name = masked_name.to_lowercase();
 
         file_parent == parent && stem == masked_name
             || file_parent == masks_dir && stem == file_stem

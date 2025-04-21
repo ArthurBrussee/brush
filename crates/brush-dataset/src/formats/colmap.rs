@@ -19,18 +19,22 @@ use brush_render::{
     sh::rgb_to_sh,
 };
 use brush_vfs::BrushVfs;
-use burn::prelude::Backend;
+use burn::backend::wgpu::WgpuDevice;
 use glam::Vec3;
 use std::collections::HashMap;
 
 fn find_base_path(archive: &BrushVfs, search_path: &str) -> Option<PathBuf> {
     for path in archive.file_names() {
-        // Nb: This will use case sensitivity from the OS.
-        if path.ends_with(search_path) {
-            return path
-                .ancestors()
-                .nth(Path::new(search_path).components().count())
-                .map(|x| x.to_owned());
+        let lower_name = path.to_str().map(|s| s.to_lowercase());
+
+        if let Some(lower_name) = lower_name {
+            // Nb: This will use case sensitivity from the OS.
+            if lower_name.ends_with(search_path) {
+                return path
+                    .ancestors()
+                    .nth(Path::new(search_path).components().count())
+                    .map(|x| x.to_owned());
+            }
         }
     }
     None
@@ -61,11 +65,11 @@ fn find_mask_and_img(vfs: &BrushVfs, paths: &[PathBuf]) -> Result<(PathBuf, Opti
         .context("No candidates found")
 }
 
-pub(crate) async fn load_dataset<B: Backend>(
+pub(crate) async fn load_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-    device: &B::Device,
-) -> Option<Result<(DataStream<SplatMessage<B>>, Dataset)>> {
+    device: &WgpuDevice,
+) -> Option<Result<(DataStream<SplatMessage>, Dataset)>> {
     log::info!("Loading colmap dataset");
 
     let (cam_path, img_path) = if let Some(path) = find_base_path(&vfs, "cameras.bin") {
@@ -79,13 +83,13 @@ pub(crate) async fn load_dataset<B: Backend>(
     Some(load_dataset_inner(vfs, load_args, device, cam_path, img_path).await)
 }
 
-async fn load_dataset_inner<B: Backend>(
+async fn load_dataset_inner(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-    device: &<B as Backend>::Device,
+    device: &WgpuDevice,
     cam_path: PathBuf,
     img_path: PathBuf,
-) -> Result<(DataStream<SplatMessage<B>>, Dataset)> {
+) -> Result<(DataStream<SplatMessage>, Dataset)> {
     let is_binary = cam_path.ends_with("cameras.bin");
 
     let cam_model_data = {

@@ -10,7 +10,7 @@ use burn::{
     config::Config,
     module::{Module, Param, ParamId},
     prelude::Backend,
-    tensor::{Tensor, TensorData, TensorPrimitive, activation::sigmoid},
+    tensor::{Tensor, TensorData, TensorPrimitive, activation::sigmoid, backend::AutodiffBackend},
 };
 use glam::{Quat, Vec3};
 use rand::Rng;
@@ -237,6 +237,32 @@ impl<B: Backend> Splats<B> {
 
     pub fn device(&self) -> B::Device {
         self.means.device()
+    }
+
+    // TODO: This should probably exist in Burn. Maybe make a PR.
+    pub fn into_autodiff<BDiff: AutodiffBackend<InnerBackend = B>>(self) -> Splats<BDiff> {
+        let (means_id, means) = self.means.consume();
+        let (rotation_id, rotation) = self.rotation.consume();
+        let (log_scales_id, log_scales) = self.log_scales.consume();
+        let (sh_coeffs_id, sh_coeffs) = self.sh_coeffs.consume();
+        let (raw_opacity_id, raw_opacity) = self.raw_opacity.consume();
+
+        Splats::<BDiff> {
+            means: Param::initialized(means_id, Tensor::from_inner(means).require_grad()),
+            rotation: Param::initialized(rotation_id, Tensor::from_inner(rotation).require_grad()),
+            log_scales: Param::initialized(
+                log_scales_id,
+                Tensor::from_inner(log_scales).require_grad(),
+            ),
+            sh_coeffs: Param::initialized(
+                sh_coeffs_id,
+                Tensor::from_inner(sh_coeffs).require_grad(),
+            ),
+            raw_opacity: Param::initialized(
+                raw_opacity_id,
+                Tensor::from_inner(raw_opacity).require_grad(),
+            ),
+        }
     }
 }
 

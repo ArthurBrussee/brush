@@ -11,7 +11,7 @@ use async_fn_stream::try_fn_stream;
 use brush_render::camera::fov_to_focal;
 use brush_render::camera::{Camera, focal_to_fov};
 use brush_vfs::BrushVfs;
-use burn::prelude::Backend;
+use burn::backend::wgpu::WgpuDevice;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
@@ -177,11 +177,11 @@ async fn read_transforms_file(
     Ok(results)
 }
 
-pub async fn read_dataset<B: Backend>(
+pub async fn read_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-    device: &B::Device,
-) -> Option<Result<(DataStream<SplatMessage<B>>, Dataset)>> {
+    device: &WgpuDevice,
+) -> Option<Result<(DataStream<SplatMessage>, Dataset)>> {
     log::info!("Loading nerfstudio dataset");
 
     let json_files: Vec<_> = vfs
@@ -204,13 +204,13 @@ pub async fn read_dataset<B: Backend>(
     Some(read_dataset_inner(vfs, load_args, device, json_files, transforms_path).await)
 }
 
-async fn read_dataset_inner<B: Backend>(
+async fn read_dataset_inner(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-    device: &<B as Backend>::Device,
+    device: &WgpuDevice,
     json_files: Vec<std::path::PathBuf>,
     transforms_path: std::path::PathBuf,
-) -> Result<(DataStream<SplatMessage<B>>, Dataset)> {
+) -> Result<(DataStream<SplatMessage>, Dataset)> {
     let mut buf = String::new();
     vfs.reader_at_path(&transforms_path)
         .await?

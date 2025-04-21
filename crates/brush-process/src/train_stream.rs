@@ -67,7 +67,7 @@ pub(crate) async fn train_stream(
             // If the metadata has an up axis prefer that, otherwise estimate
             // the up direction.
             up_axis: message.meta.up_axis.or(Some(estimated_up)),
-            splats: Box::new(message.splats.valid()),
+            splats: Box::new(message.splats.clone()),
             frame: 0,
             total_frames: 0,
         };
@@ -95,7 +95,8 @@ pub(crate) async fn train_stream(
         Splats::from_random_config(&config, adjusted_bounds, &mut rng, &device)
     };
 
-    let mut splats = splats.with_sh_degree(process_args.model_config.sh_degree);
+    let splats = splats.with_sh_degree(process_args.model_config.sh_degree);
+    let mut splats = splats.into_autodiff();
 
     let mut eval_scene = dataset.eval;
     let scene_extent = dataset.train.estimate_extent().unwrap_or(1.0);

@@ -16,8 +16,11 @@ rfd = { version = "0.15.0", default-features = false, features = [
     "tokio",
 ] }
 
-[target.'cfg(target_os = "android")'.dependencies]
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["fs", "sync"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+tokio = { workspace = true, features = ["sync"] }
 
 [lints]
 workspace = true

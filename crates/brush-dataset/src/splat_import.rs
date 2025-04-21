@@ -1,9 +1,10 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, pin::Pin};
 
 use async_fn_stream::try_fn_stream;
-use brush_render::{gaussian_splats::inverse_sigmoid, sh::rgb_to_sh};
+use brush_render::{MainBackend, gaussian_splats::inverse_sigmoid, sh::rgb_to_sh};
+use brush_vfs::{DynStream, SendNotWasm};
 use burn::{
-    prelude::Backend,
+    backend::wgpu::{WgpuDevice, WgpuRuntime},
     tensor::{Tensor, TensorData},
 };
 use glam::{Quat, Vec3, Vec4};
@@ -18,6 +19,7 @@ use tracing::trace_span;
 
 use anyhow::{Context, Result};
 use brush_render::gaussian_splats::Splats;
+use burn_cubecl::cubecl::Runtime;
 
 use crate::parsed_gaussian::ParsedGaussian;
 
@@ -28,9 +30,9 @@ pub struct ParseMetadata {
     pub current_frame: u32,
 }
 
-pub struct SplatMessage<B: Backend> {
+pub struct SplatMessage {
     pub meta: ParseMetadata,
-    pub splats: Splats<B>,
+    pub splats: Splats<MainBackend>,
 }
 
 enum PlyFormat {
@@ -98,15 +100,16 @@ impl TimeYield {
     }
 }
 
-pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
+pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
     reader: T,
     subsample_points: Option<u32>,
-    device: B::Device,
-) -> impl Stream<Item = Result<SplatMessage<B>>> + 'static {
+    device: WgpuDevice,
+) -> impl DynStream<Result<SplatMessage>> {
     // set up a reader, in this case a file.
     let mut reader = BufReader::new(reader);
 
     let _span = trace_span!("Read splats").entered();
+    let client = WgpuRuntime::client(&device);
 
     try_fn_stream(|emitter| async move {
         let header = Parser::<DefaultElement>::new()
@@ -139,51 +142,46 @@ pub fn load_splat_from_ply<T: AsyncRead + Unpin + 'static, B: Backend>(
             anyhow::bail!("Couldn't decide format of Ply file. Unknown Ply format.")
         };
 
-        match ply_type {
+        type SplatStream = Pin<Box<dyn DynStream<Result<SplatMessage>>>>;
+
+        let mut sub_stream: SplatStream = match ply_type {
             PlyFormat::Ply => {
-                let mut stream =
-                    std::pin::pin!(parse_ply(reader, subsample_points, device, header, up_axis));
-                while let Some(splat) = stream.next().await {
-                    emitter.emit(splat?).await;
-                }
+                Box::pin(parse_ply(reader, subsample_points, device, header, up_axis))
             }
-            PlyFormat::Brush4DCompressed => {
-                let mut stream = std::pin::pin!(parse_delta_ply(
-                    reader,
-                    subsample_points,
-                    device,
-                    header,
-                    up_axis
-                ));
-                while let Some(splat) = stream.next().await {
-                    emitter.emit(splat?).await;
-                }
-            }
-            PlyFormat::SuperSplatCompressed => {
-                let mut stream = std::pin::pin!(parse_compressed_ply(
-                    reader,
-                    subsample_points,
-                    device,
-                    header,
-                    up_axis
-                ));
-                while let Some(splat) = stream.next().await {
-                    emitter.emit(splat?).await;
-                }
-            }
+            PlyFormat::Brush4DCompressed => Box::pin(parse_delta_ply(
+                reader,
+                subsample_points,
+                device,
+                header,
+                up_axis,
+            )),
+            PlyFormat::SuperSplatCompressed => Box::pin(parse_compressed_ply(
+                reader,
+                subsample_points,
+                device,
+                header,
+                up_axis,
+            )),
         };
+
+        while let Some(splat) = sub_stream.next().await {
+            // As loading concatenates splats each time, memory usage tends to accumulate a lot
+            // over time. Clear out memory after each step to prevent this buildup.
+            client.memory_cleanup();
+            emitter.emit(splat?).await;
+        }
 
         Ok(())
     })
 }
 
-fn parse_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
+fn parse_ply<T: AsyncBufRead + Unpin + 'static>(
     mut reader: T,
     subsample_points: Option<u32>,
-    device: B::Device,
+    device: WgpuDevice,
     header: Header,
     up_axis: Option<Vec3>,
-) -> impl Stream<Item = Result<SplatMessage<B>>> + 'static {
+) -> impl Stream<Item = Result<SplatMessage>> + 'static {
     try_fn_stream(|emitter| async move {
         let vertex = header.elements.first().context("No elements in header")?;
         if vertex.name != "vertex" {
@@ -272,13 +270,13 @@ fn parse_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
     })
 }
 
-fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
+fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
     mut reader: T,
     subsample_points: Option<u32>,
-    device: B::Device,
+    device: WgpuDevice,
     header: Header,
     up_axis: Option<Vec3>,
-) -> impl Stream<Item = Result<SplatMessage<B>>> + 'static {
+) -> impl Stream<Item = Result<SplatMessage>> + 'static {
     #[derive(Default)]
     struct MinMax {
         min: Vec3,
@@ -495,13 +493,13 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
     })
 }
 
-fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static, B: Backend>(
+fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
     mut reader: T,
     subsample_points: Option<u32>,
-    device: B::Device,
+    device: WgpuDevice,
     header: Header,
     up_axis: Option<Vec3>,
-) -> impl Stream<Item = Result<SplatMessage<B>>> + 'static {
+) -> impl Stream<Item = Result<SplatMessage>> + 'static {
     try_fn_stream(|emitter| async move {
         let parser = Parser::<ParsedGaussian<false>>::new();
         let mut yielder = TimeYield::new();

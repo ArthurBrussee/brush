@@ -879,6 +879,7 @@ dependencies = [
  "brush-render",
  "brush-vfs",
  "burn",
+ "burn-cubecl",
  "clap",
  "colmap-reader",
  "glam",

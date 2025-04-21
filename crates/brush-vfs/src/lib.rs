@@ -15,10 +15,11 @@ use std::{
 use anyhow::Context;
 use path_clean::PathClean;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt},
+    io::{AsyncRead, AsyncReadExt, BufReader},
     sync::Mutex,
 };
 
+use tokio_stream::Stream;
 use zip::{
     ZipArchive,
     result::{ZipError, ZipResult},
@@ -30,21 +31,30 @@ use zip::{
 #[cfg(target_family = "wasm")]
 mod wasm_send {
     pub trait WasmNotSend {}
-    impl<T> WasmNotSend for T {}
+    impl<T> SendNotWasm for T {}
 }
 #[cfg(not(target_family = "wasm"))]
 mod wasm_send {
-    pub trait WasmNotSend: Send {}
-    impl<T: Send> WasmNotSend for T {}
+    pub trait SendNotWasm: Send {}
+    impl<T: Send> SendNotWasm for T {}
 }
 pub use data_source::DataSource;
 pub use wasm_send::*;
 
-pub trait DynRead: AsyncRead + WasmNotSend + Unpin {}
-impl<T: AsyncRead + WasmNotSend + Unpin> DynRead for T {}
+pub trait DynStream<Item>: Stream<Item = Item> + SendNotWasm {}
+impl<Item, T: Stream<Item = Item> + SendNotWasm> DynStream<Item> for T {}
+
+pub trait DynRead: AsyncRead + SendNotWasm + Unpin {}
+impl<T: AsyncRead + SendNotWasm + Unpin> DynRead for T {}
 
 // Sometimes rust is beautiful - sometimes it's ArcMutexOptionBox
 type SharedRead = Arc<Mutex<Option<Box<dyn DynRead>>>>;
+
+// New type to keep track that this string-y path might not correspond to
+// a physical file path.
+//
+#[derive(Eq, PartialEq, Hash)]
+struct PathKey(String);
 
 #[derive(Clone)]
 pub struct ZipData {
@@ -57,36 +67,33 @@ impl AsRef<[u8]> for ZipData {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct PathReader {
-    paths: HashMap<PathBuf, SharedRead>,
+async fn read_at_most<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    limit: usize,
+) -> std::io::Result<Vec<u8>> {
+    let mut buffer = vec![0; limit];
+    let bytes_read = reader.read(&mut buffer).await?;
+    buffer.truncate(bytes_read);
+    Ok(buffer)
 }
 
-impl PathReader {
-    fn paths(&self) -> impl Iterator<Item = &PathBuf> {
-        self.paths.keys()
-    }
+fn compare_paths_lowercase(path_a: &Path, path_b: &Path) -> bool {
+    path_to_key(path_a) == path_to_key(path_b)
+}
 
-    pub fn add(&mut self, path: &Path, reader: impl AsyncRead + WasmNotSend + Unpin + 'static) {
-        self.paths.insert(
-            path.to_path_buf(),
-            #[allow(clippy::arc_with_non_send_sync)] // Not send/sync on wasm but that's ok.
-            Arc::new(Mutex::new(Some(Box::new(reader)))),
-        );
-    }
-
-    async fn open(&self, path: &Path) -> anyhow::Result<Box<dyn DynRead>> {
-        let entry = self.paths.get(path).context("File not found")?;
-        let reader = entry.lock().await.take();
-        reader.context("Missing reader")
-    }
+fn path_to_key(path: &Path) -> PathKey {
+    PathKey(
+        path.to_str()
+            .expect("Path is not valid ascii")
+            .to_lowercase(),
+    )
 }
 
 pub enum BrushVfs {
     Zip(ZipArchive<Cursor<ZipData>>),
-    Manual(PathReader),
+    Manual(HashMap<PathKey, SharedRead>),
     #[cfg(not(target_family = "wasm"))]
-    Directory(PathBuf, Vec<PathBuf>),
+    Directory(PathBuf, HashMap<PathBuf, PathKey>),
 }
 
 impl BrushVfs {
@@ -102,24 +109,41 @@ impl BrushVfs {
         Ok(Self::Zip(archive))
     }
 
-    pub fn from_paths(paths: PathReader) -> Self {
-        Self::Manual(paths)
+    async fn from_reader(
+        reader: impl AsyncRead + SendNotWasm + Unpin + 'static,
+    ) -> anyhow::Result<Self> {
+        // Small hack to peek some bytes: Read them
+        // and add them at the start again.
+        let mut data = BufReader::new(reader);
+        let peek = read_at_most(&mut data, 64).await?;
+        let reader: Box<dyn DynRead> =
+            Box::new(AsyncReadExt::chain(Cursor::new(peek.clone()), data));
+
+        if peek.as_slice().starts_with(b"ply") {
+            let mut map = HashMap::new();
+            let key = PathKey("input.ply".to_owned());
+            let reader = Arc::new(Mutex::new(Some(reader)));
+            map.insert(key, reader);
+            Ok(Self::Manual(map))
+        } else if peek.starts_with(b"PK") {
+            Self::from_zip_reader(reader)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))
+        } else if peek.starts_with(b"<!DOCTYPE html>") {
+            // TODO: Display HTML page on WASM maybe?
+            anyhow::bail!("Failed to download data.")
+        } else {
+            anyhow::bail!("only zip and ply files are supported. Unknown data type.")
+        }
     }
 
-    pub async fn from_directory(dir: &Path) -> anyhow::Result<Self> {
+    pub async fn from_path(dir: &Path) -> anyhow::Result<Self> {
         #[cfg(not(target_family = "wasm"))]
         {
             if dir.is_file() {
                 let file = tokio::fs::File::open(dir).await?;
-
-                if dir.extension().is_some_and(|e| e == "zip") {
-                    Ok(Self::from_zip_reader(file).await?)
-                } else {
-                    // Make a VFS with just this file.
-                    let mut paths = PathReader::default();
-                    paths.add(dir, file);
-                    Ok(Self::from_paths(paths))
-                }
+                let reader = BufReader::new(file);
+                Self::from_reader(reader).await
             } else {
                 // Make a VFS with all files contained in the directory.
                 async fn walk_dir(dir: impl AsRef<Path>) -> std::io::Result<Vec<PathBuf>> {
@@ -157,29 +181,30 @@ impl BrushVfs {
         }
     }
 
-    pub fn file_names(&self) -> impl Iterator<Item = PathBuf> + '_ {
-        let iterator: Box<dyn Iterator<Item = &Path>> = match self {
-            Self::Zip(archive) => Box::new(archive.file_names().map(Path::new)),
-            Self::Manual(map) => Box::new(map.paths().map(|p| p.as_path())),
-            #[cfg(not(target_family = "wasm"))]
-            Self::Directory(_, paths) => Box::new(paths.iter().map(|p| p.as_path())),
-        };
-        iterator.filter_map(|p| {
-            // stupic macOS.
-            if !p.starts_with("__MACOSX") {
-                Some(p.clean())
-            } else {
-                None
-            }
-        })
-    }
+    // pub fn file_names(&self) -> impl Iterator<Item = PathBuf> + '_ {
+    //     let iterator: Box<dyn Iterator<Item = &Path>> = match self {
+    //         Self::Zip(archive) => Box::new(archive.file_names().map(Path::new)),
+    //         Self::Manual(map) => Box::new(map.keys()),
+    //         #[cfg(not(target_family = "wasm"))]
+    //         Self::Directory(_, paths) => Box::new(paths.iter().map(|p| p.as_path())),
+    //     };
+    //     iterator.filter_map(|p| {
+    //         if !p.starts_with("__MACOSX") {
+    //             Some(p.clean())
+    //         } else {
+    //             None
+    //         }
+    //     })
+    // }
 
     pub async fn reader_at_path(&self, path: &Path) -> anyhow::Result<Box<dyn DynRead>> {
         match self {
             Self::Zip(archive) => {
+                // Zip file doesn't have a quick lookup. Maybe should add a HashMap<String, String> to go from
+                // path key to name in zip file.
                 let name = archive
                     .file_names()
-                    .find(|name| path == Path::new(name))
+                    .find(|name| compare_paths_lowercase(Path::new(name), path))
                     .ok_or(ZipError::FileNotFound)?;
                 let name = name.to_owned();
                 let mut buffer = vec![];
@@ -187,9 +212,18 @@ impl BrushVfs {
                 archive.clone().by_name(&name)?.read_to_end(&mut buffer)?;
                 Ok(Box::new(Cursor::new(buffer)))
             }
-            Self::Manual(map) => map.open(path).await,
+            Self::Manual(map) => {
+                let key = path_to_key(path);
+                // Readers get taken out of the map as they are not cloneable.
+                // This means that unlike other methods this path can only be loaded
+                // once.
+                let reader_mut = map.get(&key).context("File not found")?;
+                let reader = reader_mut.lock().await.take();
+                reader.context("Missing reader")
+            }
             #[cfg(not(target_family = "wasm"))]
             Self::Directory(dir, _) => {
+                // TODO: Use a string -> PathBuf cache.
                 let total_path = dir.join(path);
                 let file = tokio::fs::File::open(total_path).await?;
                 let file = tokio::io::BufReader::new(file);

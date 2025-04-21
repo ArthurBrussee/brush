@@ -359,29 +359,20 @@ For bigger training runs consider using the native app."#,
                     if let Some(splats) = splats {
                         if ui.button("⬆ Export").clicked() {
                             let fut = async move {
-                                let file = rrfd::save_file("export.ply").await;
+                                let data = splat_export::splat_to_ply(splats).await;
+
+                                let data = match data {
+                                    Ok(data) => data,
+                                    Err(e) => {
+                                        log::error!("Failed to serialize file: {e}");
+                                        return;
+                                    }
+                                };
 
                                 // Not sure where/how to show this error if any.
-                                match file {
-                                    Err(e) => {
-                                        log::error!("Failed to save file: {e}");
-                                    }
-                                    Ok(file) => {
-                                        let data = splat_export::splat_to_ply(splats).await;
-
-                                        let data = match data {
-                                            Ok(data) => data,
-                                            Err(e) => {
-                                                log::error!("Failed to serialize file: {e}");
-                                                return;
-                                            }
-                                        };
-
-                                        if let Err(e) = file.write(&data).await {
-                                            log::error!("Failed to write file: {e}");
-                                        }
-                                    }
-                                }
+                                let _ = rrfd::save_file("export.ply", data)
+                                    .await
+                                    .inspect_err(|e| log::error!("Failed to save file: {e}"));
                             };
 
                             tokio_wasm::task::spawn(fut);
