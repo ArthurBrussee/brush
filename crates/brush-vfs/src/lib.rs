@@ -27,7 +27,7 @@ use zip::ZipArchive;
 // So, it can help to annotate futures/objects as send only on not-wasm.
 #[cfg(target_family = "wasm")]
 mod wasm_send {
-    pub trait WasmNotSend {}
+    pub trait SendNotWasm {}
     impl<T> SendNotWasm for T {}
 }
 #[cfg(not(target_family = "wasm"))]
