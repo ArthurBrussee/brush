@@ -7,7 +7,5 @@ dist = "trunk_dist"
 public_url = "/brush-demo"
 # Whether to include hash values in the output file names.
 filehash = false
-# Control minification: can be one of: never, on_release, always
-minify = "on_release"
 # Allow disabling sub-resource integrity (SRI)
 no_sri = true

@@ -28,7 +28,6 @@ pub(crate) async fn train_stream(
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
-
     emitter.emit(ProcessMessage::NewSource).await;
 
     log::info!("Create rerun {}", process_args.rerun_config.rerun_enabled);

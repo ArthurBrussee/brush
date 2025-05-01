@@ -24,7 +24,6 @@ egui.workspace = true
 egui_tiles.workspace = true
 eframe.workspace = true
 wgpu.workspace = true
-urlencoding.workspace = true
 tokio_with_wasm = { workspace = true, features = ["rt"] }
 tokio = { workspace = true }
 tracing.workspace = true

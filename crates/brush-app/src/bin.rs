@@ -1,5 +1,4 @@
 #![recursion_limit = "256"]
-
 mod ui_process;
 
 #[cfg(target_family = "wasm")]
@@ -13,7 +12,7 @@ fn main() -> Result<(), anyhow::Error> {
         use brush_ui::BrushUiProcess;
         use brush_ui::app::App;
 
-        let context = std::sync::Arc::new(ui_process::UiProcess::new());
+        let context = std::sync::Arc::new(ui_process::UiProcess::new(brush_ui::UiMode::Full));
         let wgpu_options = brush_ui::create_egui_options();
 
         use brush_cli::Cli;
@@ -60,7 +59,7 @@ fn main() -> Result<(), anyhow::Error> {
                 eframe::run_native(
                     title,
                     native_options,
-                    Box::new(move |cc| Ok(Box::new(App::new(cc, None, context)))),
+                    Box::new(move |cc| Ok(Box::new(App::new(cc, context)))),
                 )?;
             } else {
                 let Some(source) = args.source else {
@@ -76,9 +75,19 @@ fn main() -> Result<(), anyhow::Error> {
 
     #[cfg(target_family = "wasm")]
     {
+        let level = if cfg!(debug_assertions) {
+            // Could do 'debug' but it's way too spammy.
+            log::Level::Info
+        } else {
+            log::Level::Warn
+        };
+        wasm_log::init(wasm_log::Config::new(level));
+
+        let start_uri = web_sys::window().and_then(|w| w.location().search().ok());
+
         // Allowed to fail. When using the embedding API main canvas just won't be found.
         // Ideally it would catch only _that_ error.
-        let _ = wasm::wasm_app("main_canvas", None);
+        let _ = wasm::wasm_app("main_canvas", start_uri.as_deref().unwrap_or(""));
     }
 
     Ok(())

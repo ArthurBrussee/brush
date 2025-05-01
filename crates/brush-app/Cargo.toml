@@ -71,6 +71,7 @@ tokio = { workspace = true, features = ["io-util", "rt"] }
 wasm-bindgen.workspace = true
 web-sys.workspace = true
 wasm-log = "0.3.1"
+urlencoding.workspace = true
 
 # wasm_js random backend needs to be enabled explicitly.
 getrandom = { version = "0.3", features = ["wasm_js"] }

@@ -63,7 +63,6 @@ impl AppPanel for DatasetPanel {
             }
             ProcessMessage::Dataset { dataset } => {
                 if let Some(view) = dataset.train.views.first() {
-                    process.set_camera(view.camera.clone());
                     process.focus_view(view);
                 }
                 self.cur_dataset = dataset.clone();
@@ -147,7 +146,7 @@ impl AppPanel for DatasetPanel {
                 if let Some(texture_handle) = &mut self.last_handle {
                     let selected_view = selected.get_view(&self.cur_dataset);
 
-                    let size = size_for_splat_view(ui);
+                    let size = size_for_splat_view(ui, true);
                     let mut size = size.floor();
                     let aspect_ratio = texture_handle.aspect_ratio();
 

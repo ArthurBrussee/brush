@@ -295,6 +295,9 @@ unwrap_used = "warn"
 # Too many false positives
 significant_drop_tightening = "allow"
 
+# For WASM this is quite common
+arc_with_non_send_sync = "allow"
+
 # TODO: More docs
 missing_errors_doc = "allow"
 

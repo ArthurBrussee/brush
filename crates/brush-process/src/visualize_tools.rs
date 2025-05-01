@@ -351,10 +351,14 @@ mod visualize_tools_impl {
             Ok(())
         }
 
+        #[allow(unused_variables)]
+        #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
         pub fn log_scene(&self, _scene: &Scene, _max_img_size: u32) -> Result<()> {
             Ok(())
         }
 
+        #[allow(unused_variables)]
+        #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
         pub fn log_eval_stats(&self, _iter: u32, _avg_psnr: f32, _avg_ssim: f32) -> Result<()> {
             Ok(())
         }
@@ -369,6 +373,7 @@ mod visualize_tools_impl {
         }
 
         #[allow(unused_variables)]
+        #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
         pub fn log_splat_stats<B: Backend>(&self, _iter: u32, _splats: &Splats<B>) -> Result<()> {
             Ok(())
         }
@@ -383,10 +388,12 @@ mod visualize_tools_impl {
         }
 
         #[allow(unused_variables)]
+        #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
         pub fn log_refine_stats(&self, _iter: u32, _refine: &RefineStats) -> Result<()> {
             Ok(())
         }
 
+        #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
         pub fn log_memory(&self, _iter: u32, _memory: &MemoryUsage) -> Result<()> {
             Ok(())
         }

@@ -11,22 +11,20 @@ use brush_render::{
 };
 use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect};
-use glam::{Quat, UVec2, Vec3};
+use glam::{Affine3A, UVec2};
 use tokio_with_wasm::alias as tokio_wasm;
 use tracing::trace_span;
 use web_time::Instant;
 
 use crate::{
-    BrushUiProcess, burn_texture::BurnTexture, draw_checkerboard, panels::AppPanel,
+    BrushUiProcess, UiMode, burn_texture::BurnTexture, draw_checkerboard, panels::AppPanel,
     size_for_splat_view,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct RenderState {
     size: UVec2,
-    cam_pos: Vec3,
-    cam_rot: Quat,
-
+    cam_transform: Affine3A,
     frame: f32,
 }
 
@@ -47,7 +45,7 @@ pub struct ScenePanel {
     live_update: bool,
     paused: bool,
     err: Option<ErrorDisplay>,
-    zen: bool,
+    ui_mode: UiMode,
 
     // Keep track of what was last rendered.
     last_state: Option<RenderState>,
@@ -58,7 +56,7 @@ impl ScenePanel {
         device: wgpu::Device,
         queue: wgpu::Queue,
         renderer: Arc<EguiRwLock<Renderer>>,
-        zen: bool,
+        ui_mode: UiMode,
     ) -> Self {
         Self {
             backbuffer: BurnTexture::new(renderer, device, queue),
@@ -68,7 +66,7 @@ impl ScenePanel {
             live_update: true,
             paused: false,
             last_state: None,
-            zen,
+            ui_mode,
             frame_count: 0,
             frame: 0.0,
         }
@@ -80,7 +78,7 @@ impl ScenePanel {
         process: &dyn BrushUiProcess,
         splats: Option<Splats<MainBackend>>,
     ) -> egui::Rect {
-        let size = size_for_splat_view(ui);
+        let size = size_for_splat_view(ui, self.ui_mode == UiMode::Full);
 
         let mut size = size.floor();
 
@@ -110,8 +108,7 @@ impl ScenePanel {
 
         let state = RenderState {
             size,
-            cam_pos: camera.position,
-            cam_rot: camera.rotation,
+            cam_transform: camera.local_to_world(),
             frame: self.frame,
         };
 
@@ -230,7 +227,10 @@ impl AppPanel for ScenePanel {
         self.last_draw = Some(cur_time);
 
         // Empty scene, nothing to show.
-        if !process.is_training() && self.view_splats.is_empty() && self.err.is_none() && !self.zen
+        if !process.is_training()
+            && self.view_splats.is_empty()
+            && self.err.is_none()
+            && self.ui_mode == UiMode::Full
         {
             ui.heading("Load a ply file or dataset to get started.");
             ui.add_space(5.0);
@@ -380,20 +380,22 @@ For bigger training runs consider using the native app."#,
                     }
                 }
 
-                ui.selectable_label(false, "Controls")
-                    .on_hover_ui_at_pointer(|ui| {
-                        ui.heading("Controls");
+                if self.ui_mode == UiMode::Full {
+                    ui.selectable_label(false, "Controls")
+                        .on_hover_ui_at_pointer(|ui| {
+                            ui.heading("Controls");
 
-                        ui.label("• Left click and drag to orbit");
-                        ui.label(
-                            "• Right click, or left click + spacebar, and drag to look around.",
-                        );
-                        ui.label("• Middle click, or left click + control, and drag to pan");
-                        ui.label("• Scroll to zoom");
-                        ui.label("• WASD to fly, Q&E to move up & down.");
-                        ui.label("• Z&C to roll, X to reset roll");
-                        ui.label("• Shift to move faster");
-                    });
+                            ui.label("• Left click and drag to orbit");
+                            ui.label(
+                                "• Right click, or left click + spacebar, and drag to look around.",
+                            );
+                            ui.label("• Middle click, or left click + control, and drag to pan");
+                            ui.label("• Scroll to zoom");
+                            ui.label("• WASD to fly, Q&E to move up & down.");
+                            ui.label("• Z&C to roll, X to reset roll");
+                            ui.label("• Shift to move faster");
+                        });
+                }
             });
         }
     }

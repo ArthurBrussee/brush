@@ -31,7 +31,6 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         android_logger::init_once(
             android_logger::Config::default().with_max_level(log::LevelFilter::Info),
         );
-
         eframe::run_native(
             "Brush",
             eframe::NativeOptions {
@@ -41,7 +40,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
                 wgpu_options,
                 ..Default::default()
             },
-            Box::new(|cc| Ok(Box::new(App::new(cc, None, context)))),
+            Box::new(|cc| Ok(Box::new(App::new(cc, context)))),
         )
         .unwrap();
     });

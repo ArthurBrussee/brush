@@ -216,10 +216,9 @@ fn parse_ply<T: AsyncBufRead + Unpin + 'static>(
             .contains("opacity")
             .then(|| Vec::with_capacity(vertex.count));
 
-        let update_every = vertex.count.div_ceil(20);
+        let update_every = vertex.count.div_ceil(8);
 
         let mut last_update = 0;
-
         let mut yielder = TimeYield::new();
 
         for i in 0..vertex.count {

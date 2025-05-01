@@ -24,6 +24,12 @@ mod settings;
 mod stats;
 mod tracing_debug;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiMode {
+    Full,
+    Zen,
+}
+
 // Two way communication with the UI.
 // These are used both from the GUI, and for the exposed JS API's.
 pub trait BrushUiProcess {
@@ -38,13 +44,13 @@ pub trait BrushUiProcess {
     fn model_local_to_world(&self) -> glam::Affine3A;
     fn selected_view(&self) -> Option<SceneView>;
     fn set_train_paused(&self, paused: bool);
-    fn set_camera(&self, cam: Camera);
     fn set_cam_settings(&self, settings: CameraSettings);
     fn focus_view(&self, view: &SceneView);
     fn set_model_up(&self, up: Vec3);
     fn start_new_process(&self, source: DataSource, args: ProcessArgs);
     fn try_recv_message(&self) -> Option<anyhow::Result<ProcessMessage>>;
     fn connect_device(&self, device: WgpuDevice, ctx: egui::Context);
+    fn ui_mode(&self) -> UiMode;
 }
 
 pub fn create_egui_options() -> WgpuConfiguration {
@@ -107,8 +113,10 @@ pub fn draw_checkerboard(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color
     ui.painter().image(handle.id(), rect, uv, color);
 }
 
-pub fn size_for_splat_view(ui: &mut egui::Ui) -> egui::Vec2 {
+pub fn size_for_splat_view(ui: &mut egui::Ui, with_button: bool) -> egui::Vec2 {
     let mut size = ui.available_size();
-    size.y -= 25.0;
+    if with_button {
+        size.y -= 25.0;
+    }
     size.floor()
 }

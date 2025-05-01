@@ -2,7 +2,7 @@ use anyhow::Result;
 use brush_dataset::{Dataset, scene::SceneView};
 use brush_process::{config::ProcessArgs, message::ProcessMessage, process::process_stream};
 use brush_render::camera::Camera;
-use brush_ui::{BrushUiProcess, app::CameraSettings, camera_controls::CameraController};
+use brush_ui::{BrushUiProcess, UiMode, app::CameraSettings, camera_controls::CameraController};
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use egui::Response;
@@ -19,8 +19,8 @@ enum ControlMessage {
 
 #[derive(Debug, Clone)]
 struct DeviceContext {
-    device: WgpuDevice,
-    ctx: egui::Context,
+    pub device: WgpuDevice,
+    pub ctx: egui::Context,
 }
 
 struct RunningProcess {
@@ -40,9 +40,9 @@ pub struct UiProcess {
 }
 
 impl UiProcess {
-    pub fn new() -> Self {
+    pub fn new(ui_mode: UiMode) -> Self {
         Self {
-            inner: RwLock::new(UiProcessInner::new()),
+            inner: RwLock::new(UiProcessInner::new(ui_mode)),
         }
     }
 }
@@ -84,42 +84,44 @@ impl BrushUiProcess for UiProcess {
         }
     }
 
-    fn set_camera(&self, cam: Camera) {
-        let mut inner = self.inner.write();
-        inner.match_controls_to(&cam);
-        inner.camera = cam;
-        inner.controls.stop_movement();
-    }
-
     fn set_cam_settings(&self, settings: CameraSettings) {
         let mut inner = self.inner.write();
-        inner.controls = CameraController::new(CameraSettings::default());
-        inner.cam_settings = settings;
+        inner.controls = CameraController::new(settings.clone());
+        // Update the camera to the new position.
+        inner.camera.position = settings.position;
+        inner.camera.rotation = settings.rotation;
+
+        inner.camera.fov_x = settings.fov_y;
+        inner.camera.fov_y = settings.fov_y;
+
         let cam = inner.camera.clone();
         inner.match_controls_to(&cam);
+        inner.repaint();
     }
 
     fn focus_view(&self, view: &SceneView) {
-        self.set_camera(view.camera.clone());
-
         let mut inner = self.inner.write();
+        inner.match_controls_to(&view.camera);
+        inner.camera = view.camera.clone();
+        inner.controls.stop_movement();
         inner.view_aspect = Some(view.image.width() as f32 / view.image.height() as f32);
         if let Some(extent) = inner.dataset.train.estimate_extent() {
             inner.controls.focus_distance = extent / 3.0;
-        } else {
-            inner.controls.focus_distance = inner.cam_settings.focus_distance;
-        }
-        inner.controls.focus_distance = inner.cam_settings.focus_distance;
+        };
+        inner.repaint();
     }
 
     fn set_model_up(&self, up_axis: Vec3) {
+        let current = self.current_camera();
+
         let mut inner = self.inner.write();
         inner.model_local_to_world = Affine3A::from_rotation_translation(
             Quat::from_rotation_arc(up_axis.normalize(), Vec3::NEG_Y),
             Vec3::ZERO,
         );
-        let cam = inner.camera.clone();
-        inner.match_controls_to(&cam);
+
+        inner.match_controls_to(&current);
+        inner.repaint();
     }
 
     fn connect_device(&self, device: WgpuDevice, ctx: egui::Context) {
@@ -161,8 +163,9 @@ impl BrushUiProcess for UiProcess {
     }
 
     fn start_new_process(&self, source: DataSource, args: ProcessArgs) {
+        let ui_mode = self.ui_mode();
         let mut inner = self.inner.write();
-        let mut reset = UiProcessInner::new();
+        let mut reset = UiProcessInner::new(ui_mode);
         reset.cur_device_ctx = inner.cur_device_ctx.clone();
         *inner = reset;
 
@@ -258,6 +261,10 @@ impl BrushUiProcess for UiProcess {
             None
         }
     }
+
+    fn ui_mode(&self) -> UiMode {
+        self.inner.read().ui_mode
+    }
 }
 
 struct UiProcessInner {
@@ -265,17 +272,17 @@ struct UiProcessInner {
     is_loading: bool,
     is_training: bool,
     camera: Camera,
+    ui_mode: UiMode,
     view_aspect: Option<f32>,
     controls: CameraController,
     model_local_to_world: Affine3A,
     running_process: Option<RunningProcess>,
-    cam_settings: CameraSettings,
     selected_view: Option<SceneView>,
     cur_device_ctx: Option<DeviceContext>,
 }
 
 impl UiProcessInner {
-    pub fn new() -> Self {
+    pub fn new(ui_mode: UiMode) -> Self {
         let cam_settings = CameraSettings::default();
         let controls = CameraController::new(CameraSettings::default());
 
@@ -283,14 +290,15 @@ impl UiProcessInner {
         let camera = Camera::new(
             Vec3::ZERO,
             Quat::IDENTITY,
-            cam_settings.focal,
-            cam_settings.focal,
+            cam_settings.fov_y,
+            cam_settings.fov_y,
             glam::vec2(0.5, 0.5),
         );
 
         Self {
             camera,
             controls,
+            ui_mode,
             model_local_to_world: Affine3A::IDENTITY,
             view_aspect: None,
             dataset: Dataset::empty(),
@@ -298,8 +306,13 @@ impl UiProcessInner {
             is_training: false,
             selected_view: None,
             running_process: None,
-            cam_settings,
             cur_device_ctx: None,
+        }
+    }
+
+    fn repaint(&self) {
+        if let Some(ctx) = &self.cur_device_ctx {
+            ctx.ctx.request_repaint();
         }
     }
 

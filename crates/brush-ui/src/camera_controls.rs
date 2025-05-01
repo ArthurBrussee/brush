@@ -9,10 +9,8 @@ use crate::app::CameraSettings;
 pub struct CameraClamping {
     pub min_focus_distance: Option<f32>,
     pub max_focus_distance: Option<f32>,
-
     pub min_pitch: Option<f32>,
     pub max_pitch: Option<f32>,
-
     pub min_yaw: Option<f32>,
     pub max_yaw: Option<f32>,
 }
@@ -118,14 +116,14 @@ fn smooth_clamp(val: f32, min: Option<f32>, max: Option<f32>, dt: f32, lambda: f
 impl CameraController {
     pub fn new(settings: CameraSettings) -> Self {
         Self {
-            position: settings.init_position,
-            rotation: settings.init_rotation,
+            position: settings.position,
+            rotation: settings.rotation,
             roll: Quat::IDENTITY,
             fly_velocity: Vec3::ZERO,
             orbit_velocity: Vec2::ZERO,
             focus_distance: settings.focus_distance,
             clamping: settings.clamping,
-            speed_scale: settings.speed_scale,
+            speed_scale: settings.speed_scale.unwrap_or(1.0),
         }
     }
 
