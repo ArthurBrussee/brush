@@ -17,7 +17,7 @@ use crate::safetensor_utils::{safetensor_to_burn, splats_from_safetensors};
 
 type DiffBack = Autodiff<Wgpu>;
 
-const USE_RERUN: bool = false;
+const USE_RERUN: bool = true;
 
 fn compare<B: Backend, const D1: usize>(
     name: &str,
@@ -90,7 +90,7 @@ async fn test_reference() -> Result<()> {
 
     let rec = if USE_RERUN {
         rerun::RecordingStreamBuilder::new("render test")
-            .connect_tcp()
+            .connect_grpc()
             .ok()
     } else {
         None
@@ -153,7 +153,7 @@ async fn test_reference() -> Result<()> {
 
         aux.debug_assert_valid();
 
-        let num_visible: Tensor<DiffBack, 1, Int> = Tensor::from_primitive(aux.num_visible.clone());
+        let num_visible: Tensor<DiffBack, 1, Int> = aux.num_visible();
         let num_visible = num_visible.into_scalar_async().await as usize;
         let projected_splats =
             Tensor::from_primitive(TensorPrimitive::Float(aux.projected_splats.clone()));

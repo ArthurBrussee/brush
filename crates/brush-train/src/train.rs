@@ -92,15 +92,7 @@ impl SplatTrainer {
         let camera = &batch.camera;
 
         let current_opacity = splats.opacities();
-
-        let (
-            pred_image,
-            visible,
-            global_from_compact_gid,
-            num_visible,
-            num_intersections,
-            refine_weight_holder,
-        ) = {
+        let (pred_image, aux, refine_weight_holder) = {
             let diff_out = <Autodiff<MainBackend> as SplatForwardDiff<_>>::render_splats(
                 camera,
                 glam::uvec2(img_w as u32, img_h as u32),
@@ -111,14 +103,7 @@ impl SplatTrainer {
                 current_opacity.clone().into_primitive().tensor(),
             );
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-            (
-                img,
-                diff_out.aux.visible,
-                diff_out.aux.global_from_compact_gid,
-                diff_out.aux.num_visible,
-                diff_out.aux.num_intersections,
-                diff_out.refine_weight_holder,
-            )
+            (img, diff_out.aux, diff_out.refine_weight_holder)
         };
 
         let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
@@ -153,13 +138,15 @@ impl SplatTrainer {
         };
 
         let opac_loss_weight = self.config.opac_loss_weight;
-        let visible: Tensor<_, 1> = Tensor::from_primitive(TensorPrimitive::Float(visible));
+        let visible: Tensor<_, 1> =
+            Tensor::from_primitive(TensorPrimitive::Float(aux.visible.clone()));
+
 
         let loss = if opac_loss_weight > 0.0 {
             // Invisible splats still have a tiny bit of loss. Otherwise,
             // they would never die off.
             let visible = visible.clone() + 1e-3;
-            loss + (current_opacity * visible).sum() * (opac_loss_weight * (1.0 - train_t))
+            loss + (current_opacity.clone() * visible).sum() * (opac_loss_weight * (1.0 - train_t))
         } else {
             loss
         };
@@ -227,25 +214,25 @@ impl SplatTrainer {
             splats
         });
 
-        trace_span!("Housekeeping", sync_burn = true).in_scope(|| {
-            // Get the xy gradient norm from the dummy tensor.
-            let refine_weight = refine_weight_holder
-                .grad_remove(&mut grads)
-                .expect("XY gradients need to be calculated.");
+        let _housekeep = trace_span!("Housekeeping", sync_burn = true);
+        // Get the xy gradient norm from the dummy tensor.
+        let refine_weight = refine_weight_holder
+            .grad_remove(&mut grads)
+            .expect("XY gradients need to be calculated.");
 
-            let device = splats.device();
-            let num_splats = splats.num_splats();
-            let record = self
-                .refine_record
-                .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
+        let device = splats.device();
+        let num_splats = splats.num_splats();
+        let record = self
+            .refine_record
+            .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
 
-            record.gather_stats(
-                refine_weight,
-                glam::uvec2(img_w as u32, img_h as u32),
-                global_from_compact_gid,
-                num_visible.clone(),
-            );
-        });
+        record.gather_stats(
+            refine_weight,
+            glam::uvec2(img_w as u32, img_h as u32),
+            aux.global_from_compact_gid.clone(),
+            aux.num_visible().into_primitive(),
+        );
+        drop(_housekeep);
 
         let mean_noise_weight_scale = self.config.mean_noise_weight * (1.0 - train_t);
 
@@ -255,7 +242,7 @@ impl SplatTrainer {
             // let the splats settle in without noise, not much point in exploring regions anymore.
             // trace_span!("Noise means").in_scope(|| {
             let one = Tensor::ones([1], &device);
-            let noise_weight = (one - splats.opacities().inner())
+            let noise_weight = (one - current_opacity.inner())
                 .powf_scalar(100.0)
                 .clamp(0.0, 1.0);
             let noise_weight = noise_weight * visible.inner(); // Only noise visible gaussians.
@@ -278,8 +265,8 @@ impl SplatTrainer {
 
         let stats = TrainStepStats {
             pred_image: pred_image.inner(),
-            num_visible: Tensor::from_primitive(num_visible),
-            num_intersections: Tensor::from_primitive(num_intersections),
+            num_visible: aux.num_visible().inner(),
+            num_intersections: aux.num_intersections().inner(),
             loss: loss.inner(),
             lr_mean,
             lr_rotation,

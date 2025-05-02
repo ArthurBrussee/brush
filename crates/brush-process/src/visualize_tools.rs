@@ -147,9 +147,9 @@ mod visualize_tools_impl {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
                 self.rec
-                    .log("psnr/eval", &rerun::Scalar::new(avg_psnr as f64))?;
+                    .log("psnr/eval", &rerun::Scalars::new(vec![avg_psnr as f64]))?;
                 self.rec
-                    .log("ssim/eval", &rerun::Scalar::new(avg_ssim as f64))?;
+                    .log("ssim/eval", &rerun::Scalars::new(vec![avg_ssim as f64]))?;
             }
             Ok(())
         }
@@ -208,15 +208,15 @@ mod visualize_tools_impl {
                 )?;
                 self.rec.log(
                     format!("psnr/eval_{index}"),
-                    &rerun::Scalar::new(
-                        eval.psnr.clone().into_scalar_async().await.elem::<f32>() as f64
-                    ),
+                    &rerun::Scalars::new(vec![
+                        eval.psnr.clone().into_scalar_async().await.elem::<f32>() as f64,
+                    ]),
                 )?;
                 self.rec.log(
                     format!("ssim/eval_{index}"),
-                    &rerun::Scalar::new(
-                        eval.ssim.clone().into_scalar_async().await.elem::<f32>() as f64
-                    ),
+                    &rerun::Scalars::new(vec![
+                        eval.ssim.clone().into_scalar_async().await.elem::<f32>() as f64,
+                    ]),
                 )?;
             }
 
@@ -230,7 +230,7 @@ mod visualize_tools_impl {
 
                 let num = splats.num_splats();
                 self.rec
-                    .log("splats/num_splats", &rerun::Scalar::new(num as f64))?;
+                    .log("splats/num_splats", &rerun::Scalars::new(vec![num as f64]))?;
             }
             Ok(())
         }
@@ -244,29 +244,31 @@ mod visualize_tools_impl {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
                 self.rec
-                    .log("lr/mean", &rerun::Scalar::new(stats.lr_mean))?;
+                    .log("lr/mean", &rerun::Scalars::new(vec![stats.lr_mean]))?;
                 self.rec
-                    .log("lr/rotation", &rerun::Scalar::new(stats.lr_rotation))?;
+                    .log("lr/rotation", &rerun::Scalars::new(vec![stats.lr_rotation]))?;
                 self.rec
-                    .log("lr/scale", &rerun::Scalar::new(stats.lr_scale))?;
+                    .log("lr/scale", &rerun::Scalars::new(vec![stats.lr_scale]))?;
                 self.rec
-                    .log("lr/coeffs", &rerun::Scalar::new(stats.lr_coeffs))?;
+                    .log("lr/coeffs", &rerun::Scalars::new(vec![stats.lr_coeffs]))?;
                 self.rec
-                    .log("lr/opac", &rerun::Scalar::new(stats.lr_opac))?;
+                    .log("lr/opac", &rerun::Scalars::new(vec![stats.lr_opac]))?;
 
                 self.rec.log(
                     "splats/num_intersects",
-                    &rerun::Scalar::new(
+                    &rerun::Scalars::new(vec![
                         stats
                             .num_intersections
                             .into_scalar_async()
                             .await
                             .elem::<f64>(),
-                    ),
+                    ]),
                 )?;
                 self.rec.log(
                     "splats/splats_visible",
-                    &rerun::Scalar::new(stats.num_visible.into_scalar_async().await.elem::<f64>()),
+                    &rerun::Scalars::new(vec![
+                        stats.num_visible.into_scalar_async().await.elem::<f64>(),
+                    ]),
                 )?;
 
                 let [img_h, img_w, _] = stats.pred_image.dims();
@@ -274,7 +276,9 @@ mod visualize_tools_impl {
 
                 self.rec.log(
                     "losses/main",
-                    &rerun::Scalar::new(stats.loss.clone().into_scalar_async().await.elem::<f64>()),
+                    &rerun::Scalars::new(vec![
+                        stats.loss.clone().into_scalar_async().await.elem::<f64>(),
+                    ]),
                 )?;
             }
 
@@ -287,15 +291,15 @@ mod visualize_tools_impl {
                 self.rec.set_time_sequence("iterations", iter);
                 self.rec.log(
                     "refine/num_added",
-                    &rerun::Scalar::new(refine.num_added as f64),
+                    &rerun::Scalars::new(vec![refine.num_added as f64]),
                 )?;
                 self.rec.log(
                     "refine/num_pruned",
-                    &rerun::Scalar::new(refine.num_pruned as f64),
+                    &rerun::Scalars::new(vec![refine.num_pruned as f64]),
                 )?;
                 self.rec.log(
                     "refine/effective_growth",
-                    &rerun::Scalar::new(refine.num_added as f64 - refine.num_pruned as f64),
+                    &rerun::Scalars::new(vec![refine.num_added as f64 - refine.num_pruned as f64]),
                 )?;
             }
             Ok(())
@@ -307,17 +311,17 @@ mod visualize_tools_impl {
 
                 self.rec.log(
                     "memory/used",
-                    &rerun::Scalar::new(memory.bytes_in_use as f64),
+                    &rerun::Scalars::new(vec![memory.bytes_in_use as f64]),
                 )?;
 
                 self.rec.log(
                     "memory/reserved",
-                    &rerun::Scalar::new(memory.bytes_reserved as f64),
+                    &rerun::Scalars::new(vec![memory.bytes_reserved as f64]),
                 )?;
 
                 self.rec.log(
                     "memory/allocs",
-                    &rerun::Scalar::new(memory.number_allocs as f64),
+                    &rerun::Scalars::new(vec![memory.number_allocs as f64]),
                 )?;
             }
             Ok(())

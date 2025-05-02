@@ -5,10 +5,9 @@ use brush_render::gaussian_splats::Splats;
 use brush_render::{MainBackend, gaussian_splats::inverse_sigmoid, sh::rgb_to_sh};
 use brush_vfs::{DynStream, SendNotWasm};
 use burn::{
-    backend::wgpu::{WgpuDevice, WgpuRuntime},
+    backend::wgpu::WgpuDevice,
     tensor::{Tensor, TensorData},
 };
-use burn_cubecl::cubecl::Runtime;
 use glam::{Quat, Vec3, Vec4};
 use ply_rs::{
     parser::Parser,
@@ -117,7 +116,6 @@ pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
     let mut reader = BufReader::new(reader);
 
     let _span = trace_span!("Read splats").entered();
-    let client = WgpuRuntime::client(&device);
 
     try_fn_stream(|emitter| async move {
         let header = Parser::<DefaultElement>::new()
@@ -173,9 +171,6 @@ pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
         };
 
         while let Some(splat) = sub_stream.next().await {
-            // As loading concatenates splats each time, memory usage tends to accumulate a lot
-            // over time. Clear out memory after each step to prevent this buildup.
-            client.memory_cleanup();
             emitter.emit(splat?).await;
         }
 

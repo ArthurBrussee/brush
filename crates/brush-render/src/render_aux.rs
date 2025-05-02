@@ -1,24 +1,27 @@
+use std::mem::offset_of;
+
 use burn::{
     prelude::Backend,
     tensor::{
         ElementConversion, Int, Tensor, TensorMetadata,
         ops::{FloatTensor, IntTensor},
+        s,
     },
 };
 
-use crate::{GAUSSIANS_UPPER_BOUND, INTERSECTS_UPPER_BOUND, shaders::helpers::TILE_WIDTH};
+use crate::{
+    GAUSSIANS_UPPER_BOUND, INTERSECTS_UPPER_BOUND,
+    shaders::{self, helpers::TILE_WIDTH},
+};
 
 #[derive(Debug, Clone)]
 pub struct RenderAux<B: Backend> {
     /// The packed projected splat information, see `ProjectedSplat` in helpers.wgsl
     pub projected_splats: FloatTensor<B>,
     pub uniforms_buffer: IntTensor<B>,
-    pub num_intersections: IntTensor<B>,
-    pub num_visible: IntTensor<B>,
     pub tile_offsets: IntTensor<B>,
     pub compact_gid_from_isect: IntTensor<B>,
     pub global_from_compact_gid: IntTensor<B>,
-
     pub visible: FloatTensor<B>,
     pub final_index: IntTensor<B>,
 }
@@ -40,12 +43,20 @@ impl<B: Backend> RenderAux<B> {
         (max - min).reshape([ty, tx])
     }
 
+    pub fn num_intersections(&self) -> Tensor<B, 1, Int> {
+        Tensor::from_primitive(self.tile_offsets.clone()).slice(s![-1])
+    }
+
+    pub fn num_visible(&self) -> Tensor<B, 1, Int> {
+        let num_vis_field_offset = offset_of!(shaders::helpers::RenderUniforms, num_visible) / 4;
+        Tensor::from_primitive(self.uniforms_buffer.clone()).slice(s![num_vis_field_offset])
+    }
+
     pub fn debug_assert_valid(&self) {
-        let num_intersects: Tensor<B, 1, Int> =
-            Tensor::from_primitive(self.num_intersections.clone());
+        let num_intersects: Tensor<B, 1, Int> = self.num_intersections();
         let compact_gid_from_isect: Tensor<B, 1, Int> =
             Tensor::from_primitive(self.compact_gid_from_isect.clone());
-        let num_visible: Tensor<B, 1, Int> = Tensor::from_primitive(self.num_visible.clone());
+        let num_visible: Tensor<B, 1, Int> = self.num_visible();
 
         let num_intersections = num_intersects.into_scalar().elem::<i32>();
         let num_points = compact_gid_from_isect.dims()[0] as u32;
@@ -109,16 +120,24 @@ impl<B: Backend> RenderAux<B> {
             );
         }
 
-        let compact_gid_from_isect = &compact_gid_from_isect
-            .into_data()
-            .to_vec::<i32>()
-            .expect("Failed to fetch compact_gid_from_isect")[0..num_intersections as usize];
+        if num_intersections > 0 {
+            let compact_gid_from_isect = &compact_gid_from_isect
+                .slice([0..num_intersections as usize])
+                .into_data()
+                .to_vec::<i32>()
+                .expect("Failed to fetch compact_gid_from_isect");
 
-        for &compact_gid in compact_gid_from_isect {
-            assert!(
+            for (i, &compact_gid) in compact_gid_from_isect.iter().enumerate() {
+                assert!(
                 compact_gid >= 0 && compact_gid < num_visible,
-                "Invalid gaussian ID in intersection buffer. {compact_gid} out of {num_visible}"
+                "Invalid gaussian ID in intersection buffer. {compact_gid} out of {num_visible}. At {i} out of {num_intersections} intersections. \n
+
+
+                {compact_gid_from_isect:?}
+
+                \n\n\n"
             );
+            }
         }
 
         // assert that every ID in global_from_compact_gid is valid.

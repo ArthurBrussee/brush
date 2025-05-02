@@ -11,7 +11,7 @@ trait BurnToRerunData {
 impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D> {
     async fn into_rerun_data(self) -> rerun::TensorData {
         rerun::TensorData::new(
-            self.dims().map(|x| x as u64).as_slice(),
+            self.dims().map(|x| x as u64).to_vec(),
             rerun::TensorBuffer::F32(
                 self.into_data_async()
                     .await
@@ -26,7 +26,7 @@ impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D> {
 impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D, Int> {
     async fn into_rerun_data(self) -> rerun::TensorData {
         rerun::TensorData::new(
-            self.dims().map(|x| x as u64).as_slice(),
+            self.dims().map(|x| x as u64).to_vec(),
             rerun::TensorBuffer::I32(
                 self.into_data_async()
                     .await
@@ -41,7 +41,7 @@ impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D, Int> {
 impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D, Bool> {
     async fn into_rerun_data(self) -> rerun::TensorData {
         rerun::TensorData::new(
-            self.dims().map(|x| x as u64).as_slice(),
+            self.dims().map(|x| x as u64).to_vec(),
             rerun::TensorBuffer::U8(
                 self.into_data_async()
                     .await

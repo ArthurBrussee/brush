@@ -91,7 +91,10 @@ fn main(
     // this is the T AFTER the last gaussian in this pixel
     let T_final = 1.0 - output[pix_id].w;
 
-    var range = vec2u(u32(tile_offsets[tile_id]), u32(tile_offsets[tile_id + 1]));
+    var range = vec2u(
+        u32(clamp(tile_offsets[tile_id], 0, i32(uniforms.max_intersects))),
+        u32(clamp(tile_offsets[tile_id + 1], 0, i32(uniforms.max_intersects)))
+    );
 
     var final_isect = range.x;
     if inside {

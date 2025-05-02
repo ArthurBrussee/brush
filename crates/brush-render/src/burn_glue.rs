@@ -59,8 +59,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                 let [
                     projected_splats,
                     uniforms_buffer,
-                    num_intersections,
-                    num_visible,
                     tile_offsets,
                     compact_gid_from_isect,
                     global_from_compact_gid,
@@ -87,11 +85,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                     aux.projected_splats,
                 );
                 h.register_int_tensor::<MainBackendBase>(&uniforms_buffer.id, aux.uniforms_buffer);
-                h.register_int_tensor::<MainBackendBase>(
-                    &num_intersections.id,
-                    aux.num_intersections,
-                );
-                h.register_int_tensor::<MainBackendBase>(&num_visible.id, aux.num_visible);
                 h.register_int_tensor::<MainBackendBase>(&tile_offsets.id, aux.tile_offsets);
                 h.register_int_tensor::<MainBackendBase>(
                     &compact_gid_from_isect.id,
@@ -136,9 +129,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
         let aux = RenderAux::<Self> {
             projected_splats: client.tensor_uninitialized(vec![num_points, proj_size], DType::F32),
             uniforms_buffer: client.tensor_uninitialized(vec![uniforms_size], DType::I32),
-            num_intersections: client.tensor_uninitialized(vec![1], DType::I32),
-            num_visible: client.tensor_uninitialized(vec![1], DType::I32),
-
             tile_offsets: client.tensor_uninitialized(
                 vec![(tile_bounds.y * tile_bounds.x) as usize + 1],
                 DType::I32,
@@ -146,7 +136,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             compact_gid_from_isect: client
                 .tensor_uninitialized(vec![max_intersects as usize], DType::I32),
             global_from_compact_gid: client.tensor_uninitialized(vec![num_points], DType::I32),
-
             visible: client.tensor_uninitialized(visible_shape, DType::F32),
             final_index: client.tensor_uninitialized(final_index_shape, DType::I32),
         };
@@ -163,8 +152,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             &[
                 aux.projected_splats.to_ir_out(),
                 aux.uniforms_buffer.to_ir_out(),
-                aux.num_intersections.to_ir_out(),
-                aux.num_visible.to_ir_out(),
                 aux.tile_offsets.to_ir_out(),
                 aux.compact_gid_from_isect.to_ir_out(),
                 aux.global_from_compact_gid.to_ir_out(),

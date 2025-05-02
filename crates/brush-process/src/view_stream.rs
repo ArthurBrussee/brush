@@ -5,7 +5,8 @@ use std::sync::Arc;
 use async_fn_stream::TryStreamEmitter;
 use brush_dataset::splat_import;
 use brush_vfs::BrushVfs;
-use burn_wgpu::WgpuDevice;
+use burn_cubecl::cubecl::Runtime;
+use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use tokio_stream::StreamExt;
 
 pub(crate) async fn view_stream(
@@ -18,6 +19,7 @@ pub(crate) async fn view_stream(
 
     let mut paths: Vec<_> = vfs.file_paths().collect();
     alphanumeric_sort::sort_path_slice(&mut paths);
+    let client = WgpuRuntime::client(&device);
 
     for (i, path) in paths.iter().enumerate() {
         log::info!("Loading single ply file");
@@ -53,11 +55,18 @@ pub(crate) async fn view_stream(
                 total_frames,
             };
 
+            // As loading concatenates splats each time, memory usage tends to accumulate a lot
+            // over time. Clear out memory after each step to prevent this buildup.
+            client.memory_cleanup();
+
             emitter.emit(view_splat_msg).await;
         }
     }
 
     emitter.emit(ProcessMessage::DoneLoading).await;
+
+    // Clear out memory after loading is fully done.
+    client.memory_cleanup();
 
     Ok(())
 }

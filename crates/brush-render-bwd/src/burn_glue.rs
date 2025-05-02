@@ -209,8 +209,6 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
 
         let wrapped_aux = RenderAux::<Self> {
             projected_splats: <Self as AutodiffBackend>::from_inner(aux.projected_splats.clone()),
-            num_intersections: aux.num_intersections.clone(),
-            num_visible: aux.num_visible.clone(),
             final_index: aux.final_index.clone(),
             tile_offsets: aux.tile_offsets.clone(),
             compact_gid_from_isect: aux.compact_gid_from_isect.clone(),

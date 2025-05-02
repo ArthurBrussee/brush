@@ -1,5 +1,5 @@
 const TILE_WIDTH: u32 = 16u;
-// Nb: TILE_SIZE should be <= 512 for max compatibility.
+// Nb: TILE_SIZE should be <= 256 for max compatibility.
 const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 
 const MAIN_WG: u32 = 256u;
@@ -7,29 +7,34 @@ const MAIN_WG: u32 = 256u;
 struct RenderUniforms {
     // View matrix transform world to view position.
     viewmat: mat4x4f,
-    // Position of camera (xyz + pad)
-    camera_position: vec4f,
+
     // Focal of camera (fx, fy)
     focal: vec2f,
     // Img resolution (w, h)
     img_size: vec2u,
+
     tile_bounds: vec2u,
     // Camera center (cx, cy).
     pixel_center: vec2f,
+
+    // Position of camera (xyz + pad)
+    camera_position: vec4f,
+
     // Degree of sh coeffecients used.
     sh_degree: u32,
+
 #ifdef UNIFORM_WRITE
     // Number of visible gaussians, written by project_forward.
     // This needs to be non-atomic for other kernels as you can't have
     // read-only atomic data.
     num_visible: atomic<i32>,
-    num_intersections: atomic<i32>,
 #else
     // Number of visible gaussians.
     num_visible: i32,
-    num_intersections: i32,
 #endif
+
     total_splats: u32,
+    max_intersects: u32,
 }
 
 // nb: this struct has a bunch of padding but that's probably fine.

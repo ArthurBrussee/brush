@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use brush_render::{MainBackend, MainBackendBase};
-use burn::tensor::{Int, Tensor};
+use burn::tensor::{Tensor, TensorPrimitive};
+use burn_cubecl::cubecl::Runtime;
 use burn_fusion::client::FusionClient;
+use burn_wgpu::WgpuRuntime;
 use eframe::egui_wgpu::Renderer;
 use egui::TextureId;
 use egui::epaint::mutex::RwLock as EguiRwLock;
@@ -52,13 +54,8 @@ impl BurnTexture {
     }
 
     pub fn update_texture(&mut self, img: Tensor<MainBackend, 3>) -> TextureId {
-        let mut encoder = self
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("viewer encoder"),
-            });
-
-        let [h, w, _] = img.shape().dims();
+        let [h, w, c] = img.shape().dims();
+        assert!(c == 1, "texture should be u8 packed RGBA");
         let size = glam::uvec2(w as u32, h as u32);
 
         let dirty = if let Some(s) = self.state.as_ref() {
@@ -68,6 +65,10 @@ impl BurnTexture {
         };
 
         if dirty {
+            // Resizing has some really bad memory profiles, so cleanup memory when it's detected.
+            let client = WgpuRuntime::client(&img.device());
+            client.memory_cleanup();
+
             let texture = create_texture(glam::uvec2(w as u32, h as u32), &self.device);
 
             if let Some(s) = self.state.as_mut() {
@@ -93,27 +94,31 @@ impl BurnTexture {
             unreachable!("Somehow failed to initialize")
         };
         let texture: &wgpu::Texture = &s.texture;
-
         let [height, width, c] = img.dims();
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("viewer encoder"),
+            });
 
         let padded_shape = vec![height, width.div_ceil(64) * 64, c];
 
         let img_prim = img.into_primitive().tensor();
         let fusion_client = img_prim.client.clone();
-        let img = fusion_client.resolve_tensor_int::<MainBackendBase>(img_prim);
-        let img: Tensor<MainBackendBase, 3, Int> = Tensor::from_primitive(img);
+        let img = fusion_client.resolve_tensor_float::<MainBackendBase>(img_prim);
+        let img: Tensor<MainBackendBase, 3> = Tensor::from_primitive(TensorPrimitive::Float(img));
 
         // Create padded tensor if needed. The bytes_per_row needs to be divisible
         // by 256 in WebGPU, so 4 bytes per pixel means width needs to be divisible by 64.
         let img = if width % 64 != 0 {
-            let padded: Tensor<MainBackendBase, 3, Int> =
-                Tensor::zeros(&padded_shape, &img.device());
+            let padded: Tensor<MainBackendBase, 3> = Tensor::zeros(&padded_shape, &img.device());
             padded.slice_assign([0..height, 0..width], img)
         } else {
             img
         };
 
-        let img = img.into_primitive();
+        let img = img.into_primitive().tensor();
 
         // Get a hold of the Burn resource.
         let client = &img.client;

@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use async_fn_stream::try_fn_stream;
 use brush_vfs::DataSource;
-use burn_wgpu::WgpuDevice;
+use burn_cubecl::cubecl::Runtime;
+use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use tokio_stream::Stream;
 
 #[allow(unused)]
@@ -22,6 +23,10 @@ pub fn process_stream(
         log::info!("Starting process with source {source:?}");
         let vfs = Arc::new(source.into_vfs().await?);
 
+        let client = WgpuRuntime::client(&device);
+        // Start with memory cleared out.
+        client.memory_cleanup();
+
         let vfs_counts = vfs.file_count();
         let ply_count = vfs.files_with_extension("ply").count();
 
@@ -36,6 +41,7 @@ pub fn process_stream(
         } else {
             train_stream(vfs, process_args, device, emitter).await?;
         };
+
         Ok(())
     })
 }

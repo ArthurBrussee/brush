@@ -179,7 +179,6 @@ impl BrushUiProcess for UiProcess {
                 // Closed before we could start the process
                 return;
             };
-
             let stream = process_stream(source, args, device_ctx.device);
             let mut stream = std::pin::pin!(stream);
 
@@ -193,7 +192,6 @@ impl BrushUiProcess for UiProcess {
                 if sender.send(msg).await.is_err() {
                     break;
                 }
-
                 // Check if training is paused. Don't care about other messages as pausing loading
                 // doesn't make much sense.
                 if is_train_step

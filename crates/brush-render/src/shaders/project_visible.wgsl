@@ -18,8 +18,6 @@ struct IsectInfo {
 @group(0) @binding(6) var<storage, read> global_from_compact_gid: array<i32>;
 
 @group(0) @binding(7) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
-@group(0) @binding(8) var<storage, read_write> num_tiles: array<i32>;
-@group(0) @binding(9) var<storage, read_write> isect_info: array<IsectInfo>;
 
 struct ShCoeffs {
     b0_c0: vec3f,
@@ -239,8 +237,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
     }
 
+    // Write projected splat information.
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
-
     var color = sh_coeffs_to_color(sh_degree, viewdir, sh) + vec3f(0.5);
 
     projected[compact_gid] = helpers::create_projected_splat(
@@ -248,26 +246,4 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         vec3f(conic[0][0], conic[0][1], conic[1][1]),
         vec4f(color, opac)
     );
-
-    let radius = helpers::radius_from_cov(cov2d, opac);
-    let tile_minmax = helpers::get_tile_bbox(mean2d, radius, uniforms.tile_bounds);
-    let tile_min = tile_minmax.xy;
-    let tile_max = tile_minmax.zw;
-
-    var num_tiles_hit = 0;
-
-    for (var ty = tile_min.y; ty < tile_max.y; ty++) {
-        for (var tx = tile_min.x; tx < tile_max.x; tx++) {
-            if helpers::can_be_visible(vec2u(tx, ty), mean2d, conic, opac) {
-                // Add to the tile hit count.
-                num_tiles_hit += 1;
-                let isect_id = atomicAdd(&uniforms.num_intersections, 1);
-
-                let tile_id = tx + ty * uniforms.tile_bounds.x; // tile within image
-                isect_info[isect_id] = IsectInfo(i32(compact_gid), i32(tile_id));
-            }
-        }
-    }
-
-    num_tiles[compact_gid + 1] = num_tiles_hit;
 }

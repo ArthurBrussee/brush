@@ -15,9 +15,9 @@ use brush_kernel::create_uniform_buffer;
 use brush_kernel::{CubeCount, calc_cube_count};
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
-use burn::tensor::{DType, Tensor};
+use burn::tensor::{DType, Int, s};
 use burn::tensor::{
-    Int,
+    Tensor,
     ops::{FloatTensorOps, IntTensorOps},
 };
 
@@ -43,10 +43,12 @@ pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
 pub(crate) fn max_intersections(img_size: glam::UVec2, num_splats: u32) -> u32 {
     // Divide screen into tiles.
     let tile_bounds = calc_tile_bounds(img_size);
+    // Assume on average each splat is maximally covering half x half the screen,
+    // and adjust for the variance such that we're fairly certain we have enough intersections.
     let num_tiles = tile_bounds[0] * tile_bounds[1];
-    let max = num_splats.saturating_mul(num_tiles);
+    let expected_intersections = num_tiles * num_splats / 4 + 2 * (num_tiles * num_splats).isqrt();
     // clamp to max nr. of dispatches.
-    max.min(INTERSECTS_UPPER_BOUND)
+    expected_intersections.min(INTERSECTS_UPPER_BOUND)
 }
 
 pub(crate) fn render_forward(
@@ -98,6 +100,7 @@ pub(crate) fn render_forward(
     // Tile rendering setup.
     let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape.dims[1] as u32);
     let total_splats = means.shape.dims[0];
+    let max_intersects = max_intersections(img_size, total_splats as u32);
 
     let uniforms = shaders::helpers::RenderUniforms {
         viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
@@ -108,9 +111,9 @@ pub(crate) fn render_forward(
         tile_bounds: tile_bounds.into(),
         sh_degree,
         total_splats: total_splats as u32,
+        max_intersects,
         // Nb: Bit of a hack as these aren't _really_ uniforms but are written to by the shaders.
         num_visible: 0,
-        num_intersections: 0,
     };
 
     // Nb: This contains both static metadata and some dynamic data so can't pass this as metadata to execute. In the future
@@ -165,14 +168,8 @@ pub(crate) fn render_forward(
     let projected_splats =
         create_tensor::<2, _>([total_splats, projected_size], device, client, DType::F32);
 
-    let max_intersects = max_intersections(img_size, total_splats as u32);
-    // 1 extra length to make this an exclusive sum.
-    let tiles_hit_per_splat = MainBackendBase::int_zeros([total_splats + 1].into(), device);
-    let isect_info =
-        create_tensor::<2, WgpuRuntime>([max_intersects as usize, 2], device, client, DType::I32);
-
     // Create a buffer to determine how many threads to dispatch for all visible splats.
-    let num_vis_wg = create_dispatch_buffer(num_visible.clone(), [shaders::helpers::MAIN_WG, 1, 1]);
+    let num_vis_wg = create_dispatch_buffer(num_visible, [shaders::helpers::MAIN_WG, 1, 1]);
 
     tracing::trace_span!("ProjectVisible", sync_burn = true).in_scope(|| {
         // Normal execute as loops in here could be iffy.
@@ -188,67 +185,60 @@ pub(crate) fn render_forward(
                 opacities.handle.binding(),
                 global_from_compact_gid.handle.clone().binding(),
                 projected_splats.handle.clone().binding(),
-                tiles_hit_per_splat.handle.clone().binding(),
-                isect_info.handle.clone().binding(),
             ]),
         );
     });
 
-    // Create a tensor containing just the number of intersections.
-    let num_intersections_offset =
-        offset_of!(shaders::helpers::RenderUniforms, num_intersections) / 4;
-    let num_intersections = MainBackendBase::int_slice(
-        uniforms_buffer.clone(),
-        &[num_intersections_offset..num_intersections_offset + 1],
-    );
-
     // Each intersection maps to a gaussian.
     let (tile_offsets, compact_gid_from_isect) = {
         let num_tiles = tile_bounds.x * tile_bounds.y;
+
+        // Number of intersections per tile. Range ID's are later derived from this
+        // by a prefix sum.
+        let tile_intersect_counts =
+            MainBackendBase::int_zeros([num_tiles as usize + 1].into(), device);
+        let splat_intersect_counts = MainBackendBase::int_zeros([total_splats + 1].into(), device);
+
+        // First do a prepass to compute the tile counts, then fill in intersection counts.
+        tracing::trace_span!("MapGaussiansToIntersectPrepass", sync_burn = true).in_scope(|| {
+            client.execute(
+                MapGaussiansToIntersect::task(true),
+                CubeCount::Dynamic(num_vis_wg.clone().handle.binding()),
+                Bindings::new().with_buffers(vec![
+                    uniforms_buffer.clone().handle.binding(),
+                    projected_splats.clone().handle.binding(),
+                    splat_intersect_counts.clone().handle.binding(),
+                    tile_intersect_counts.clone().handle.binding(),
+                ]),
+            );
+        });
+
+        // TODO: Only need to do this up to num_visible gaussians really.
+        let cum_tiles_hit = tracing::trace_span!("PrefixSumGaussHits", sync_burn = true)
+            .in_scope(|| prefix_sum(splat_intersect_counts));
 
         let tile_id_from_isect =
             create_tensor::<1, _>([max_intersects as usize], device, client, DType::I32);
         let compact_gid_from_isect =
             create_tensor::<1, _>([max_intersects as usize], device, client, DType::I32);
 
-        // Number of intersections per tile. Range ID's are later derived from this
-        // by a prefix sum.
-        let tile_counts = MainBackendBase::int_zeros(
-            [(tile_bounds.y * tile_bounds.x) as usize + 1].into(),
-            device,
-        );
-
-        let cum_tiles_hit = tracing::trace_span!("PrefixSum", sync_burn = true).in_scope(|| {
-            // TODO: Only need to do this up to num_visible gaussians really.
-            prefix_sum(tiles_hit_per_splat)
-        });
-
         tracing::trace_span!("MapGaussiansToIntersect", sync_burn = true).in_scope(|| {
-            // The workgroup size is [256, 2] to be an effective 512 threads.
-            let num_intersects: Tensor<MainBackendBase, 1, Int> =
-                Tensor::from_primitive(num_intersections.clone());
-            let dispatch = (num_intersects + 1) / 2;
-            let intersect_wg_buf = create_dispatch_buffer(
-                dispatch.into_primitive(),
-                MapGaussiansToIntersect::WORKGROUP_SIZE,
+            client.execute(
+                MapGaussiansToIntersect::task(false),
+                CubeCount::Dynamic(num_vis_wg.clone().handle.binding()),
+                Bindings::new().with_buffers(vec![
+                    uniforms_buffer.clone().handle.binding(),
+                    projected_splats.clone().handle.binding(),
+                    cum_tiles_hit.clone().handle.binding(),
+                    tile_id_from_isect.clone().handle.binding(),
+                    compact_gid_from_isect.clone().handle.binding(),
+                ]),
             );
-
-            // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
-            unsafe {
-                client.execute_unchecked(
-                    MapGaussiansToIntersect::task(),
-                    CubeCount::Dynamic(intersect_wg_buf.handle.binding()),
-                    Bindings::new().with_buffers(vec![
-                        num_intersections.clone().handle.binding(),
-                        isect_info.handle.clone().binding(),
-                        cum_tiles_hit.handle.binding(),
-                        tile_counts.handle.clone().binding(),
-                        tile_id_from_isect.handle.clone().binding(),
-                        compact_gid_from_isect.handle.clone().binding(),
-                    ]),
-                );
-            }
         });
+
+        // Create a tensor containing just the number of intersections.
+        let cum_tiles_hit = Tensor::<MainBackendBase, 1, Int>::from_primitive(cum_tiles_hit);
+        let num_intersections = cum_tiles_hit.slice(s![-1]);
 
         // We're sorting by tile ID, but we know beforehand what the maximum value
         // can be. We don't need to sort all the leading 0 bits!
@@ -259,15 +249,14 @@ pub(crate) fn render_forward(
                 radix_argsort(
                     tile_id_from_isect,
                     compact_gid_from_isect,
-                    &num_intersections,
+                    &num_intersections.clone().into_primitive(),
                     bits,
                 )
             });
 
-        let _span = tracing::trace_span!("PrefixSumTileCounts", sync_burn = true).entered();
+        let tile_offsets = tracing::trace_span!("PrefixSumTileHits", sync_burn = true)
+            .in_scope(|| prefix_sum(tile_intersect_counts));
 
-        // Figure out start/end values for each tile.
-        let tile_offsets = prefix_sum(tile_counts);
         (tile_offsets, compact_gid_from_isect)
     };
 
@@ -284,7 +273,7 @@ pub(crate) fn render_forward(
         [img_size.y as usize, img_size.x as usize, out_dim],
         device,
         client,
-        if bwd_info { DType::F32 } else { DType::U32 },
+        DType::F32,
     );
 
     let mut bindings = Bindings::new().with_buffers(vec![
@@ -338,8 +327,6 @@ pub(crate) fn render_forward(
         out_img,
         RenderAux {
             uniforms_buffer,
-            num_visible,
-            num_intersections,
             tile_offsets,
             projected_splats,
             compact_gid_from_isect,

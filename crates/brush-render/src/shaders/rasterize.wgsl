@@ -48,7 +48,10 @@ fn main(
 
     // have all threads in tile process the same gaussians in batches
     // first collect gaussians between the bin counts.
-    let range = vec2u(u32(tile_offsets[tile_id]), u32(tile_offsets[tile_id + 1]));
+    let range = vec2u(
+        u32(clamp(tile_offsets[tile_id], 0, i32(uniforms.max_intersects))),
+        u32(clamp(tile_offsets[tile_id + 1], 0, i32(uniforms.max_intersects)))
+    );
 
     let num_batches = helpers::ceil_div(range.y - range.x, u32(helpers::TILE_SIZE));
     // current visibility left to render
