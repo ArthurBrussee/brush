@@ -141,7 +141,6 @@ impl SplatTrainer {
         let visible: Tensor<_, 1> =
             Tensor::from_primitive(TensorPrimitive::Float(aux.visible.clone()));
 
-
         let loss = if opac_loss_weight > 0.0 {
             // Invisible splats still have a tiny bit of loss. Otherwise,
             // they would never die off.
