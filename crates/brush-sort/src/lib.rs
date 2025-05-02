@@ -77,38 +77,33 @@ pub fn radix_argsort(
             DType::I32,
         );
 
-        // SAFETY: wgsl FFI, kernel checked to have no OOB, bounded loops.
-        unsafe {
-            client.execute_unchecked(
-                SortCount::task(),
-                CubeCount::Dynamic(num_wgs.clone().handle.binding()),
-                Bindings::new().with_buffers(vec![
-                    uniforms_buffer.clone().handle.binding(),
-                    n_sort.clone().handle.binding(),
-                    cur_keys.handle.clone().binding(),
-                    count_buf.clone().handle.binding(),
-                ]),
-            );
-        }
+        // use safe distpatch as dynamic work count isn't verified.
+        client.execute(
+            SortCount::task(),
+            CubeCount::Dynamic(num_wgs.clone().handle.binding()),
+            Bindings::new().with_buffers(vec![
+                uniforms_buffer.clone().handle.binding(),
+                n_sort.clone().handle.binding(),
+                cur_keys.handle.clone().binding(),
+                count_buf.clone().handle.binding(),
+            ]),
+        );
 
         {
             let reduced_buf =
                 create_tensor::<1, WgpuRuntime>([BLOCK_SIZE as usize], device, client, DType::I32);
 
-            // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
-            unsafe {
-                client.execute_unchecked(
-                    SortReduce::task(),
-                    CubeCount::Dynamic(num_reduce_wgs.clone().handle.binding()),
-                    Bindings::new().with_buffers(vec![
-                        n_sort.clone().handle.binding(),
-                        count_buf.clone().handle.binding(),
-                        reduced_buf.clone().handle.binding(),
-                    ]),
-                );
-            }
+            client.execute(
+                SortReduce::task(),
+                CubeCount::Dynamic(num_reduce_wgs.clone().handle.binding()),
+                Bindings::new().with_buffers(vec![
+                    n_sort.clone().handle.binding(),
+                    count_buf.clone().handle.binding(),
+                    reduced_buf.clone().handle.binding(),
+                ]),
+            );
 
-            // SAFETY: Kernel has to contain no OOB indexing, bounded loops..
+            // SAFETY: No OOB or loops in kernel.
             unsafe {
                 client.execute_unchecked(
                     SortScan::task(),
@@ -120,40 +115,34 @@ pub fn radix_argsort(
                 );
             }
 
-            // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
-            unsafe {
-                client.execute_unchecked(
-                    SortScanAdd::task(),
-                    CubeCount::Dynamic(num_reduce_wgs.handle.clone().binding()),
-                    Bindings::new().with_buffers(vec![
-                        n_sort.clone().handle.binding(),
-                        reduced_buf.clone().handle.binding(),
-                        count_buf.clone().handle.binding(),
-                    ]),
-                );
-            }
+            client.execute(
+                SortScanAdd::task(),
+                CubeCount::Dynamic(num_reduce_wgs.handle.clone().binding()),
+                Bindings::new().with_buffers(vec![
+                    n_sort.clone().handle.binding(),
+                    reduced_buf.clone().handle.binding(),
+                    count_buf.clone().handle.binding(),
+                ]),
+            );
         }
 
         let output_keys = create_tensor::<1, _>([max_n as usize], device, client, cur_keys.dtype());
         let output_values =
             create_tensor::<1, _>([max_n as usize], device, client, cur_vals.dtype());
 
-        // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
-        unsafe {
-            client.execute_unchecked(
-                SortScatter::task(),
-                CubeCount::Dynamic(num_wgs.clone().handle.binding()),
-                Bindings::new().with_buffers(vec![
-                    uniforms_buffer.handle.clone().binding(),
-                    n_sort.clone().handle.binding(),
-                    cur_keys.handle.clone().binding(),
-                    cur_vals.handle.clone().binding(),
-                    count_buf.handle.clone().binding(),
-                    output_keys.handle.clone().binding(),
-                    output_values.handle.clone().binding(),
-                ]),
-            );
-        }
+        client.execute(
+            SortScatter::task(),
+            CubeCount::Dynamic(num_wgs.clone().handle.binding()),
+            Bindings::new().with_buffers(vec![
+                uniforms_buffer.handle.clone().binding(),
+                n_sort.clone().handle.binding(),
+                cur_keys.handle.clone().binding(),
+                cur_vals.handle.clone().binding(),
+                count_buf.handle.clone().binding(),
+                output_keys.handle.clone().binding(),
+                output_values.handle.clone().binding(),
+            ]),
+        );
 
         cur_keys = output_keys;
         cur_vals = output_values;

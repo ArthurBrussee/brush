@@ -46,7 +46,10 @@ pub(crate) fn max_intersections(img_size: glam::UVec2, num_splats: u32) -> u32 {
     // Assume on average each splat is maximally covering half x half the screen,
     // and adjust for the variance such that we're fairly certain we have enough intersections.
     let num_tiles = tile_bounds[0] * tile_bounds[1];
-    let expected_intersections = num_tiles * num_splats / 4 + 2 * (num_tiles * num_splats).isqrt();
+
+    let expected_intersections = (num_tiles / 8)
+        .saturating_mul(num_splats)
+        .saturating_add(5 * (num_tiles.isqrt().saturating_mul(num_splats.isqrt())));
     // clamp to max nr. of dispatches.
     expected_intersections.min(INTERSECTS_UPPER_BOUND)
 }
