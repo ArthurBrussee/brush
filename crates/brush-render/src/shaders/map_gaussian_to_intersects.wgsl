@@ -45,7 +45,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // Nb: It's really really important here the two dispatches
     // of this kernel arrive at the exact same num_tiles_hit count. Otherwise
     // we might not be writing some intersection data.
-    // This is a bit scary given potential optmizations that might happen depending
+    // This is a bit scary given potential optimizations that might happen depending
     // on which version is being ran.
     for (var ty = tile_min.y; ty < tile_max.y; ty++) {
         for (var tx = tile_min.x; tx < tile_max.x; tx++) {
