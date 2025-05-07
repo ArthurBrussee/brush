@@ -69,7 +69,10 @@ ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',
-] } # Various burn packages. Currently need to use burn at head.
+] }
+burn-import = { git = "https://github.com/tracel-ai/burn", features = [
+    'pytorch',
+], default-features = false }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
 burn-ir = { git = "https://github.com/tracel-ai/burn" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
@@ -107,13 +110,14 @@ parking_lot = "0.12"
 
 alphanumeric-sort = "1.5.3"
 
-# # Uncomment this to use local burn.
-# [patch."https://github.com/tracel-ai/burn"]
-# burn = { path = "../burn/crates/burn" }
-# burn-cubecl = { path = "../burn/crates/burn-cubecl" }
-# burn-wgpu = { path = "../burn/crates/burn-wgpu" }
-# burn-fusion = { path = "../burn/crates/burn-fusion" }
-# burn-ir = { path = "../burn/crates/burn-ir" }
+# Uncomment this to use local burn.
+[patch."https://github.com/tracel-ai/burn"]
+burn = { path = "../burn/crates/burn" }
+burn-cubecl = { path = "../burn/crates/burn-cubecl" }
+burn-wgpu = { path = "../burn/crates/burn-wgpu" }
+burn-fusion = { path = "../burn/crates/burn-fusion" }
+burn-ir = { path = "../burn/crates/burn-ir" }
+burn-import = { path = "../burn/crates/burn-import" }
 
 # Uncomment this to use local cubcl.
 # [patch."https://github.com/tracel-ai/cubecl"]
