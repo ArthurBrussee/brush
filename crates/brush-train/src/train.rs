@@ -242,7 +242,7 @@ impl SplatTrainer {
             // trace_span!("Noise means").in_scope(|| {
             let one = Tensor::ones([1], &device);
             let noise_weight = (one - current_opacity.inner())
-                .powf_scalar(100.0)
+                .powi_scalar(100)
                 .clamp(0.0, 1.0);
             let noise_weight = noise_weight * visible.inner(); // Only noise visible gaussians.
             let noise_weight = noise_weight.unsqueeze_dim(1);

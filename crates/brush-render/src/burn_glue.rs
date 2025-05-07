@@ -50,10 +50,10 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
 
         impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp {
             fn execute(
-                self: Box<Self>,
+                &self,
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
             ) {
-                let (inputs, outputs) = self.desc.consume();
+                let (inputs, outputs) = self.desc.as_fixed();
 
                 let [means, log_scales, quats, sh_coeffs, opacity] = inputs;
                 let [
@@ -70,11 +70,11 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                 let (img, aux) = MainBackendBase::render_splats(
                     &self.cam,
                     self.img_size,
-                    h.get_float_tensor::<MainBackendBase>(&means),
-                    h.get_float_tensor::<MainBackendBase>(&log_scales),
-                    h.get_float_tensor::<MainBackendBase>(&quats),
-                    h.get_float_tensor::<MainBackendBase>(&sh_coeffs),
-                    h.get_float_tensor::<MainBackendBase>(&opacity),
+                    h.get_float_tensor::<MainBackendBase>(means),
+                    h.get_float_tensor::<MainBackendBase>(log_scales),
+                    h.get_float_tensor::<MainBackendBase>(quats),
+                    h.get_float_tensor::<MainBackendBase>(sh_coeffs),
+                    h.get_float_tensor::<MainBackendBase>(opacity),
                     self.bwd_info,
                 );
 

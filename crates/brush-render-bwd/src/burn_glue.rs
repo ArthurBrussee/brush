@@ -271,13 +271,13 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
 
         impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp {
             fn execute(
-                self: Box<Self>,
+                &self,
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
             ) {
                 let ([v_output], [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine]) =
-                    self.desc.consume();
+                    self.desc.as_fixed();
 
-                let state = self.state;
+                let state = self.state.clone();
 
                 let inner_state = GaussianBackwardState {
                     means: h.get_float_tensor::<MainBackendBase>(&state.means.into_ir()),
@@ -303,7 +303,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                 let grads =
                     <MainBackendBase as SplatBackwardOps<MainBackendBase>>::render_splats_bwd(
                         inner_state,
-                        h.get_float_tensor::<MainBackendBase>(&v_output),
+                        h.get_float_tensor::<MainBackendBase>(v_output),
                     );
 
                 // // Register output.
