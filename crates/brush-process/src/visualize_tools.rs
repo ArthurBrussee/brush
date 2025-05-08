@@ -22,8 +22,8 @@ mod visualize_tools_impl {
     use anyhow::Result;
 
     use burn_cubecl::cubecl::MemoryUsage;
-    use rerun::external::image::{Rgb32FImage, Rgba32FImage};
-    use rerun::external::{glam, image};
+    use image::{Rgb32FImage, Rgba32FImage};
+    use rerun::external::glam;
 
     use super::VisualizeTools;
 

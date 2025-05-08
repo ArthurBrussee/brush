@@ -865,7 +865,6 @@ dependencies = [
  "brush-render",
  "brush-vfs",
  "burn",
- "burn-cubecl",
  "clap",
  "colmap-reader",
  "glam",
@@ -6903,11 +6902,9 @@ dependencies = [
  "arrow",
  "bytemuck",
  "document-features",
- "ecolor",
  "emath",
  "glam",
  "half",
- "image",
  "infer",
  "itertools 0.14.0",
  "linked-hash-map",
@@ -6929,7 +6926,6 @@ dependencies = [
  "re_types_core",
  "smallvec",
  "thiserror 1.0.69",
- "tiff",
  "uuid",
 ]
 

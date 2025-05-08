@@ -31,7 +31,7 @@ tracing = "0.1.41"
 tracing-tracy = "0.11.3"
 tracing-subscriber = "0.3.19"
 
-tokio = "1.42.0"
+tokio = { version = "1.42.0", default-features = false }
 tokio_with_wasm = "0.8.2"
 tokio-stream = "0.1"
 tokio-util = { version = "0.7.13", features = ["io"] }
@@ -61,7 +61,11 @@ log = "0.4.22"
 wasm-bindgen = "0.2.97"
 
 naga_oil = { git = "https://github.com/bevyengine/naga_oil", default-features = false }
-wgpu = { version = "25", features = ["naga-ir"] }
+wgpu = { version = "25", default-features = false, features = [
+    "metal",
+    "webgpu",
+    "vulkan",
+] }
 
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
 ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
@@ -80,7 +84,7 @@ burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/h
 ] }
 burn-fusion = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head" }
 
-egui = { version = "0.31" }
+egui = "0.31"
 eframe = { version = "0.31", default-features = false, features = [
     "wgpu",
     "android-game-activity",
@@ -93,7 +97,6 @@ egui_tiles = "0.12.0"
 rerun = { version = "0.23", default-features = false, features = [
     'sdk',
     'glam',
-    'image',
 ] }
 
 ball-tree = "0.5.1"
@@ -132,7 +135,6 @@ eframe = { git = "https://github.com/emilk/egui", rev = "refs/pull/6744/head" }
 ecolor = { git = "https://github.com/emilk/egui", rev = "refs/pull/6744/head" }
 emath = { git = "https://github.com/emilk/egui", rev = "refs/pull/6744/head" }
 
-# TODO: When re-enabling web training, update wasm branch.
 wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }
 naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }
 # wgpu.path = "../wgpu/wgpu"
