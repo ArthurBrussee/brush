@@ -65,6 +65,7 @@ wgpu = { version = "25", default-features = false, features = [
     "metal",
     "webgpu",
     "vulkan",
+    "naga-ir",
 ] }
 
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
