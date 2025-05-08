@@ -7,15 +7,13 @@ use burn::nn::conv::Conv2d;
 use burn::nn::conv::Conv2dConfig;
 use burn::nn::pool::MaxPool2d;
 use burn::nn::pool::MaxPool2dConfig;
-use burn::record::Recorder;
 use burn::tensor::Device;
 use burn::{
     config::Config,
     module::Module,
-    record::FullPrecisionSettings,
     tensor::{Tensor, backend::Backend},
 };
-use burn_import::pytorch::{LoadArgs, PyTorchFileRecorder};
+// use burn_import::pytorch::{LoadArgs, PyTorchFileRecorder};
 use std::f64::consts::SQRT_2;
 
 struct ConvReluConfig {
@@ -108,66 +106,6 @@ impl<B: Backend> VggBlock<B> {
     }
 }
 
-pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
-    let model = LpipsModelConfig::new().init::<B>(device);
-    let device = B::Device::default();
-
-    let mut load_args = LoadArgs::new("./vgg16_conv_float32.pth".into());
-
-    let key_mappings = [
-        // PyTorch Idx | Burn Block Idx | Burn Conv Idx in Block
-        ("0", 0, 0),
-        ("2", 0, 1),
-        ("5", 1, 0),
-        ("7", 1, 1),
-        ("10", 2, 0),
-        ("12", 2, 1),
-        ("14", 2, 2),
-        ("17", 3, 0),
-        ("19", 3, 1),
-        ("21", 3, 2),
-        ("24", 4, 0),
-        ("26", 4, 1),
-        ("28", 4, 2),
-    ];
-
-    for (pt_idx_str, burn_block_idx, burn_conv_idx) in &key_mappings {
-        load_args = load_args.with_key_remap(
-            &format!(r"^{pt_idx_str}\.(weight|bias)$"),
-            &format!(r"blocks.{burn_block_idx}.convs.{burn_conv_idx}.conv.$1"),
-        );
-    }
-
-    // TODO: Load linear logs.
-
-    let record: <LpipsModel<B> as Module<B>>::Record =
-        PyTorchFileRecorder::<FullPrecisionSettings>::default()
-            .load(load_args, &device)
-            .expect("Should decode state successfully");
-
-    println!("record {:?}", record.blocks.len());
-    model.load_record(record)
-}
-
-#[derive(Config)]
-pub struct LpipsModelConfig {}
-
-impl LpipsModelConfig {
-    pub fn init<B: Backend>(&self, device: &B::Device) -> LpipsModel<B> {
-        // Could have different variations here but just doing VGG for now.
-        let block1 = VggBlockConfig::new(2, 3, 64).init(device);
-        let block2 = VggBlockConfig::new(2, 64, 128).init(device);
-        let block3 = VggBlockConfig::new(3, 128, 256).init(device);
-        let block4 = VggBlockConfig::new(3, 256, 512).init(device);
-        let block5 = VggBlockConfig::new(3, 512, 512).init(device);
-
-        LpipsModel {
-            blocks: vec![block1, block2, block3, block4, block5],
-            max_pool: MaxPool2dConfig::new([2, 2]).with_strides([2, 2]).init(),
-        }
-    }
-}
-
 #[derive(Module, Debug)]
 pub struct LpipsModel<B: Backend> {
     blocks: Vec<VggBlock<B>>,
@@ -217,49 +155,109 @@ impl<B: Backend> LpipsModel<B> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::load_vgg_lpips;
-    use burn::backend::Wgpu;
-    use burn::backend::wgpu::WgpuDevice;
-    use burn::tensor::TensorData;
-    use burn::tensor::{Tensor, backend::Backend};
-    use image::ImageReader;
+#[derive(Config)]
+pub struct LpipsModelConfig {}
 
-    fn image_to_tensor<B: Backend>(device: &B::Device, img: &image::DynamicImage) -> Tensor<B, 4> {
-        // Convert to RGB float array
-        let rgb_img = img.to_rgb32f().into_vec();
-        let data = TensorData::new(rgb_img, [1, 64, 64, 3]);
-        Tensor::from_data(data, device)
-    }
+impl LpipsModelConfig {
+    pub fn init<B: Backend>(&self, device: &B::Device) -> LpipsModel<B> {
+        // Could have different variations here but just doing VGG for now.
+        let block1 = VggBlockConfig::new(2, 3, 64).init(device);
+        let block2 = VggBlockConfig::new(2, 64, 128).init(device);
+        let block3 = VggBlockConfig::new(3, 128, 256).init(device);
+        let block4 = VggBlockConfig::new(3, 256, 512).init(device);
+        let block5 = VggBlockConfig::new(3, 512, 512).init(device);
 
-    #[test]
-    fn test_result() -> Result<(), Box<dyn std::error::Error>> {
-        let device = WgpuDevice::default();
-
-        // Load and preprocess the images
-        let image1 = ImageReader::open("./apple.jpg")?.decode()?;
-        let image2 = ImageReader::open("./pear.png")?.decode()?;
-
-        let tensor1 = image_to_tensor::<Wgpu>(&device, &image1);
-        let tensor2 = image_to_tensor::<Wgpu>(&device, &image2);
-
-        println!(
-            "Converted images to tensors with shape: {:?} and {:?}",
-            tensor1.shape(),
-            tensor2.shape()
-        );
-
-        // Load the LPIPS model
-        let model = load_vgg_lpips(&device);
-
-        // Calculate LPIPS similarity score between the two images
-        let similarity_score = model.lpips(tensor1, tensor2).into_scalar();
-
-        println!("LPIPS similarity score: {similarity_score}");
-
-        assert_eq!(similarity_score, 0.6731404);
-
-        Ok(())
+        LpipsModel {
+            blocks: vec![block1, block2, block3, block4, block5],
+            max_pool: MaxPool2dConfig::new([2, 2]).with_strides([2, 2]).init(),
+        }
     }
 }
+
+// pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
+//     let model = LpipsModelConfig::new().init::<B>(device);
+//     let device = B::Device::default();
+
+//     let mut load_args = LoadArgs::new("./vgg16_conv_float32.pth".into());
+
+//     let key_mappings = [
+//         // PyTorch Idx | Burn Block Idx | Burn Conv Idx in Block
+//         ("0", 0, 0),
+//         ("2", 0, 1),
+//         ("5", 1, 0),
+//         ("7", 1, 1),
+//         ("10", 2, 0),
+//         ("12", 2, 1),
+//         ("14", 2, 2),
+//         ("17", 3, 0),
+//         ("19", 3, 1),
+//         ("21", 3, 2),
+//         ("24", 4, 0),
+//         ("26", 4, 1),
+//         ("28", 4, 2),
+//     ];
+
+//     for (pt_idx_str, burn_block_idx, burn_conv_idx) in &key_mappings {
+//         load_args = load_args.with_key_remap(
+//             &format!(r"^{pt_idx_str}\.(weight|bias)$"),
+//             &format!(r"blocks.{burn_block_idx}.convs.{burn_conv_idx}.conv.$1"),
+//         );
+//     }
+
+//     // TODO: Load linear logs.
+
+//     let record: <LpipsModel<B> as Module<B>>::Record =
+//         PyTorchFileRecorder::<FullPrecisionSettings>::default()
+//             .load(load_args, &device)
+//             .expect("Should decode state successfully");
+
+//     println!("record {:?}", record.blocks.len());
+//     model.load_record(record)
+// }
+
+// #[cfg(test)]
+// mod tests {
+//     use super::load_vgg_lpips;
+//     use burn::backend::Wgpu;
+//     use burn::backend::wgpu::WgpuDevice;
+//     use burn::tensor::TensorData;
+//     use burn::tensor::{Tensor, backend::Backend};
+//     use image::ImageReader;
+
+//     fn image_to_tensor<B: Backend>(device: &B::Device, img: &image::DynamicImage) -> Tensor<B, 4> {
+//         // Convert to RGB float array
+//         let rgb_img = img.to_rgb32f().into_vec();
+//         let data = TensorData::new(rgb_img, [1, 64, 64, 3]);
+//         Tensor::from_data(data, device)
+//     }
+
+//     #[test]
+//     fn test_result() -> Result<(), Box<dyn std::error::Error>> {
+//         let device = WgpuDevice::default();
+
+//         // Load and preprocess the images
+//         let image1 = ImageReader::open("./apple.jpg")?.decode()?;
+//         let image2 = ImageReader::open("./pear.png")?.decode()?;
+
+//         let tensor1 = image_to_tensor::<Wgpu>(&device, &image1);
+//         let tensor2 = image_to_tensor::<Wgpu>(&device, &image2);
+
+//         println!(
+//             "Converted images to tensors with shape: {:?} and {:?}",
+//             tensor1.shape(),
+//             tensor2.shape()
+//         );
+
+//         // Load the LPIPS model
+//         let model = load_vgg_lpips(&device);
+
+//         // Calculate LPIPS similarity score between the two images
+//         let similarity_score = model.lpips(tensor1, tensor2).into_scalar();
+
+//         println!("LPIPS similarity score: {similarity_score}");
+
+//         assert_eq!(similarity_score, 0.6731404);
+
+//         Ok(())
+//     }
+// }

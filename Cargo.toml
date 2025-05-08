@@ -66,19 +66,19 @@ wgpu = { version = "25", features = ["naga-ir"] }
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
 ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 
-burn = { git = "https://github.com/tracel-ai/burn", features = [
+burn = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head", features = [
     'wgpu',
     'autodiff',
 ] }
-burn-import = { git = "https://github.com/tracel-ai/burn", features = [
-    'pytorch',
-], default-features = false }
-burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
-burn-ir = { git = "https://github.com/tracel-ai/burn" }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
+# burn-import = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head", features = [
+#     'pytorch',
+# ], default-features = false }
+burn-cubecl = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head" }
+burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head" }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head", features = [
     "exclusive-memory-only",
 ] }
-burn-fusion = { git = "https://github.com/tracel-ai/burn" }
+burn-fusion = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head" }
 
 egui = { version = "0.31" }
 eframe = { version = "0.31", default-features = false, features = [
@@ -117,7 +117,7 @@ burn-cubecl = { path = "../burn/crates/burn-cubecl" }
 burn-wgpu = { path = "../burn/crates/burn-wgpu" }
 burn-fusion = { path = "../burn/crates/burn-fusion" }
 burn-ir = { path = "../burn/crates/burn-ir" }
-burn-import = { path = "../burn/crates/burn-import" }
+# burn-import = { path = "../burn/crates/burn-import" }
 
 # Uncomment this to use local cubcl.
 # [patch."https://github.com/tracel-ai/cubecl"]

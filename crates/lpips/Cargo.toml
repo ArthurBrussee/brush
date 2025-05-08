@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 burn.workspace = true
-burn-import.workspace = true
+# burn-import.workspace = true
 
 [dev-dependencies]
 image.workspace = true

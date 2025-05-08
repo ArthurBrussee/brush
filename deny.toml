@@ -41,8 +41,6 @@ skip = [
     { name = 'derive-new' },
     { name = 'getrandom' },
 
-    { name = "zerocopy" },
-
     # Until everyone is on 0.9
     { name = "rand" },
     { name = "rand_core" },
@@ -73,6 +71,8 @@ skip = [
     { name = 'windows-interface' }, # Wgpu & rerun
     { name = 'windows-implement' }, # Wgpu & rerun
 
+
+    { name = "webpki-roots" },
 
     { name = 'rustix' },        # Winit & clap
     { name = 'linux-raw-sys' }, # Winit & clap
