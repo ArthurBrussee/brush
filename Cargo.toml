@@ -110,13 +110,13 @@ parking_lot = "0.12"
 
 alphanumeric-sort = "1.5.3"
 
-# Uncomment this to use local burn.
-[patch."https://github.com/tracel-ai/burn"]
-burn = { path = "../burn/crates/burn" }
-burn-cubecl = { path = "../burn/crates/burn-cubecl" }
-burn-wgpu = { path = "../burn/crates/burn-wgpu" }
-burn-fusion = { path = "../burn/crates/burn-fusion" }
-burn-ir = { path = "../burn/crates/burn-ir" }
+# # Uncomment this to use local burn.
+# [patch."https://github.com/tracel-ai/burn"]
+# burn = { path = "../burn/crates/burn" }
+# burn-cubecl = { path = "../burn/crates/burn-cubecl" }
+# burn-wgpu = { path = "../burn/crates/burn-wgpu" }
+# burn-fusion = { path = "../burn/crates/burn-fusion" }
+# burn-ir = { path = "../burn/crates/burn-ir" }
 # burn-import = { path = "../burn/crates/burn-import" }
 
 # Uncomment this to use local cubcl.
