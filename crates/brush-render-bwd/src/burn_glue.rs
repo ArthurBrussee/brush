@@ -266,7 +266,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
     ) -> SplatGrads<Self> {
         struct CustomOp {
             desc: CustomOpIr,
-            state: GaussianBackwardState<Fusion<MainBackendBase>>,
+            sh_degree: u32,
         }
 
         impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp {
@@ -274,30 +274,39 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                 &self,
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
             ) {
-                let ([v_output], [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine]) =
-                    self.desc.as_fixed();
-
-                let state = self.state.clone();
+                let (
+                    [
+                        v_output,
+                        means,
+                        quats,
+                        log_scales,
+                        raw_opac,
+                        out_img,
+                        projected_splats,
+                        uniforms_buffer,
+                        final_index,
+                        tile_offsets,
+                        compact_gid_from_isect,
+                        global_from_compact_gid,
+                    ],
+                    [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine],
+                ) = self.desc.as_fixed();
 
                 let inner_state = GaussianBackwardState {
-                    means: h.get_float_tensor::<MainBackendBase>(&state.means.into_ir()),
-                    log_scales: h.get_float_tensor::<MainBackendBase>(&state.log_scales.into_ir()),
-                    quats: h.get_float_tensor::<MainBackendBase>(&state.quats.into_ir()),
-                    raw_opac: h.get_float_tensor::<MainBackendBase>(&state.raw_opac.into_ir()),
-                    out_img: h.get_float_tensor::<MainBackendBase>(&state.out_img.into_ir()),
-                    projected_splats: h
-                        .get_float_tensor::<MainBackendBase>(&state.projected_splats.into_ir()),
-                    uniforms_buffer: h
-                        .get_int_tensor::<MainBackendBase>(&state.uniforms_buffer.into_ir()),
-                    final_index: h.get_int_tensor::<MainBackendBase>(&state.final_index.into_ir()),
-                    tile_offsets: h
-                        .get_int_tensor::<MainBackendBase>(&state.tile_offsets.into_ir()),
+                    means: h.get_float_tensor::<MainBackendBase>(means),
+                    log_scales: h.get_float_tensor::<MainBackendBase>(log_scales),
+                    quats: h.get_float_tensor::<MainBackendBase>(quats),
+                    raw_opac: h.get_float_tensor::<MainBackendBase>(raw_opac),
+                    out_img: h.get_float_tensor::<MainBackendBase>(out_img),
+                    projected_splats: h.get_float_tensor::<MainBackendBase>(projected_splats),
+                    uniforms_buffer: h.get_int_tensor::<MainBackendBase>(uniforms_buffer),
+                    final_index: h.get_int_tensor::<MainBackendBase>(final_index),
+                    tile_offsets: h.get_int_tensor::<MainBackendBase>(tile_offsets),
                     compact_gid_from_isect: h
-                        .get_int_tensor::<MainBackendBase>(&state.compact_gid_from_isect.into_ir()),
-                    global_from_compact_gid: h.get_int_tensor::<MainBackendBase>(
-                        &state.global_from_compact_gid.into_ir(),
-                    ),
-                    sh_degree: state.sh_degree,
+                        .get_int_tensor::<MainBackendBase>(compact_gid_from_isect),
+                    global_from_compact_gid: h
+                        .get_int_tensor::<MainBackendBase>(global_from_compact_gid),
+                    sh_degree: self.sh_degree,
                 };
 
                 let grads =
@@ -334,7 +343,20 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
 
         let desc = CustomOpIr::new(
             "render_splat_bwd",
-            &[v_output.into_ir()],
+            &[
+                v_output.into_ir(),
+                state.means.into_ir(),
+                state.quats.into_ir(),
+                state.log_scales.into_ir(),
+                state.raw_opac.into_ir(),
+                state.out_img.into_ir(),
+                state.projected_splats.into_ir(),
+                state.uniforms_buffer.into_ir(),
+                state.final_index.into_ir(),
+                state.tile_offsets.into_ir(),
+                state.compact_gid_from_isect.into_ir(),
+                state.global_from_compact_gid.into_ir(),
+            ],
             &[
                 grads.v_means.to_ir_out(),
                 grads.v_quats.to_ir_out(),
@@ -345,12 +367,15 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             ],
         );
 
-        let op = CustomOp {
-            state,
-            desc: desc.clone(),
-        };
-
-        client.register(vec![stream], OperationIr::Custom(desc), op);
+        client.register(
+            vec![stream],
+            OperationIr::Custom(desc.clone()),
+            CustomOp {
+                // state,
+                desc,
+                sh_degree: state.sh_degree,
+            },
+        );
         grads
     }
 }
