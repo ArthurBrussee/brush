@@ -808,7 +808,6 @@ dependencies = [
  "log",
  "parking_lot",
  "rrfd",
- "sync-span",
  "tokio",
  "tokio-stream",
  "tokio_with_wasm",
@@ -1045,7 +1044,6 @@ dependencies = [
  "humantime",
  "log",
  "rrfd",
- "sync-span",
  "tokio",
  "tokio_with_wasm",
  "tracing",
@@ -8037,15 +8035,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "sync-span"
-version = "0.2.0"
-dependencies = [
- "burn",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

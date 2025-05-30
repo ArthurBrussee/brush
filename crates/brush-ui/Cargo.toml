@@ -11,7 +11,6 @@ brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
 brush-process.path = "../brush-process"
 rrfd.path = "../rrfd"
-sync-span.path = "../sync-span"
 
 log.workspace = true
 anyhow.workspace = true

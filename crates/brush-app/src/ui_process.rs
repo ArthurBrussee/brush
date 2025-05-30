@@ -143,11 +143,7 @@ impl BrushUiProcess for UiProcess {
                 use tracing_subscriber::layer::SubscriberExt;
 
                 tracing::subscriber::set_global_default(
-                    tracing_subscriber::registry()
-                        .with(tracing_tracy::TracyLayer::default())
-                        .with(sync_span::SyncLayer::<
-                            burn_cubecl::CubeBackend<burn_wgpu::WgpuRuntime, f32, i32, u32>,
-                        >::new(device.clone())),
+                    tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
                 )
                 .expect("Failed to set tracing subscriber");
             }
