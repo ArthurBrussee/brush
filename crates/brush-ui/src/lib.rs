@@ -22,7 +22,6 @@ mod panels;
 mod scene;
 mod settings;
 mod stats;
-mod tracing_debug;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiMode {

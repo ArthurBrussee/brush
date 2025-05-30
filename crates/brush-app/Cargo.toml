@@ -89,5 +89,5 @@ workspace = true
 
 
 [features]
-tracy = ["brush-ui/tracy", "dep:tracing-tracy"]
-tracing = ["brush-ui/tracing", "dep:tracing-subscriber"]
+tracy = ["dep:tracing-tracy"]
+tracing = ["dep:tracing-subscriber"]

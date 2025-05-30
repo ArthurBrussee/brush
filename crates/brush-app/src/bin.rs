@@ -8,6 +8,19 @@ mod wasm;
 fn main() -> Result<(), anyhow::Error> {
     #[cfg(not(target_family = "wasm"))]
     {
+        #[cfg(feature = "tracing")]
+        {
+            #[cfg(all(feature = "tracy", not(target_family = "wasm")))]
+            {
+                use tracing_subscriber::layer::SubscriberExt;
+
+                tracing::subscriber::set_global_default(
+                    tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
+                )
+                .expect("Failed to set tracing subscriber");
+            }
+        }
+
         use brush_process::process::process_stream;
         use brush_ui::BrushUiProcess;
         use brush_ui::app::App;
@@ -75,6 +88,17 @@ fn main() -> Result<(), anyhow::Error> {
 
     #[cfg(target_family = "wasm")]
     {
+        // TODO: In debug only?
+        #[cfg(target_family = "wasm")]
+        {
+            use tracing_subscriber::layer::SubscriberExt;
+            tracing::subscriber::set_global_default(
+                tracing_subscriber::registry()
+                    .with(tracing_wasm::WASMLayer::new(Default::default())),
+            )
+            .expect("Failed to set tracing subscriber");
+        }
+
         let level = if cfg!(debug_assertions) {
             // Could do 'debug' but it's way too spammy.
             log::Level::Info

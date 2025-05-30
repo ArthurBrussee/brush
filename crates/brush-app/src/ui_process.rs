@@ -125,29 +125,6 @@ impl BrushUiProcess for UiProcess {
     }
 
     fn connect_device(&self, device: WgpuDevice, ctx: egui::Context) {
-        #[cfg(feature = "tracing")]
-        {
-            // TODO: In debug only?
-            #[cfg(target_family = "wasm")]
-            {
-                use tracing_subscriber::layer::SubscriberExt;
-                tracing::subscriber::set_global_default(
-                    tracing_subscriber::registry()
-                        .with(tracing_wasm::WASMLayer::new(Default::default())),
-                )
-                .expect("Failed to set tracing subscriber");
-            }
-
-            #[cfg(all(feature = "tracy", not(target_family = "wasm")))]
-            {
-                use tracing_subscriber::layer::SubscriberExt;
-
-                tracing::subscriber::set_global_default(
-                    tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
-                )
-                .expect("Failed to set tracing subscriber");
-            }
-        }
         let mut inner = self.inner.write();
         let ctx = DeviceContext { device, ctx };
         inner.cur_device_ctx = Some(ctx.clone());

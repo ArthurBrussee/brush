@@ -34,7 +34,3 @@ workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 web-sys.workspace = true
-
-[features]
-tracy = ["tracing"]
-tracing = []

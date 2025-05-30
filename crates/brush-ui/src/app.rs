@@ -1,7 +1,7 @@
 use crate::UiMode;
 use crate::{
     BrushUiProcess, camera_controls::CameraClamping, datasets::DatasetPanel, panels::PaneType,
-    scene::ScenePanel, settings::SettingsPanel, stats::StatsPanel, tracing_debug::TracingPanel,
+    scene::ScenePanel, settings::SettingsPanel, stats::StatsPanel,
 };
 use brush_process::message::ProcessMessage;
 use eframe::egui;
@@ -124,10 +124,6 @@ impl App {
                 loading_pane,
                 tiles.insert_pane(Box::new(StatsPanel::new(device, state.adapter.get_info()))),
             ];
-
-            if cfg!(feature = "tracing") {
-                sides.push(tiles.insert_pane(Box::new(TracingPanel::default())));
-            }
 
             let side_panel = tiles.insert_vertical_tile(sides);
 
