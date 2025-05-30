@@ -8,17 +8,14 @@ mod wasm;
 fn main() -> Result<(), anyhow::Error> {
     #[cfg(not(target_family = "wasm"))]
     {
-        #[cfg(feature = "tracing")]
+        #[cfg(feature = "tracy")]
         {
-            #[cfg(all(feature = "tracy", not(target_family = "wasm")))]
-            {
-                use tracing_subscriber::layer::SubscriberExt;
+            use tracing_subscriber::layer::SubscriberExt;
 
-                tracing::subscriber::set_global_default(
-                    tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
-                )
-                .expect("Failed to set tracing subscriber");
-            }
+            tracing::subscriber::set_global_default(
+                tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
+            )
+            .expect("Failed to set tracing subscriber");
         }
 
         use brush_process::process::process_stream;
@@ -89,7 +86,7 @@ fn main() -> Result<(), anyhow::Error> {
     #[cfg(target_family = "wasm")]
     {
         // TODO: In debug only?
-        #[cfg(target_family = "wasm")]
+        #[cfg(feature = "tracing")]
         {
             use tracing_subscriber::layer::SubscriberExt;
             tracing::subscriber::set_global_default(

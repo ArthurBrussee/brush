@@ -65,7 +65,8 @@ tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-tracing-wasm.workspace = true
+tracing-wasm = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["io-util", "rt"] }
 wasm-bindgen.workspace = true
 web-sys.workspace = true
