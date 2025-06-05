@@ -217,38 +217,58 @@ impl AppPanel for SettingsPanel {
 
             // Create a nice loading options UI
             let mut load_option = None;
-            
-            ui.label(egui::RichText::new("Load:").heading().color(egui::Color32::from_rgb(70, 130, 180)));
+
+            ui.label(
+                egui::RichText::new("Load:")
+                    .heading()
+                    .color(egui::Color32::from_rgb(70, 130, 180)),
+            );
             ui.add_space(5.0);
-            
+
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                
-                if ui.add(egui::Button::new("File")
-                    .min_size(egui::vec2(50.0, 32.0))
-                    .fill(egui::Color32::from_rgb(70, 130, 180))
-                    .stroke(egui::Stroke::NONE)).clicked() {
+
+                if ui
+                    .add(
+                        egui::Button::new("File")
+                            .min_size(egui::vec2(50.0, 32.0))
+                            .fill(egui::Color32::from_rgb(70, 130, 180))
+                            .stroke(egui::Stroke::NONE),
+                    )
+                    .clicked()
+                {
                     load_option = Some(DataSource::PickFile);
                 }
-                
+
                 let can_pick_dir = !cfg!(target_family = "wasm") && !cfg!(target_os = "android");
-                if can_pick_dir && ui.add(egui::Button::new("Directory")
-                    .min_size(egui::vec2(70.0, 32.0))
-                    .fill(egui::Color32::from_rgb(70, 130, 180))
-                    .stroke(egui::Stroke::NONE)).clicked() {
+                if can_pick_dir
+                    && ui
+                        .add(
+                            egui::Button::new("Directory")
+                                .min_size(egui::vec2(70.0, 32.0))
+                                .fill(egui::Color32::from_rgb(70, 130, 180))
+                                .stroke(egui::Stroke::NONE),
+                        )
+                        .clicked()
+                {
                     load_option = Some(DataSource::PickDirectory);
                 }
-                
-                if ui.add(egui::Button::new("URL")
-                    .min_size(egui::vec2(50.0, 32.0))
-                    .fill(egui::Color32::from_rgb(70, 130, 180))
-                    .stroke(egui::Stroke::NONE)).clicked() {
+
+                if ui
+                    .add(
+                        egui::Button::new("URL")
+                            .min_size(egui::vec2(50.0, 32.0))
+                            .fill(egui::Color32::from_rgb(70, 130, 180))
+                            .stroke(egui::Stroke::NONE),
+                    )
+                    .clicked()
+                {
                     self.show_url_dialog = true;
                 }
             });
-            
+
             ui.add_space(15.0);
-            
+
             // URL dialog window
             if self.show_url_dialog {
                 egui::Window::new("Load from URL")
@@ -260,15 +280,15 @@ impl AppPanel for SettingsPanel {
                         ui.vertical(|ui| {
                             ui.label("Enter URL:");
                             ui.add_space(5.0);
-                            
+
                             let url_response = ui.add(
                                 egui::TextEdit::singleline(&mut self.url)
                                     .desired_width(300.0)
-                                    .hint_text("e.g., splat.com/example.ply")
+                                    .hint_text("e.g., splat.com/example.ply"),
                             );
-                            
+
                             ui.add_space(10.0);
-                            
+
                             ui.horizontal(|ui| {
                                 if ui.button("Load").clicked() && !self.url.trim().is_empty() {
                                     load_option = Some(DataSource::Url(self.url.clone()));
@@ -278,8 +298,11 @@ impl AppPanel for SettingsPanel {
                                     self.show_url_dialog = false;
                                 }
                             });
-                            
-                            if url_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !self.url.trim().is_empty() {
+
+                            if url_response.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                && !self.url.trim().is_empty()
+                            {
                                 load_option = Some(DataSource::Url(self.url.clone()));
                                 self.show_url_dialog = false;
                             }
