@@ -97,7 +97,9 @@ pub fn wasm_app(canvas_name: &str, start_uri: &str) -> anyhow::Result<Arc<UiProc
 
     let url = search_params.get("url").cloned();
     if let Some(url) = url {
-        context.start_new_process(DataSource::Url(url), ProcessArgs::default());
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let _ = sender.send(ProcessArgs::default());
+        context.start_new_process(DataSource::Url(url), receiver);
     }
 
     let position = search_params
@@ -198,7 +200,9 @@ impl EmbeddedApp {
             while let Some(command) = cmd_rec.recv().await {
                 match command {
                     EmbeddedCommands::LoadDataSource(data_source) => {
-                        context.start_new_process(data_source, ProcessArgs::default());
+                        let (sender, receiver) = tokio::sync::oneshot::channel();
+                        let _ = sender.send(ProcessArgs::default());
+                        context.start_new_process(data_source, receiver);
                     }
                     EmbeddedCommands::SetCamSettings(settings) => {
                         context.set_cam_settings(settings.0);
