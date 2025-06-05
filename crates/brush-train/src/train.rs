@@ -62,7 +62,8 @@ fn create_default_optimizer() -> OptimizerType {
 
 impl SplatTrainer {
     pub fn new(config: &TrainConfig, device: &WgpuDevice) -> Self {
-        let ssim = Ssim::new(config.ssim_window_size, 3, device);
+        const SSIM_WINDOW_SIZE: usize = 11; // Could be configurable but meh, rather keep consistent.
+        let ssim = Ssim::new(SSIM_WINDOW_SIZE, 3, device);
 
         let decay = (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_steps as f64);
         let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean, decay);

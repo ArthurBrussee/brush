@@ -15,6 +15,7 @@ use burn_wgpu::WgpuDevice;
 use eframe::egui_wgpu::WgpuConfiguration;
 use egui::Response;
 use glam::Vec3;
+use tokio::sync::oneshot::Receiver;
 use wgpu::{Adapter, Features};
 
 mod datasets;
@@ -46,7 +47,7 @@ pub trait BrushUiProcess {
     fn set_cam_settings(&self, settings: CameraSettings);
     fn focus_view(&self, view: &SceneView);
     fn set_model_up(&self, up: Vec3);
-    fn start_new_process(&self, source: DataSource, args: ProcessArgs);
+    fn start_new_process(&self, source: DataSource, args: Receiver<ProcessArgs>);
     fn try_recv_message(&self) -> Option<anyhow::Result<ProcessMessage>>;
     fn connect_device(&self, device: WgpuDevice, ctx: egui::Context);
     fn ui_mode(&self) -> UiMode;

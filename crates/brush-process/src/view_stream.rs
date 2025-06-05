@@ -14,9 +14,6 @@ pub(crate) async fn view_stream(
     device: WgpuDevice,
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
 ) -> anyhow::Result<()> {
-    log::info!("Start of view stream");
-    emitter.emit(ProcessMessage::NewSource).await;
-
     let mut paths: Vec<_> = vfs.file_paths().collect();
     alphanumeric_sort::sort_path_slice(&mut paths);
     let client = WgpuRuntime::client(&device);

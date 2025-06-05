@@ -9,6 +9,12 @@ pub struct ProcessConfig {
     #[config(default = 42)]
     #[arg(long, help_heading = "Process options", default_value = "42")]
     pub seed: u64,
+
+    /// Iteration to resume from
+    #[config(default = 0)]
+    #[arg(long, help_heading = "Process options", default_value = "0")]
+    pub start_iter: u32,
+
     /// Eval every this many steps.
     #[arg(long, help_heading = "Process options", default_value = "1000")]
     #[config(default = 1000)]
@@ -17,30 +23,25 @@ pub struct ProcessConfig {
     #[arg(long, help_heading = "Process options", default_value = "false")]
     #[config(default = false)]
     pub eval_save_to_disk: bool,
+
     /// Export every this many steps.
     #[arg(long, help_heading = "Process options", default_value = "5000")]
     #[config(default = 5000)]
     pub export_every: u32,
-
     /// Location to put exported files. By default uses the cwd.
     ///
     /// This path can be set to be relative to the CWD.
-    #[arg(long, help_heading = "Process options")]
-    pub export_path: Option<String>,
-
+    #[arg(long, help_heading = "Process options", default_value = ".")]
+    #[config(default = "String::from('.')")]
+    pub export_path: String,
     /// Filename of exported ply file
     #[arg(
         long,
         help_heading = "Process options",
-        default_value = "./export_{iter}.ply"
+        default_value = "export_{iter}.ply"
     )]
-    #[config(default = "String::from(\"./export_{iter}.ply\")")]
+    #[config(default = "String::from(\"export_{iter}.ply\")")]
     pub export_name: String,
-
-    /// Iteration to resume from
-    #[config(default = 0)]
-    #[arg(long, help_heading = "Process options", default_value = "0")]
-    pub start_iter: u32,
 }
 
 #[derive(Config, Args)]

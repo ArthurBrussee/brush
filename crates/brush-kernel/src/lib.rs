@@ -4,13 +4,16 @@
 mod shaders;
 
 use burn::tensor::{DType, Shape};
-pub use burn_cubecl::cubecl::KernelId;
 pub use burn_cubecl::cubecl::prelude::ExecutionMode;
-use burn_cubecl::cubecl::server::{Bindings, MetadataBinding};
 pub use burn_cubecl::cubecl::{
     CubeCount, CubeDim, client::ComputeClient, compute::CompiledKernel, compute::CubeTask,
     server::ComputeServer,
 };
+pub use burn_cubecl::cubecl::{
+    prelude::KernelId,
+    server::{Bindings, MetadataBinding},
+};
+use burn_cubecl::kernel::KernelMetadata;
 pub use burn_cubecl::{CubeRuntime, cubecl::Compiler, tensor::CubeTensor};
 
 use bytemuck::Pod;
@@ -120,13 +123,13 @@ macro_rules! kernel_source_gen {
                 let module = self.source();
                 brush_kernel::module_to_compiled(stringify!($struct_name), &module, Self::WORKGROUP_SIZE)
             }
+        }
 
+        impl burn_cubecl::kernel::KernelMetadata for $struct_name {
             fn id(&self) -> brush_kernel::KernelId {
                 brush_kernel::calc_kernel_id::<Self>(&[$(self.$field_name),*])
             }
         }
-        // impl burn_cubecl::kernel::Kernel for $struct_name {
-        // }
     };
 }
 
@@ -204,14 +207,13 @@ impl<C: Compiler> CubeTask<C> for CreateDispatchBuffer {
             [1, 1, 1],
         )
     }
+}
 
+impl KernelMetadata for CreateDispatchBuffer {
     fn id(&self) -> KernelId {
         KernelId::new::<Self>()
     }
 }
-
-// impl KernelMetadata for CreateDispatchBuffer {
-// }
 
 pub fn create_dispatch_buffer<R: CubeRuntime>(
     thread_nums: CubeTensor<R>,

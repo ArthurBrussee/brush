@@ -8,7 +8,7 @@ use burn_wgpu::WgpuDevice;
 use egui::Response;
 use glam::{Affine3A, Quat, Vec3};
 use parking_lot::RwLock;
-use tokio::sync;
+use tokio::sync::{self, oneshot::Receiver};
 use tokio_stream::StreamExt;
 use tokio_with_wasm::alias as tokio_wasm;
 
@@ -135,7 +135,7 @@ impl BrushUiProcess for UiProcess {
         }
     }
 
-    fn start_new_process(&self, source: DataSource, args: ProcessArgs) {
+    fn start_new_process(&self, source: DataSource, args: Receiver<ProcessArgs>) {
         let ui_mode = self.ui_mode();
         let mut inner = self.inner.write();
         let mut reset = UiProcessInner::new(ui_mode);
@@ -152,6 +152,7 @@ impl BrushUiProcess for UiProcess {
                 // Closed before we could start the process
                 return;
             };
+
             let stream = process_stream(source, args, device_ctx.device);
             let mut stream = std::pin::pin!(stream);
 

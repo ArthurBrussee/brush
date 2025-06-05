@@ -71,19 +71,16 @@ wgpu = { version = "25", default-features = false, features = [
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
 ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 
-burn = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head", features = [
+burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',
 ] }
-# burn-import = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head", features = [
-#     'pytorch',
-# ], default-features = false }
-burn-cubecl = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head" }
-burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head" }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head", features = [
+burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
+burn-ir = { git = "https://github.com/tracel-ai/burn" }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
 ] }
-burn-fusion = { git = "https://github.com/tracel-ai/burn", rev = "refs/pull/3168/head" }
+burn-fusion = { git = "https://github.com/tracel-ai/burn" }
 
 egui = "0.31"
 eframe = { version = "0.31", default-features = false, features = [
@@ -111,7 +108,6 @@ zip = { version = "2.2.1", default-features = false, features = ["deflate"] }
 urlencoding = "2.1"
 hashbrown = "0.15"
 parking_lot = "0.12"
-
 alphanumeric-sort = "1.5.3"
 
 # # Uncomment this to use local burn.
@@ -131,13 +127,15 @@ alphanumeric-sort = "1.5.3"
 # cubecl-linalg = { path = "../cubecl/crates/cubecl-linalg" }
 
 [patch.crates-io]
-egui = { git = "https://github.com/emilk/egui", rev = "92fea8a18fe6c102a6879347cbd599f3daf163aa" }
-eframe = { git = "https://github.com/emilk/egui", rev = "92fea8a18fe6c102a6879347cbd599f3daf163aa" }
-ecolor = { git = "https://github.com/emilk/egui", rev = "92fea8a18fe6c102a6879347cbd599f3daf163aa" }
-emath = { git = "https://github.com/emilk/egui", rev = "92fea8a18fe6c102a6879347cbd599f3daf163aa" }
+egui = { git = "https://github.com/emilk/egui", rev = "6d04140736ddfbd1e406195de6804f57f1406321" }
+eframe = { git = "https://github.com/emilk/egui", rev = "6d04140736ddfbd1e406195de6804f57f1406321" }
+ecolor = { git = "https://github.com/emilk/egui", rev = "6d04140736ddfbd1e406195de6804f57f1406321" }
+emath = { git = "https://github.com/emilk/egui", rev = "6d04140736ddfbd1e406195de6804f57f1406321" }
 
 wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }
 naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }
+
+# Uncomment this to use local wgpu and naga.
 # wgpu.path = "../wgpu/wgpu"
 # naga.path = "../wgpu/naga"
 

@@ -18,26 +18,29 @@ use burn::{module::AutodiffModule, prelude::Backend};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
+use tokio::sync::oneshot::Receiver;
 use tokio_stream::StreamExt;
 use web_time::{Duration, Instant};
 
 pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
-    process_args: ProcessArgs,
+    process_args: Receiver<ProcessArgs>,
     device: WgpuDevice,
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
-    emitter.emit(ProcessMessage::NewSource).await;
+
+    emitter
+        .emit(ProcessMessage::StartLoading { training: true })
+        .await;
+
+    // Now wait for the process args.
+    let process_args = process_args.await?;
 
     log::info!("Create rerun {}", process_args.rerun_config.rerun_enabled);
     let visualize = VisualizeTools::new(process_args.rerun_config.rerun_enabled);
 
     let process_config = &process_args.process_config;
-    emitter
-        .emit(ProcessMessage::StartLoading { training: true })
-        .await;
-
     log::info!("Using seed {}", process_config.seed);
     <MainBackend as Backend>::seed(process_config.seed);
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
@@ -45,14 +48,13 @@ pub(crate) async fn train_stream(
     log::info!("Loading dataset");
     let (mut splat_stream, dataset) =
         brush_dataset::load_dataset(vfs.clone(), &process_args.load_config, &device).await?;
+    visualize.log_scene(&dataset.train, process_args.rerun_config.rerun_max_img_size)?;
     log::info!("Dataset loaded");
     emitter
         .emit(ProcessMessage::Dataset {
             dataset: dataset.clone(),
         })
         .await;
-
-    visualize.log_scene(&dataset.train, process_args.rerun_config.rerun_max_img_size)?;
 
     let estimated_up = dataset.estimate_up();
 
@@ -115,8 +117,7 @@ pub(crate) async fn train_stream(
         splats = new_splats;
 
         #[allow(unused)]
-        let export_path =
-            Path::new(process_config.export_path.as_deref().unwrap_or(".")).to_owned();
+        let export_path = Path::new(&process_config.export_path).to_owned();
 
         // We just finished iter 'iter', now starting iter + 1.
         let iter = iter + 1;

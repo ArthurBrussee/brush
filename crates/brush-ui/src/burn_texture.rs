@@ -161,4 +161,8 @@ impl BurnTexture {
     pub fn id(&self) -> Option<TextureId> {
         self.state.as_ref().map(|s| s.id)
     }
+
+    pub fn reset(&mut self) {
+        self.state = None;
+    }
 }

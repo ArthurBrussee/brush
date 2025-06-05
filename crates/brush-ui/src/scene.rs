@@ -173,13 +173,15 @@ impl AppPanel for ScenePanel {
     fn on_message(&mut self, message: &ProcessMessage, context: &dyn BrushUiProcess) {
         match message {
             ProcessMessage::NewSource => {
+                self.last_draw = None;
                 self.view_splats = vec![];
                 self.frame_count = 0;
-                self.live_update = true;
+                self.frame = 0.0;
+                self.live_update = false;
                 self.paused = false;
                 self.err = None;
+                self.backbuffer.reset();
                 self.last_state = None;
-                self.frame = 0.0;
             }
             ProcessMessage::ViewSplats {
                 up_axis,
@@ -234,16 +236,6 @@ impl AppPanel for ScenePanel {
         {
             ui.heading("Load a ply file or dataset to get started.");
             ui.add_space(5.0);
-            ui.label(
-                r#"
-Load a pretrained .ply file to view it
-
-Or load a dataset to train on. These are zip files with:
-    - a transforms.json and images, like the nerfstudio dataset format.
-    - COLMAP data, containing the `images` & `sparse` folder."#,
-            );
-
-            ui.add_space(10.0);
 
             if cfg!(debug_assertions) {
                 ui.scope(|ui| {

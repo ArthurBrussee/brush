@@ -8,15 +8,10 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "30000")]
     pub total_steps: u32,
 
-    /// Weight of SSIM loss (compared to l1 loss)
-    #[config(default = 0.2)]
-    #[clap(long, help_heading = "Training options", default_value = "0.2")]
-    pub ssim_weight: f32,
-
-    /// SSIM window size
-    #[config(default = 11)]
-    #[clap(long, help_heading = "Training options", default_value = "11")]
-    pub ssim_window_size: usize,
+    /// Max nr. of splats. This is an upper bound, but the actual final number of splats might be lower than this.
+    #[config(default = 10000000)]
+    #[arg(long, help_heading = "Refine options", default_value = "10000000")]
+    pub max_splats: u32,
 
     /// Start learning rate for the mean parameters.
     #[config(default = 4e-5)]
@@ -63,11 +58,6 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "1e-3")]
     pub lr_rotation: f64,
 
-    /// Weight of the opacity loss.
-    #[config(default = 1e-8)]
-    #[arg(long, help_heading = "Training options", default_value = "1e-8")]
-    pub opac_loss_weight: f32,
-
     /// Frequency of 'refinement' where gaussians are replaced and densified. This should
     /// roughly be the number of images it takes to properly "cover" your scene.
     #[config(default = 150)]
@@ -90,13 +80,18 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "12500")]
     pub growth_stop_iter: u32,
 
+    /// Weight of SSIM loss (compared to l1 loss)
+    #[config(default = 0.2)]
+    #[clap(long, help_heading = "Training options", default_value = "0.2")]
+    pub ssim_weight: f32,
+
+    /// Weight of the opacity loss.
+    #[config(default = 1e-8)]
+    #[arg(long, help_heading = "Training options", default_value = "1e-8")]
+    pub opac_loss_weight: f32,
+
     /// Weight of l1 loss on alpha if input view has transparency.
     #[config(default = 0.1)]
     #[arg(long, help_heading = "Refine options", default_value = "0.1")]
     pub match_alpha_weight: f32,
-
-    /// Max nr. of splats. This is an upper bound, but the actual final number of splats might be lower than this.
-    #[config(default = 10000000)]
-    #[arg(long, help_heading = "Refine options", default_value = "10000000")]
-    pub max_splats: u32,
 }

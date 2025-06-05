@@ -4,6 +4,7 @@ use async_fn_stream::try_fn_stream;
 use brush_vfs::DataSource;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
+use tokio::sync::oneshot::Receiver;
 use tokio_stream::Stream;
 
 #[allow(unused)]
@@ -16,11 +17,13 @@ use crate::{
 
 pub fn process_stream(
     source: DataSource,
-    process_args: ProcessArgs,
+    process_args: Receiver<ProcessArgs>,
     device: WgpuDevice,
 ) -> impl Stream<Item = Result<ProcessMessage, anyhow::Error>> + 'static {
     try_fn_stream(|emitter| async move {
         log::info!("Starting process with source {source:?}");
+        emitter.emit(ProcessMessage::NewSource).await;
+
         let vfs = Arc::new(source.into_vfs().await?);
 
         let client = WgpuRuntime::client(&device);
@@ -36,9 +39,13 @@ pub fn process_stream(
             ply_count
         );
 
+        log::info!("Start of view stream");
+
         if vfs_counts == ply_count {
+            drop(process_args);
             view_stream(vfs, device, emitter).await?;
         } else {
+            // Receive the processing args.
             train_stream(vfs, process_args, device, emitter).await?;
         };
 

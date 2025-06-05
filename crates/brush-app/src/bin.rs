@@ -40,6 +40,9 @@ fn main() -> Result<(), anyhow::Error> {
                 .target(env_logger::Target::Stdout)
                 .init();
 
+            let (sender, args_receiver) = tokio::sync::oneshot::channel();
+            let _ = sender.send(args.process.clone());
+
             if args.with_viewer {
                 let icon = eframe::icon_data::from_png_bytes(
                     &include_bytes!("../assets/icon-256.png")[..],
@@ -57,7 +60,7 @@ fn main() -> Result<(), anyhow::Error> {
                 };
 
                 if let Some(source) = args.source {
-                    context.start_new_process(source, args.process);
+                    context.start_new_process(source, args_receiver);
                 }
 
                 let title = if cfg!(debug_assertions) {
@@ -76,7 +79,7 @@ fn main() -> Result<(), anyhow::Error> {
                     panic!("Validation of args failed?");
                 };
                 let device = brush_render::burn_init_setup().await;
-                let stream = process_stream(source, args.process.clone(), device);
+                let stream = process_stream(source, args_receiver, device);
                 brush_cli::process_ui(stream, args.process).await?;
             }
             anyhow::Result::<(), anyhow::Error>::Ok(())
