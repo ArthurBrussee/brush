@@ -13,15 +13,26 @@ zip.workspace = true
 
 tokio-stream.workspace = true
 path-clean = "1.0.1"
-reqwest.workspace = true
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["compat"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 tokio = { workspace = true, features = ["io-util"] }
-web-sys.workspace = true
+web-sys = { workspace = true, features = [
+    "Window",
+    "Location",
+    "Request",
+    "RequestInit",
+    "RequestCredentials",
+    "RequestMode",
+    "Response",
+] }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+wasm-streams.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["io-util", "fs"] }
+reqwest.workspace = true
 
 [lints]
 workspace = true

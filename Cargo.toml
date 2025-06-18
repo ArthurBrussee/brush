@@ -54,11 +54,13 @@ humantime = "2.1.0"
 tracing-wasm = "0.2.1"
 async-fn-stream = "0.2.2"
 miette = { version = "7.4.0", features = ["fancy"] }
-cfg-if = "1.0.0"
 assert_approx_eq = "1.1.0"
 safetensors = "0.5.3"
 log = "0.4.22"
 wasm-bindgen = "0.2.97"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+wasm-streams = "0.4"
 
 naga_oil = { git = "https://github.com/bevyengine/naga_oil", default-features = false }
 wgpu = { version = "25", default-features = false, features = [
@@ -99,11 +101,7 @@ rerun = { version = "0.23", default-features = false, features = [
 
 ball-tree = "0.5.1"
 
-web-sys = { version = "0.3.74", features = [
-    "Window",
-    "Location",
-    "UrlSearchParams",
-] }
+web-sys = { version = "0.3.74" }
 zip = { version = "2.2.1", default-features = false, features = ["deflate"] }
 urlencoding = "2.1"
 hashbrown = "0.15"
