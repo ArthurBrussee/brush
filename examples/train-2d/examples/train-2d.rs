@@ -169,6 +169,7 @@ impl eframe::App for App {
             let (img, _) = msg.splats.render(
                 &self.camera,
                 glam::uvec2(self.image.width(), self.image.height()),
+                Vec3::ZERO, // Just render with a black background
                 false,
             );
 

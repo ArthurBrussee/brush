@@ -7,6 +7,7 @@ use burn_fusion::{
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
 use burn_wgpu::WgpuRuntime;
+use glam::Vec3;
 
 use crate::{
     MainBackendBase, SplatForward,
@@ -26,10 +27,11 @@ impl SplatForward<Self> for MainBackendBase {
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         opacity: FloatTensor<Self>,
+        background: Vec3,
         bwd_info: bool,
     ) -> (FloatTensor<Self>, RenderAux<Self>) {
         render_forward(
-            camera, img_size, means, log_scales, quats, sh_coeffs, opacity, bwd_info,
+            camera, img_size, means, log_scales, quats, sh_coeffs, opacity, background, bwd_info,
         )
     }
 }
@@ -43,6 +45,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         opacity: FloatTensor<Self>,
+        background: Vec3,
         bwd_info: bool,
     ) -> (FloatTensor<Self>, RenderAux<Self>) {
         #[derive(Debug)]
@@ -50,6 +53,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             cam: Camera,
             img_size: glam::UVec2,
             bwd_info: bool,
+            background: Vec3,
             desc: CustomOpIr,
         }
 
@@ -80,6 +84,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                     h.get_float_tensor::<MainBackendBase>(quats),
                     h.get_float_tensor::<MainBackendBase>(sh_coeffs),
                     h.get_float_tensor::<MainBackendBase>(opacity),
+                    self.background,
                     self.bwd_info,
                 );
 
@@ -168,6 +173,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             cam: cam.clone(),
             img_size,
             bwd_info,
+            background,
             desc: desc.clone(),
         };
         client.register(stream, OperationIr::Custom(desc), op);

@@ -134,8 +134,9 @@ fn main(
     }
 
     if inside {
-        let img_alpha = (1.0 - T);
-        let final_color = vec4f(pix_out, img_alpha);
+        // Compose with background. Nb that color is already pre-multiplied
+        // by definition.
+        let final_color = vec4f(pix_out + T * uniforms.background.rgb, 1.0 - T);
 
         #ifdef BWD_INFO
             out_img[pix_id] = final_color;

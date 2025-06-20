@@ -11,7 +11,7 @@ use brush_render::{
 };
 use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect, Slider};
-use glam::UVec2;
+use glam::{UVec2, Vec3};
 use tokio_with_wasm::alias as tokio_wasm;
 use tracing::trace_span;
 use web_time::Instant;
@@ -125,7 +125,8 @@ impl ScenePanel {
             // If this viewport is re-rendering.
             if size.x > 8 && size.y > 8 && dirty {
                 let _span = trace_span!("Render splats").entered();
-                let (img, _) = splats.render(&camera, size, false);
+                // Could add an option for background color.
+                let (img, _) = splats.render(&camera, size, Vec3::ZERO, false);
                 self.backbuffer.update_texture(img);
             }
         }

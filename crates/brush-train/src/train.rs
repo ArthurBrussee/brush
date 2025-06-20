@@ -34,7 +34,9 @@ use burn::{
 };
 
 use burn_cubecl::cubecl::Runtime;
+use glam::Vec3;
 use hashbrown::{HashMap, HashSet};
+use rand::Rng;
 use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
@@ -95,6 +97,13 @@ impl SplatTrainer {
 
         let current_opacity = splats.opacities();
         let (pred_image, aux, refine_weight_holder) = {
+            // Just generate a uniform background color
+            let background = Vec3::new(
+                rand::rng().random(),
+                rand::rng().random(),
+                rand::rng().random(),
+            );
+
             let diff_out = <Autodiff<MainBackend> as SplatForwardDiff<_>>::render_splats(
                 camera,
                 glam::uvec2(img_w as u32, img_h as u32),
@@ -103,6 +112,7 @@ impl SplatTrainer {
                 splats.rotation.val().into_primitive().tensor(),
                 splats.sh_coeffs.val().into_primitive().tensor(),
                 current_opacity.clone().into_primitive().tensor(),
+                background,
             );
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
 

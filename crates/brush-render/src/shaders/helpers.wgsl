@@ -33,6 +33,9 @@ struct RenderUniforms {
 
     total_splats: u32,
     max_intersects: u32,
+
+    // Nb: Alpha is ignored atm.
+    background: vec4f,
 }
 
 // nb: this struct has a bunch of padding but that's probably fine.

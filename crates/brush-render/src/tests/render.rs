@@ -2,6 +2,7 @@ use crate::{SplatForward, camera::Camera};
 use assert_approx_eq::assert_approx_eq;
 use burn::tensor::{Tensor, TensorPrimitive};
 use burn_wgpu::{Wgpu, WgpuDevice};
+use glam::Vec3;
 
 type Back = Wgpu;
 
@@ -36,6 +37,7 @@ fn renders_at_all() {
         quats.into_primitive().tensor(),
         sh_coeffs.into_primitive().tensor(),
         raw_opacity.into_primitive().tensor(),
+        Vec3::ZERO,
         true,
     );
     aux.debug_assert_valid();

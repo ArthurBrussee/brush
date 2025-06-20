@@ -7,6 +7,7 @@ use burn_fusion::Fusion;
 use burn_wgpu::graphics::{AutoGraphicsApi, GraphicsApi};
 use burn_wgpu::{RuntimeOptions, WgpuDevice, WgpuRuntime};
 use camera::Camera;
+use glam::Vec3;
 use render_aux::RenderAux;
 use wgpu::{Adapter, Device, Queue};
 
@@ -56,6 +57,7 @@ pub trait SplatForward<B: Backend> {
         quats: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
+        background: Vec3,
         bwd_info: bool,
     ) -> (FloatTensor<B>, RenderAux<B>);
 }

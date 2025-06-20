@@ -24,7 +24,7 @@ use burn::tensor::{
 use burn_cubecl::{cubecl::server::Bindings, kernel::into_contiguous};
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
-use glam::uvec2;
+use glam::{Vec3, uvec2};
 use std::mem::{offset_of, size_of};
 
 pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
@@ -67,6 +67,7 @@ pub(crate) fn render_forward(
     quats: CubeTensor<WgpuRuntime>,
     sh_coeffs: CubeTensor<WgpuRuntime>,
     opacities: CubeTensor<WgpuRuntime>,
+    background: Vec3,
     bwd_info: bool,
 ) -> (CubeTensor<WgpuRuntime>, RenderAux<MainBackendBase>) {
     assert!(
@@ -128,6 +129,7 @@ pub(crate) fn render_forward(
         max_intersects,
         // Nb: Bit of a hack as these aren't _really_ uniforms but are written to by the shaders.
         num_visible: 0,
+        background: [background.x, background.y, background.z, 1.0],
     };
 
     // Nb: This contains both static metadata and some dynamic data so can't pass this as metadata to execute. In the future

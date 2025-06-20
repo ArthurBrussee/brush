@@ -28,6 +28,7 @@ use burn_fusion::{
     stream::{Operation, OperationStreams},
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
+use glam::Vec3;
 
 use crate::render_bwd::{SplatGrads, render_backward};
 
@@ -48,6 +49,7 @@ pub trait SplatForwardDiff<B: Backend> {
         quats: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacity: FloatTensor<B>,
+        background: Vec3,
     ) -> SplatOutputDiff<B>;
 }
 
@@ -179,6 +181,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacity: FloatTensor<Self>,
+        background: Vec3,
     ) -> SplatOutputDiff<Self> {
         // Get backend tensors & dequantize if needed. Could try and support quantized inputs
         // in the future.
@@ -208,6 +211,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
             quats.clone().into_primitive(),
             sh_coeffs.clone().into_primitive(),
             raw_opacity.clone().into_primitive(),
+            background,
             true,
         );
 

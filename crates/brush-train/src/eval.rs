@@ -5,6 +5,7 @@ use brush_render::gaussian_splats::Splats;
 use brush_render::render_aux::RenderAux;
 use burn::prelude::Backend;
 use burn::tensor::{Tensor, s};
+use glam::Vec3;
 use image::DynamicImage;
 
 use crate::ssim::Ssim;
@@ -34,7 +35,8 @@ pub async fn eval_stats<B: Backend + SplatForward<B>>(
 
     let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
 
-    let (rendered, aux) = splats.render(&eval_view.camera, res, true);
+    // Render on reference black background.
+    let (rendered, aux) = splats.render(&eval_view.camera, res, Vec3::ZERO, true);
     let render_rgb = rendered.slice(s![.., .., 0..3]);
 
     // Simulate an 8-bit roundtrip for fair comparison.

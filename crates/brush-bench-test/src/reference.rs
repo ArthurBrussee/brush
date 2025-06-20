@@ -10,6 +10,7 @@ use burn::{
     prelude::Backend,
     tensor::{Float, Int, Tensor, TensorPrimitive},
 };
+use glam::Vec3;
 use safetensors::SafeTensors;
 use std::{fs::File, io::Read};
 
@@ -130,6 +131,7 @@ async fn test_reference() -> Result<()> {
             splats.rotation.val().into_primitive().tensor(),
             splats.sh_coeffs.val().into_primitive().tensor(),
             splats.opacities().into_primitive().tensor(),
+            Vec3::ZERO,
         );
 
         let (out, aux) = (
