@@ -121,6 +121,9 @@ pub fn wasm_app(canvas_name: &str, start_uri: &str) -> anyhow::Result<Arc<UiProc
     let speed_scale = search_params
         .get("speed_scale")
         .and_then(|f| f.parse().ok());
+    let splat_scale = search_params
+        .get("splat_scale")
+        .and_then(|f| f.parse().ok());
 
     context.set_cam_settings(brush_ui::app::CameraSettings {
         fov_y,
@@ -128,6 +131,7 @@ pub fn wasm_app(canvas_name: &str, start_uri: &str) -> anyhow::Result<Arc<UiProc
         rotation,
         focus_distance,
         speed_scale,
+        splat_scale,
         clamping: Default::default(),
     });
 
@@ -167,6 +171,7 @@ impl CameraSettings {
         max_pitch: Option<f32>,
         min_yaw: Option<f32>,
         max_yaw: Option<f32>,
+        splat_scale: Option<f32>,
     ) -> Self {
         Self(brush_ui::app::CameraSettings {
             fov_y,
@@ -175,6 +180,7 @@ impl CameraSettings {
             rotation: Quat::from_euler(EulerRot::XYZ, euler_x, euler_y, euler_z),
             focus_distance,
             speed_scale,
+            splat_scale,
             // TODO: Could make this a separate JS object.
             clamping: brush_ui::camera_controls::CameraClamping {
                 min_focus_distance,
