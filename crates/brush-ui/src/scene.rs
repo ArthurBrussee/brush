@@ -26,6 +26,7 @@ struct RenderState {
     size: UVec2,
     cam: Camera,
     frame: f32,
+    splat_scale: Option<f32>,
 }
 
 struct ErrorDisplay {
@@ -103,6 +104,8 @@ impl ScenePanel {
 
         // Get camera after modifying the controls.
         let mut camera = process.current_camera();
+        let settings = process.get_cam_settings();
+
         let focal_y = fov_to_focal(camera.fov_y, size.y) as f32;
         camera.fov_x = focal_to_fov(focal_y as f64, size.x);
 
@@ -110,13 +113,13 @@ impl ScenePanel {
             size,
             cam: camera.clone(),
             frame: self.frame,
+            splat_scale: settings.splat_scale,
         };
 
         let dirty = self.last_state != Some(state.clone());
 
         if dirty {
             self.last_state = Some(state);
-
             // Check again next frame, as there might be more to animate.
             ui.ctx().request_repaint();
         }
@@ -126,7 +129,7 @@ impl ScenePanel {
             if size.x > 8 && size.y > 8 && dirty {
                 let _span = trace_span!("Render splats").entered();
                 // Could add an option for background color.
-                let (img, _) = splats.render(&camera, size, Vec3::ZERO, false);
+                let (img, _) = splats.render(&camera, size, Vec3::ZERO, settings.splat_scale);
                 self.backbuffer.update_texture(img);
             }
         }
@@ -397,6 +400,25 @@ Note: In browser training can be slower. For bigger training runs consider using
                 }
 
                 if self.ui_mode == UiMode::Full {
+                    ui.add_space(15.0);
+
+                    // Splat scale slider
+                    let mut settings = process.get_cam_settings();
+                    let mut scale = settings.splat_scale.unwrap_or(1.0);
+
+                    ui.label("Splat Scale:");
+                    let response = ui.add(
+                        Slider::new(&mut scale, 0.01..=2.0)
+                            .logarithmic(true)
+                            .show_value(true)
+                            .custom_formatter(|val, _| format!("{val:.1}x")),
+                    );
+
+                    if response.changed() {
+                        settings.splat_scale = Some(scale);
+                        process.set_cam_settings(settings);
+                    }
+
                     ui.add_space(15.0);
 
                     // FOV slider

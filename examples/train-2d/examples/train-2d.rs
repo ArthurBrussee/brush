@@ -170,7 +170,7 @@ impl eframe::App for App {
                 &self.camera,
                 glam::uvec2(self.image.width(), self.image.height()),
                 Vec3::ZERO, // Just render with a black background
-                false,
+                None,
             );
 
             let size = egui::vec2(self.image.width() as f32, self.image.height() as f32);

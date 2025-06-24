@@ -4,7 +4,7 @@ use brush_render::SplatForward;
 use brush_render::gaussian_splats::Splats;
 use brush_render::render_aux::RenderAux;
 use burn::prelude::Backend;
-use burn::tensor::{Tensor, s};
+use burn::tensor::{Tensor, TensorPrimitive, s};
 use glam::Vec3;
 use image::DynamicImage;
 
@@ -36,8 +36,21 @@ pub async fn eval_stats<B: Backend + SplatForward<B>>(
     let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
 
     // Render on reference black background.
-    let (rendered, aux) = splats.render(&eval_view.camera, res, Vec3::ZERO, true);
-    let render_rgb = rendered.slice(s![.., .., 0..3]);
+    let (img, aux) = {
+        let (img, aux) = B::render_splats(
+            &eval_view.camera,
+            res,
+            splats.means.val().into_primitive().tensor(),
+            splats.log_scales.val().into_primitive().tensor(),
+            splats.rotation.val().into_primitive().tensor(),
+            splats.sh_coeffs.val().into_primitive().tensor(),
+            splats.opacities().into_primitive().tensor(),
+            Vec3::ZERO,
+            true,
+        );
+        (Tensor::from_primitive(TensorPrimitive::Float(img)), aux)
+    };
+    let render_rgb = img.slice(s![.., .., 0..3]);
 
     // Simulate an 8-bit roundtrip for fair comparison.
     let render_rgb = (render_rgb * 255.0).round() / 255.0;

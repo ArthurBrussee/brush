@@ -196,7 +196,7 @@ fn bench_general(
 
         bencher.bench_local(move || {
             for _ in 0..INTERNAL_ITERS {
-                let _ = splats.render(&camera, resolution, Vec3::ZERO, false);
+                let _ = splats.render(&camera, resolution, Vec3::ZERO, None);
             }
             // Wait for GPU work.
             <Wgpu as burn::prelude::Backend>::sync(&device);

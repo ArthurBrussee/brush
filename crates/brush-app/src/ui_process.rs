@@ -93,11 +93,8 @@ impl BrushUiProcess for UiProcess {
             position: cam.position,
             rotation: cam.rotation,
             focus_distance: inner.controls.focus_distance,
-            speed_scale: if inner.controls.speed_scale == 1.0 {
-                None
-            } else {
-                Some(inner.controls.speed_scale)
-            },
+            splat_scale: inner.splat_scale,
+            speed_scale: inner.controls.speed_scale,
             clamping: inner.controls.clamping.clone(),
         }
     }
@@ -105,6 +102,8 @@ impl BrushUiProcess for UiProcess {
     fn set_cam_settings(&self, settings: CameraSettings) {
         let mut inner = self.inner.write();
         inner.controls = CameraController::new(settings.clone());
+        inner.splat_scale = settings.splat_scale;
+
         // Update the camera to the new position.
         inner.camera.position = settings.position;
         inner.camera.rotation = settings.rotation;
@@ -260,6 +259,7 @@ struct UiProcessInner {
     camera: Camera,
     ui_mode: UiMode,
     view_aspect: Option<f32>,
+    splat_scale: Option<f32>,
     controls: CameraController,
     model_local_to_world: Affine3A,
     running_process: Option<RunningProcess>,
@@ -287,6 +287,7 @@ impl UiProcessInner {
             ui_mode,
             model_local_to_world: Affine3A::IDENTITY,
             view_aspect: None,
+            splat_scale: None,
             dataset: Dataset::empty(),
             is_loading: false,
             is_training: false,

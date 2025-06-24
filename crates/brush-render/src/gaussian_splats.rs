@@ -275,18 +275,25 @@ impl<B: Backend + SplatForward<B>> Splats<B> {
         camera: &Camera,
         img_size: glam::UVec2,
         background: Vec3,
-        bwd_info: bool,
+        splat_scale: Option<f32>,
     ) -> (Tensor<B, 3>, RenderAux<B>) {
+        let mut scales = self.log_scales.val();
+
+        // Add in scaling if needed.
+        if let Some(scale) = splat_scale {
+            scales = scales + scale.ln();
+        };
+
         let (img, aux) = B::render_splats(
             camera,
             img_size,
             self.means.val().into_primitive().tensor(),
-            self.log_scales.val().into_primitive().tensor(),
+            scales.into_primitive().tensor(),
             self.rotation.val().into_primitive().tensor(),
             self.sh_coeffs.val().into_primitive().tensor(),
             self.opacities().into_primitive().tensor(),
             background,
-            bwd_info,
+            false,
         );
         let img = Tensor::from_primitive(TensorPrimitive::Float(img));
         #[cfg(feature = "debug-validation")]

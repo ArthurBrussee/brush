@@ -59,6 +59,7 @@ pub struct CameraSettings {
     pub rotation: Quat,
     pub focus_distance: f32,
     pub speed_scale: Option<f32>,
+    pub splat_scale: Option<f32>,
     pub clamping: CameraClamping,
 }
 
@@ -70,6 +71,7 @@ impl Default for CameraSettings {
             rotation: Quat::IDENTITY,
             focus_distance: 4.0,
             speed_scale: None,
+            splat_scale: None,
             clamping: CameraClamping::default(),
         }
     }

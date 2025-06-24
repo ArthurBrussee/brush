@@ -19,7 +19,7 @@ pub struct CameraController {
     pub position: Vec3,
     pub rotation: Quat,
     pub focus_distance: f32,
-    pub speed_scale: f32,
+    pub speed_scale: Option<f32>,
     pub clamping: CameraClamping,
 
     roll: Quat,
@@ -122,7 +122,7 @@ impl CameraController {
             orbit_velocity: Vec2::ZERO,
             focus_distance: settings.focus_distance,
             clamping: settings.clamping,
-            speed_scale: settings.speed_scale.unwrap_or(1.0),
+            speed_scale: settings.speed_scale,
         }
     }
 
@@ -185,7 +185,7 @@ impl CameraController {
         let fly_moment_lambda = 0.8;
 
         let move_speed = 25.0
-            * self.speed_scale
+            * self.speed_scale.unwrap_or(1.0)
             * if ui.input(|r| r.modifiers.shift) {
                 4.0
             } else {
