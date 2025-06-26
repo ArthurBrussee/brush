@@ -1,5 +1,4 @@
 #![windows_subsystem = "windows"]
-
 #![recursion_limit = "256"]
 mod ui_process;
 
