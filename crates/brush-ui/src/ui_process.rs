@@ -1,8 +1,8 @@
+use crate::{UiMode, app::CameraSettings, camera_controls::CameraController};
 use anyhow::Result;
 use brush_dataset::{Dataset, scene::SceneView};
 use brush_process::{config::ProcessArgs, message::ProcessMessage, process::process_stream};
 use brush_render::camera::Camera;
-use brush_ui::{BrushUiProcess, UiMode, app::CameraSettings, camera_controls::CameraController};
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use egui::Response;
@@ -47,24 +47,24 @@ impl UiProcess {
     }
 }
 
-impl BrushUiProcess for UiProcess {
-    fn is_loading(&self) -> bool {
+impl UiProcess {
+    pub fn is_loading(&self) -> bool {
         self.inner.read().is_loading
     }
 
-    fn is_training(&self) -> bool {
+    pub fn is_training(&self) -> bool {
         self.inner.read().is_training
     }
 
-    fn tick_controls(&self, response: &Response, ui: &egui::Ui) {
+    pub fn tick_controls(&self, response: &Response, ui: &egui::Ui) {
         self.inner.write().controls.tick(response, ui);
     }
 
-    fn model_local_to_world(&self) -> glam::Affine3A {
+    pub fn model_local_to_world(&self) -> glam::Affine3A {
         self.inner.read().model_local_to_world
     }
 
-    fn current_camera(&self) -> Camera {
+    pub fn current_camera(&self) -> Camera {
         let mut cam = self.inner.read().camera.clone();
         // Update camera to current position and rotation.
         let total_transform =
@@ -74,17 +74,17 @@ impl BrushUiProcess for UiProcess {
         cam
     }
 
-    fn selected_view(&self) -> Option<SceneView> {
+    pub fn selected_view(&self) -> Option<SceneView> {
         self.inner.read().selected_view.clone()
     }
 
-    fn set_train_paused(&self, paused: bool) {
+    pub fn set_train_paused(&self, paused: bool) {
         if let Some(process) = self.inner.read().running_process.as_ref() {
             let _ = process.control.send(ControlMessage::Paused(paused));
         }
     }
 
-    fn get_cam_settings(&self) -> CameraSettings {
+    pub fn get_cam_settings(&self) -> CameraSettings {
         let cam = self.current_camera();
         let inner = self.inner.read();
 
@@ -99,7 +99,7 @@ impl BrushUiProcess for UiProcess {
         }
     }
 
-    fn set_cam_settings(&self, settings: CameraSettings) {
+    pub fn set_cam_settings(&self, settings: &CameraSettings) {
         let mut inner = self.inner.write();
         inner.controls = CameraController::new(settings.clone());
         inner.splat_scale = settings.splat_scale;
@@ -117,7 +117,7 @@ impl BrushUiProcess for UiProcess {
         inner.repaint();
     }
 
-    fn focus_view(&self, view: &SceneView) {
+    pub fn focus_view(&self, view: &SceneView) {
         let mut inner = self.inner.write();
         inner.match_controls_to(&view.camera);
         inner.camera = view.camera.clone();
@@ -129,7 +129,7 @@ impl BrushUiProcess for UiProcess {
         inner.repaint();
     }
 
-    fn set_model_up(&self, up_axis: Vec3) {
+    pub fn set_model_up(&self, up_axis: Vec3) {
         let mut inner = self.inner.write();
         inner.model_local_to_world = Affine3A::from_rotation_translation(
             Quat::from_rotation_arc(up_axis.normalize(), Vec3::NEG_Y),
@@ -138,7 +138,7 @@ impl BrushUiProcess for UiProcess {
         inner.repaint();
     }
 
-    fn connect_device(&self, device: WgpuDevice, ctx: egui::Context) {
+    pub fn connect_device(&self, device: WgpuDevice, ctx: egui::Context) {
         let mut inner = self.inner.write();
         let ctx = DeviceContext { device, ctx };
         inner.cur_device_ctx = Some(ctx.clone());
@@ -149,7 +149,7 @@ impl BrushUiProcess for UiProcess {
         }
     }
 
-    fn start_new_process(&self, source: DataSource, args: Receiver<ProcessArgs>) {
+    pub fn start_new_process(&self, source: DataSource, args: Receiver<ProcessArgs>) {
         let ui_mode = self.ui_mode();
         let mut inner = self.inner.write();
         let mut reset = UiProcessInner::new(ui_mode);
@@ -220,7 +220,7 @@ impl BrushUiProcess for UiProcess {
         }
     }
 
-    fn try_recv_message(&self) -> Option<Result<ProcessMessage>> {
+    pub fn try_recv_message(&self) -> Option<Result<ProcessMessage>> {
         let mut inner = self.inner.write();
         if let Some(process) = inner.running_process.as_mut() {
             // If none, just return none.
@@ -248,7 +248,7 @@ impl BrushUiProcess for UiProcess {
         }
     }
 
-    fn ui_mode(&self) -> UiMode {
+    pub fn ui_mode(&self) -> UiMode {
         self.inner.read().ui_mode
     }
 }

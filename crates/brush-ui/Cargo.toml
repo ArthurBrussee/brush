@@ -28,6 +28,8 @@ tokio = { workspace = true }
 tracing.workspace = true
 web-time.workspace = true
 humantime.workspace = true
+tokio-stream.workspace = true
+parking_lot.workspace = true
 
 [lints]
 workspace = true

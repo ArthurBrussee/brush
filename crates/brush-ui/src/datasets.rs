@@ -1,4 +1,4 @@
-use crate::{BrushUiProcess, draw_checkerboard, panels::AppPanel, size_for_splat_view};
+use crate::{draw_checkerboard, panels::AppPanel, size_for_splat_view, ui_process::UiProcess};
 use brush_dataset::{
     Dataset,
     scene::{Scene, SceneView, ViewType},
@@ -56,7 +56,7 @@ impl AppPanel for DatasetPanel {
         "Dataset".to_owned()
     }
 
-    fn on_message(&mut self, message: &ProcessMessage, process: &dyn BrushUiProcess) {
+    fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
             ProcessMessage::NewSource => {
                 *self = Self::new();
@@ -83,7 +83,7 @@ impl AppPanel for DatasetPanel {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, process: &dyn BrushUiProcess) {
+    fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         let pick_scene = selected_scene(self.view_type, &self.cur_dataset).clone();
         let mut nearest_view_ind =
             pick_scene.get_nearest_view(process.current_camera().local_to_world());

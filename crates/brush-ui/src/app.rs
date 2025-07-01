@@ -1,7 +1,8 @@
 use crate::UiMode;
+use crate::ui_process::UiProcess;
 use crate::{
-    BrushUiProcess, camera_controls::CameraClamping, datasets::DatasetPanel, panels::PaneType,
-    scene::ScenePanel, settings::SettingsPanel, stats::StatsPanel,
+    camera_controls::CameraClamping, datasets::DatasetPanel, panels::PaneType, scene::ScenePanel,
+    settings::SettingsPanel, stats::StatsPanel,
 };
 use brush_process::message::ProcessMessage;
 use eframe::egui;
@@ -11,7 +12,7 @@ use glam::{Quat, Vec3};
 use std::sync::Arc;
 
 pub(crate) struct AppTree {
-    context: Arc<dyn BrushUiProcess>,
+    context: Arc<UiProcess>,
 }
 
 impl egui_tiles::Behavior<PaneType> for AppTree {
@@ -84,7 +85,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext, context: Arc<dyn BrushUiProcess>) -> Self {
+    pub fn new(cc: &eframe::CreationContext, context: Arc<UiProcess>) -> Self {
         // For now just assume we're running on the default
         let state = cc
             .wgpu_render_state

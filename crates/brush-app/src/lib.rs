@@ -1,14 +1,12 @@
 #![recursion_limit = "256"]
 #![cfg(target_os = "android")]
 
-mod ui_process;
-
 use brush_ui::UiMode;
 use brush_ui::app::App;
+use brush_ui::ui_process::UiProcess;
 use jni::sys::{JNI_VERSION_1_6, jint};
 use std::os::raw::c_void;
 use std::sync::Arc;
-use ui_process::UiProcess;
 
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]

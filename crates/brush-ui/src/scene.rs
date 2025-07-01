@@ -17,8 +17,8 @@ use tracing::trace_span;
 use web_time::Instant;
 
 use crate::{
-    BrushUiProcess, UiMode, app::CameraSettings, burn_texture::BurnTexture, draw_checkerboard,
-    panels::AppPanel, size_for_splat_view,
+    UiMode, app::CameraSettings, burn_texture::BurnTexture, draw_checkerboard, panels::AppPanel,
+    size_for_splat_view, ui_process::UiProcess,
 };
 
 #[derive(Clone, PartialEq)]
@@ -76,7 +76,7 @@ impl ScenePanel {
     pub(crate) fn draw_splats(
         &mut self,
         ui: &mut egui::Ui,
-        process: &dyn BrushUiProcess,
+        process: &UiProcess,
         splats: Option<Splats<MainBackend>>,
     ) -> egui::Rect {
         let size = size_for_splat_view(ui, self.ui_mode == UiMode::Full);
@@ -175,7 +175,7 @@ impl AppPanel for ScenePanel {
         "Scene".to_owned()
     }
 
-    fn on_message(&mut self, message: &ProcessMessage, process: &dyn BrushUiProcess) {
+    fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
             ProcessMessage::NewSource => {
                 self.last_draw = None;
@@ -222,7 +222,7 @@ impl AppPanel for ScenePanel {
         }
     }
 
-    fn on_error(&mut self, error: &anyhow::Error, _: &dyn BrushUiProcess) {
+    fn on_error(&mut self, error: &anyhow::Error, _: &UiProcess) {
         let headline = error.to_string();
         let context = error
             .chain()
@@ -232,7 +232,7 @@ impl AppPanel for ScenePanel {
         self.err = Some(ErrorDisplay { headline, context });
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, process: &dyn BrushUiProcess) {
+    fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         let cur_time = Instant::now();
 
         let delta_time = self.last_draw.map_or(0.0, |x| x.elapsed().as_secs_f32());
@@ -417,7 +417,7 @@ Note: In browser training can be slower. For bigger training runs consider using
 
                     if response.changed() {
                         settings.splat_scale = Some(scale);
-                        process.set_cam_settings(settings);
+                        process.set_cam_settings(&settings);
                     }
 
                     ui.add_space(15.0);
@@ -434,7 +434,7 @@ Note: In browser training can be slower. For bigger training runs consider using
                     );
 
                     if response.changed() {
-                        process.set_cam_settings(CameraSettings {
+                        process.set_cam_settings(&CameraSettings {
                             fov_y: fov_degrees.to_radians() as f64,
                             ..process.get_cam_settings()
                         });
@@ -456,7 +456,7 @@ Note: In browser training can be slower. For bigger training runs consider using
                             bg_color.g() as f32 / 255.0,
                             bg_color.b() as f32 / 255.0,
                         );
-                        process.set_cam_settings(settings);
+                        process.set_cam_settings(&settings);
                     }
 
                     ui.selectable_label(false, "Controls")

@@ -1,6 +1,6 @@
 use brush_process::message::ProcessMessage;
 
-use crate::BrushUiProcess;
+use crate::ui_process::UiProcess;
 
 pub type PaneType = Box<dyn AppPanel>;
 
@@ -8,16 +8,16 @@ pub(crate) trait AppPanel {
     fn title(&self) -> String;
 
     /// Draw the pane's UI's content/
-    fn ui(&mut self, ui: &mut egui::Ui, process: &dyn BrushUiProcess);
+    fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess);
 
     /// Handle an incoming message from the UI.
-    fn on_message(&mut self, message: &ProcessMessage, process: &dyn BrushUiProcess) {
+    fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         let _ = message;
         let _ = process;
     }
 
     /// Handle an incoming error from the UI.
-    fn on_error(&mut self, error: &anyhow::Error, process: &dyn BrushUiProcess) {
+    fn on_error(&mut self, error: &anyhow::Error, process: &UiProcess) {
         let _ = error;
         let _ = process;
     }

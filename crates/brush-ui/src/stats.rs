@@ -1,4 +1,4 @@
-use crate::{BrushUiProcess, panels::AppPanel};
+use crate::{panels::AppPanel, ui_process::UiProcess};
 use brush_process::message::ProcessMessage;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
@@ -58,7 +58,7 @@ impl AppPanel for StatsPanel {
         "Stats".to_owned()
     }
 
-    fn on_message(&mut self, message: &ProcessMessage, _: &dyn BrushUiProcess) {
+    fn on_message(&mut self, message: &ProcessMessage, _: &UiProcess) {
         match message {
             ProcessMessage::NewSource => {
                 *self = Self::new(self.device.clone(), self.adapter_info.clone());
@@ -104,7 +104,7 @@ impl AppPanel for StatsPanel {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _: &dyn BrushUiProcess) {
+    fn ui(&mut self, ui: &mut egui::Ui, _: &UiProcess) {
         ui.vertical(|ui| {
             // Model Stats
             ui.heading("Model Stats");

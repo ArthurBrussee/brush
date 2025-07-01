@@ -1,4 +1,4 @@
-use crate::{BrushUiProcess, panels::AppPanel};
+use crate::{panels::AppPanel, ui_process::UiProcess};
 use brush_process::config::ProcessArgs;
 use brush_vfs::DataSource;
 use egui::{Align2, Slider, Ui};
@@ -211,7 +211,7 @@ impl AppPanel for SettingsPanel {
         "Settings".to_owned()
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, process: &dyn BrushUiProcess) {
+    fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(20.0);
 

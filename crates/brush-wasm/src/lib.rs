@@ -1,10 +1,12 @@
+#![cfg(target_family = "wasm")]
+
 use crate::three::ThreeVector3;
-use crate::ui_process::UiProcess;
 use anyhow::Context;
 use brush_process::config::ProcessArgs;
 use brush_ui::BrushUiProcess;
 use brush_ui::UiMode;
 use brush_ui::app::App;
+use brush_ui_process::UiProcess;
 use brush_vfs::DataSource;
 use glam::Vec3;
 use glam::{EulerRot, Quat};
@@ -14,6 +16,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_with_wasm::alias as tokio_wasm;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
+
+mod three;
 
 fn parse_search(search: &str) -> HashMap<String, String> {
     let mut params = HashMap::new();

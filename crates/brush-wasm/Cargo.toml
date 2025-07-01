@@ -1,0 +1,63 @@
+[package]
+name = "brush-wasm"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Lib for WASM.
+[lib]
+name = "brush_app"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Brush deps.
+brush-ui.path = "../brush-ui"
+brush-render.path = "../brush-render"
+brush-dataset.path = "../brush-dataset"
+brush-process.path = "../brush-process"
+brush-vfs.path = "../brush-vfs"
+
+burn-wgpu.workspace = true
+burn-cubecl.workspace = true
+glam.workspace = true
+egui.workspace = true
+eframe.workspace = true
+
+anyhow.workspace = true
+tracing.workspace = true
+tokio_with_wasm = { workspace = true, features = ["rt"] }
+tokio-stream.workspace = true
+parking_lot.workspace = true
+log.workspace = true
+
+tracing-tracy = { workspace = true, optional = true }
+tracing-wasm = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["io-util", "rt"] }
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = ["HtmlCanvasElement", "Document", "Window"] }
+
+wasm-log = "0.3.1"
+urlencoding.workspace = true
+
+# wasm_js random backend needs to be enabled explicitly.
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[package.metadata.wasm-pack.profile.release.wasm-bindgen]
+debug-js-glue = false
+demangle-name-section = false
+dwarf-debug-info = false
+omit-default-module-path = false
+
+[package.metadata.cargo-machete]
+ignored = ["winit"] # Need winit to set backend.
+
+[lints]
+workspace = true
+
+[features]
+tracy = ["dep:tracing-tracy"]
+tracing = ["dep:tracing-subscriber"]
+debug-validation = ["brush-render/debug-validation"]

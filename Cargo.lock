@@ -862,7 +862,6 @@ dependencies = [
  "eframe",
  "egui",
  "env_logger",
- "getrandom 0.3.3",
  "glam",
  "jni",
  "log",
@@ -874,11 +873,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
- "tracing-wasm",
- "urlencoding",
- "wasm-bindgen",
- "wasm-log",
- "web-sys",
  "winapi",
  "winit",
 ]
@@ -1104,8 +1098,10 @@ dependencies = [
  "glam",
  "humantime",
  "log",
+ "parking_lot",
  "rrfd",
  "tokio",
+ "tokio-stream",
  "tokio_with_wasm",
  "tracing",
  "web-sys",
@@ -1129,6 +1125,37 @@ dependencies = [
  "wasm-streams",
  "web-sys",
  "zip 4.2.0",
+]
+
+[[package]]
+name = "brush-wasm"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "brush-dataset",
+ "brush-process",
+ "brush-render",
+ "brush-ui",
+ "brush-vfs",
+ "burn-cubecl",
+ "burn-wgpu",
+ "eframe",
+ "egui",
+ "getrandom 0.3.3",
+ "glam",
+ "log",
+ "parking_lot",
+ "tokio",
+ "tokio-stream",
+ "tokio_with_wasm",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tracy",
+ "tracing-wasm",
+ "urlencoding",
+ "wasm-bindgen",
+ "wasm-log",
+ "web-sys",
 ]
 
 [[package]]
