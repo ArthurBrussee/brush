@@ -11,7 +11,7 @@ repository.workspace = true
 name = "main"
 crate-type = ["cdylib"]
 
-# Bin for desktop platforms / trunk.
+# Bin for desktop platforms.
 [[bin]]
 name = "brush_app"
 path = "src/bin.rs"

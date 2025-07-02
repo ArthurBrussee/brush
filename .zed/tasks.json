@@ -29,32 +29,6 @@
     }
   },
   {
-    "label": "web debug",
-    "command": "trunk serve",
-    "env": {
-      "RUST_BACKTRACE": "1",
-      "RUST_LOG": "info,wgpu_core=off"
-    },
-    "use_new_terminal": false,
-    "allow_concurrent_runs": true,
-    "reveal": "always",
-    "hide": "never",
-    "shell": "system"
-  },
-  {
-    "label": "web release",
-    "command": "trunk serve --release",
-    "env": {
-      "RUST_BACKTRACE": "1",
-      "RUST_LOG": "info,wgpu_core=off"
-    },
-    "use_new_terminal": false,
-    "allow_concurrent_runs": true,
-    "reveal": "always",
-    "hide": "never",
-    "shell": "system"
-  },
-  {
     "label": "test rendering",
     "command": "cargo test",
     "args": ["-p brush-train -- --nocapture"],
