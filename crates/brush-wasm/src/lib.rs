@@ -3,12 +3,10 @@
 use crate::three::ThreeVector3;
 use anyhow::Context;
 use brush_process::config::ProcessArgs;
-use brush_ui::BrushUiProcess;
 use brush_ui::UiMode;
 use brush_ui::app::App;
-use brush_ui_process::UiProcess;
+use brush_ui::ui_process::UiProcess;
 use brush_vfs::DataSource;
-use glam::Vec3;
 use glam::{EulerRot, Quat};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,33 +32,6 @@ fn parse_search(search: &str) -> HashMap<String, String> {
         }
     }
     params
-}
-
-fn vec_from_uri(uri: &str) -> Option<Vec3> {
-    let parts: Vec<&str> = uri.split(',').collect();
-    if parts.len() == 3 {
-        Some(Vec3::new(
-            parts[0].parse().ok()?,
-            parts[1].parse().ok()?,
-            parts[2].parse().ok()?,
-        ))
-    } else {
-        None
-    }
-}
-
-fn quat_from_uri(uri: &str) -> Option<Quat> {
-    let parts: Vec<&str> = uri.split(',').collect();
-    if parts.len() == 4 {
-        Some(Quat::from_xyzw(
-            parts[0].parse().ok()?,
-            parts[1].parse().ok()?,
-            parts[2].parse().ok()?,
-            parts[3].parse().ok()?,
-        ))
-    } else {
-        None
-    }
 }
 
 pub fn wasm_app(canvas_name: &str, start_uri: &str) -> anyhow::Result<Arc<UiProcess>> {
@@ -99,43 +70,6 @@ pub fn wasm_app(canvas_name: &str, start_uri: &str) -> anyhow::Result<Arc<UiProc
             .await
             .expect("failed to start eframe");
     });
-
-    let url = search_params.get("url").cloned();
-    if let Some(url) = url {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let _ = sender.send(ProcessArgs::default());
-        context.start_new_process(DataSource::Url(url), receiver);
-    }
-
-    let position = search_params
-        .get("position")
-        .and_then(|f| vec_from_uri(f))
-        .unwrap_or(-Vec3::Z * 2.5);
-    let rotation = search_params
-        .get("rotation")
-        .and_then(|f| quat_from_uri(f))
-        .unwrap_or(Quat::IDENTITY);
-    let fov_y = search_params
-        .get("fov_y")
-        .and_then(|f| f.parse().ok())
-        .unwrap_or(0.8);
-    let speed_scale = search_params
-        .get("speed_scale")
-        .and_then(|f| f.parse().ok());
-    let splat_scale = search_params
-        .get("splat_scale")
-        .and_then(|f| f.parse().ok());
-
-    context.set_cam_settings(brush_ui::app::CameraSettings {
-        fov_y,
-        position,
-        rotation,
-        speed_scale,
-        splat_scale,
-        clamping: Default::default(),
-        background: Vec3::ZERO,
-    });
-
     Ok(context)
 }
 
@@ -213,7 +147,7 @@ impl EmbeddedApp {
                         context.start_new_process(data_source, receiver);
                     }
                     EmbeddedCommands::SetCamSettings(settings) => {
-                        context.set_cam_settings(settings.0);
+                        context.set_cam_settings(&settings.0);
                     }
                 }
             }

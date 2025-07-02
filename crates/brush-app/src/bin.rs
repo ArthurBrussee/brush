@@ -103,30 +103,5 @@ fn main() -> Result<(), anyhow::Error> {
         })?;
     }
 
-    // #[cfg(target_family = "wasm")]
-    // {
-    //     // TODO: In debug only?
-    //     #[cfg(feature = "tracing")]
-    //     {
-    //         use tracing_subscriber::layer::SubscriberExt;
-    //         tracing::subscriber::set_global_default(
-    //             tracing_subscriber::registry()
-    //                 .with(tracing_wasm::WASMLayer::new(Default::default())),
-    //         )
-    //         .expect("Failed to set tracing subscriber");
-    //     }
-    //     let level = if cfg!(debug_assertions) {
-    //         // Could do 'debug' but it's way too spammy.
-    //         log::Level::Info
-    //     } else {
-    //         log::Level::Warn
-    //     };
-    //     wasm_log::init(wasm_log::Config::new(level));
-    //     let start_uri = web_sys::window().and_then(|w| w.location().search().ok());
-    //     // Allowed to fail. When using the embedding API main canvas just won't be found.
-    //     // Ideally it would catch only _that_ error.
-    //     let _ = wasm::wasm_app("main_canvas", start_uri.as_deref().unwrap_or(""));
-    // }
-
     Ok(())
 }

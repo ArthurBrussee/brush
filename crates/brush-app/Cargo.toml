@@ -20,26 +20,18 @@ path = "src/bin.rs"
 # Brush deps.
 brush-ui.path = "../brush-ui"
 brush-render.path = "../brush-render"
-brush-dataset.path = "../brush-dataset"
 brush-process.path = "../brush-process"
-brush-vfs.path = "../brush-vfs"
 
-burn-wgpu.workspace = true
-burn-cubecl.workspace = true
-
-glam.workspace = true
 egui.workspace = true
 eframe.workspace = true
 
 anyhow.workspace = true
 tracing.workspace = true
-tokio_with_wasm = { workspace = true, features = ["rt"] }
-tokio-stream.workspace = true
-parking_lot.workspace = true
 log.workspace = true
 
 tracing-subscriber = { workspace = true, optional = true }
 tracing-tracy = { workspace = true, optional = true }
+
 
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { version = "0.30", features = ["android-game-activity"] }
