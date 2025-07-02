@@ -70,7 +70,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check wasm32
-        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check --target wasm32-unknown-unknown
+        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check -p brush-wasm --target wasm32-unknown-unknown
 
   # ---------------------------------------------------------------------------
 
