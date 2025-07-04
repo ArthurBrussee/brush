@@ -46,7 +46,6 @@ pub struct ScenePanel {
     live_update: bool,
     paused: bool,
     err: Option<ErrorDisplay>,
-    ui_mode: UiMode,
 
     // Keep track of what was last rendered.
     last_state: Option<RenderState>,
@@ -57,7 +56,6 @@ impl ScenePanel {
         device: wgpu::Device,
         queue: wgpu::Queue,
         renderer: Arc<EguiRwLock<Renderer>>,
-        ui_mode: UiMode,
     ) -> Self {
         Self {
             backbuffer: BurnTexture::new(renderer, device, queue),
@@ -67,7 +65,6 @@ impl ScenePanel {
             live_update: true,
             paused: false,
             last_state: None,
-            ui_mode,
             frame_count: 0,
             frame: 0.0,
         }
@@ -79,7 +76,7 @@ impl ScenePanel {
         process: &UiProcess,
         splats: Option<Splats<MainBackend>>,
     ) -> egui::Rect {
-        let size = size_for_splat_view(ui, self.ui_mode == UiMode::Full);
+        let size = size_for_splat_view(ui, process.ui_mode() == UiMode::Full);
 
         let mut size = size.floor();
 
@@ -104,6 +101,12 @@ impl ScenePanel {
 
         // Get camera after modifying the controls.
         let mut camera = process.current_camera();
+
+        let total_transform = process.model_local_to_world() * camera.local_to_world();
+        let (_, rotation, position) = total_transform.to_scale_rotation_translation();
+        camera.position = position;
+        camera.rotation = rotation;
+
         let settings = process.get_cam_settings();
 
         let focal_y = fov_to_focal(camera.fov_y, size.y) as f32;
@@ -242,7 +245,7 @@ impl AppPanel for ScenePanel {
         if !process.is_training()
             && self.view_splats.is_empty()
             && self.err.is_none()
-            && self.ui_mode == UiMode::Full
+            && process.ui_mode() == UiMode::Full
         {
             ui.heading("Load a ply file or dataset to get started.");
             ui.add_space(5.0);
@@ -400,7 +403,7 @@ Note: In browser training can be slower. For bigger training runs consider using
                     }
                 }
 
-                if self.ui_mode == UiMode::Full {
+                if process.ui_mode() == UiMode::Full {
                     ui.add_space(15.0);
 
                     // Splat scale slider

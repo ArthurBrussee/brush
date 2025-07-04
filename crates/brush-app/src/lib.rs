@@ -18,7 +18,7 @@ pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _: *mut c_void) -> jint {
 
 #[unsafe(no_mangle)]
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
-    let context = Arc::new(UiProcess::new(UiMode::Full));
+    let context = Arc::new(UiProcess::new());
 
     let wgpu_options = brush_ui::create_egui_options();
     let runtime = tokio::runtime::Builder::new_multi_thread()

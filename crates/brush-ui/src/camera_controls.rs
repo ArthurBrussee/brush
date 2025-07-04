@@ -19,8 +19,7 @@ pub struct CameraController {
     pub position: Vec3,
     pub rotation: Quat,
     pub focus_distance: f32,
-    pub speed_scale: Option<f32>,
-    pub clamping: CameraClamping,
+    pub settings: CameraSettings,
 
     roll: Quat,
     fly_velocity: Vec3,
@@ -113,16 +112,15 @@ fn smooth_clamp(val: f32, min: Option<f32>, max: Option<f32>, dt: f32, lambda: f
 }
 
 impl CameraController {
-    pub fn new(settings: CameraSettings) -> Self {
+    pub fn new(position: Vec3, rotation: Quat, settings: CameraSettings) -> Self {
         Self {
-            position: settings.position,
-            rotation: settings.rotation,
+            position,
+            rotation,
+            focus_distance: 4.0,
+            settings,
             roll: Quat::IDENTITY,
             fly_velocity: Vec3::ZERO,
             orbit_velocity: Vec2::ZERO,
-            clamping: settings.clamping,
-            speed_scale: settings.speed_scale,
-            focus_distance: 4.0,
         }
     }
 
@@ -177,7 +175,7 @@ impl CameraController {
             self.roll,
             self.orbit_velocity.x,
             self.orbit_velocity.y,
-            &self.clamping,
+            &self.settings.clamping,
             delta_time,
             self.focus_distance,
         );
@@ -185,7 +183,7 @@ impl CameraController {
         let fly_moment_lambda = 0.8;
 
         let move_speed = 25.0
-            * self.speed_scale.unwrap_or(1.0)
+            * self.settings.speed_scale.unwrap_or(1.0)
             * if ui.input(|r| r.modifiers.shift) {
                 4.0
             } else {
@@ -282,8 +280,8 @@ impl CameraController {
 
         self.focus_distance = smooth_clamp(
             self.focus_distance,
-            self.clamping.min_focus_distance,
-            self.clamping.max_focus_distance,
+            self.settings.clamping.min_focus_distance,
+            self.settings.clamping.max_focus_distance,
             delta_time,
             50.5,
         );

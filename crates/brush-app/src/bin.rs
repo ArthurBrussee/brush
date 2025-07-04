@@ -40,8 +40,7 @@ fn main() -> Result<(), anyhow::Error> {
         use brush_process::process::process_stream;
         use brush_ui::app::App;
 
-        let context =
-            std::sync::Arc::new(brush_ui::ui_process::UiProcess::new(brush_ui::UiMode::Full));
+        let context = std::sync::Arc::new(brush_ui::ui_process::UiProcess::new());
         let wgpu_options = brush_ui::create_egui_options();
 
         use brush_cli::Cli;

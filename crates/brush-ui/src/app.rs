@@ -8,7 +8,7 @@ use brush_process::message::ProcessMessage;
 use eframe::egui;
 use egui::ThemePreference;
 use egui_tiles::{Container, SimplificationOptions, Tile, TileId, Tiles};
-use glam::{Quat, Vec3};
+use glam::Vec3;
 use std::sync::Arc;
 
 pub(crate) struct AppTree {
@@ -56,8 +56,6 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
 #[derive(Clone, PartialEq)]
 pub struct CameraSettings {
     pub fov_y: f64,
-    pub position: Vec3,
-    pub rotation: Quat,
     pub speed_scale: Option<f32>,
     pub splat_scale: Option<f32>,
     pub clamping: CameraClamping,
@@ -68,8 +66,7 @@ impl Default for CameraSettings {
     fn default() -> Self {
         Self {
             fov_y: 0.8,
-            position: -Vec3::Z * 2.5,
-            rotation: Quat::IDENTITY,
+
             speed_scale: None,
             splat_scale: None,
             clamping: CameraClamping::default(),
@@ -113,7 +110,6 @@ impl App {
             state.device.clone(),
             state.queue.clone(),
             state.renderer.clone(),
-            context.ui_mode(),
         );
 
         let scene_pane_id = tiles.insert_pane(Box::new(scene_pane));

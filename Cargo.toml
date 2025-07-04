@@ -307,6 +307,7 @@ arc_with_non_send_sync = "allow"
 
 # TODO: More docs
 missing_errors_doc = "allow"
+new_without_default = "allow"
 
 # # These are meh:
 # Annoying: Some functions need Box so don't want to force user to to do this.
