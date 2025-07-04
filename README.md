@@ -51,9 +51,9 @@ First install rust 1.85+. You can run tests with `cargo test --all`. Brush uses 
 Simply `cargo run` or `cargo run --release` from the workspace root. Brush can also be used as a CLI, run `cargo run --release -- --help` to use the CLI directly from source. See the notes about the CLI in the features section.
 
 ### Web
-Brush can be compiled to WASM. There is a demo website using NextJS in the brush_nextjs directory. Simple `npm run dev` to start a development server, this will update the WASM too.
+Brush can be compiled to WASM. Run `npm run dev` to start the demo website using Next.js, see the brush_nextjs directory.
 
-It uses [`wasm-pack`](https://rustwasm.github.io/wasm-bindgen/introduction.html) to build the WASM bundle. You can also use it without a bundler, see [wasm-pack's documentation](hhttps://rustwasm.github.io/wasm-bindgen/examples/without-a-bundler.html).
+Brush uses [`wasm-pack`](https://rustwasm.github.io/wasm-bindgen/introduction.html) to build the WASM bundle. You can also use it without a bundler, see [wasm-pack's documentation](hhttps://rustwasm.github.io/wasm-bindgen/examples/without-a-bundler.html).
 
 WebGPU is still an upcoming standard, and as such, only Chrome 134+ on Windows and macOS is currently supported.
 

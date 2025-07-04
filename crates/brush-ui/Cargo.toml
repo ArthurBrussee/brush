@@ -30,9 +30,7 @@ web-time.workspace = true
 humantime.workspace = true
 tokio-stream.workspace = true
 parking_lot.workspace = true
+wasm-bindgen.workspace = true
 
 [lints]
 workspace = true
-
-[target.'cfg(target_family = "wasm")'.dependencies]
-web-sys.workspace = true

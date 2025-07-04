@@ -1,4 +1,6 @@
-use crate::{draw_checkerboard, panels::AppPanel, size_for_splat_view, ui_process::UiProcess};
+use crate::{
+    UiMode, draw_checkerboard, panels::AppPane, size_for_splat_view, ui_process::UiProcess,
+};
 use brush_dataset::{
     Dataset,
     scene::{Scene, SceneView, ViewType},
@@ -51,9 +53,13 @@ impl DatasetPanel {
     }
 }
 
-impl AppPanel for DatasetPanel {
+impl AppPane for DatasetPanel {
     fn title(&self) -> String {
         "Dataset".to_owned()
+    }
+
+    fn is_visible(&self, process: &UiProcess) -> bool {
+        process.ui_mode() == UiMode::Default && process.is_training()
     }
 
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {

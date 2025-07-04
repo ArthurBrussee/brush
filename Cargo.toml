@@ -13,7 +13,6 @@ repository = "https://github.com/ArthurBrussee/brush"
 [workspace.dependencies]
 glam = { version = "0.28", features = ["serde"] }
 bytemuck = "1.20"
-byteorder = "1.5.0"
 image = { version = "0.25", default-features = false, features = [
     'png',
     'webp',
@@ -52,8 +51,6 @@ clap = { version = "4.5.23", features = ["derive"] }
 
 web-time = "1.1.0"
 humantime = "2.1.0"
-
-tracing-wasm = "0.2.1"
 async-fn-stream = "0.2.2"
 miette = { version = "7.4.0", features = ["fancy"] }
 assert_approx_eq = "1.1.0"
@@ -61,7 +58,6 @@ safetensors = "0.6.0"
 log = "0.4.22"
 wasm-bindgen = "0.2.97"
 wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
 wasm-streams = "0.4"
 
 naga_oil = { git = "https://github.com/bevyengine/naga_oil", default-features = false }
@@ -105,7 +101,6 @@ ball-tree = "0.5.1"
 
 web-sys = { version = "0.3.74" }
 zip = { version = "4.2", default-features = false, features = ["deflate"] }
-urlencoding = "2.1"
 hashbrown = "0.15"
 parking_lot = "0.12"
 alphanumeric-sort = "1.5.3"

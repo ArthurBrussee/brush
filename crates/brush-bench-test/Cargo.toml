@@ -14,7 +14,6 @@ image.workspace = true
 glam.workspace = true
 log.workspace = true
 burn.workspace = true
-wgpu.workspace = true
 bytemuck.workspace = true
 
 [dev-dependencies]

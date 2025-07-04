@@ -24,8 +24,6 @@ burn.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
 
-wgpu.workspace = true
-
 [lints]
 workspace = true
 

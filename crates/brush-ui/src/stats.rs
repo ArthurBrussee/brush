@@ -1,4 +1,4 @@
-use crate::{panels::AppPanel, ui_process::UiProcess};
+use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
 use brush_process::message::ProcessMessage;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
@@ -53,9 +53,13 @@ fn bytes_format(bytes: u64) -> String {
     }
 }
 
-impl AppPanel for StatsPanel {
+impl AppPane for StatsPanel {
     fn title(&self) -> String {
         "Stats".to_owned()
+    }
+
+    fn is_visible(&self, process: &UiProcess) -> bool {
+        process.ui_mode() == UiMode::Default
     }
 
     fn on_message(&mut self, message: &ProcessMessage, _: &UiProcess) {

@@ -600,9 +600,9 @@ dependencies = [
 
 [[package]]
 name = "avif-serialize"
-version = "0.8.4"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19135c0c7a60bfee564dbe44ab5ce0557c6bf3884e5291a50be76a15640c4fbd"
+checksum = "2ea8ef51aced2b9191c08197f55450d830876d9933f8f48a429b354f1d496b42"
 dependencies = [
  "arrayvec",
 ]
@@ -886,7 +886,6 @@ dependencies = [
  "rerun",
  "safetensors 0.6.0",
  "tokio",
- "wgpu",
 ]
 
 [[package]]
@@ -1068,7 +1067,6 @@ dependencies = [
  "log",
  "rand 0.9.1",
  "tracing",
- "wgpu",
 ]
 
 [[package]]
@@ -1096,7 +1094,7 @@ dependencies = [
  "tokio-stream",
  "tokio_with_wasm",
  "tracing",
- "web-sys",
+ "wasm-bindgen",
  "web-time",
  "wgpu",
 ]
@@ -1112,7 +1110,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
- "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
@@ -1132,7 +1129,6 @@ dependencies = [
  "glam",
  "tokio",
  "tokio_with_wasm",
- "urlencoding",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -1694,9 +1690,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.27"
+version = "1.2.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d487aa071b5f64da6f19a3e848e3578944b726ee5a4854b82172f02aa876bfdc"
+checksum = "4ad45f4f74e4e20eaa392913b7b33a7091c87e59628f4dd27888205ad888843c"
 dependencies = [
  "jobserver",
  "libc",
@@ -4727,9 +4723,9 @@ checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
 
 [[package]]
 name = "libfuzzer-sys"
-version = "0.4.9"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf78f52d400cf2d84a3a973a78a592b4adc535739e0a5597a0da6f0c357adc75"
+checksum = "5037190e1f70cbeef565bd267599242926f724d3b8a9f510fd7e0b540cfa4404"
 dependencies = [
  "arbitrary",
  "cc",
@@ -4864,7 +4860,6 @@ name = "lpips"
 version = "0.2.0"
 dependencies = [
  "burn",
- "image",
 ]
 
 [[package]]

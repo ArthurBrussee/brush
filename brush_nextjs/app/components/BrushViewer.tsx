@@ -1,15 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { EmbeddedApp } from '../../pkg/brush_app';
+import { EmbeddedApp, UiMode } from '../../pkg/brush_app';
 
 interface BrushViewerProps {
   url?: string | null;
+  fullsplat?: boolean;
 }
 
-export default function BrushViewer({
-  url = ''
-}: BrushViewerProps) {
+export default function BrushViewer(props: BrushViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [app, setApp] = useState<EmbeddedApp | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +20,7 @@ export default function BrushViewer({
     canvasRef.current.id = canvasId;
 
     try {
-      const brushApp = new EmbeddedApp(canvasId, url ? `?url=${encodeURIComponent(url)}` : '');
+      const brushApp = new EmbeddedApp(canvasId);
       setApp(brushApp);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -29,10 +28,16 @@ export default function BrushViewer({
   }, []);
 
   useEffect(() => {
-    if (app && url) {
-      app.load_url(url);
+    if (app && props.url) {
+      app.load_url(props.url);
     }
-  }, [app, url]);
+  }, [app, props.url]);
+
+  useEffect(() => {
+    if (app && props.fullsplat) {
+      app.set_ui_mode(props.fullsplat ? UiMode.FullScreenSplat : UiMode.Default);
+    }
+  }, [app, props.fullsplat]);
 
   return (
     <div style={{

@@ -264,8 +264,11 @@ impl UiProcess {
     }
 
     pub fn ui_mode(&self) -> UiMode {
-        // TODO TODO:
-        UiMode::Full
+        self.read().ui_mode
+    }
+
+    pub fn set_ui_mode(&self, mode: UiMode) {
+        self.write().ui_mode = mode;
     }
 }
 
@@ -282,6 +285,7 @@ struct UiProcessInner {
     running_process: Option<RunningProcess>,
     selected_view: Option<SceneView>,
     cur_device_ctx: Option<DeviceContext>,
+    ui_mode: UiMode,
 }
 
 impl UiProcessInner {
@@ -314,6 +318,7 @@ impl UiProcessInner {
             running_process: None,
             cur_device_ctx: None,
             background: Vec3::ZERO,
+            ui_mode: UiMode::Default,
         }
     }
 

@@ -26,7 +26,6 @@ web-sys = { workspace = true, features = [
     "RequestMode",
     "Response",
 ] }
-wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 wasm-streams.workspace = true
 

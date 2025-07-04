@@ -32,8 +32,6 @@ web-sys = { workspace = true, features = [
     "Window",
 ] }
 
-urlencoding.workspace = true
-
 # wasm_js random backend needs to be enabled explicitly.
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
@@ -46,7 +44,7 @@ demangle-name-section = false
 dwarf-debug-info = false
 omit-default-module-path = false
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["getrandom"] # Need winit to set backend.
 
 [lints]

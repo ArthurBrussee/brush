@@ -13,12 +13,15 @@ mod stats;
 
 use eframe::egui_wgpu::WgpuConfiguration;
 use std::sync::Arc;
+use wasm_bindgen::prelude::*;
 use wgpu::{Adapter, Features};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[wasm_bindgen]
 pub enum UiMode {
-    Full,
-    Zen,
+    #[default]
+    Default,
+    FullScreenSplat,
 }
 
 pub fn create_egui_options() -> WgpuConfiguration {

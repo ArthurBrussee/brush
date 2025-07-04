@@ -1,19 +1,21 @@
 use crate::UiMode;
+use crate::panels::AppPane;
 use crate::ui_process::UiProcess;
 use crate::{
-    camera_controls::CameraClamping, datasets::DatasetPanel, panels::PaneType, scene::ScenePanel,
+    camera_controls::CameraClamping, datasets::DatasetPanel, scene::ScenePanel,
     settings::SettingsPanel, stats::StatsPanel,
 };
-use brush_process::message::ProcessMessage;
 use eframe::egui;
 use egui::ThemePreference;
-use egui_tiles::{Container, SimplificationOptions, Tile, TileId, Tiles};
+use egui_tiles::{SimplificationOptions, Tile, Tiles};
 use glam::Vec3;
 use std::sync::Arc;
 
 pub(crate) struct AppTree {
-    context: Arc<UiProcess>,
+    process: Arc<UiProcess>,
 }
+
+type PaneType = Box<dyn AppPane>;
 
 impl egui_tiles::Behavior<PaneType> for AppTree {
     fn tab_title_for_pane(&mut self, pane: &PaneType) -> egui::WidgetText {
@@ -29,7 +31,7 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
         egui::Frame::new()
             .inner_margin(pane.inner_margin())
             .show(ui, |ui| {
-                pane.ui(ui, self.context.as_ref());
+                pane.ui(ui, self.process.as_ref());
             });
         egui_tiles::UiResponse::None
     }
@@ -37,7 +39,7 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
     /// What are the rules for simplifying the tree?
     fn simplification_options(&self) -> SimplificationOptions {
         SimplificationOptions {
-            all_panes_must_have_tabs: self.context.ui_mode() == UiMode::Full,
+            all_panes_must_have_tabs: self.process.ui_mode() == UiMode::Default,
             ..Default::default()
         }
     }
@@ -45,7 +47,7 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
     /// Width of the gap between tiles in a horizontal or vertical layout,
     /// and between rows/columns in a grid layout.
     fn gap_width(&self, _style: &egui::Style) -> f32 {
-        if self.context.ui_mode() == UiMode::Zen {
+        if self.process.ui_mode() == UiMode::FullScreenSplat {
             0.0
         } else {
             0.5
@@ -77,7 +79,6 @@ impl Default for CameraSettings {
 
 pub struct App {
     tree: egui_tiles::Tree<PaneType>,
-    datasets: Option<TileId>,
     tree_ctx: AppTree,
 }
 
@@ -106,77 +107,45 @@ impl App {
             .options_mut(|opt| opt.theme_preference = ThemePreference::Dark);
 
         let mut tiles: Tiles<PaneType> = Tiles::default();
-        let scene_pane = ScenePanel::new(
+        let settings_pane = tiles.insert_pane(Box::new(SettingsPanel::new()));
+        let stats_pane =
+            tiles.insert_pane(Box::new(StatsPanel::new(device, state.adapter.get_info())));
+        let side_pane = tiles.insert_vertical_tile(vec![settings_pane, stats_pane]);
+
+        let scene_pane = tiles.insert_pane(Box::new(ScenePanel::new(
             state.device.clone(),
             state.queue.clone(),
             state.renderer.clone(),
+        )));
+        let dataset_pane = tiles.insert_pane(Box::new(DatasetPanel::new()));
+
+        let mut lin = egui_tiles::Linear::new(
+            egui_tiles::LinearDir::Horizontal,
+            vec![side_pane, scene_pane, dataset_pane],
         );
-
-        let scene_pane_id = tiles.insert_pane(Box::new(scene_pane));
-
-        let root_container = if context.ui_mode() == UiMode::Full {
-            let loading_subs = vec![tiles.insert_pane(Box::new(SettingsPanel::new()))];
-            let loading_pane = tiles.insert_tab_tile(loading_subs);
-
-            #[allow(unused_mut)]
-            let mut sides = vec![
-                loading_pane,
-                tiles.insert_pane(Box::new(StatsPanel::new(device, state.adapter.get_info()))),
-            ];
-
-            let side_panel = tiles.insert_vertical_tile(sides);
-
-            let mut lin = egui_tiles::Linear::new(
-                egui_tiles::LinearDir::Horizontal,
-                vec![side_panel, scene_pane_id],
-            );
-            lin.shares.set_share(side_panel, 0.4);
-            tiles.insert_container(lin)
-        } else {
-            scene_pane_id
-        };
+        lin.shares.set_share(side_pane, 0.35);
+        let root_container = tiles.insert_container(lin);
 
         let tree = egui_tiles::Tree::new("brush_tree", root_container, tiles);
+        let tree_ctx = AppTree { process: context };
 
-        let tree_ctx = AppTree { context };
-
-        Self {
-            tree,
-            tree_ctx,
-            datasets: None,
-        }
+        Self { tree, tree_ctx }
     }
 
     fn receive_messages(&mut self) {
         let mut messages = vec![];
 
-        while let Some(message) = self.tree_ctx.context.try_recv_message() {
+        while let Some(message) = self.tree_ctx.process.try_recv_message() {
             messages.push(message);
         }
 
         for message in messages {
             match message {
                 Ok(message) => {
-                    if let ProcessMessage::Dataset { dataset: _ } = message {
-                        // Show the dataset panel if we've loaded one.
-                        if self.datasets.is_none() {
-                            let pane_id =
-                                self.tree.tiles.insert_pane(Box::new(DatasetPanel::new()));
-                            self.datasets = Some(pane_id);
-                            if let Some(Tile::Container(Container::Linear(lin))) = self
-                                .tree
-                                .tiles
-                                .get_mut(self.tree.root().expect("UI must have a root"))
-                            {
-                                lin.add_child(pane_id);
-                            }
-                        }
-                    }
-
                     for (_, pane) in self.tree.tiles.iter_mut() {
                         match pane {
                             Tile::Pane(pane) => {
-                                pane.on_message(&message, self.tree_ctx.context.as_ref());
+                                pane.on_message(&message, self.tree_ctx.process.as_ref());
                             }
                             Tile::Container(_) => {}
                         }
@@ -186,7 +155,7 @@ impl App {
                     for (_, pane) in self.tree.tiles.iter_mut() {
                         match pane {
                             Tile::Pane(pane) => {
-                                pane.on_error(&e, self.tree_ctx.context.as_ref());
+                                pane.on_error(&e, self.tree_ctx.process.as_ref());
                             }
                             Tile::Container(_) => {}
                         }
@@ -200,6 +169,52 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.receive_messages();
+
+        if ctx.input(|i| i.key_pressed(egui::Key::F)) {
+            let current_mode = self.tree_ctx.process.ui_mode();
+            let new_mode = match current_mode {
+                UiMode::Default => UiMode::FullScreenSplat,
+                UiMode::FullScreenSplat => UiMode::Default,
+            };
+            self.tree_ctx.process.set_ui_mode(new_mode);
+        }
+
+        let process = self.tree_ctx.process.clone();
+
+        // Recursive function to compute visibility bottom-up
+        let mut tile_visibility = std::collections::HashMap::new();
+
+        fn compute_visibility(
+            tile_id: egui_tiles::TileId,
+            tiles: &Tiles<PaneType>,
+            process: &Arc<UiProcess>,
+            memo: &mut std::collections::HashMap<egui_tiles::TileId, bool>,
+        ) -> bool {
+            if let Some(&cached) = memo.get(&tile_id) {
+                return cached;
+            }
+            let visible = match tiles.get(tile_id) {
+                Some(Tile::Pane(pane)) => pane.is_visible(process),
+                Some(Tile::Container(container)) => {
+                    // Container is visible if any child is visible
+                    container
+                        .active_children()
+                        .any(|&child_id| compute_visibility(child_id, tiles, process, memo))
+                }
+                None => false,
+            };
+            memo.insert(tile_id, visible);
+            visible
+        }
+
+        // Compute visibility for all tiles
+        let all_tile_ids: Vec<_> = self.tree.tiles.iter().map(|(id, _)| *id).collect();
+        for tile_id in all_tile_ids {
+            self.tree.set_visible(
+                tile_id,
+                compute_visibility(tile_id, &self.tree.tiles, &process, &mut tile_visibility),
+            );
+        }
 
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ctx.style().as_ref()).inner_margin(0.0))

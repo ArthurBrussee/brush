@@ -9,8 +9,8 @@ license.workspace = true
 burn.workspace = true
 # burn-import.workspace = true
 
-[dev-dependencies]
-image.workspace = true
+# [dev-dependencies]
+# image.workspace = true
 
 [lints]
 workspace = true

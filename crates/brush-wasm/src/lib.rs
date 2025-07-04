@@ -3,6 +3,7 @@
 use crate::three::ThreeVector3;
 use anyhow::Context;
 use brush_process::config::ProcessArgs;
+use brush_ui::UiMode;
 use brush_ui::app::App;
 use brush_ui::ui_process::UiProcess;
 use brush_vfs::DataSource;
@@ -120,5 +121,10 @@ impl EmbeddedApp {
             rotation_euler.z() as f32,
         );
         self.context.set_camera_transform(position, rotation);
+    }
+
+    #[wasm_bindgen]
+    pub fn set_ui_mode(&self, mode: UiMode) {
+        self.context.set_ui_mode(mode);
     }
 }

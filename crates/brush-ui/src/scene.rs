@@ -17,7 +17,7 @@ use tracing::trace_span;
 use web_time::Instant;
 
 use crate::{
-    UiMode, app::CameraSettings, burn_texture::BurnTexture, draw_checkerboard, panels::AppPanel,
+    UiMode, app::CameraSettings, burn_texture::BurnTexture, draw_checkerboard, panels::AppPane,
     size_for_splat_view, ui_process::UiProcess,
 };
 
@@ -76,7 +76,7 @@ impl ScenePanel {
         process: &UiProcess,
         splats: Option<Splats<MainBackend>>,
     ) -> egui::Rect {
-        let size = size_for_splat_view(ui, process.ui_mode() == UiMode::Full);
+        let size = size_for_splat_view(ui, process.ui_mode() == UiMode::Default);
 
         let mut size = size.floor();
 
@@ -173,7 +173,7 @@ impl ScenePanel {
     }
 }
 
-impl AppPanel for ScenePanel {
+impl AppPane for ScenePanel {
     fn title(&self) -> String {
         "Scene".to_owned()
     }
@@ -245,7 +245,7 @@ impl AppPanel for ScenePanel {
         if !process.is_training()
             && self.view_splats.is_empty()
             && self.err.is_none()
-            && process.ui_mode() == UiMode::Full
+            && process.ui_mode() == UiMode::Default
         {
             ui.heading("Load a ply file or dataset to get started.");
             ui.add_space(5.0);
@@ -403,7 +403,7 @@ Note: In browser training can be slower. For bigger training runs consider using
                     }
                 }
 
-                if process.ui_mode() == UiMode::Full {
+                if process.ui_mode() == UiMode::Default {
                     ui.add_space(15.0);
 
                     // Splat scale slider

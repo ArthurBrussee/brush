@@ -1,4 +1,4 @@
-use crate::{panels::AppPanel, ui_process::UiProcess};
+use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
 use brush_process::config::ProcessArgs;
 use brush_vfs::DataSource;
 use egui::{Align2, Slider, Ui};
@@ -206,9 +206,13 @@ impl SettingsPanel {
     }
 }
 
-impl AppPanel for SettingsPanel {
+impl AppPane for SettingsPanel {
     fn title(&self) -> String {
         "Settings".to_owned()
+    }
+
+    fn is_visible(&self, process: &UiProcess) -> bool {
+        process.ui_mode() == UiMode::Default
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {

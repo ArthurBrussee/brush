@@ -24,7 +24,9 @@ function Loading() {
 function Brush() {
   const searchParams = useSearchParams();
   const url = searchParams.get('url');
-  return <BrushViewer url={url} />;
+  // This mode used to be called "zen" mode, keep it for backwards compatibility.
+  const fullsplat = searchParams.get('fullsplat')?.toLowerCase() == 'true' || searchParams.get('zen')?.toLowerCase() == 'true' || false;
+  return <BrushViewer url={url} fullsplat={fullsplat} />;
 }
 
 export default function Home() {
