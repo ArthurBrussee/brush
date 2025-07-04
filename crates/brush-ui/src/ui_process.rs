@@ -45,13 +45,13 @@ impl UiProcess {
 
 // Wrap the write guard, so we can redraw the UI after any changes.
 struct UiProcessWriteGuard<'a>(parking_lot::RwLockWriteGuard<'a, UiProcessInner>);
-impl<'a> Drop for UiProcessWriteGuard<'a> {
+impl Drop for UiProcessWriteGuard<'_> {
     fn drop(&mut self) {
         self.0.repaint();
     }
 }
 
-impl<'a> std::ops::Deref for UiProcessWriteGuard<'a> {
+impl std::ops::Deref for UiProcessWriteGuard<'_> {
     type Target = UiProcessInner;
 
     fn deref(&self) -> &Self::Target {
@@ -59,7 +59,7 @@ impl<'a> std::ops::Deref for UiProcessWriteGuard<'a> {
     }
 }
 
-impl<'a> std::ops::DerefMut for UiProcessWriteGuard<'a> {
+impl std::ops::DerefMut for UiProcessWriteGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
