@@ -33,7 +33,7 @@ tracing-subscriber = { workspace = true, optional = true }
 tracing-tracy = { workspace = true, optional = true }
 
 # Select supported backends per platform.
-[target.'cfg(target_family = "macos")'.dependencies]
+[target.'cfg(any(target_family = "macos", target_family = "ios"))'.dependencies]
 wgpu = { workspace = true, features = ["metal"] }
 
 [target.'cfg(target_family = "unix")'.dependencies]
