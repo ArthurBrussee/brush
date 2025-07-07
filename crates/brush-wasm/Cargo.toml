@@ -35,6 +35,9 @@ web-sys = { workspace = true, features = [
 # wasm_js random backend needs to be enabled explicitly.
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
+# Enable native webgpu backend.
+wgpu = { workspace = true, features = ["webgpu"] }
+
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
 

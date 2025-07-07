@@ -61,12 +61,9 @@ wasm-bindgen-futures = "0.4"
 wasm-streams = "0.4"
 
 naga_oil = { git = "https://github.com/bevyengine/naga_oil", default-features = false }
-wgpu = { version = "25", default-features = false, features = [
-    "metal",
-    "webgpu",
-    "vulkan",
-    "naga-ir",
-] }
+
+# Backends are chosen per platform.
+wgpu = { version = "25", default-features = false, features = ["naga-ir"] }
 
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
 ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"

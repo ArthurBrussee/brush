@@ -59,7 +59,7 @@ fn undecorate_regex() -> &'static Regex {
 }
 
 // https://github.com/bevyengine/naga_oil/blob/master/src/compose/mod.rs#L421-L431
-fn demangle_str(string: &str) -> Cow<str> {
+fn demangle_str(string: &str) -> Cow<'_, str> {
     undecorate_regex().replace_all(string, |caps: &regex::Captures| {
         format!(
             "{}{}::{}",
