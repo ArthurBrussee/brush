@@ -202,84 +202,50 @@ fn radius_from_cov(cov2d: mat2x2f, opac: f32) -> f32 {
     let det = determinant(cov2d);
     let b = 0.5f * (cov2d[0][0] + cov2d[1][1]);
     let v1 = b + sqrt(max(0.01f, b * b - det));
-    let radius = ceil(3.f * sqrt(v1));
+    let radius = sqrt(2.0f * log(opac * 255.0f) * v1);
     return radius;
-
-    // I think we can do better and derive an exact bound when we hit some eps threshold.
-    // Also, we should take into account the opoacity of the gaussian.
-    // So, opac * exp(-0.5 * x^T Sigma^-1 x) = eps  (with eps being e.g. 1.0 / 255.0).
-    // x^T Sigma^-1 x = -2 * log(eps / opac)
-    // Find maximal |x| using quadratic form
-    // |x|^2 = c / lambd_min.
-    // // Now solve for maximal |r| such that min alpha = 1.0 / 255.0.
-    // //
-    // // we actually go for 2.0 / 255.0 or so to match the cutoff from gsplat better.
-    // // maybe can be more precise here if we don't need 1:1 compat with gsplat anymore.
-    // let trace = conic.x + conic.z;
-    // let determinant = conic.x * conic.z - conic.y * conic.y;
-    // let l_min = 0.5 * (trace - sqrt(trace * trace - 4 * determinant));
-    // let eps_const = -2.0 * log(1.0 / (opac * 255.0));
-    // return sqrt(eps_const / l_min);
 }
 
-fn check_edge(p1: vec2f, p2: vec2f, ellipse_center: vec2f, ellipse_conic: mat2x2f) -> bool {
-    let edge = p2 - p1;
-    let f = p1 - ellipse_center;
-    let a = dot(edge * ellipse_conic, edge);
-    let b = 2.0 * dot(f * ellipse_conic, edge);
-    let c = dot(f * ellipse_conic, f) - 1.0;
-    let discriminant = b * b - 4.0 * a * c;
-
-    if discriminant < 0.0 {
-        return false;
+fn copysign(x: f32, y: f32) -> f32 {
+    let x_abs = abs(x);
+    if (y < 0.0f) {
+        return -x_abs;
     }
-
-    let sqrt_discriminant = sqrt(discriminant);
-    let t1 = (-b - sqrt_discriminant) / (2.0 * a);
-    let t2 = (-b + sqrt_discriminant) / (2.0 * a);
-    return (t1 >= 0.0 && t1 <= 1.0) || (t2 >= 0.0 && t2 <= 1.0);
+    return x_abs;
 }
 
-fn ellipse_intersects_aabb(box_pos: vec2f, box_extent: vec2f, ellipse_center: vec2f, ellipse_conic: mat2x2f) -> bool {
-    let d = ellipse_center - box_pos;
+fn will_primitive_contribute(tile: vec2u, mean: vec2f, conic: vec3f, power_threshold: f32) -> bool {
+    let rect_min = vec2f(f32(tile.x * TILE_WIDTH), f32(tile.y * TILE_WIDTH));
+    let rect_max = vec2f(f32((tile.x + 1) * TILE_WIDTH - 1), f32((tile.y + 1) * TILE_WIDTH - 1));
 
-    // Check if ellipse center is inside AABB.
-    if all(abs(d) <= box_extent) {
-        return true;
+    let x_min_diff = rect_min.x - mean.x;
+    let x_left = f32(x_min_diff > 0.0f);
+    let not_in_x_range = x_left + f32(mean.x > rect_max.x);
+
+    let y_min_diff = rect_min.y - mean.y;
+    let y_above = f32(y_min_diff > 0.0f);
+    let not_in_y_range = y_above + f32(mean.y > rect_max.y);
+
+    var max_power_in_tile = 0.0f; // remember 0 means max contribution
+    if ((not_in_y_range + not_in_x_range) > 0.0f) {
+        let closest_corner = vec2f(
+            x_left * rect_min.x + (1.0f - x_left) * rect_max.x,
+            y_above * rect_min.y + (1.0f - y_above) * rect_max.y
+        );
+
+        let diff = mean - closest_corner;
+
+        let dx = copysign(f32(TILE_WIDTH - 1u), x_min_diff); // vec2f(copysign(f32(TILE_WIDTH - 1), x_min_diff), 0.0f)
+        let dy = copysign(f32(TILE_WIDTH - 1u), y_min_diff); // vec2f(0.0f, copysign(f32(TILE_WIDTH - 1), y_min_diff))
+
+        let tx = not_in_y_range * clamp((dx * conic.x * diff.x + dx * conic.y * diff.y) / (dx * conic.x * dx), 0.0f, 1.0f);
+        let ty = not_in_x_range * clamp((dy * conic.y * diff.x + dy * conic.z * diff.y) / (dy * conic.z * dy), 0.0f, 1.0f);
+
+        let max_contribution_point = vec2f(closest_corner.x + tx * dx, closest_corner.y + ty * dy);
+        max_power_in_tile = calc_sigma(mean, conic, max_contribution_point);
     }
 
-    // Determine the nearest corner
-    let corner_sign = sign(d);
-    let nearest_corner = box_pos + corner_sign * box_extent;
-
-    // Check if the nearest corner is inside the ellipse
-    let cp = nearest_corner - ellipse_center;
-    if dot(cp * ellipse_conic, cp) <= 1.0 {
-        return true;
-    }
-
-    // Check the two edges adjacent to the nearest corner
-    let edge1_end = nearest_corner - vec2f(corner_sign.x * 2.0 * box_extent.x, 0.0);
-    let edge2_end = nearest_corner - vec2f(0.0, corner_sign.y * 2.0 * box_extent.y);
-
-    return check_edge(nearest_corner, edge1_end, ellipse_center, ellipse_conic) ||
-           check_edge(nearest_corner, edge2_end, ellipse_center, ellipse_conic);
-}
-
-fn can_be_visible(tile: vec2u, xy: vec2f, conic: mat2x2f, opac: f32) -> bool {
-    // opac * exp(-sigma) == 1.0 / 255.0
-    // exp(-sigma) == 1.0 / (opac * 255.0)
-    // -sigma == log(1.0 / (opac * 255.0))
-    // sigma == log(opac * 255.0);
-    let sigma = log(opac * 255.0);
-    if sigma <= 0.0 {
-        return false;
-    }
-    let conic_scale = 1.0 / (2.0 * sigma);
-    let conic_scaled = conic * conic_scale;
-    let tile_extent = vec2f(f32(TILE_WIDTH) / 2.0);
-    let tile_center = vec2f(tile) * f32(TILE_WIDTH) + tile_extent;
-    return ellipse_intersects_aabb(tile_center, tile_extent, xy, conic_scaled);
+    return max_power_in_tile <= power_threshold;
 }
 
 fn ceil_div(a: u32, b: u32) -> u32 {

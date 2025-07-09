@@ -35,6 +35,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let tile_min = tile_minmax.xy;
     let tile_max = tile_minmax.zw;
 
+    let mean2d_shifted = mean2d - 0.5f;
+    let conic_vec = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
+    let power_threshold = log(opac * 255.0f);
+
     var num_tiles_hit = 0;
 
     #ifdef PREPASS
@@ -50,7 +54,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // on which version is being ran.
     for (var ty = tile_min.y; ty < tile_max.y; ty++) {
         for (var tx = tile_min.x; tx < tile_max.x; tx++) {
-            if helpers::can_be_visible(vec2u(tx, ty), mean2d, conic, opac) {
+            if helpers::will_primitive_contribute(vec2u(tx, ty), mean2d_shifted, conic_vec, power_threshold) {
                 let tile_id = tx + ty * uniforms.tile_bounds.x;
 
             #ifdef PREPASS
