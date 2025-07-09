@@ -70,12 +70,12 @@ fn get_bbox(center: vec2f, dims: vec2f, bounds: vec2u) -> vec4u {
     return vec4u(min, max);
 }
 
-fn get_tile_bbox(pix_center: vec2f, pix_radius: f32, tile_bounds: vec2u) -> vec4u {
+fn get_tile_bbox(pix_center: vec2f, pix_extent: vec2f, tile_bounds: vec2u) -> vec4u {
     // gets gaussian dimensions in tile space, i.e. the span of a gaussian in
     // tile_grid (image divided into tiles)
     let tile_center = pix_center / f32(TILE_WIDTH);
-    let tile_radius = pix_radius / f32(TILE_WIDTH);
-    return get_bbox(tile_center, vec2f(tile_radius, tile_radius), tile_bounds);
+    let tile_extent = pix_extent / f32(TILE_WIDTH);
+    return get_bbox(tile_center, tile_extent, tile_bounds);
 }
 
 fn normalize_quat(quat: vec4f) -> vec4f {
@@ -198,12 +198,16 @@ fn calc_vis(pixel_coord: vec2f, conic: vec3f, xy: vec2f) -> f32 {
     return exp(-calc_sigma(pixel_coord, conic, xy));
 }
 
-fn radius_from_cov(cov2d: mat2x2f, opac: f32) -> f32 {
+fn compute_bbox_extent(cov2d: mat2x2f, power_threshold: f32) -> vec2f {
+    let extent = min(3.33f, sqrt(2.0f * power_threshold));
     let det = determinant(cov2d);
     let b = 0.5f * (cov2d[0][0] + cov2d[1][1]);
     let v1 = b + sqrt(max(0.01f, b * b - det));
-    let radius = sqrt(2.0f * log(opac * 255.0f) * v1);
-    return radius;
+    let radius = extent * sqrt(v1);
+    return vec2f(
+        min(extent * sqrt(cov2d[0][0]), radius),
+        min(extent * sqrt(cov2d[1][1]), radius),
+    );
 }
 
 fn copysign(x: f32, y: f32) -> f32 {

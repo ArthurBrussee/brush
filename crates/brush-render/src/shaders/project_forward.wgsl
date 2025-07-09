@@ -46,12 +46,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
 
     let cov3d = helpers::calc_cov3d(scale, quat);
     let cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
-    let det = determinant(cov2d);
 
-    valid &= det > 0.0;
-
-    // Calculate ellipse conic.
-    let conic = helpers::inverse(cov2d);
+    valid &= determinant(cov2d) > 0.0;
 
     // compute the projected mean
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
@@ -61,10 +57,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     // Phrase as positive to bail on NaN.
     valid &= opac > 1.0 / 255.0;
 
-    let radius = helpers::radius_from_cov(cov2d, opac);
-    valid &= radius > 0.0;
-    valid &= mean2d.x + radius > 0 && mean2d.x - radius < f32(uniforms.img_size.x) &&
-            mean2d.y + radius > 0 && mean2d.y - radius < f32(uniforms.img_size.y);
+    let extent = helpers::compute_bbox_extent(cov2d, log(255.0f * opac));
+    valid &= extent.x > 0.0 && extent.y > 0.0;
+    valid &= mean2d.x + extent.x > 0 && mean2d.x - extent.x < f32(uniforms.img_size.x) &&
+             mean2d.y + extent.y > 0 && mean2d.y - extent.y < f32(uniforms.img_size.y);
 
     // mask out gaussians outside the image region
     if !valid {

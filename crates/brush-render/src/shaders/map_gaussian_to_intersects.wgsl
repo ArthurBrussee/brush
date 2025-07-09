@@ -24,20 +24,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     let projected = projected[compact_gid];
     let mean2d = vec2f(projected.xy_x, projected.xy_y);
+    let mean2d_shifted = mean2d - 0.5f;
 
     let opac = projected.color_a;
-
-    // Reconstruct conic matrix.
-    let conic = mat2x2f(projected.conic_x, projected.conic_y, projected.conic_y, projected.conic_z);
-    let cov_from_conic = helpers::inverse(conic);
-    let radius = helpers::radius_from_cov(cov_from_conic, opac);
-    let tile_minmax = helpers::get_tile_bbox(mean2d, radius, uniforms.tile_bounds);
-    let tile_min = tile_minmax.xy;
-    let tile_max = tile_minmax.zw;
-
-    let mean2d_shifted = mean2d - 0.5f;
-    let conic_vec = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
     let power_threshold = log(opac * 255.0f);
+
+    // Compute the splat's bounding box in tile coordinates.
+    let conic = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
+    let cov2d = helpers::inverse(mat2x2f(conic.x, conic.y, conic.y, conic.z));
+    let extent = helpers::compute_bbox_extent(cov2d, power_threshold);
+    let tile_bbox = helpers::get_tile_bbox(mean2d, extent, uniforms.tile_bounds);
+    let tile_bbox_min = tile_bbox.xy;
+    let tile_bbox_max = tile_bbox.zw;
 
     var num_tiles_hit = 0;
 
@@ -52,26 +50,28 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // we might not be writing some intersection data.
     // This is a bit scary given potential optimizations that might happen depending
     // on which version is being ran.
-    for (var ty = tile_min.y; ty < tile_max.y; ty++) {
-        for (var tx = tile_min.x; tx < tile_max.x; tx++) {
-            if helpers::will_primitive_contribute(vec2u(tx, ty), mean2d_shifted, conic_vec, power_threshold) {
-                let tile_id = tx + ty * uniforms.tile_bounds.x;
+    let tile_bbox_width = tile_bbox_max.x - tile_bbox_min.x;
+    let num_tiles_bbox = (tile_bbox_max.y - tile_bbox_min.y) * tile_bbox_width;
+    for (var tile_idx = 0u; tile_idx < num_tiles_bbox; tile_idx++) {
+        let tx = (tile_idx % tile_bbox_width) + tile_bbox_min.x;
+        let ty = (tile_idx / tile_bbox_width) + tile_bbox_min.y;
+        if helpers::will_primitive_contribute(vec2u(tx, ty), mean2d_shifted, conic, power_threshold) {
+            let tile_id = tx + ty * uniforms.tile_bounds.x;
 
-            #ifdef PREPASS
-                // TODO: Want to bail here if the tile is saturated with gaussians, but not clear
-                // how the prepass and final pass would agree.
-                atomicAdd(&tile_intersect_counts[tile_id + 1u], 1);
-            #else
-                let isect_id = base_isect_id + num_tiles_hit;
-                // Nb: isect_id MIGHT be out of bounds here for degenerate cases.
-                // These kernels should be launched with bounds checking, so that these
-                // writes are ignored. This will skip these intersections.
-                tile_id_from_isect[isect_id] = i32(tile_id);
-                compact_gid_from_isect[isect_id] = i32(compact_gid);
-            #endif
+        #ifdef PREPASS
+            // TODO: Want to bail here if the tile is saturated with gaussians, but not clear
+            // how the prepass and final pass would agree.
+            atomicAdd(&tile_intersect_counts[tile_id + 1u], 1);
+        #else
+            let isect_id = base_isect_id + num_tiles_hit;
+            // Nb: isect_id MIGHT be out of bounds here for degenerate cases.
+            // These kernels should be launched with bounds checking, so that these
+            // writes are ignored. This will skip these intersections.
+            tile_id_from_isect[isect_id] = i32(tile_id);
+            compact_gid_from_isect[isect_id] = i32(compact_gid);
+        #endif
 
-                num_tiles_hit += 1;
-            }
+            num_tiles_hit += 1;
         }
     }
 
