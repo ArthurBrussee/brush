@@ -24,7 +24,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     let projected = projected[compact_gid];
     let mean2d = vec2f(projected.xy_x, projected.xy_y);
-    let mean2d_shifted = mean2d - 0.5f;
 
     let opac = projected.color_a;
     let power_threshold = log(opac * 255.0f);
@@ -55,7 +54,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     for (var tile_idx = 0u; tile_idx < num_tiles_bbox; tile_idx++) {
         let tx = (tile_idx % tile_bbox_width) + tile_bbox_min.x;
         let ty = (tile_idx / tile_bbox_width) + tile_bbox_min.y;
-        if helpers::will_primitive_contribute(vec2u(tx, ty), mean2d_shifted, conic, power_threshold) {
+        if helpers::will_primitive_contribute(vec2u(tx, ty), mean2d, conic, power_threshold) {
             let tile_id = tx + ty * uniforms.tile_bounds.x;
 
         #ifdef PREPASS
