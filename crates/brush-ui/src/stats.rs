@@ -94,7 +94,11 @@ impl AppPane for StatsPanel {
                 self.num_splats = splats.num_splats();
                 let current_iter_per_s = (iter - self.last_train_step.1) as f32
                     / (*total_elapsed - self.last_train_step.0).as_secs_f32();
-                self.train_iter_per_s = 0.95 * self.train_iter_per_s + 0.05 * current_iter_per_s;
+                self.train_iter_per_s = if *iter < 16 {
+                    current_iter_per_s
+                } else {
+                    0.95 * self.train_iter_per_s + 0.05 * current_iter_per_s
+                };
                 self.last_train_step = (*total_elapsed, *iter);
             }
             ProcessMessage::EvalResult {
