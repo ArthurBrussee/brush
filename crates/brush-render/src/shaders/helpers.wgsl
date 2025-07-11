@@ -210,44 +210,40 @@ fn compute_bbox_extent(cov2d: mat2x2f, power_threshold: f32) -> vec2f {
     );
 }
 
-fn copysign(x: f32, y: f32) -> f32 {
-    let x_abs = abs(x);
-    if (y < 0.0f) {
-        return -x_abs;
-    }
-    return x_abs;
-}
-
 fn will_primitive_contribute(tile: vec2u, mean: vec2f, conic: vec3f, power_threshold: f32) -> bool {
     let rect_min = vec2f(f32(tile.x * TILE_WIDTH), f32(tile.y * TILE_WIDTH));
     let rect_max = vec2f(f32((tile.x + 1) * TILE_WIDTH - 1), f32((tile.y + 1) * TILE_WIDTH - 1));
 
-    let x_min_diff = rect_min.x - mean.x;
-    let x_left = f32(x_min_diff > 0.0f);
-    let not_in_x_range = x_left + f32(mean.x > rect_max.x);
+    let x_left = mean.x < rect_min.x;
+    let x_right = mean.x > rect_max.x;
+    let in_x_range = !(x_left || x_right);
 
-    let y_min_diff = rect_min.y - mean.y;
-    let y_above = f32(y_min_diff > 0.0f);
-    let not_in_y_range = y_above + f32(mean.y > rect_max.y);
+    let y_above = mean.y < rect_min.y;
+    let y_below = mean.y > rect_max.y;
+    let in_y_range = !(y_above || y_below);
 
-    var max_power_in_tile = 0.0f; // remember 0 means max contribution
-    if ((not_in_y_range + not_in_x_range) > 0.0f) {
-        let closest_corner = vec2f(
-            x_left * rect_min.x + (1.0f - x_left) * rect_max.x,
-            y_above * rect_min.y + (1.0f - y_above) * rect_max.y
-        );
-
-        let diff = mean - closest_corner;
-
-        let dx = copysign(f32(TILE_WIDTH - 1u), x_min_diff); // vec2f(copysign(f32(TILE_WIDTH - 1), x_min_diff), 0.0f)
-        let dy = copysign(f32(TILE_WIDTH - 1u), y_min_diff); // vec2f(0.0f, copysign(f32(TILE_WIDTH - 1), y_min_diff))
-
-        let tx = not_in_y_range * clamp((dx * conic.x * diff.x + dx * conic.y * diff.y) / (dx * conic.x * dx), 0.0f, 1.0f);
-        let ty = not_in_x_range * clamp((dy * conic.y * diff.x + dy * conic.z * diff.y) / (dy * conic.z * dy), 0.0f, 1.0f);
-
-        let max_contribution_point = vec2f(closest_corner.x + tx * dx, closest_corner.y + ty * dy);
-        max_power_in_tile = calc_sigma(mean, conic, max_contribution_point);
+    if (in_x_range && in_y_range) {
+        return true;
     }
+
+    let closest_corner = vec2f(
+        select(rect_max.x, rect_min.x, x_left),
+        select(rect_max.y, rect_min.y, y_above)
+    );
+
+    let d = vec2f(
+        select(-f32(TILE_WIDTH - 1u), f32(TILE_WIDTH - 1u), x_left),
+        select(-f32(TILE_WIDTH - 1u), f32(TILE_WIDTH - 1u), y_above)
+    );
+
+    let diff = mean - closest_corner;
+    let t_max = vec2f(
+        select(clamp((d.x * conic.x * diff.x + d.x * conic.y * diff.y) / (d.x * conic.x * d.x), 0.0f, 1.0f), 0.0f, in_y_range),
+        select(clamp((d.y * conic.y * diff.x + d.y * conic.z * diff.y) / (d.y * conic.z * d.y), 0.0f, 1.0f), 0.0f, in_x_range)
+    );
+
+    let max_contribution_point = closest_corner + t_max * d;
+    let max_power_in_tile = calc_sigma(mean, conic, max_contribution_point);
 
     return max_power_in_tile <= power_threshold;
 }
