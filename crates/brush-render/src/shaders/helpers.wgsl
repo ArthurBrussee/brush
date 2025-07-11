@@ -210,6 +210,7 @@ fn compute_bbox_extent(cov2d: mat2x2f, power_threshold: f32) -> vec2f {
     );
 }
 
+// Based on method from StopThePop: https://arxiv.org/pdf/2402.00525.
 fn will_primitive_contribute(tile: vec2u, mean: vec2f, conic: vec3f, power_threshold: f32) -> bool {
     let rect_min = vec2f(f32(tile.x * TILE_WIDTH), f32(tile.y * TILE_WIDTH));
     let rect_max = vec2f(f32((tile.x + 1) * TILE_WIDTH - 1), f32((tile.y + 1) * TILE_WIDTH - 1));
