@@ -95,8 +95,19 @@ skip = [
     { name = 'tower' },            # Old version in rerun
     { name = "tower-http" },
     { name = 'indexmap' },         # Old version in rerun
-    { name = "emath" },            # Old version in rerun.
-    { name = 'ndk-sys' },          # Needed on Android.
+
+    { name = 'ndk-sys' }, # Needed on Android.
+
+    { name = "serde_spanned" }, # Burn-import weirdness.
+    { name = "dyn-stack" },     # Burn-import weirdness.
+    { name = "gemm" },          # Burn-import weirdness.
+    { name = "gemm-f16" },      # Burn-import weirdness.
+    { name = "gemm-f32" },      # Burn-import weirdness.
+    { name = "gemm-f64" },      # Burn-import weirdness.
+    { name = "gemm-c32" },      # Burn-import weirdness.
+    { name = "gemm-c64" },      # Burn-import weirdness.
+    { name = "raw-cpuid" },     # Burn-import weirdness.
+    { name = "pulp" },          # Burn-import weirdness.
 ]
 
 [licenses]
