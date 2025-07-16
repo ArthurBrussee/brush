@@ -78,6 +78,9 @@ burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
 ] }
 burn-fusion = { git = "https://github.com/tracel-ai/burn" }
+burn-import = { git = "https://github.com/tracel-ai/burn", default-features = false, features = [
+    "pytorch",
+] }
 
 egui = "0.31"
 eframe = { version = "0.31", default-features = false, features = [

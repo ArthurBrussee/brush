@@ -38,13 +38,22 @@ skip = [
     # common small deps.
     { name = "bitflags" },
     { name = 'itertools' },
-    { name = 'derive-new' },
     { name = 'getrandom' },
+    { name = 'syn' },
+    { name = 'strum_macros' },
+    { name = 'strum' },
+    { name = 'gemm-common' },
 
     # Until everyone is on 0.9
     { name = "rand" },
     { name = "rand_core" },
     { name = "rand_chacha" },
+
+    { name = "yoke-derive" },
+    { name = "yoke" },
+    { name = "toml_datetime" },
+    { name = "toml" },
+    { name = "sysctl" },
 
     #
     { name = 'thiserror' },
@@ -78,21 +87,16 @@ skip = [
     { name = 'block2' },           # eframe & rfd
     { name = 'objc2-app-kit' },    # eframe & rfd
     { name = 'objc2' },            # eframe & rfd
-
-    { name = 'windows' }, # Wgpu & kiddo
-
+    { name = 'windows' },          # Wgpu & kiddo
     { name = 'hashbrown' },
-
+    { name = 'zip' },
     { name = 'colored' },
-    { name = 'spin' },
-
-    { name = "tower-http" },
     { name = "rustc-hash" },
-
-    { name = 'tower' },
-    { name = 'indexmap' },
-
-    { name = 'ndk-sys' }, # Needed on Android.
+    { name = 'tower' },            # Old version in rerun
+    { name = "tower-http" },
+    { name = 'indexmap' },         # Old version in rerun
+    { name = "emath" },            # Old version in rerun.
+    { name = 'ndk-sys' },          # Needed on Android.
 ]
 
 [licenses]
