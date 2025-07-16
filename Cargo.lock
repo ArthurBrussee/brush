@@ -470,7 +470,6 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_repr",
- "tokio",
  "url",
  "wayland-backend",
  "wayland-client",
@@ -8979,11 +8978,9 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
- "signal-hook-registry",
  "slab",
  "socket2",
  "tokio-macros",
- "tracing",
  "windows-sys 0.52.0",
 ]
 
@@ -10888,7 +10885,6 @@ dependencies = [
  "ordered-stream",
  "serde",
  "serde_repr",
- "tokio",
  "tracing",
  "uds_windows",
  "windows-sys 0.59.0",

@@ -11,10 +11,7 @@ lazy_static = "1.5.0"
 thiserror.workspace = true
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-rfd = { version = "0.15", default-features = false, features = [
-    "xdg-portal",
-    "tokio",
-] }
+rfd = { version = "0.15" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["fs", "sync"] }
