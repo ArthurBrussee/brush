@@ -92,9 +92,8 @@ skip = [
     { name = 'zip' },
     { name = 'colored' },
     { name = "rustc-hash" },
-    { name = 'tower' },            # Old version in rerun
-    { name = "tower-http" },
-    { name = 'indexmap' },         # Old version in rerun
+
+    { name = "bincode" },
 
     { name = 'ndk-sys' }, # Needed on Android.
 
@@ -128,6 +127,7 @@ allow = [
     "Unlicense",                      # https://www.tldrlegal.com/license/unlicense
     "Unicode-3.0",
     "CDLA-Permissive-2.0",
+    "bzip2-1.0.6",
 ]
 
 [[licenses.clarify]]
