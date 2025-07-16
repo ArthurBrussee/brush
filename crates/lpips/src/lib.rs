@@ -106,22 +106,17 @@ impl<B: Backend> LpipsModel<B> {
         let imgs_a = self.forward(imgs_a * 2.0 - 1.0);
         let imgs_b = self.forward(imgs_b * 2.0 - 1.0);
 
-        // Get mean of spatial values.
-        let sim_values = imgs_a
-            .into_iter()
-            .zip(imgs_b)
-            .zip(&self.heads)
-            // TODO: 3rd dimension is learned 1x1 convs....
-            .map(|((p1, p2), head)| {
+        let device = imgs_a[0].device();
+
+        imgs_a.into_iter().zip(imgs_b).zip(&self.heads).fold(
+            Tensor::zeros([1], &device),
+            |acc, ((p1, p2), head)| {
                 let diff = (p1 - p2).powi_scalar(2);
                 let class = head.forward(diff);
-                class.mean_dim(2).mean_dim(3)
-            })
-            .collect();
-
-        // TODO: Just fold this.
-        let sim_values = Tensor::cat(sim_values, 0);
-        sim_values.sum()
+                // Add spatial mean.
+                acc + class.mean_dim(2).mean_dim(3).reshape([1])
+            },
+        )
     }
 }
 
