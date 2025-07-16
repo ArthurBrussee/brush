@@ -4916,8 +4916,16 @@ name = "lpips"
 version = "0.2.0"
 dependencies = [
  "burn",
- "burn-import",
  "image",
+]
+
+[[package]]
+name = "lpips-convert"
+version = "0.2.0"
+dependencies = [
+ "burn",
+ "burn-import",
+ "lpips",
 ]
 
 [[package]]
