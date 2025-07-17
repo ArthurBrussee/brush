@@ -9,9 +9,11 @@
     "build": "npm run build:wasm-release && next build --turbopack"
   },
   "dependencies": {
+    "@types/three": "^0.175.0",
     "next": "^15.3.4",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "three": "^0.175.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.10",

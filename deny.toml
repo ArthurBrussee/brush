@@ -51,13 +51,12 @@ skip = [
 
     { name = "yoke-derive" },
     { name = "yoke" },
-    { name = "toml_datetime" },
-    { name = "toml" },
     { name = "sysctl" },
 
     #
     { name = 'thiserror' },
     { name = 'thiserror-impl' },
+    { name = 'derive-new' },
     { name = 'unicode-width' },
 
     # Custom ply fork.
@@ -98,18 +97,19 @@ skip = [
 
     { name = 'ndk-sys' }, # Needed on Android.
 
-    { name = "serde_spanned" }, # Burn-import weirdness.
-    { name = "dyn-stack" },     # Burn-import weirdness.
-    { name = "gemm" },          # Burn-import weirdness.
-    { name = "gemm-f16" },      # Burn-import weirdness.
-    { name = "gemm-f32" },      # Burn-import weirdness.
-    { name = "gemm-f64" },      # Burn-import weirdness.
-    { name = "gemm-c32" },      # Burn-import weirdness.
-    { name = "gemm-c64" },      # Burn-import weirdness.
-    { name = "raw-cpuid" },     # Burn-import weirdness.
-    { name = "pulp" },          # Burn-import weirdness.
+    { name = "dyn-stack" }, # Burn-import weirdness.
+    { name = "gemm" },      # Burn-import weirdness.
+    { name = "gemm-f16" },  # Burn-import weirdness.
+    { name = "gemm-f32" },  # Burn-import weirdness.
+    { name = "gemm-f64" },  # Burn-import weirdness.
+    { name = "gemm-c32" },  # Burn-import weirdness.
+    { name = "gemm-c64" },  # Burn-import weirdness.
+    { name = "raw-cpuid" }, # Burn-import weirdness.
+    { name = "pulp" },      # Burn-import weirdness.
 
     { name = "emath" },
+
+    { name = "spin" },
 ]
 
 [licenses]
@@ -130,7 +130,6 @@ allow = [
     "Unlicense",                      # https://www.tldrlegal.com/license/unlicense
     "Unicode-3.0",
     "CDLA-Permissive-2.0",
-    "bzip2-1.0.6",
 ]
 
 [[licenses.clarify]]

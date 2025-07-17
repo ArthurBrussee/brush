@@ -31,6 +31,8 @@ web-sys = { workspace = true, features = [
     "Document",
     "Window",
 ] }
+wasm-logger = "0.2.0"
+log.workspace = true
 
 # wasm_js random backend needs to be enabled explicitly.
 getrandom = { version = "0.3", features = ["wasm_js"] }

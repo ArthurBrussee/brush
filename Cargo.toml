@@ -68,17 +68,17 @@ wgpu = { version = "25", default-features = false, features = ["naga-ir"] }
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
 ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 
-burn = { git = "https://github.com/tracel-ai/burn", features = [
+burn = { git = "https://github.com/tracel-ai/burn", rev = "ec2e7ed4c5d757b5111983c59daf49456c537279", features = [
     'wgpu',
     'autodiff',
 ] }
-burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
-burn-ir = { git = "https://github.com/tracel-ai/burn" }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
+burn-cubecl = { git = "https://github.com/tracel-ai/burn", rev = "ec2e7ed4c5d757b5111983c59daf49456c537279" }
+burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "ec2e7ed4c5d757b5111983c59daf49456c537279" }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "ec2e7ed4c5d757b5111983c59daf49456c537279", features = [
     "exclusive-memory-only",
 ] }
-burn-fusion = { git = "https://github.com/tracel-ai/burn" }
-burn-import = { git = "https://github.com/tracel-ai/burn", default-features = false, features = [
+burn-fusion = { git = "https://github.com/tracel-ai/burn", rev = "ec2e7ed4c5d757b5111983c59daf49456c537279" }
+burn-import = { git = "https://github.com/tracel-ai/burn", rev = "ec2e7ed4c5d757b5111983c59daf49456c537279", default-features = false, features = [
     "pytorch",
 ] }
 
@@ -119,7 +119,6 @@ alphanumeric-sort = "1.5.3"
 # cubecl = { path = "../cubecl/crates/cubecl" }
 # cubecl-common = { path = "../cubecl/crates/cubecl-common" }
 # cubecl-std = { path = "../cubecl/crates/cubecl-std" }
-# cubecl-linalg = { path = "../cubecl/crates/cubecl-linalg" }
 
 [patch.crates-io]
 wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }

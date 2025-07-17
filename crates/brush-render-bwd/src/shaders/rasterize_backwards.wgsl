@@ -175,10 +175,6 @@ fn main(
                 }
             }
 
-            if !subgroupAny(valid) {
-                continue;
-            }
-
             var v_xy_local = vec2f(0.0);
             var v_conic_local = vec3f(0.0);
             var v_rgb_local = vec3f(0.0);
@@ -227,32 +223,34 @@ fn main(
             let v_colors_sum = subgroupAdd(vec4f(v_rgb_local, v_alpha_local));
             let v_refine_sum = subgroupAdd(v_refine_local);
 
-            // Queue a new gradient if this subgroup has any.
-            // The gradient is sum of all gradients in the subgroup.
-            let compact_gid = local_id[t];
-            switch subgroup_invocation_id {
-                case 0u:  { write_grads_atomic(compact_gid * 9 + 0, v_xy_sum.x); }
-                case 1u:  { write_grads_atomic(compact_gid * 9 + 1, v_xy_sum.y); }
-                case 2u:  { write_grads_atomic(compact_gid * 9 + 2, v_conic_sum.x); }
-                case 3u:  { write_grads_atomic(compact_gid * 9 + 3, v_conic_sum.y); }
-                case 4u:  { write_grads_atomic(compact_gid * 9 + 4, v_conic_sum.z); }
-                case 5u:  { write_grads_atomic(compact_gid * 9 + 5, v_colors_sum.x); }
-                case 6u:  { write_grads_atomic(compact_gid * 9 + 6, v_colors_sum.y); }
-                case 7u:  {
-                    write_grads_atomic(compact_gid * 9 + 7, v_colors_sum.z);
+            if subgroupAny(valid) {
+                // Queue a new gradient if this subgroup has any.
+                // The gradient is sum of all gradients in the subgroup.
+                let compact_gid = local_id[t];
+                switch subgroup_invocation_id {
+                    case 0u:  { write_grads_atomic(compact_gid * 9 + 0, v_xy_sum.x); }
+                    case 1u:  { write_grads_atomic(compact_gid * 9 + 1, v_xy_sum.y); }
+                    case 2u:  { write_grads_atomic(compact_gid * 9 + 2, v_conic_sum.x); }
+                    case 3u:  { write_grads_atomic(compact_gid * 9 + 3, v_conic_sum.y); }
+                    case 4u:  { write_grads_atomic(compact_gid * 9 + 4, v_conic_sum.z); }
+                    case 5u:  { write_grads_atomic(compact_gid * 9 + 5, v_colors_sum.x); }
+                    case 6u:  { write_grads_atomic(compact_gid * 9 + 6, v_colors_sum.y); }
+                    case 7u:  {
+                        write_grads_atomic(compact_gid * 9 + 7, v_colors_sum.z);
 
-                    // Subgroups of size 8 need to be handled separately as there's not enough threads to write
-                    // all the gaussian fields. The next size (16) is fine.
-                    if subgroup_size == 8u {
-                        write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w);
-                        write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x);
-                        write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y);
+                        // Subgroups of size 8 need to be handled separately as there's not enough threads to write
+                        // all the gaussian fields. The next size (16) is fine.
+                        if subgroup_size == 8u {
+                            write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w);
+                            write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x);
+                            write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y);
+                        }
                     }
+                    case 8u:  { write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w); }
+                    case 9u:  { write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x); }
+                    case 10u: { write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y); }
+                    default: {}
                 }
-                case 8u:  { write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w); }
-                case 9u:  { write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x); }
-                case 10u: { write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y); }
-                default: {}
             }
         }
 

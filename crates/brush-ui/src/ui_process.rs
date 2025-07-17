@@ -130,9 +130,7 @@ impl UiProcess {
     }
 
     pub fn set_camera_transform(&self, position: Vec3, rotation: Quat) {
-        let mut inner = self.write();
-        inner.controls.position = position;
-        inner.controls.rotation = rotation;
+        self.write().set_camera_transform(position, rotation);
     }
 
     pub fn focus_view(&self, view: &SceneView) {
@@ -336,5 +334,12 @@ impl UiProcessInner {
         let (_, rot, translate) = transform.to_scale_rotation_translation();
         self.controls.position = translate;
         self.controls.rotation = rot;
+    }
+
+    fn set_camera_transform(&mut self, position: Vec3, rotation: Quat) {
+        self.controls.position = position;
+        self.controls.rotation = rotation;
+        self.camera.position = position;
+        self.camera.rotation = rotation;
     }
 }

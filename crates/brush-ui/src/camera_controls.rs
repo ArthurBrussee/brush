@@ -223,29 +223,25 @@ impl CameraController {
             );
         }
 
-        if ui.input(|r| r.modifiers.alt) {
-        } else {
-            // Move _down_ with Q
-            if ui.input(|r| r.key_down(egui::Key::Q)) {
-                self.fly_velocity = exp_lerp3(
-                    self.fly_velocity,
-                    -Vec3::Y * move_speed,
-                    delta_time,
-                    fly_moment_lambda,
-                );
-            }
-            // Move up with E
-            if ui.input(|r| r.key_down(egui::Key::E)) {
-                self.fly_velocity = exp_lerp3(
-                    self.fly_velocity,
-                    Vec3::Y * move_speed,
-                    delta_time,
-                    fly_moment_lambda,
-                );
-            }
+        // Move _down_ with Q
+        if ui.input(|r| r.key_down(egui::Key::Q)) {
+            self.fly_velocity = exp_lerp3(
+                self.fly_velocity,
+                -Vec3::Y * move_speed,
+                delta_time,
+                fly_moment_lambda,
+            );
+        }
+        // Move up with E
+        if ui.input(|r| r.key_down(egui::Key::E)) {
+            self.fly_velocity = exp_lerp3(
+                self.fly_velocity,
+                Vec3::Y * move_speed,
+                delta_time,
+                fly_moment_lambda,
+            );
         }
 
-        // Roll with alt + Q&E.
         if ui.input(|r| r.key_down(egui::Key::Z)) {
             let roll = Quat::from_axis_angle(forward, move_speed * 0.025 * delta_time);
             self.rotation = roll * self.rotation;

@@ -25,7 +25,7 @@ images/
 /target
 /src/splat_render/shaders/mod.rs
 
-
+/node_modules
 
 # Ignore bench files by now, need a better solution.
 crates/brush-bench-test/test_cases/bench_data.safetensors
