@@ -40,17 +40,15 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # Enable native webgpu backend.
 wgpu = { workspace = true, features = ["webgpu"] }
 
+[package.metadata.wasm-pack.profile.dev.wasm-bindgen]
+dwarf-debug-info = true
+
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
 
-[package.metadata.wasm-pack.profile.release.wasm-bindgen]
-debug-js-glue = false
-demangle-name-section = false
-dwarf-debug-info = false
-omit-default-module-path = false
-
 [package.metadata.cargo-shear]
 ignored = ["getrandom"] # Need winit to set backend.
+
 
 [lints]
 workspace = true
