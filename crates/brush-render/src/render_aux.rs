@@ -3,7 +3,7 @@ use std::mem::offset_of;
 use burn::{
     prelude::Backend,
     tensor::{
-        ElementConversion, Int, Tensor, TensorMetadata, TensorPrimitive,
+        ElementConversion, Int, Tensor, TensorPrimitive,
         ops::{FloatTensor, IntTensor},
         s,
     },
@@ -24,23 +24,19 @@ pub struct RenderAux<B: Backend> {
     pub compact_gid_from_isect: IntTensor<B>,
     pub global_from_compact_gid: IntTensor<B>,
     pub visible: FloatTensor<B>,
-    pub final_idx: IntTensor<B>,
+    pub img_size: glam::UVec2,
 }
 
 impl<B: Backend> RenderAux<B> {
     pub fn calc_tile_depth(&self) -> Tensor<B, 2, Int> {
         let tile_offsets: Tensor<B, 1, Int> = Tensor::from_primitive(self.tile_offsets.clone());
-        let final_index: Tensor<B, 2, Int> = Tensor::from_primitive(self.final_idx.clone());
 
         let n_bins = tile_offsets.dims()[0];
         let max = tile_offsets.clone().slice([1..n_bins]);
         let min = tile_offsets.slice([0..n_bins - 1]);
-        let [h, w] = final_index.shape().dims();
-        let [ty, tx] = [
-            h.div_ceil(TILE_WIDTH as usize),
-            w.div_ceil(TILE_WIDTH as usize),
-        ];
-        (max - min).reshape([ty, tx])
+        let [w, h] = self.img_size.into();
+        let [ty, tx] = [h.div_ceil(TILE_WIDTH), w.div_ceil(TILE_WIDTH)];
+        (max - min).reshape([ty as usize, tx as usize])
     }
 
     pub fn num_intersections(&self) -> Tensor<B, 1, Int> {
@@ -61,11 +57,7 @@ impl<B: Backend> RenderAux<B> {
         let num_intersections = num_intersects.into_scalar().elem::<i32>();
         let num_points = compact_gid_from_isect.dims()[0] as u32;
         let num_visible = num_visible.into_scalar().elem::<i32>();
-
-        let final_index: Tensor<B, 2, Int> = Tensor::from_primitive(self.final_idx.clone());
-
-        let [h, w] = final_index.shape().dims();
-        let img_size = glam::uvec2(w as u32, h as u32);
+        let img_size = self.img_size;
 
         let max_intersects = max_intersections(img_size, num_points) as i32;
 
@@ -95,19 +87,6 @@ impl<B: Backend> RenderAux<B> {
             !projected_splats.contains_nan().into_scalar().elem::<bool>(),
             "Splat projecteion contains NaN values"
         );
-
-        if self.final_idx.shape().dims() != [1, 1] {
-            let final_index = final_index
-                .into_data()
-                .into_vec::<i32>()
-                .expect("Failed to fetch final index");
-            for &final_index in &final_index {
-                assert!(
-                    final_index >= 0 && final_index <= num_intersections,
-                    "Final index exceeds bounds. Final index {final_index}, num_intersections: {num_intersections}"
-                );
-            }
-        }
 
         let tile_offsets: Tensor<B, 1, Int> = Tensor::from_primitive(self.tile_offsets.clone());
 

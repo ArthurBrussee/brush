@@ -80,7 +80,6 @@ impl SplatBackwardOps<Self> for MainBackendBase {
             state.compact_gid_from_isect,
             state.global_from_compact_gid,
             state.tile_offsets,
-            state.final_idx,
             state.sh_degree,
         )
     }
@@ -98,7 +97,6 @@ pub struct GaussianBackwardState<B: Backend> {
     compact_gid_from_isect: IntTensor<B>,
     global_from_compact_gid: IntTensor<B>,
     tile_offsets: IntTensor<B>,
-    final_idx: IntTensor<B>,
     sh_degree: u32,
 }
 
@@ -217,12 +215,12 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
 
         let wrapped_aux = RenderAux::<Self> {
             projected_splats: <Self as AutodiffBackend>::from_inner(aux.projected_splats.clone()),
-            final_idx: aux.final_idx.clone(),
             tile_offsets: aux.tile_offsets.clone(),
             compact_gid_from_isect: aux.compact_gid_from_isect.clone(),
             global_from_compact_gid: aux.global_from_compact_gid.clone(),
             uniforms_buffer: aux.uniforms_buffer.clone(),
             visible: <Self as AutodiffBackend>::from_inner(aux.visible),
+            img_size: aux.img_size,
         };
 
         match prep_nodes {
@@ -240,7 +238,6 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
                     out_img: out_img.clone(),
                     projected_splats: aux.projected_splats,
                     uniforms_buffer: aux.uniforms_buffer,
-                    final_idx: aux.final_idx,
                     tile_offsets: aux.tile_offsets,
                     compact_gid_from_isect: aux.compact_gid_from_isect,
                     global_from_compact_gid: aux.global_from_compact_gid,
@@ -293,7 +290,6 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                         out_img,
                         projected_splats,
                         uniforms_buffer,
-                        final_index,
                         tile_offsets,
                         compact_gid_from_isect,
                         global_from_compact_gid,
@@ -309,7 +305,6 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                     out_img: h.get_float_tensor::<MainBackendBase>(out_img),
                     projected_splats: h.get_float_tensor::<MainBackendBase>(projected_splats),
                     uniforms_buffer: h.get_int_tensor::<MainBackendBase>(uniforms_buffer),
-                    final_idx: h.get_int_tensor::<MainBackendBase>(final_index),
                     tile_offsets: h.get_int_tensor::<MainBackendBase>(tile_offsets),
                     compact_gid_from_isect: h
                         .get_int_tensor::<MainBackendBase>(compact_gid_from_isect),
@@ -356,7 +351,6 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             state.out_img,
             state.projected_splats,
             state.uniforms_buffer,
-            state.final_idx,
             state.tile_offsets,
             state.compact_gid_from_isect,
             state.global_from_compact_gid,

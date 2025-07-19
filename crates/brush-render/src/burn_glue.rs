@@ -73,7 +73,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                     global_from_compact_gid,
                     out_img,
                     visible,
-                    final_idx,
                 ] = outputs;
 
                 let (img, aux) = MainBackendBase::render_splats(
@@ -106,7 +105,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                 );
 
                 h.register_float_tensor::<MainBackendBase>(&visible.id, aux.visible);
-                h.register_int_tensor::<MainBackendBase>(&final_idx.id, aux.final_idx);
             }
         }
 
@@ -128,11 +126,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             if bwd_info { DType::F32 } else { DType::U32 },
         );
 
-        let final_index_shape = if bwd_info {
-            vec![img_size.y as usize, img_size.x as usize]
-        } else {
-            vec![1, 1]
-        };
         let visible_shape = if bwd_info { vec![num_points] } else { vec![1] };
 
         let aux = RenderAux::<Self> {
@@ -146,7 +139,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                 .tensor_uninitialized(vec![max_intersects as usize], DType::I32),
             global_from_compact_gid: client.tensor_uninitialized(vec![num_points], DType::I32),
             visible: client.tensor_uninitialized(visible_shape, DType::F32),
-            final_idx: client.tensor_uninitialized(final_index_shape, DType::I32),
+            img_size,
         };
 
         let mut stream = OperationStreams::default();
@@ -159,7 +152,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             &aux.global_from_compact_gid,
             &out_img,
             &aux.visible,
-            &aux.final_idx,
         ];
         for inp in &input_tensors {
             stream.tensor(inp);

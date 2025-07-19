@@ -308,29 +308,18 @@ pub(crate) fn render_forward(
         out_img.handle.clone().binding(),
     ]);
 
-    let (visible, final_idx) = if bwd_info {
+    let visible = if bwd_info {
         let visible = MainBackendBase::float_zeros([total_splats].into(), device);
-
-        // Buffer containing the final visible splat per tile.
-        let final_idx = create_tensor::<2, _>(
-            [img_size.y as usize, img_size.x as usize],
-            device,
-            client,
-            DType::I32,
-        );
 
         // Add the buffer to the bindings
         bindings = bindings.with_buffers(vec![
             global_from_compact_gid.handle.clone().binding(),
-            final_idx.handle.clone().binding(),
             visible.handle.clone().binding(),
         ]);
 
-        (visible, final_idx)
+        visible
     } else {
-        let visible = create_tensor::<1, _>([1], device, client, DType::F32);
-        let final_idx = create_tensor::<2, _>([1, 1], device, client, DType::I32);
-        (visible, final_idx)
+        create_tensor::<1, _>([1], device, client, DType::F32)
     };
 
     // Compile the kernel, including/excluding info for backwards pass.
@@ -354,7 +343,7 @@ pub(crate) fn render_forward(
             compact_gid_from_isect,
             global_from_compact_gid,
             visible,
-            final_idx,
+            img_size,
         },
     )
 }

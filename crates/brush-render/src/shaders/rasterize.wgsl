@@ -7,10 +7,8 @@
 
 #ifdef BWD_INFO
     @group(0) @binding(4) var<storage, read_write> out_img: array<vec4f>;
-
     @group(0) @binding(5) var<storage, read> global_from_compact_gid: array<i32>;
-    @group(0) @binding(6) var<storage, read_write> final_index: array<i32>;
-    @group(0) @binding(7) var<storage, read_write> visible: array<f32>;
+    @group(0) @binding(6) var<storage, read_write> visible: array<f32>;
 #else
     @group(0) @binding(4) var<storage, read_write> out_img: array<u32>;
 #endif
@@ -62,7 +60,6 @@ fn main(
     // each thread loads one gaussian at a time before rasterizing its
     // designated pixel
     var t = 0;
-    var final_idx = 0u;
 
     atomicStore(&done_count, 0u);
 
@@ -127,9 +124,6 @@ fn main(
             let clamped_rgb = max(color.rgb, vec3f(0.0));
             pix_out += clamped_rgb * vis;
             T = next_T;
-
-            let isect_id = batch_start + t;
-            final_idx = isect_id + 1;
         }
     }
 
@@ -140,7 +134,6 @@ fn main(
 
         #ifdef BWD_INFO
             out_img[pix_id] = final_color;
-            final_index[pix_id] = i32(final_idx);
         #else
             let colors_u = vec4u(clamp(final_color * 255.0, vec4f(0.0), vec4f(255.0)));
             let packed: u32 = colors_u.x | (colors_u.y << 8u) | (colors_u.z << 16u) | (colors_u.w << 24u);
