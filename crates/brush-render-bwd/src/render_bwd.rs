@@ -94,7 +94,6 @@ pub(crate) fn render_backward(
                 compact_gid_from_isect.handle.binding(),
                 tile_offsets.handle.binding(),
                 projected_splats.handle.binding(),
-                final_index.handle.binding(),
                 out_img.handle.binding(),
                 v_output.handle.binding(),
                 v_grads.clone().handle.binding(),

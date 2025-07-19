@@ -7,16 +7,15 @@
 
 @group(0) @binding(3) var<storage, read> projected_splats: array<helpers::ProjectedSplat>;
 
-@group(0) @binding(4) var<storage, read> final_index: array<i32>;
-@group(0) @binding(5) var<storage, read> output: array<vec4f>;
-@group(0) @binding(6) var<storage, read> v_output: array<vec4f>;
+@group(0) @binding(4) var<storage, read> output: array<vec4f>;
+@group(0) @binding(5) var<storage, read> v_output: array<vec4f>;
 
 #ifdef HARD_FLOAT
-    @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<f32>>;
-    @group(0) @binding(8) var<storage, read_write> v_refine_grad: array<atomic<f32>>;
+    @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<f32>>;
+    @group(0) @binding(7) var<storage, read_write> v_refine_grad: array<atomic<f32>>;
 #else
-    @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<u32>>;
-    @group(0) @binding(8) var<storage, read_write> v_refine_grad: array<atomic<u32>>;
+    @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<u32>>;
+    @group(0) @binding(7) var<storage, read_write> v_refine_grad: array<atomic<u32>>;
 #endif
 
 const BATCH_SIZE = helpers::TILE_SIZE;
@@ -25,8 +24,8 @@ const BATCH_SIZE = helpers::TILE_SIZE;
 var<workgroup> local_batch: array<helpers::ProjectedSplat, BATCH_SIZE>;
 var<workgroup> local_id: array<u32, BATCH_SIZE>;
 
-var<workgroup> max_idx: atomic<u32>;
-var<workgroup> max_idx_uniform: u32;
+var<workgroup> done_count: atomic<u32>;
+var<workgroup> done_count_uniform: u32;
 
 fn add_bitcast(cur: u32, add: f32) -> u32 {
     return bitcast<u32>(bitcast<f32>(cur) + add);
@@ -82,63 +81,60 @@ fn main(
     );
 
     let pix_id = pixel_coordi.x + pixel_coordi.y * img_size.x;
-    let pixel_coord = vec2f(pixel_coordi) + 0.5;
+    let pixel_coord = vec2f(pixel_coordi) + 0.5f;
 
     // return if out of bounds
     // keep not rasterizing threads around for reading data
     let inside = pixel_coordi.x < img_size.x && pixel_coordi.y < img_size.y;
+    var done = !inside;
 
-    // this is the T AFTER the last gaussian in this pixel
-    let T_final = 1.0 - output[pix_id].w;
-
-    var range = vec2u(
-        u32(clamp(tile_offsets[tile_id], 0, i32(uniforms.max_intersects))),
-        u32(clamp(tile_offsets[tile_id + 1], 0, i32(uniforms.max_intersects)))
-    );
-
-    var final_isect = range.x;
-    if inside {
-        final_isect = u32(final_index[pix_id]);
-    }
-
-    // Update the actual final end range as determined by final_index.
-    if local_idx == 0 {
-        // TODO: Zero'ing here isn't strictly needed if we're on actual WebGPU where workgroup variables are always zero'ed.
-        atomicStore(&max_idx, 0u);
-    }
-    workgroupBarrier();
-    let sg_max = subgroupMax(final_isect);
-    if subgroup_invocation_id == 0 {
-        atomicMax(&max_idx, sg_max);
-    }
-    workgroupBarrier();
-    max_idx_uniform = atomicLoad(&max_idx);
-
-    range.y = workgroupUniformLoad(&max_idx_uniform);
-    range.x = min(range.x, range.y);
-
-    let num_batches = helpers::ceil_div(range.y - range.x, BATCH_SIZE);
-
-    // current visibility left to render
-    var T = T_final;
-    var buffer = vec3f(0.0);
+    // final values from forward pass before background blend
+    let final_color = output[pix_id];
+    let T_final = 1.0f - final_color.a;
+    let rgb_pixel_final = vec3f(final_color.rgb) - T_final * uniforms.background.rgb;
 
     // df/d_out for this pixel
-    var v_out = vec4f(0.0);
+    var v_out = vec4f(0.0f);
     if inside {
         v_out = v_output[pix_id];
     }
 
+    // precompute the gradient from the final alpha of the pixel as far as possible
+    v_out.a = (v_out.a - dot(uniforms.background.rgb, v_out.rgb)) * T_final;
+
+    // have all threads in tile process the same gaussians in batches
+    // first collect gaussians between the bin counts.
+    let range = vec2u(
+        u32(clamp(tile_offsets[tile_id], 0, i32(uniforms.max_intersects))),
+        u32(clamp(tile_offsets[tile_id + 1], 0, i32(uniforms.max_intersects)))
+    );
+    let num_batches = helpers::ceil_div(range.y - range.x, u32(helpers::TILE_SIZE));
+
+    // current visibility left to render
+    var T = 1.0f;
+    var rgb_pixel = vec3f(0.0f);
+
+    atomicStore(&done_count, 0u);
+
+    // each thread loads one gaussian at a time before rasterizing its
+    // designated pixel
     for (var b = 0u; b < num_batches; b++) {
-        // each thread fetch 1 gaussian from back to front
-        // 0 index will be furthest back in batch
-        // index of gaussian to load
-        let batch_end = range.y - b * BATCH_SIZE;
-        let remaining = min(BATCH_SIZE, batch_end - range.x);
+        let batch_start = range.x + b * helpers::TILE_SIZE;
+
+        // Wait for all in flight threads and check whether we're all done.
+        //
+        // HACK: Annoyingly workgroupUniformLoad doesn't work for atomics...
+        done_count_uniform = atomicLoad(&done_count);
+        if workgroupUniformLoad(&done_count_uniform) >= helpers::TILE_SIZE {
+            break;
+        }
+
+        // process gaussians in the current batch for this pixel
+        let remaining = min(helpers::TILE_SIZE, range.y - batch_start);
 
         // Each thread first gathers one gaussian.
         if local_idx < remaining {
-            let load_isect_id = batch_end - 1 - local_idx;
+            let load_isect_id = batch_start + local_idx;
             let load_compact_gid = u32(compact_gid_from_isect[load_isect_id]);
             local_id[local_idx] = load_compact_gid;
             local_batch[local_idx] = projected_splats[load_compact_gid];
@@ -147,14 +143,12 @@ fn main(
         // Wait for all threads to finish loading.
         workgroupBarrier();
 
-        for (var t = 0u; t < remaining; t += 1) {
-            let isect_id = batch_end - 1 - t;
-
-            var valid = inside && isect_id < final_isect;
+        for (var t = 0u; t < remaining; t++) {
+            var valid = inside && !done;
 
             var alpha: f32;
             var color: vec4f;
-            var vis: f32;
+            var gaussian: f32;
             var delta: vec2f;
             var conic: vec3f;
 
@@ -167,39 +161,48 @@ fn main(
                 delta = xy - pixel_coord;
 
                 let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
-                vis = exp(-sigma);
-                alpha = min(0.999f, color.w * vis);
+                gaussian = exp(-sigma);
+                alpha = min(0.999f, color.a * gaussian);
 
                 if (sigma < 0.0f || alpha < 1.0f / 255.0f) {
                     valid = false;
                 }
+
+                if T * (1.0f - alpha) <= 1e-4f {
+                    atomicAdd(&done_count, 1u);
+                    done = true;
+                    valid = false;
+                }
             }
 
-            var v_xy_local = vec2f(0.0);
-            var v_conic_local = vec3f(0.0);
-            var v_rgb_local = vec3f(0.0);
-            var v_alpha_local = 0.0;
-            var v_refine_local = vec2f(0.0);
+            if !subgroupAny(valid) {
+                continue;
+            }
+
+            var v_xy_local = vec2f(0.0f);
+            var v_conic_local = vec3f(0.0f);
+            var v_rgb_local = vec3f(0.0f);
+            var v_alpha_local = 0.0f;
+            var v_refine_local = vec2f(0.0f);
 
             if valid {
-                let ra = 1.0 / (1.0 - alpha);
-                T *= ra;
-                // update v_colors for this gaussian
-                let fac = alpha * T;
-                v_rgb_local = select(vec3f(0.0), fac * v_out.rgb, color.rgb > vec3f(0.0));
+                let vis = alpha * T;
 
-                // contribution from this pixel
-                let clamped_rgb = max(color.rgb, vec3f(0.0));
+                // update v_colors for this gaussian
+                let v_rgb_local = select(vec3f(0.0f), vis * v_out.rgb, color.rgb > vec3f(0.0f));
+
+                // add contribution of this gaussian to the pixel
+                let clamped_rgb = max(color.rgb, vec3f(0.0f));
+                rgb_pixel += vis * clamped_rgb;
 
                 // Account for alpha being clamped.
-                if (color.w * vis <= 0.999f) {
-                    var v_alpha = dot(clamped_rgb * T - buffer * ra, v_out.rgb);
-                    v_alpha += T_final * ra * v_out.a;
+                if (color.a * gaussian <= 0.999f) {
+                    let ra = 1.0f / (1.0f - alpha);
 
-                    // contribution from background pixel
-                    v_alpha += -T_final * ra * dot(uniforms.background.rgb, v_out.rgb);
+                    let v_alpha = dot(T * clamped_rgb + (rgb_pixel - rgb_pixel_final) * ra, v_out.rgb)
+                                + v_out.a * ra;
 
-                    let v_sigma = -color.a * vis * v_alpha;
+                    let v_sigma = -color.a * gaussian * v_alpha;
                     v_conic_local = vec3f(
                         0.5f * v_sigma * delta.x * delta.x,
                         v_sigma * delta.x * delta.y,
@@ -209,13 +212,12 @@ fn main(
                         conic.x * delta.x + conic.y * delta.y,
                         conic.y * delta.x + conic.z * delta.y
                     );
-                    v_alpha_local = vis * v_alpha;
+                    v_alpha_local = gaussian * v_alpha;
+                    v_refine_local = abs(v_xy_local);
                 }
 
-                v_refine_local = abs(v_xy_local);
-
-                // update the running sum
-                buffer += clamped_rgb * fac;
+                // update transmittance
+                T *= 1.0f - alpha;
             }
 
             let v_xy_sum = subgroupAdd(v_xy_local);
@@ -223,34 +225,32 @@ fn main(
             let v_colors_sum = subgroupAdd(vec4f(v_rgb_local, v_alpha_local));
             let v_refine_sum = subgroupAdd(v_refine_local);
 
-            if subgroupAny(valid) {
-                // Queue a new gradient if this subgroup has any.
-                // The gradient is sum of all gradients in the subgroup.
-                let compact_gid = local_id[t];
-                switch subgroup_invocation_id {
-                    case 0u:  { write_grads_atomic(compact_gid * 9 + 0, v_xy_sum.x); }
-                    case 1u:  { write_grads_atomic(compact_gid * 9 + 1, v_xy_sum.y); }
-                    case 2u:  { write_grads_atomic(compact_gid * 9 + 2, v_conic_sum.x); }
-                    case 3u:  { write_grads_atomic(compact_gid * 9 + 3, v_conic_sum.y); }
-                    case 4u:  { write_grads_atomic(compact_gid * 9 + 4, v_conic_sum.z); }
-                    case 5u:  { write_grads_atomic(compact_gid * 9 + 5, v_colors_sum.x); }
-                    case 6u:  { write_grads_atomic(compact_gid * 9 + 6, v_colors_sum.y); }
-                    case 7u:  {
-                        write_grads_atomic(compact_gid * 9 + 7, v_colors_sum.z);
+            // Queue a new gradient if this subgroup has any.
+            // The gradient is sum of all gradients in the subgroup.
+            let compact_gid = local_id[t];
+            switch subgroup_invocation_id {
+                case 0u:  { write_grads_atomic(compact_gid * 9 + 0, v_xy_sum.x); }
+                case 1u:  { write_grads_atomic(compact_gid * 9 + 1, v_xy_sum.y); }
+                case 2u:  { write_grads_atomic(compact_gid * 9 + 2, v_conic_sum.x); }
+                case 3u:  { write_grads_atomic(compact_gid * 9 + 3, v_conic_sum.y); }
+                case 4u:  { write_grads_atomic(compact_gid * 9 + 4, v_conic_sum.z); }
+                case 5u:  { write_grads_atomic(compact_gid * 9 + 5, v_colors_sum.x); }
+                case 6u:  { write_grads_atomic(compact_gid * 9 + 6, v_colors_sum.y); }
+                case 7u:  {
+                    write_grads_atomic(compact_gid * 9 + 7, v_colors_sum.z);
 
-                        // Subgroups of size 8 need to be handled separately as there's not enough threads to write
-                        // all the gaussian fields. The next size (16) is fine.
-                        if subgroup_size == 8u {
-                            write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w);
-                            write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x);
-                            write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y);
-                        }
+                    // Subgroups of size 8 need to be handled separately as there's not enough threads to write
+                    // all the gaussian fields. The next size (16) is fine.
+                    if subgroup_size == 8u {
+                        write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w);
+                        write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x);
+                        write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y);
                     }
-                    case 8u:  { write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w); }
-                    case 9u:  { write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x); }
-                    case 10u: { write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y); }
-                    default: {}
                 }
+                case 8u:  { write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w); }
+                case 9u:  { write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x); }
+                case 10u: { write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y); }
+                default: {}
             }
         }
 
