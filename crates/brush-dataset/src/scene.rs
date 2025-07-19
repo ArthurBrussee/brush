@@ -112,13 +112,15 @@ impl LoadImage {
     }
 
     pub async fn load(&self) -> image::ImageResult<DynamicImage> {
-        let mut img_bytes = vec![];
-        self.vfs
-            .reader_at_path(&self.path)
-            .await?
-            .read_to_end(&mut img_bytes)
-            .await?;
-        let mut img = image::load_from_memory(&img_bytes)?;
+        let mut img = {
+            let mut img_bytes = vec![];
+            self.vfs
+                .reader_at_path(&self.path)
+                .await?
+                .read_to_end(&mut img_bytes)
+                .await?;
+            image::load_from_memory(&img_bytes)?
+        };
 
         // Copy over mask.
         // TODO: Interleave this work better & speed things up here.

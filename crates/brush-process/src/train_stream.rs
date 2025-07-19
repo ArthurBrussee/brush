@@ -3,10 +3,9 @@ use std::sync::Arc;
 
 use crate::{
     config::ProcessArgs, eval_export::eval_save_to_disk, message::ProcessMessage,
-    visualize_tools::VisualizeTools,
+    process::ProcessSend, visualize_tools::VisualizeTools,
 };
 use anyhow::Context;
-use async_fn_stream::TryStreamEmitter;
 use brush_dataset::scene_loader::SceneLoader;
 use brush_render::{
     MainBackend,
@@ -26,13 +25,13 @@ pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
     process_args: Receiver<ProcessArgs>,
     device: WgpuDevice,
-    emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
+    stream: ProcessSend,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
-    emitter
-        .emit(ProcessMessage::StartLoading { training: true })
-        .await;
+    stream
+        .send(ProcessMessage::StartLoading { training: true })
+        .await?;
 
     // Now wait for the process args.
     let process_args = process_args.await?;
@@ -50,11 +49,11 @@ pub(crate) async fn train_stream(
         brush_dataset::load_dataset(vfs.clone(), &process_args.load_config, &device).await?;
     visualize.log_scene(&dataset.train, process_args.rerun_config.rerun_max_img_size)?;
     log::info!("Dataset loaded");
-    emitter
-        .emit(ProcessMessage::Dataset {
+    stream
+        .send(ProcessMessage::Dataset {
             dataset: dataset.clone(),
         })
-        .await;
+        .await?;
 
     let estimated_up = dataset.estimate_up();
 
@@ -65,20 +64,20 @@ pub(crate) async fn train_stream(
     while let Some(message) = splat_stream.next().await {
         let message = message?;
 
-        emitter
-            .emit(ProcessMessage::ViewSplats {
+        stream
+            .send(ProcessMessage::ViewSplats {
                 // If the metadata has an up axis prefer that, otherwise estimate
                 // the up direction.
                 up_axis: message.meta.up_axis.or(Some(estimated_up)),
-                splats: Box::new(message.splats.clone()),
+                // splats: Box::new(message.splats.clone()),
                 frame: 0,
                 total_frames: 0,
             })
-            .await;
+            .await?;
         initial_splats = Some(message.splats);
     }
 
-    emitter.emit(ProcessMessage::DoneLoading).await;
+    stream.send(ProcessMessage::DoneLoading).await?;
 
     let splats = if let Some(splats) = initial_splats {
         splats
@@ -175,7 +174,7 @@ pub(crate) async fn train_stream(
                     avg_ssim: ssim,
                 };
 
-                emitter.emit(message).await;
+                stream.send(message).await?;
             }
         }
 
@@ -221,25 +220,25 @@ pub(crate) async fn train_stream(
         // Emit some messages. Important to not count these in the training time (as this might pause).
         if let Some(stats) = refine {
             visualize.log_refine_stats(iter, &stats)?;
-            emitter
-                .emit(ProcessMessage::RefineStep {
+            stream
+                .send(ProcessMessage::RefineStep {
                     stats: Box::new(stats),
                     cur_splat_count: splats.num_splats(),
                     iter,
                 })
-                .await;
+                .await?;
         }
 
         // How frequently to update the UI after a training step.
         const UPDATE_EVERY: u32 = 5;
         if iter % UPDATE_EVERY == 0 || is_last_step {
             let message = ProcessMessage::TrainStep {
-                splats: Box::new(splats.valid()),
+                // splats: Box::new(splats.valid()),
                 stats: Box::new(stats),
                 iter,
                 total_elapsed: train_duration,
             };
-            emitter.emit(message).await;
+            stream.send(message).await?;
         }
     }
 

@@ -180,7 +180,7 @@ impl AppPane for ScenePanel {
 
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
-            ProcessMessage::NewSource => {
+            ProcessMessage::NewProcess => {
                 self.last_draw = None;
                 self.view_splats = vec![];
                 self.frame_count = 0;
@@ -193,7 +193,7 @@ impl AppPane for ScenePanel {
             }
             ProcessMessage::ViewSplats {
                 up_axis,
-                splats,
+                // splats,
                 frame,
                 total_frames,
             } => {
@@ -205,7 +205,7 @@ impl AppPane for ScenePanel {
                 }
 
                 self.view_splats.truncate(*frame as usize);
-                self.view_splats.push(*splats.clone());
+                // self.view_splats.push(*splats.clone());
                 self.frame_count = *total_frames;
 
                 // Mark redraw as dirty if we're live updating.
@@ -213,26 +213,27 @@ impl AppPane for ScenePanel {
                     self.last_state = None;
                 }
             }
-            ProcessMessage::TrainStep { splats, .. } => {
-                let splats = *splats.clone();
-                self.view_splats = vec![splats];
+            ProcessMessage::TrainStep { /*splats,*/ .. } => {
+                // let splats = *splats.clone();
+                // self.view_splats = vec![splats];
                 // Mark redraw as dirty if we're live updating.
                 if self.live_update {
                     self.last_state = None;
                 }
             }
+            ProcessMessage::Complete { result } => {
+                if let Some(err) = result.as_ref().err() {
+                    let headline = err.to_string();
+                    let context = err
+                        .chain()
+                        .skip(1)
+                        .map(|cause| format!("{cause}"))
+                        .collect();
+                    self.err = Some(ErrorDisplay { headline, context });
+                }
+            }
             _ => {}
         }
-    }
-
-    fn on_error(&mut self, error: &anyhow::Error, _: &UiProcess) {
-        let headline = error.to_string();
-        let context = error
-            .chain()
-            .skip(1)
-            .map(|cause| format!("{cause}"))
-            .collect();
-        self.err = Some(ErrorDisplay { headline, context });
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
@@ -381,7 +382,7 @@ Note: In browser training can be slower. For bigger training runs consider using
 
                     if let Some(splats) = splats {
                         if ui.button("⬆ Export").clicked() {
-                            let fut = async move {
+                            tokio_wasm::task::spawn(async move {
                                 let data = splat_export::splat_to_ply(splats).await;
 
                                 let data = match data {
@@ -396,9 +397,7 @@ Note: In browser training can be slower. For bigger training runs consider using
                                 let _ = rrfd::save_file("export.ply", data)
                                     .await
                                     .inspect_err(|e| log::error!("Failed to save file: {e}"));
-                            };
-
-                            tokio_wasm::task::spawn(fut);
+                            });
                         }
                     }
                 }

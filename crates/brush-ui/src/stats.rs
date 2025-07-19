@@ -64,7 +64,7 @@ impl AppPane for StatsPanel {
 
     fn on_message(&mut self, message: &ProcessMessage, _: &UiProcess) {
         match message {
-            ProcessMessage::NewSource => {
+            ProcessMessage::NewProcess => {
                 *self = Self::new(self.device.clone(), self.adapter_info.clone());
             }
             ProcessMessage::StartLoading { training } => {
@@ -76,22 +76,22 @@ impl AppPane for StatsPanel {
             }
             ProcessMessage::ViewSplats {
                 up_axis: _,
-                splats,
+                // splats,
                 frame,
                 total_frames: _,
             } => {
-                self.num_splats = splats.num_splats();
+                // self.num_splats = splats.num_splats();
                 self.frames = *frame;
-                self.cur_sh_degree = splats.sh_degree();
+                // self.cur_sh_degree = splats.sh_degree();
             }
             ProcessMessage::TrainStep {
-                splats,
+                // splats,
                 stats: _,
                 iter,
                 total_elapsed,
             } => {
-                self.cur_sh_degree = splats.sh_degree();
-                self.num_splats = splats.num_splats();
+                // self.cur_sh_degree = splats.sh_degree();
+                // self.num_splats = splats.num_splats();
                 let current_iter_per_s = (iter - self.last_train_step.1) as f32
                     / (*total_elapsed - self.last_train_step.0).as_secs_f32();
                 self.train_iter_per_s = if *iter < 16 {

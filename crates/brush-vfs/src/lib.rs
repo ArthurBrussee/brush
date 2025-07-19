@@ -14,7 +14,7 @@ use std::{
 
 use path_clean::PathClean;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, BufReader},
+    io::{AsyncBufRead, AsyncRead, AsyncReadExt, BufReader},
     sync::Mutex,
 };
 
@@ -40,8 +40,8 @@ pub use wasm_send::*;
 pub trait DynStream<Item>: Stream<Item = Item> + SendNotWasm {}
 impl<Item, T: Stream<Item = Item> + SendNotWasm> DynStream<Item> for T {}
 
-pub trait DynRead: AsyncRead + SendNotWasm + Unpin {}
-impl<T: AsyncRead + SendNotWasm + Unpin> DynRead for T {}
+pub trait DynRead: AsyncBufRead + SendNotWasm + Unpin {}
+impl<T: AsyncBufRead + SendNotWasm + Unpin> DynRead for T {}
 
 // Sometimes rust is beautiful - sometimes it's ArcMutexOptionBox
 type SharedRead = Arc<Mutex<Option<Box<dyn DynRead>>>>;

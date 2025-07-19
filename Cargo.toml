@@ -61,6 +61,7 @@ wasm-bindgen-futures = "0.4"
 wasm-streams = "0.4"
 
 naga_oil = { version = "0.18", default-features = false }
+byteorder = "1.5.0"
 
 # Backends are chosen per platform.
 wgpu = { version = "25", default-features = false, features = ["naga-ir"] }

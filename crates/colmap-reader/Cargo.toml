@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 glam.workspace = true
-tokio.workspace = true
+byteorder.workspace = true
 
 [lints]
 workspace = true

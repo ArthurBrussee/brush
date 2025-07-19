@@ -1,10 +1,9 @@
 #![allow(unused)]
 
 use std::collections::HashMap;
-use std::io::{self, BufRead, Read};
-use tokio::io::AsyncBufReadExt;
-use tokio::io::AsyncReadExt;
-use tokio::io::{AsyncBufRead, AsyncRead};
+use std::io::{self, BufRead, Cursor, Read};
+
+use byteorder::{LittleEndian, ReadBytesExt};
 
 // TODO: Really these should each hold their respective params but bit of an annoying refactor. We just need
 // basic params.
@@ -158,12 +157,11 @@ fn parse<T: std::str::FromStr>(s: &str) -> io::Result<T> {
         .map_err(|_e| io::Error::new(io::ErrorKind::InvalidData, "Parse error"))
 }
 
-async fn read_cameras_text<R: AsyncRead + Unpin>(reader: R) -> io::Result<HashMap<i32, Camera>> {
+fn read_cameras_text(mut reader: impl BufRead) -> io::Result<HashMap<i32, Camera>> {
     let mut cameras = HashMap::new();
-    let mut buf_reader = tokio::io::BufReader::new(reader);
     let mut line = String::new();
 
-    while buf_reader.read_line(&mut line).await? > 0 {
+    while reader.read_line(&mut line)? > 0 {
         if line.starts_with('#') {
             line.clear();
             continue;
@@ -211,17 +209,15 @@ async fn read_cameras_text<R: AsyncRead + Unpin>(reader: R) -> io::Result<HashMa
     Ok(cameras)
 }
 
-async fn read_cameras_binary<R: AsyncRead + Unpin>(
-    mut reader: R,
-) -> io::Result<HashMap<i32, Camera>> {
+fn read_cameras_binary(mut reader: impl BufRead) -> io::Result<HashMap<i32, Camera>> {
     let mut cameras = HashMap::new();
-    let num_cameras = reader.read_u64_le().await?;
+    let num_cameras = reader.read_u64::<LittleEndian>()?;
 
     for _ in 0..num_cameras {
-        let camera_id = reader.read_i32_le().await?;
-        let model_id = reader.read_i32_le().await?;
-        let width = reader.read_u64_le().await?;
-        let height = reader.read_u64_le().await?;
+        let camera_id = reader.read_i32::<LittleEndian>()?;
+        let model_id = reader.read_i32::<LittleEndian>()?;
+        let width = reader.read_u64::<LittleEndian>()?;
+        let height = reader.read_u64::<LittleEndian>()?;
 
         let model = CameraModel::from_id(model_id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid camera model"))?;
@@ -229,7 +225,7 @@ async fn read_cameras_binary<R: AsyncRead + Unpin>(
         let num_params = model.num_params();
         let mut params = Vec::with_capacity(num_params);
         for _ in 0..num_params {
-            params.push(reader.read_f64_le().await?);
+            params.push(reader.read_f64::<LittleEndian>()?);
         }
 
         cameras.insert(
@@ -247,16 +243,15 @@ async fn read_cameras_binary<R: AsyncRead + Unpin>(
     Ok(cameras)
 }
 
-async fn read_images_text<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<HashMap<i32, Image>> {
+fn read_images_text(mut reader: impl BufRead) -> io::Result<HashMap<i32, Image>> {
     let mut images = HashMap::new();
-    let mut buf_reader = tokio::io::BufReader::new(reader);
     let mut line = String::new();
 
     let mut img_data = true;
 
     loop {
         line.clear();
-        if buf_reader.read_line(&mut line).await? == 0 {
+        if reader.read_line(&mut line)? == 0 {
             break;
         }
 
@@ -276,7 +271,7 @@ async fn read_images_text<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<Has
             let name = elems[9].to_owned();
 
             line.clear();
-            buf_reader.read_line(&mut line).await?;
+            reader.read_line(&mut line)?;
             let elems: Vec<&str> = line.split_whitespace().collect();
             let mut xys = Vec::new();
             let mut point3d_ids = Vec::new();
@@ -303,46 +298,44 @@ async fn read_images_text<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<Has
     Ok(images)
 }
 
-async fn read_images_binary<R: AsyncBufRead + Unpin>(
-    mut reader: R,
-) -> io::Result<HashMap<i32, Image>> {
+fn read_images_binary(mut reader: impl BufRead) -> io::Result<HashMap<i32, Image>> {
     let mut images = HashMap::new();
-    let num_images = reader.read_u64_le().await?;
+    let num_images = reader.read_u64::<LittleEndian>()?;
 
     for _ in 0..num_images {
-        let image_id = reader.read_i32_le().await?;
+        let image_id = reader.read_i32::<LittleEndian>()?;
 
         let [w, x, y, z] = [
-            reader.read_f64_le().await? as f32,
-            reader.read_f64_le().await? as f32,
-            reader.read_f64_le().await? as f32,
-            reader.read_f64_le().await? as f32,
+            reader.read_f64::<LittleEndian>()? as f32,
+            reader.read_f64::<LittleEndian>()? as f32,
+            reader.read_f64::<LittleEndian>()? as f32,
+            reader.read_f64::<LittleEndian>()? as f32,
         ];
         let quat = glam::quat(x, y, z, w);
 
         let tvec = glam::vec3(
-            reader.read_f64_le().await? as f32,
-            reader.read_f64_le().await? as f32,
-            reader.read_f64_le().await? as f32,
+            reader.read_f64::<LittleEndian>()? as f32,
+            reader.read_f64::<LittleEndian>()? as f32,
+            reader.read_f64::<LittleEndian>()? as f32,
         );
-        let camera_id = reader.read_i32_le().await?;
+        let camera_id = reader.read_i32::<LittleEndian>()?;
         let mut name_bytes = Vec::new();
-        reader.read_until(b'\0', &mut name_bytes).await?;
+        reader.read_until(b'\0', &mut name_bytes)?;
 
         let name = std::str::from_utf8(&name_bytes[..name_bytes.len() - 1])
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
             .to_owned();
 
-        let num_points2d = reader.read_u64_le().await?;
+        let num_points2d = reader.read_u64::<LittleEndian>()?;
         let mut xys = Vec::with_capacity(num_points2d as usize);
         let mut point3d_ids = Vec::with_capacity(num_points2d as usize);
 
         for _ in 0..num_points2d {
             xys.push(glam::Vec2::new(
-                reader.read_f64_le().await? as f32,
-                reader.read_f64_le().await? as f32,
+                reader.read_f64::<LittleEndian>()? as f32,
+                reader.read_f64::<LittleEndian>()? as f32,
             ));
-            point3d_ids.push(reader.read_i64().await?);
+            point3d_ids.push(reader.read_i64::<LittleEndian>()?);
         }
 
         images.insert(
@@ -361,14 +354,11 @@ async fn read_images_binary<R: AsyncBufRead + Unpin>(
     Ok(images)
 }
 
-async fn read_points3d_text<R: AsyncRead + Unpin>(
-    mut reader: R,
-) -> io::Result<HashMap<i64, Point3D>> {
+fn read_points3d_text(mut reader: impl BufRead) -> io::Result<HashMap<i64, Point3D>> {
     let mut points3d = HashMap::new();
-    let mut buf_reader = tokio::io::BufReader::new(reader);
     let mut line = String::new();
 
-    while buf_reader.read_line(&mut line).await? > 0 {
+    while reader.read_line(&mut line)? > 0 {
         if line.starts_with('#') {
             line.clear();
             continue;
@@ -421,33 +411,27 @@ async fn read_points3d_text<R: AsyncRead + Unpin>(
     Ok(points3d)
 }
 
-async fn read_points3d_binary<R: AsyncRead + Unpin>(
-    mut reader: R,
-) -> io::Result<HashMap<i64, Point3D>> {
+fn read_points3d_binary(mut reader: impl BufRead) -> io::Result<HashMap<i64, Point3D>> {
     let mut points3d = HashMap::new();
-    let num_points = reader.read_u64_le().await?;
+    let num_points = reader.read_u64::<LittleEndian>()?;
 
     for _ in 0..num_points {
-        let point3d_id = reader.read_i64().await?;
+        let point3d_id = reader.read_i64::<LittleEndian>()?;
         let xyz = glam::Vec3::new(
-            reader.read_f64_le().await? as f32,
-            reader.read_f64_le().await? as f32,
-            reader.read_f64_le().await? as f32,
+            reader.read_f64::<LittleEndian>()? as f32,
+            reader.read_f64::<LittleEndian>()? as f32,
+            reader.read_f64::<LittleEndian>()? as f32,
         );
-        let rgb = [
-            reader.read_u8().await?,
-            reader.read_u8().await?,
-            reader.read_u8().await?,
-        ];
-        let error = reader.read_f64_le().await?;
+        let rgb = [reader.read_u8()?, reader.read_u8()?, reader.read_u8()?];
+        let error = reader.read_f64::<LittleEndian>()?;
 
-        let track_length = reader.read_u64_le().await?;
+        let track_length = reader.read_u64::<LittleEndian>()?;
         let mut image_ids = Vec::with_capacity(track_length as usize);
         let mut point2d_idxs = Vec::with_capacity(track_length as usize);
 
         for _ in 0..track_length {
-            image_ids.push(reader.read_i32_le().await?);
-            point2d_idxs.push(reader.read_i32_le().await?);
+            image_ids.push(reader.read_i32::<LittleEndian>()?);
+            point2d_idxs.push(reader.read_i32::<LittleEndian>()?);
         }
 
         points3d.insert(
@@ -465,35 +449,26 @@ async fn read_points3d_binary<R: AsyncRead + Unpin>(
     Ok(points3d)
 }
 
-pub async fn read_cameras<R: AsyncRead + Unpin>(
-    mut reader: R,
-    binary: bool,
-) -> io::Result<HashMap<i32, Camera>> {
+pub fn read_cameras(mut reader: impl BufRead, binary: bool) -> io::Result<HashMap<i32, Camera>> {
     if binary {
-        read_cameras_binary(reader).await
+        read_cameras_binary(reader)
     } else {
-        read_cameras_text(reader).await
+        read_cameras_text(reader)
     }
 }
 
-pub async fn read_images<R: AsyncBufRead + Unpin>(
-    reader: R,
-    binary: bool,
-) -> io::Result<HashMap<i32, Image>> {
+pub fn read_images(mut reader: impl BufRead, binary: bool) -> io::Result<HashMap<i32, Image>> {
     if binary {
-        read_images_binary(reader).await
+        read_images_binary(reader)
     } else {
-        read_images_text(reader).await
+        read_images_text(reader)
     }
 }
 
-pub async fn read_points3d<R: AsyncRead + Unpin>(
-    reader: R,
-    binary: bool,
-) -> io::Result<HashMap<i64, Point3D>> {
+pub fn read_points3d(mut reader: impl BufRead, binary: bool) -> io::Result<HashMap<i64, Point3D>> {
     if binary {
-        read_points3d_binary(reader).await
+        read_points3d_binary(reader)
     } else {
-        read_points3d_text(reader).await
+        read_points3d_text(reader)
     }
 }

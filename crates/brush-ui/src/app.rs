@@ -140,28 +140,30 @@ impl App {
         }
 
         for message in messages {
-            match message {
-                Ok(message) => {
-                    for (_, pane) in self.tree.tiles.iter_mut() {
-                        match pane {
-                            Tile::Pane(pane) => {
-                                pane.on_message(&message, self.tree_ctx.process.as_ref());
-                            }
-                            Tile::Container(_) => {}
-                        }
+            for (_, pane) in self.tree.tiles.iter_mut() {
+                match pane {
+                    Tile::Pane(pane) => {
+                        pane.on_message(&message, self.tree_ctx.process.as_ref());
                     }
+                    Tile::Container(_) => {}
                 }
-                Err(e) => {
-                    for (_, pane) in self.tree.tiles.iter_mut() {
-                        match pane {
-                            Tile::Pane(pane) => {
-                                pane.on_error(&e, self.tree_ctx.process.as_ref());
-                            }
-                            Tile::Container(_) => {}
-                        }
-                    }
-                }
-            };
+            }
+
+            // match message {
+            //     Ok(message) => {
+
+            //     }
+            //     Err(e) => {
+            //         for (_, pane) in self.tree.tiles.iter_mut() {
+            //             match pane {
+            //                 Tile::Pane(pane) => {
+            //                     pane.on_error(&e, self.tree_ctx.process.as_ref());
+            //                 }
+            //                 Tile::Container(_) => {}
+            //             }
+            //         }
+            //     }
+            // };
         }
     }
 }

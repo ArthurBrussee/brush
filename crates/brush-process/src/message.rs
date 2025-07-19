@@ -1,12 +1,12 @@
 use brush_dataset::Dataset;
 use brush_render::MainBackend;
-use brush_render::gaussian_splats::Splats;
 use brush_train::msg::{RefineStats, TrainStepStats};
 use glam::Vec3;
 use web_time::Duration;
 
 pub enum ProcessMessage {
-    NewSource,
+    NewProcess,
+
     StartLoading {
         training: bool,
     },
@@ -16,7 +16,7 @@ pub enum ProcessMessage {
     /// Nb: Animated splats will have the 'frame' number set.
     ViewSplats {
         up_axis: Option<Vec3>,
-        splats: Box<Splats<MainBackend>>,
+        // splats: Box<Splats<MainBackend>>,
         frame: u32,
         total_frames: u32,
     },
@@ -30,7 +30,7 @@ pub enum ProcessMessage {
     /// Some number of training steps are done.
     #[allow(unused)]
     TrainStep {
-        splats: Box<Splats<MainBackend>>,
+        // splats: Box<Splats<MainBackend>>,
         stats: Box<TrainStepStats<MainBackend>>,
         iter: u32,
         total_elapsed: Duration,
@@ -48,5 +48,9 @@ pub enum ProcessMessage {
         iter: u32,
         avg_psnr: f32,
         avg_ssim: f32,
+    },
+    /// Stream came to an end with a result.
+    Complete {
+        result: anyhow::Result<()>,
     },
 }

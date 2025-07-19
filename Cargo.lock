@@ -1065,6 +1065,7 @@ dependencies = [
  "rerun",
  "tokio",
  "tokio-stream",
+ "tokio_with_wasm",
  "web-time",
 ]
 
@@ -1975,8 +1976,8 @@ dependencies = [
 name = "colmap-reader"
 version = "0.2.0"
 dependencies = [
+ "byteorder",
  "glam",
- "tokio",
 ]
 
 [[package]]

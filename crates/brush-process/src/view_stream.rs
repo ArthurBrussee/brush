@@ -1,8 +1,7 @@
-use crate::message::ProcessMessage;
+use crate::{message::ProcessMessage, process::ProcessSend};
 
 use std::sync::Arc;
 
-use async_fn_stream::TryStreamEmitter;
 use brush_dataset::splat_import;
 use brush_vfs::BrushVfs;
 use burn_cubecl::cubecl::Runtime;
@@ -12,7 +11,7 @@ use tokio_stream::StreamExt;
 pub(crate) async fn view_stream(
     vfs: Arc<BrushVfs>,
     device: WgpuDevice,
-    emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
+    stream: ProcessSend,
 ) -> anyhow::Result<()> {
     let mut paths: Vec<_> = vfs.file_paths().collect();
     alphanumeric_sort::sort_path_slice(&mut paths);
@@ -21,9 +20,9 @@ pub(crate) async fn view_stream(
     for (i, path) in paths.iter().enumerate() {
         log::info!("Loading single ply file");
 
-        emitter
-            .emit(ProcessMessage::StartLoading { training: false })
-            .await;
+        stream
+            .send(ProcessMessage::StartLoading { training: false })
+            .await?;
 
         let sub_sample = None; // Subsampling a trained ply doesn't really make sense.
         let splat_stream = splat_import::load_splat_from_ply(
@@ -49,18 +48,18 @@ pub(crate) async fn view_stream(
             // over time. Clear out memory after each step to prevent this buildup.
             client.memory_cleanup();
 
-            emitter
-                .emit(ProcessMessage::ViewSplats {
+            stream
+                .send(ProcessMessage::ViewSplats {
                     up_axis: message.meta.up_axis,
-                    splats: Box::new(message.splats),
+                    // splats: Box::new(message.splats),
                     frame,
                     total_frames,
                 })
-                .await;
+                .await?;
         }
     }
 
-    emitter.emit(ProcessMessage::DoneLoading).await;
+    stream.send(ProcessMessage::DoneLoading).await?;
 
     // Clear out memory after loading is fully done.
     client.memory_cleanup();

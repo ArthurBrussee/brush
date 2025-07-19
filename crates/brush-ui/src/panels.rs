@@ -14,12 +14,6 @@ pub(crate) trait AppPane {
         let _ = process;
     }
 
-    /// Handle an incoming error from the UI.
-    fn on_error(&mut self, error: &anyhow::Error, process: &UiProcess) {
-        let _ = error;
-        let _ = process;
-    }
-
     /// Whether this pane is visible.
     fn is_visible(&self, process: &UiProcess) -> bool {
         let _ = process;

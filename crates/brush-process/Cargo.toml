@@ -28,6 +28,7 @@ image.workspace = true
 
 tokio = { workspace = true, features = ["io-util", "rt"] }
 tokio-stream.workspace = true
+tokio_with_wasm = { workspace = true, features = ["rt"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 rerun.workspace = true

@@ -1,11 +1,10 @@
 #![recursion_limit = "256"]
 
-use brush_process::{config::ProcessArgs, message::ProcessMessage};
+use brush_process::{config::ProcessArgs, message::ProcessMessage, process::Process};
 use brush_vfs::DataSource;
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
-use tokio_stream::{Stream, StreamExt};
 
 #[derive(Parser)]
 #[command(
@@ -43,10 +42,7 @@ impl Cli {
     }
 }
 
-pub async fn process_ui(
-    stream: impl Stream<Item = anyhow::Result<ProcessMessage>>,
-    process_args: ProcessArgs,
-) -> Result<(), anyhow::Error> {
+pub async fn process_ui(process: Process, process_args: ProcessArgs) -> Result<(), anyhow::Error> {
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
             .expect("Invalid indacitif config")
@@ -115,22 +111,13 @@ pub async fn process_ui(
             sp.println("ℹ️  running in debug mode, compile with --release for best performance");
     }
 
-    let mut stream = std::pin::pin!(stream);
     let mut duration = Duration::from_secs(0);
 
+    let mut process = process;
     // TODO: Unify logging & CLI UI somehow.
-    while let Some(msg) = stream.next().await {
-        let msg = match msg {
-            Ok(msg) => msg,
-            Err(error) => {
-                // Don't print the error here. It'll bubble up and be printed as output.
-                let _ = sp.println("❌ Encountered an error");
-                return Err(error);
-            }
-        };
-
+    while let Some(msg) = process.stream.recv().await {
         match msg {
-            ProcessMessage::NewSource => {
+            ProcessMessage::NewProcess => {
                 main_spinner.set_message("Starting process...");
             }
             ProcessMessage::StartLoading { training } => {
@@ -191,6 +178,15 @@ pub async fn process_ui(
                 eval_spinner.set_message(format!(
                     "Eval iter {iter}: PSNR {avg_psnr}, ssim {avg_ssim}"
                 ));
+            }
+            ProcessMessage::Complete { result } => {
+                log::info!("Completed process");
+
+                if let Err(error) = result {
+                    // Don't print the error here. It'll bubble up and be printed as output.
+                    let _ = sp.println("❌ Encountered an error");
+                    return Err(error);
+                }
             }
         }
     }

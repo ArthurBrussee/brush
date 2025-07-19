@@ -14,7 +14,7 @@ use ply_rs::{
     ply::{DefaultElement, ElementDef, Encoding, Header, Property, PropertyAccess},
 };
 use thiserror::Error;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio_stream::{Stream, StreamExt};
 use tokio_with_wasm::alias as tokio_wasm;
 use tracing::trace_span;
@@ -108,12 +108,11 @@ pub enum SplatImportError {
     InvalidFormat,
 }
 
-pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
+pub fn load_splat_from_ply<T: AsyncBufRead + SendNotWasm + Unpin + 'static>(
     reader: T,
     subsample_points: Option<u32>,
     device: WgpuDevice,
 ) -> impl DynStream<Result<SplatMessage, SplatImportError>> {
-    // set up a reader, in this case a file.
     let mut reader = BufReader::new(reader);
 
     let _span = trace_span!("Read splats").entered();

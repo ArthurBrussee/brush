@@ -81,7 +81,7 @@ pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuD
 }
 
 pub async fn burn_init_setup() -> WgpuDevice {
-    burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
-        .await;
-    WgpuDevice::DefaultDevice
+    let device = WgpuDevice::DefaultDevice;
+    burn_wgpu::init_setup_async::<AutoGraphicsApi>(&device, burn_options()).await;
+    device
 }

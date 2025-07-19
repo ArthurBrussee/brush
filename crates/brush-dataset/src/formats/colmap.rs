@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{io::Cursor, path::PathBuf, sync::Arc};
 
 use super::{DataStream, FormatError};
 use crate::{
@@ -18,6 +18,7 @@ use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
 use glam::Vec3;
 use std::collections::HashMap;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 fn find_mask_and_img(vfs: &BrushVfs, name: &str) -> Option<(PathBuf, Option<PathBuf>)> {
     // Colmap only specifies an image name, not a full path. We brute force
@@ -70,6 +71,14 @@ pub(crate) async fn load_dataset(
     Some(load_dataset_inner(vfs, load_args, device, cam_path, img_path).await)
 }
 
+async fn async_read_to_cursor<R: AsyncRead + Unpin>(
+    mut reader: R,
+) -> std::io::Result<Cursor<Vec<u8>>> {
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer).await?;
+    Ok(Cursor::new(buffer))
+}
+
 async fn load_dataset_inner(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
@@ -80,14 +89,13 @@ async fn load_dataset_inner(
     let is_binary = cam_path.ends_with("cameras.bin");
 
     let cam_model_data = {
-        let mut cam_file = vfs.reader_at_path(&cam_path).await?;
-        colmap_reader::read_cameras(&mut cam_file, is_binary).await?
+        let cam_file = async_read_to_cursor(vfs.reader_at_path(&cam_path).await?).await?;
+        colmap_reader::read_cameras(cam_file, is_binary)?
     };
 
     let img_infos = {
-        let img_file = vfs.reader_at_path(&img_path).await?;
-        let mut buf_reader = tokio::io::BufReader::new(img_file);
-        colmap_reader::read_images(&mut buf_reader, is_binary).await?
+        let img_file = async_read_to_cursor(vfs.reader_at_path(&img_path).await?).await?;
+        colmap_reader::read_images(img_file, is_binary)?
     };
 
     let mut img_info_list = img_infos.into_iter().collect::<Vec<_>>();
@@ -176,8 +184,13 @@ async fn load_dataset_inner(
         // Extract COLMAP sfm points.
         let points_data = {
             // At this point the VFS has said this file exists so just unwrap.
-            let mut points_file = vfs.reader_at_path(&points_path).await.expect("unreachable");
-            colmap_reader::read_points3d(&mut points_file, is_binary).await
+            async_read_to_cursor(
+                vfs.reader_at_path(&points_path)
+                    .await
+                    .expect("unreachable."),
+            )
+            .await
+            .and_then(|file| colmap_reader::read_points3d(file, is_binary))
         };
 
         // Ignore empty points data.

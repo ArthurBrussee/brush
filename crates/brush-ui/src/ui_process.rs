@@ -1,7 +1,6 @@
 use crate::{UiMode, app::CameraSettings, camera_controls::CameraController};
-use anyhow::Result;
 use brush_dataset::{Dataset, scene::SceneView};
-use brush_process::{config::ProcessArgs, message::ProcessMessage, process::process_stream};
+use brush_process::{config::ProcessArgs, message::ProcessMessage, process::start_process_stream};
 use brush_render::camera::Camera;
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
@@ -9,7 +8,6 @@ use egui::Response;
 use glam::{Affine3A, Quat, Vec3};
 use parking_lot::RwLock;
 use tokio::sync::{self, oneshot::Receiver};
-use tokio_stream::StreamExt;
 use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(Debug, Clone)]
@@ -24,7 +22,7 @@ struct DeviceContext {
 }
 
 struct RunningProcess {
-    messages: sync::mpsc::Receiver<Result<ProcessMessage, anyhow::Error>>,
+    messages: sync::mpsc::Receiver<ProcessMessage>,
     control: sync::mpsc::UnboundedSender<ControlMessage>,
     send_device: Option<sync::oneshot::Sender<DeviceContext>>,
 }
@@ -169,7 +167,7 @@ impl UiProcess {
         reset.cur_device_ctx = inner.cur_device_ctx.clone();
         *inner = reset;
 
-        let (sender, receiver) = sync::mpsc::channel(1);
+        let (sender, receiver) = sync::mpsc::channel(16);
         let (train_sender, mut train_receiver) = sync::mpsc::unbounded_channel();
         let (send_dev, rec_rev) = sync::oneshot::channel::<DeviceContext>();
 
@@ -180,29 +178,33 @@ impl UiProcess {
                 return;
             };
 
-            let stream = process_stream(source, args, device_ctx.device);
-            let mut stream = std::pin::pin!(stream);
+            let mut process = start_process_stream(source, args, device_ctx.device);
 
-            while let Some(msg) = stream.next().await {
+            loop {
                 // Mark egui as needing a repaint.
                 device_ctx.ctx.request_repaint();
 
-                let is_train_step = matches!(msg, Ok(ProcessMessage::TrainStep { .. }));
+                while let Some(msg) = process.stream.recv().await {
+                    let is_train_step = matches!(msg, ProcessMessage::TrainStep { .. });
+
+                    let _ = sender.send(msg).await;
+
+                    // Check if training is paused. Don't care about other messages as pausing loading
+                    // doesn't make much sense.
+                    if is_train_step
+                        && matches!(train_receiver.try_recv(), Ok(ControlMessage::Paused(true)))
+                    {
+                        // Pause if needed.
+                        while !matches!(
+                            train_receiver.recv().await,
+                            Some(ControlMessage::Paused(false))
+                        ) {}
+                    }
+                }
 
                 // Stop the process if noone is listening anymore.
-                if sender.send(msg).await.is_err() {
-                    break;
-                }
-                // Check if training is paused. Don't care about other messages as pausing loading
-                // doesn't make much sense.
-                if is_train_step
-                    && matches!(train_receiver.try_recv(), Ok(ControlMessage::Paused(true)))
-                {
-                    // Pause if needed.
-                    while !matches!(
-                        train_receiver.recv().await,
-                        Some(ControlMessage::Paused(false))
-                    ) {}
+                if sender.is_closed() {
+                    return;
                 }
 
                 // Give back control to the runtime.
@@ -233,22 +235,22 @@ impl UiProcess {
         }
     }
 
-    pub fn try_recv_message(&self) -> Option<Result<ProcessMessage>> {
+    pub fn try_recv_message(&self) -> Option<ProcessMessage> {
         let mut inner = self.write();
         if let Some(process) = inner.running_process.as_mut() {
             // If none, just return none.
             let msg = process.messages.try_recv().ok()?;
 
             // Keep track of things the ui process needs.
-            match msg.as_ref() {
-                Ok(ProcessMessage::Dataset { dataset }) => {
+            match &msg {
+                ProcessMessage::Dataset { dataset } => {
                     inner.selected_view = dataset.train.views.last().cloned();
                 }
-                Ok(ProcessMessage::StartLoading { training }) => {
+                ProcessMessage::StartLoading { training } => {
                     inner.is_training = *training;
                     inner.is_loading = true;
                 }
-                Ok(ProcessMessage::DoneLoading) => {
+                ProcessMessage::DoneLoading => {
                     inner.is_loading = false;
                 }
                 _ => (),

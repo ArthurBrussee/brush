@@ -1,5 +1,7 @@
 #![recursion_limit = "256"]
 
+use brush_process::process::start_process_stream;
+
 #[cfg(target_family = "windows")]
 fn is_console() -> bool {
     let mut buffer = [0u32; 1];
@@ -37,7 +39,6 @@ fn main() -> Result<(), anyhow::Error> {
             .expect("Failed to set tracing subscriber");
         }
 
-        use brush_process::process::process_stream;
         use brush_ui::app::App;
 
         let context = std::sync::Arc::new(brush_ui::ui_process::UiProcess::new());
@@ -95,7 +96,7 @@ fn main() -> Result<(), anyhow::Error> {
                     panic!("Validation of args failed?");
                 };
                 let device = brush_render::burn_init_setup().await;
-                let stream = process_stream(source, args_receiver, device);
+                let stream = start_process_stream(source, args_receiver, device);
                 brush_cli::process_ui(stream, args.process).await?;
             }
             anyhow::Result::<(), anyhow::Error>::Ok(())

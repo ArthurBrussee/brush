@@ -1,8 +1,6 @@
 #![recursion_limit = "256"]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use std::sync::Arc;
-
 use brush_dataset::scene::{SceneBatch, sample_to_tensor};
 use brush_render::{
     MainBackend,
@@ -25,40 +23,40 @@ struct TrainStep {
 }
 
 fn spawn_train_loop(
-    image: Arc<DynamicImage>,
+    image: &DynamicImage,
     cam: Camera,
-    config: TrainConfig,
-    device: WgpuDevice,
+    config: &TrainConfig,
+    device: &WgpuDevice,
     ctx: egui::Context,
     sender: Sender<TrainStep>,
 ) {
+    let seed = 42;
+
+    <MainBackend as Backend>::seed(seed);
+    let mut rng = rand::rngs::StdRng::from_seed([seed as u8; 32]);
+
+    let init_bounds = BoundingBox::from_min_max(-Vec3::ONE * 5.0, Vec3::ONE * 5.0);
+
+    let mut splats = Splats::from_random_config(
+        &RandomSplatsConfig::new().with_init_count(512),
+        init_bounds,
+        &mut rng,
+        device,
+    );
+
+    let mut trainer = SplatTrainer::new(config, device);
+
+    // One batch of training data, it's the same every step so can just cosntruct it once.
+    let batch = SceneBatch {
+        img_tensor: sample_to_tensor(image, device).unsqueeze(),
+        alpha_is_mask: false,
+        camera: cam,
+    };
+
+    let mut iter = 0;
+
     // Spawn a task that iterates over the training stream.
     tokio::spawn(async move {
-        let seed = 42;
-
-        <MainBackend as Backend>::seed(seed);
-        let mut rng = rand::rngs::StdRng::from_seed([seed as u8; 32]);
-
-        let init_bounds = BoundingBox::from_min_max(-Vec3::ONE * 5.0, Vec3::ONE * 5.0);
-
-        let mut splats = Splats::from_random_config(
-            &RandomSplatsConfig::new().with_init_count(512),
-            init_bounds,
-            &mut rng,
-            &device,
-        );
-
-        let mut trainer = SplatTrainer::new(&config, &device);
-
-        // One batch of training data, it's the same every step so can just cosntruct it once.
-        let batch = SceneBatch {
-            img_tensor: sample_to_tensor(&image, &device).unsqueeze(),
-            alpha_is_mask: false,
-            camera: cam,
-        };
-
-        let mut iter = 0;
-
         loop {
             let (new_splats, _) = trainer.step(1.0, iter, &batch, splats);
             let (new_splats, _) = trainer.refine_if_needed(iter, new_splats).await;
@@ -82,7 +80,7 @@ fn spawn_train_loop(
 }
 
 struct App {
-    image: Arc<image::DynamicImage>,
+    image: image::DynamicImage,
     camera: Camera,
     tex_handle: TextureHandle,
     backbuffer: BurnTexture,
@@ -102,7 +100,7 @@ impl App {
             state.queue.clone(),
         );
 
-        let image = Arc::new(image::open("./crab.jpg").expect("Failed to open image"));
+        let image = image::open("./crab.jpg").expect("Failed to open image");
 
         let fov_x = 0.5 * std::f64::consts::PI;
         let fov_y = focal_to_fov(fov_to_focal(fov_x, image.width()), image.height());
@@ -129,10 +127,10 @@ impl App {
 
         let config = TrainConfig::new();
         spawn_train_loop(
-            image.clone(),
+            &image,
             camera.clone(),
-            config,
-            device,
+            &config,
+            &device,
             cc.egui_ctx.clone(),
             sender,
         );
@@ -190,8 +188,7 @@ impl eframe::App for App {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let native_options = eframe::NativeOptions {
         // Build app display.
         viewport: egui::ViewportBuilder::default()
