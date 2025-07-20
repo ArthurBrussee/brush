@@ -167,12 +167,12 @@ fn main(
                 if (sigma < 0.0f || alpha < 1.0f / 255.0f) {
                     valid = false;
                 }
+            }
 
-                if T * (1.0f - alpha) <= 1e-4f {
-                    atomicAdd(&done_count, 1u);
-                    done = true;
-                    valid = false;
-                }
+            if valid && T * (1.0f - alpha) <= 1e-4f {
+                atomicAdd(&done_count, 1u);
+                done = true;
+                valid = false;
             }
 
             var v_xy_local = vec2f(0.0f);
@@ -191,14 +191,16 @@ fn main(
                 let clamped_rgb = max(color.rgb, vec3f(0.0f));
                 rgb_pixel += vis * clamped_rgb;
 
+                // update transmittance
+                T *= 1.0f - alpha;
+
                 // Account for alpha being clamped.
                 if (color.a * gaussian <= 0.999f) {
-                    let ra = 1.0f / (1.0f - alpha);
+                    let v_alpha_x_one_m_alpha = dot(T * clamped_rgb + (rgb_pixel - rgb_pixel_final), v_out.rgb) + v_out.a;
 
-                    let v_alpha = dot(T * clamped_rgb + (rgb_pixel - rgb_pixel_final) * ra, v_out.rgb)
-                                + v_out.a * ra;
+                    v_alpha_local = alpha * v_alpha_x_one_m_alpha;
 
-                    let v_sigma = -color.a * gaussian * v_alpha;
+                    let v_sigma = v_alpha_local / (alpha - 1.0f);
                     v_conic_local = vec3f(
                         0.5f * v_sigma * delta.x * delta.x,
                         v_sigma * delta.x * delta.y,
@@ -208,13 +210,8 @@ fn main(
                         conic.x * delta.x + conic.y * delta.y,
                         conic.y * delta.x + conic.z * delta.y
                     );
-                    let v_sigmoid = color.a * (1.0f - color.a);
-                    v_alpha_local = gaussian * v_alpha * v_sigmoid;
                     v_refine_local = abs(v_xy_local);
                 }
-
-                // update transmittance
-                T *= 1.0f - alpha;
             }
 
             let v_xy_sum = subgroupAdd(v_xy_local);
