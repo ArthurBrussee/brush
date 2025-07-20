@@ -202,7 +202,7 @@ fn main(
                     let v_alpha = dot(T * clamped_rgb + (rgb_pixel - rgb_pixel_final) * ra, v_out.rgb)
                                 + v_out.a * ra;
 
-                    let v_sigma = v_alpha * -alpha;
+                    let v_sigma = -alpha * v_alpha;
                     v_conic_local = vec3f(
                         0.5f * v_sigma * delta.x * delta.x,
                         v_sigma * delta.x * delta.y,
@@ -212,7 +212,7 @@ fn main(
                         conic.x * delta.x + conic.y * delta.y,
                         conic.y * delta.x + conic.z * delta.y
                     );
-                    v_alpha_local = v_alpha * alpha * (1.0f - color.a);
+                    v_alpha_local = alpha * (1.0f - color.a) * v_alpha;
                     v_refine_local = abs(v_xy_local);
                 }
 
