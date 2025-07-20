@@ -180,7 +180,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let scale = exp(helpers::as_vec(log_scales[global_gid]));
     // Safe to normalize, splats with length(quat) == 0 are invisible.
     let quat = normalize(quats[global_gid]);
-    let opac = 1.0f / (1.0f + exp(-raw_opacities[global_gid]));
+    let opac = helpers::sigmoid(raw_opacities[global_gid]);
 
     let viewmat = uniforms.viewmat;
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);

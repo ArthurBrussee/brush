@@ -52,7 +52,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     // compute the projected mean
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
 
-    let opac = 1.0f / (1.0f + exp(-raw_opacities[global_gid]));
+    let opac = helpers::sigmoid(raw_opacities[global_gid]);
 
     // Phrase as positive to bail on NaN.
     valid &= opac > 1.0 / 255.0;

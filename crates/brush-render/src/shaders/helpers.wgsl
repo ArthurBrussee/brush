@@ -78,6 +78,10 @@ fn get_tile_bbox(pix_center: vec2f, pix_extent: vec2f, tile_bounds: vec2u) -> ve
     return get_bbox(tile_center, tile_extent, tile_bounds);
 }
 
+fn sigmoid(x: f32) -> f32 {
+    return 1.0f / (1.0f + exp(-x));
+}
+
 fn normalize_quat(quat: vec4f) -> vec4f {
     let len = length(quat);
     let id = vec4f(1.0, 0.0f, 0.0f, 0.0f);
