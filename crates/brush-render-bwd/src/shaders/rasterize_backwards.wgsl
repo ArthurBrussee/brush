@@ -169,10 +169,14 @@ fn main(
                 }
             }
 
-            if valid && T * (1.0f - alpha) <= 1e-4f {
-                atomicAdd(&done_count, 1u);
-                done = true;
-                valid = false;
+            var next_T = T;
+            if valid {
+                next_T = T * (1.0f - alpha);
+                if next_T <= 1e-4f {
+                    atomicAdd(&done_count, 1u);
+                    done = true;
+                    valid = false;
+                }
             }
 
             var v_xy_local = vec2f(0.0f);
@@ -191,16 +195,14 @@ fn main(
                 let clamped_rgb = max(color.rgb, vec3f(0.0f));
                 rgb_pixel += vis * clamped_rgb;
 
-                // update transmittance
-                T *= 1.0f - alpha;
-
                 // Account for alpha being clamped.
                 if (color.a * gaussian <= 0.999f) {
-                    let v_alpha_x_one_m_alpha = dot(T * clamped_rgb + (rgb_pixel - rgb_pixel_final), v_out.rgb) + v_out.a;
+                    let ra = 1.0f / (1.0f - alpha);
 
-                    v_alpha_local = alpha * v_alpha_x_one_m_alpha;
+                    let v_alpha = dot(T * clamped_rgb + (rgb_pixel - rgb_pixel_final) * ra, v_out.rgb)
+                                + v_out.a * ra;
 
-                    let v_sigma = v_alpha_local / (alpha - 1.0f);
+                    let v_sigma = v_alpha * -alpha;
                     v_conic_local = vec3f(
                         0.5f * v_sigma * delta.x * delta.x,
                         v_sigma * delta.x * delta.y,
@@ -210,8 +212,12 @@ fn main(
                         conic.x * delta.x + conic.y * delta.y,
                         conic.y * delta.x + conic.z * delta.y
                     );
+                    v_alpha_local = v_alpha * alpha * (1.0f - color.a);
                     v_refine_local = abs(v_xy_local);
                 }
+
+                // update transmittance
+                T = next_T;
             }
 
             let v_xy_sum = subgroupAdd(v_xy_local);
