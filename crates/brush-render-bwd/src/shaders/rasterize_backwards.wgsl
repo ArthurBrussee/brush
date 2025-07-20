@@ -208,7 +208,8 @@ fn main(
                         conic.x * delta.x + conic.y * delta.y,
                         conic.y * delta.x + conic.z * delta.y
                     );
-                    v_alpha_local = gaussian * v_alpha;
+                    let v_sigmoid = color.a * (1.0f - color.a);
+                    v_alpha_local = gaussian * v_alpha * v_sigmoid;
                     v_refine_local = abs(v_xy_local);
                 }
 

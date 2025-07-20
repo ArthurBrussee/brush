@@ -66,7 +66,7 @@ pub(crate) fn render_forward(
     log_scales: CubeTensor<WgpuRuntime>,
     quats: CubeTensor<WgpuRuntime>,
     sh_coeffs: CubeTensor<WgpuRuntime>,
-    opacities: CubeTensor<WgpuRuntime>,
+    raw_opacities: CubeTensor<WgpuRuntime>,
     background: Vec3,
     bwd_info: bool,
 ) -> (CubeTensor<WgpuRuntime>, RenderAux<MainBackendBase>) {
@@ -87,7 +87,7 @@ pub(crate) fn render_forward(
     let log_scales = into_contiguous(log_scales);
     let quats = into_contiguous(quats);
     let sh_coeffs = into_contiguous(sh_coeffs);
-    let opacities = into_contiguous(opacities);
+    let raw_opacities = into_contiguous(raw_opacities);
 
     // Check whether input dimensions are valid.
     DimCheck::new()
@@ -95,7 +95,7 @@ pub(crate) fn render_forward(
         .check_dims("log_scales", &log_scales, &["D".into(), 3.into()])
         .check_dims("quats", &quats, &["D".into(), 4.into()])
         .check_dims("sh_coeffs", &sh_coeffs, &["D".into(), "C".into(), 3.into()])
-        .check_dims("opacities", &opacities, &["D".into()]);
+        .check_dims("raw_opacities", &raw_opacities, &["D".into()]);
 
     // Divide screen into tiles.
     let tile_bounds = calc_tile_bounds(img_size);
@@ -154,7 +154,7 @@ pub(crate) fn render_forward(
                     means.clone().handle.binding(),
                     quats.clone().handle.binding(),
                     log_scales.clone().handle.binding(),
-                    opacities.clone().handle.binding(),
+                    raw_opacities.clone().handle.binding(),
                     global_from_presort_gid.clone().handle.binding(),
                     depths.clone().handle.binding(),
                 ]),
@@ -201,7 +201,7 @@ pub(crate) fn render_forward(
                 log_scales.handle.binding(),
                 quats.handle.binding(),
                 sh_coeffs.handle.binding(),
-                opacities.handle.binding(),
+                raw_opacities.handle.binding(),
                 global_from_compact_gid.handle.clone().binding(),
                 projected_splats.handle.clone().binding(),
             ]),

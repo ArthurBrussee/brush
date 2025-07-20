@@ -94,7 +94,6 @@ impl SplatTrainer {
         let [img_h, img_w, _] = batch.img_tensor.dims();
         let camera = &batch.camera;
 
-        let current_opacity = splats.opacities();
         let (pred_image, aux, refine_weight_holder) = {
             // Could generate a random background color, but so far
             // results just seem worse.
@@ -107,7 +106,7 @@ impl SplatTrainer {
                 splats.log_scales.val().into_primitive().tensor(),
                 splats.rotation.val().into_primitive().tensor(),
                 splats.sh_coeffs.val().into_primitive().tensor(),
-                current_opacity.clone().into_primitive().tensor(),
+                splats.raw_opacity.val().into_primitive().tensor(),
                 background,
             );
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
@@ -157,7 +156,7 @@ impl SplatTrainer {
             // Invisible splats still have a tiny bit of loss. Otherwise,
             // they would never die off.
             let visible = visible.clone() + 1e-3;
-            loss + (current_opacity.clone() * visible).sum() * (opac_loss_weight * (1.0 - train_t))
+            loss + (splats.opacities() * visible).sum() * (opac_loss_weight * (1.0 - train_t))
         } else {
             loss
         };
@@ -253,7 +252,7 @@ impl SplatTrainer {
             // let the splats settle in without noise, not much point in exploring regions anymore.
             // trace_span!("Noise means").in_scope(|| {
             let one = Tensor::ones([1], &device);
-            let noise_weight = (one - current_opacity.inner())
+            let noise_weight = (one - splats.opacities().inner())
                 .powi_scalar(100)
                 .clamp(0.0, 1.0);
             let noise_weight = noise_weight * visible.inner(); // Only noise visible gaussians.

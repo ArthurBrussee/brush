@@ -8,7 +8,7 @@
 @group(0) @binding(1) var<storage, read> means: array<helpers::PackedVec3>;
 @group(0) @binding(2) var<storage, read> quats: array<vec4f>;
 @group(0) @binding(3) var<storage, read> log_scales: array<helpers::PackedVec3>;
-@group(0) @binding(4) var<storage, read> opacities: array<f32>;
+@group(0) @binding(4) var<storage, read> raw_opacities: array<f32>;
 
 @group(0) @binding(5) var<storage, read_write> global_from_compact_gid: array<u32>;
 @group(0) @binding(6) var<storage, read_write> depths: array<f32>;
@@ -52,7 +52,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     // compute the projected mean
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
 
-    let opac = opacities[global_gid];
+    let opac = 1.0f / (1.0f + exp(-raw_opacities[global_gid]));
 
     // Phrase as positive to bail on NaN.
     valid &= opac > 1.0 / 255.0;

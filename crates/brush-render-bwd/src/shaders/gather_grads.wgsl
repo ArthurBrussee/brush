@@ -209,8 +209,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
     }
 
-    // Transform alpha gradient to opacity gradient.
-    // let raw_opac = opacities[global_gid];
-    // let v_opac_raw = v_opac * v_sigmoid(raw_opac);
+    // Sigmoid was already accounted for in rasterize_backwards.
     v_opacs[global_gid] = v_opac;
 }
