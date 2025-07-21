@@ -57,7 +57,6 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
 
 #[derive(Clone, PartialEq)]
 pub struct CameraSettings {
-    pub fov_y: f64,
     pub speed_scale: Option<f32>,
     pub splat_scale: Option<f32>,
     pub clamping: CameraClamping,
@@ -67,8 +66,6 @@ pub struct CameraSettings {
 impl Default for CameraSettings {
     fn default() -> Self {
         Self {
-            fov_y: 0.8,
-
             speed_scale: None,
             splat_scale: None,
             clamping: CameraClamping::default(),

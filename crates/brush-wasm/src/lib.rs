@@ -109,12 +109,17 @@ impl EmbeddedApp {
     }
 
     #[wasm_bindgen]
-    pub fn set_camera_settings(&self, settings: CameraSettings) {
+    pub fn set_cam_settings(&self, settings: CameraSettings) {
         self.context.set_cam_settings(&settings.0);
     }
 
     #[wasm_bindgen]
-    pub fn set_camera_transform(&self, position: ThreeVector3, rotation_euler: ThreeVector3) {
+    pub fn set_cam_fov(&self, fov: f32) {
+        self.context.set_cam_fov(fov);
+    }
+
+    #[wasm_bindgen]
+    pub fn set_cam_transform(&self, position: ThreeVector3, rotation_euler: ThreeVector3) {
         let position = position.to_glam();
         // 'XYZ' matches the THREE.js default order.
         let rotation = Quat::from_euler(
@@ -123,7 +128,7 @@ impl EmbeddedApp {
             rotation_euler.y() as f32,
             rotation_euler.z() as f32,
         );
-        self.context.set_camera_transform(position, rotation);
+        self.context.set_cam_transform(position, rotation);
     }
 
     #[wasm_bindgen]

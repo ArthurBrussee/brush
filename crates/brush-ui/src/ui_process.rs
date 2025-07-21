@@ -118,19 +118,18 @@ impl UiProcess {
     pub fn set_cam_settings(&self, settings: &CameraSettings) {
         let mut inner = self.write();
         inner.controls.settings = settings.clone();
-
         inner.splat_scale = settings.splat_scale;
         inner.background = settings.background;
-
-        inner.camera.fov_x = settings.fov_y;
-        inner.camera.fov_y = settings.fov_y;
-
         let cam = inner.camera.clone();
         inner.match_controls_to(&cam);
     }
 
-    pub fn set_camera_transform(&self, position: Vec3, rotation: Quat) {
+    pub fn set_cam_transform(&self, position: Vec3, rotation: Quat) {
         self.write().set_camera_transform(position, rotation);
+    }
+
+    pub fn set_cam_fov(&self, fov_y: f64) {
+        self.write().camera.fov_y = fov_y;
     }
 
     pub fn focus_view(&self, view: &SceneView) {
@@ -288,20 +287,11 @@ struct UiProcessInner {
 
 impl UiProcessInner {
     pub fn new() -> Self {
-        let cam_settings = CameraSettings::default();
         let position = -Vec3::Z * 2.5;
         let rotation = Quat::IDENTITY;
 
         let controls = CameraController::new(position, rotation, CameraSettings::default());
-
-        // Camera position will be controlled by the orbit controls.
-        let camera = Camera::new(
-            Vec3::ZERO,
-            Quat::IDENTITY,
-            cam_settings.fov_y,
-            cam_settings.fov_y,
-            glam::vec2(0.5, 0.5),
-        );
+        let camera = Camera::new(Vec3::ZERO, Quat::IDENTITY, 0.8, 0.8, glam::vec2(0.5, 0.5));
 
         Self {
             camera,

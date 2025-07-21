@@ -311,10 +311,7 @@ impl ScenePanel {
                                 );
 
                                 if response.changed() {
-                                    process.set_cam_settings(&CameraSettings {
-                                        fov_y: fov_degrees.to_radians() as f64,
-                                        ..process.get_cam_settings()
-                                    });
+                                    process.set_cam_fov(fov_degrees.to_radians() as f64);
                                 }
 
                                 // Splat scale slider
