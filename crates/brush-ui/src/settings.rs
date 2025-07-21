@@ -223,7 +223,7 @@ impl AppPane for SettingsPanel {
             let mut load_option = None;
 
             ui.label(
-                egui::RichText::new("Load:")
+                egui::RichText::new("Load Data:")
                     .heading()
                     .color(egui::Color32::from_rgb(70, 130, 180)),
             );
