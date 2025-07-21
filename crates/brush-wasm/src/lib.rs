@@ -62,7 +62,6 @@ pub struct CameraSettings(brush_ui::app::CameraSettings);
 impl CameraSettings {
     #[wasm_bindgen(constructor)]
     pub fn new(
-        fov_y: f64,
         background: ThreeVector3,
         speed_scale: Option<f32>,
         min_focus_distance: Option<f32>,
@@ -74,7 +73,6 @@ impl CameraSettings {
         splat_scale: Option<f32>,
     ) -> Self {
         Self(brush_ui::app::CameraSettings {
-            fov_y,
             speed_scale,
             splat_scale,
             // TODO: Could make this a separate JS object.
@@ -114,7 +112,7 @@ impl EmbeddedApp {
     }
 
     #[wasm_bindgen]
-    pub fn set_cam_fov(&self, fov: f32) {
+    pub fn set_cam_fov(&self, fov: f64) {
         self.context.set_cam_fov(fov);
     }
 
