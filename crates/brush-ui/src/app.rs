@@ -119,9 +119,14 @@ impl App {
         )));
         let dataset_pane = tiles.insert_pane(Box::new(DatasetPanel::new()));
 
+        let right_side = tiles.insert_container(egui_tiles::Linear::new(
+            egui_tiles::LinearDir::Vertical,
+            vec![scene_pane, dataset_pane],
+        ));
+
         let mut lin = egui_tiles::Linear::new(
             egui_tiles::LinearDir::Horizontal,
-            vec![side_pane, scene_pane, dataset_pane],
+            vec![side_pane, right_side],
         );
         lin.shares.set_share(side_pane, 0.35);
         let root_container = tiles.insert_container(lin);

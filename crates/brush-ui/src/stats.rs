@@ -1,4 +1,5 @@
 use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
+use brush_dataset::Dataset;
 use brush_process::message::ProcessMessage;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
@@ -11,9 +12,9 @@ pub struct StatsPanel {
     train_iter_per_s: f32,
     last_eval: Option<String>,
     cur_sh_degree: u32,
-    training_started: bool,
     num_splats: u32,
     frames: u32,
+    cur_dataset: Dataset,
     adapter_info: AdapterInfo,
 }
 
@@ -24,10 +25,10 @@ impl StatsPanel {
             last_train_step: (Duration::from_secs(0), 0),
             train_iter_per_s: 0.0,
             last_eval: None,
-            training_started: false,
             num_splats: 0,
             frames: 0,
             cur_sh_degree: 0,
+            cur_dataset: Dataset::empty(),
             adapter_info,
         }
     }
@@ -67,12 +68,11 @@ impl AppPane for StatsPanel {
             ProcessMessage::NewSource => {
                 *self = Self::new(self.device.clone(), self.adapter_info.clone());
             }
-            ProcessMessage::StartLoading { training } => {
+            ProcessMessage::StartLoading { .. } => {
                 self.train_iter_per_s = 0.0;
                 self.num_splats = 0;
                 self.cur_sh_degree = 0;
                 self.last_eval = None;
-                self.training_started = *training;
             }
             ProcessMessage::ViewSplats {
                 up_axis: _,
@@ -101,6 +101,9 @@ impl AppPane for StatsPanel {
                 };
                 self.last_train_step = (*total_elapsed, *iter);
             }
+            ProcessMessage::Dataset { dataset } => {
+                self.cur_dataset = dataset.clone();
+            }
             ProcessMessage::EvalResult {
                 iter: _,
                 avg_psnr,
@@ -112,7 +115,7 @@ impl AppPane for StatsPanel {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _: &UiProcess) {
+    fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         ui.vertical(|ui| {
             // Model Stats
             ui.heading("Model Stats");
@@ -141,7 +144,7 @@ impl AppPane for StatsPanel {
                     }
                 });
 
-            if self.training_started {
+            if process.is_training() {
                 ui.add_space(10.0);
                 ui.heading("Training Stats");
                 ui.separator();
@@ -176,6 +179,20 @@ impl AppPane for StatsPanel {
                             humantime::format_duration(Duration::from_secs(
                                 self.last_train_step.0.as_secs()
                             ))
+                        ));
+                        ui.end_row();
+
+                        ui.label("Dataset train size");
+                        ui.label(format!("{}", self.cur_dataset.train.views.len()));
+                        ui.end_row();
+
+                        ui.label("Dataset eval");
+                        ui.label(format!(
+                            "{}",
+                            self.cur_dataset
+                                .eval
+                                .as_ref()
+                                .map_or(0, |eval| eval.views.len())
                         ));
                         ui.end_row();
                     });

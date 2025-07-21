@@ -1,5 +1,6 @@
 use brush_dataset::splat_export;
 use brush_process::message::ProcessMessage;
+use burn::prelude::Backend;
 use core::f32;
 use egui::{Area, Frame, epaint::mutex::RwLock as EguiRwLock};
 use std::sync::Arc;
@@ -18,7 +19,7 @@ use web_time::Instant;
 
 use crate::{
     UiMode, app::CameraSettings, burn_texture::BurnTexture, draw_checkerboard, panels::AppPane,
-    size_for_splat_view, ui_process::UiProcess,
+    ui_process::UiProcess,
 };
 
 #[derive(Clone, PartialEq)]
@@ -77,10 +78,7 @@ impl ScenePanel {
         process: &UiProcess,
         splats: Option<Splats<MainBackend>>,
     ) -> egui::Rect {
-        let size = size_for_splat_view(ui, process.ui_mode() == UiMode::Default);
-
-        let mut size = size.floor();
-
+        let mut size = ui.available_size();
         let view = process.selected_view();
 
         if let Some(view) = view {
@@ -185,6 +183,7 @@ impl ScenePanel {
         egui::Area::new(id)
             .kind(egui::UiKind::Window)
             .current_pos(egui::pos2(rect.min.x, rect.min.y))
+            .movable(false)
             .show(ui.ctx(), |ui| {
                 // Add transparent background frame. This has the same settings as a
                 let style = ui.style_mut();
@@ -209,9 +208,9 @@ impl ScenePanel {
                         false,
                     );
 
+                    // Show a header
                     state
                         .show_header(ui, |ui| {
-                            // Title
                             ui.label(egui::RichText::new("Controls").strong());
 
                             ui.add_space(5.0);
@@ -237,7 +236,7 @@ impl ScenePanel {
                                 ui.label("• Shift to move faster");
                             });
                         })
-                        .body(|ui| {
+                        .body_unindented(|ui| {
                             ui.set_max_width(180.0);
                             ui.spacing_mut().item_spacing.y = 6.0;
 
@@ -267,25 +266,7 @@ impl ScenePanel {
 
                                 if let Some(splats) = splats {
                                     if ui.small_button("⬆ Export").clicked() {
-                                        let fut = async move {
-                                            let data = splat_export::splat_to_ply(splats).await;
-
-                                            let data = match data {
-                                                Ok(data) => data,
-                                                Err(e) => {
-                                                    log::error!("Failed to serialize file: {e}");
-                                                    return;
-                                                }
-                                            };
-
-                                            let _ = rrfd::save_file("export.ply", data)
-                                                .await
-                                                .inspect_err(|e| {
-                                                    log::error!("Failed to save file: {e}");
-                                                });
-                                        };
-
-                                        tokio_wasm::task::spawn(fut);
+                                        export_current_splat(splats);
                                     }
                                 }
 
@@ -359,6 +340,24 @@ impl ScenePanel {
                 });
             });
     }
+}
+
+fn export_current_splat<B: Backend>(splat: Splats<B>) {
+    tokio_wasm::task::spawn(async move {
+        let data = splat_export::splat_to_ply(splat).await;
+
+        let data = match data {
+            Ok(data) => data,
+            Err(e) => {
+                log::error!("Failed to serialize file: {e}");
+                return;
+            }
+        };
+
+        let _ = rrfd::save_file("export.ply", data).await.inspect_err(|e| {
+            log::error!("Failed to save file: {e}");
+        });
+    });
 }
 
 impl AppPane for ScenePanel {

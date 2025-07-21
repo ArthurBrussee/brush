@@ -84,11 +84,3 @@ pub fn draw_checkerboard(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color
 
     ui.painter().image(handle.id(), rect, uv, color);
 }
-
-pub fn size_for_splat_view(ui: &mut egui::Ui, with_button: bool) -> egui::Vec2 {
-    let mut size = ui.available_size();
-    if with_button {
-        size.y -= 25.0;
-    }
-    size.floor()
-}

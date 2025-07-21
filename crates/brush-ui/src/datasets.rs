@@ -1,6 +1,4 @@
-use crate::{
-    UiMode, draw_checkerboard, panels::AppPane, size_for_splat_view, ui_process::UiProcess,
-};
+use crate::{UiMode, draw_checkerboard, panels::AppPane, ui_process::UiProcess};
 use brush_dataset::{
     Dataset,
     scene::{Scene, SceneView, ViewType},
@@ -165,8 +163,7 @@ impl AppPane for DatasetPanel {
                 if let Some(texture_handle) = &mut self.last_handle {
                     let selected_view = selected.get_view(&self.cur_dataset);
 
-                    let size = size_for_splat_view(ui, true);
-                    let mut size = size.floor();
+                    let mut size = ui.available_size();
                     let aspect_ratio = texture_handle.aspect_ratio();
 
                     if size.x / size.y > aspect_ratio {
