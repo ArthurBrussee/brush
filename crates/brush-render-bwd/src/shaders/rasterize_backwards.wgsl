@@ -189,7 +189,7 @@ fn main(
                 let vis = alpha * T;
 
                 // update v_colors for this gaussian
-                v_rgb_local = select(vec3f(0.0f), vis * v_out.rgb, color.rgb > vec3f(0.0f));
+                v_rgb_local = select(vec3f(0.0f), vis * v_out.rgb, color.rgb >= vec3f(0.0f));
 
                 // add contribution of this gaussian to the pixel
                 let clamped_rgb = max(color.rgb, vec3f(0.0f));
