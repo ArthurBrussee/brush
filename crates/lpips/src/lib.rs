@@ -71,52 +71,82 @@ pub struct LpipsModel<B: Backend> {
     max_pool: MaxPool2d,
 }
 
+fn norm_vec<B: Backend>(vec: Tensor<B, 4>) -> Tensor<B, 4> {
+    let norm_factor = vec.clone().powi_scalar(2).sum_dim(1).sqrt();
+    vec / (norm_factor + 1e-10)
+}
+
 impl<B: Backend> LpipsModel<B> {
-    pub fn forward(&self, patches: Tensor<B, 4>) -> Vec<Tensor<B, 4>> {
-        let shift = Tensor::<B, 1>::from_floats([-0.030, -0.088, -0.188], &patches.device())
-            .reshape([1, 3, 1, 1]);
-        let scale = Tensor::<B, 1>::from_floats([0.458, 0.448, 0.450], &patches.device())
-            .reshape([1, 3, 1, 1]);
-
-        let mut fold = (patches - shift) / scale;
-
-        let mut res = vec![];
-        for (i, block) in self.blocks.iter().enumerate() {
-            if i != 0 {
-                fold = self.max_pool.forward(fold);
-            }
-
-            fold = block.forward(fold);
-
-            // Save intermediate state as normalized vec per lpips.
-            let norm_factor = fold.clone().powi_scalar(2).sum_dim(1).sqrt();
-            let normed = fold.clone() / (norm_factor + 1e-10);
-            res.push(normed);
-        }
-        res
-    }
-
     /// Calculate the lpips. Imgs are in NCHW order. Inputs should be 0-1 normalised.
     pub fn lpips(&self, imgs_a: Tensor<B, 4>, imgs_b: Tensor<B, 4>) -> Tensor<B, 1> {
+        let device = imgs_a.device();
+
         // Convert NHWC to NCHW and to [-1, 1].
-        let imgs_a = imgs_a.permute([0, 3, 1, 2]);
-        let imgs_b = imgs_b.permute([0, 3, 1, 2]);
+        let imgs_a = imgs_a.permute([0, 3, 1, 2]) * 2.0 - 1.0;
+        let imgs_b = imgs_b.permute([0, 3, 1, 2]) * 2.0 - 1.0;
 
-        // TODO: concatenating first might be faster.
-        let imgs_a = self.forward(imgs_a * 2.0 - 1.0);
-        let imgs_b = self.forward(imgs_b * 2.0 - 1.0);
+        let shift =
+            Tensor::<B, 1>::from_floats([-0.030, -0.088, -0.188], &device).reshape([1, 3, 1, 1]);
+        let scale =
+            Tensor::<B, 1>::from_floats([0.458, 0.448, 0.450], &device).reshape([1, 3, 1, 1]);
 
-        let device = imgs_a[0].device();
+        let mut imgs_a = (imgs_a - shift.clone()) / scale.clone();
+        let mut imgs_b = (imgs_b - shift) / scale;
 
-        imgs_a.into_iter().zip(imgs_b).zip(&self.heads).fold(
-            Tensor::zeros([1], &device),
-            |acc, ((p1, p2), head)| {
-                let diff = (p1 - p2).powi_scalar(2);
-                let class = head.forward(diff);
-                // Add spatial mean.
-                acc + class.mean_dim(2).mean_dim(3).reshape([1])
-            },
-        )
+        let mut loss = Tensor::<B, 1>::zeros([1], &device);
+        for (i, (block, head)) in self.blocks.iter().zip(&self.heads).enumerate() {
+            // TODO: concatenating first might be faster.
+            if i != 0 {
+                imgs_a = self.max_pool.forward(imgs_a);
+                imgs_b = self.max_pool.forward(imgs_b);
+            }
+
+            // TODO: This is a dumb workaround as currently autotuning runs out of memory
+            // when the resolution is too high.
+            //
+            // Slice images into parts, process separately, then concatenate
+            let [batch_size, channels, height, width] = imgs_a.dims();
+            let slice_height = height / 2;
+
+            // Slice imgs_a into top and bottom parts
+            let imgs_a_top =
+                imgs_a
+                    .clone()
+                    .slice([0..batch_size, 0..channels, 0..slice_height, 0..width]);
+            let imgs_a_bottom =
+                imgs_a
+                    .clone()
+                    .slice([0..batch_size, 0..channels, slice_height..height, 0..width]);
+
+            // Slice imgs_b into top and bottom parts
+            let imgs_b_top =
+                imgs_b
+                    .clone()
+                    .slice([0..batch_size, 0..channels, 0..slice_height, 0..width]);
+            let imgs_b_bottom =
+                imgs_b
+                    .clone()
+                    .slice([0..batch_size, 0..channels, slice_height..height, 0..width]);
+
+            // Process each part through the block
+            let imgs_a_top_processed = block.forward(imgs_a_top);
+            let imgs_a_bottom_processed = block.forward(imgs_a_bottom);
+            let imgs_b_top_processed = block.forward(imgs_b_top);
+            let imgs_b_bottom_processed = block.forward(imgs_b_bottom);
+
+            // Concatenate the processed parts back together
+            imgs_a = Tensor::cat(vec![imgs_a_top_processed, imgs_a_bottom_processed], 2);
+            imgs_b = Tensor::cat(vec![imgs_b_top_processed, imgs_b_bottom_processed], 2);
+
+            let normed_a = norm_vec(imgs_a.clone());
+            let normed_b = norm_vec(imgs_b.clone());
+
+            let diff = (normed_a - normed_b).powi_scalar(2);
+            let class = head.forward(diff);
+            // Add spatial mean.
+            loss = loss + class.mean_dim(2).mean_dim(3).reshape([1]);
+        }
+        loss
     }
 }
 
@@ -159,9 +189,14 @@ impl LpipsModelConfig {
 
 pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
     let model = LpipsModelConfig::new().init::<B>(device);
+    let exe_path = std::env::current_exe().expect("Need current .exe path");
+    let model_path = exe_path
+        .parent()
+        .expect("Need parent directory")
+        .join("./burn_mapped");
     model.load_record(
         NamedMpkGzFileRecorder::<HalfPrecisionSettings>::default()
-            .load("./burn_mapped".into(), device)
+            .load(model_path, device)
             .expect("Should decode state successfully"),
     )
 }

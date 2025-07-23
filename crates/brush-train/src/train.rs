@@ -36,19 +36,21 @@ use burn::{
 use burn_cubecl::cubecl::Runtime;
 use glam::Vec3;
 use hashbrown::{HashMap, HashSet};
+use lpips::LpipsModel;
 use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
 const MIN_OPACITY: f32 = 0.99 / 255.0;
 
-type OptimizerType =
-    OptimizerAdaptor<AdamScaled, Splats<Autodiff<MainBackend>>, Autodiff<MainBackend>>;
+type DiffBackend = Autodiff<MainBackend>;
+type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<DiffBackend>, DiffBackend>;
 
 pub struct SplatTrainer {
     config: TrainConfig,
     sched_mean: ExponentialLrScheduler,
     sched_scale: ExponentialLrScheduler,
-    ssim: Ssim<Autodiff<MainBackend>>,
+    ssim: Option<Ssim<DiffBackend>>,
+    lpips: Option<LpipsModel<DiffBackend>>,
     refine_record: Option<RefineRecord<MainBackend>>,
     optim: Option<OptimizerType>,
 }
@@ -63,14 +65,16 @@ fn create_default_optimizer() -> OptimizerType {
 
 impl SplatTrainer {
     pub fn new(config: &TrainConfig, device: &WgpuDevice) -> Self {
-        const SSIM_WINDOW_SIZE: usize = 11; // Could be configurable but meh, rather keep consistent.
-        let ssim = Ssim::new(SSIM_WINDOW_SIZE, 3, device);
-
         let decay = (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_steps as f64);
         let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean, decay);
 
         let decay = (config.lr_scale_end / config.lr_scale).powf(1.0 / config.total_steps as f64);
         let lr_scale = ExponentialLrSchedulerConfig::new(config.lr_scale, decay);
+
+        const SSIM_WINDOW_SIZE: usize = 11; // Could be configurable but meh, rather keep consistent.
+        let ssim = (config.ssim_weight > 0.0).then(|| Ssim::new(SSIM_WINDOW_SIZE, 3, device));
+
+        let lpips = (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device));
 
         Self {
             config: config.clone(),
@@ -79,6 +83,7 @@ impl SplatTrainer {
             optim: None,
             refine_record: None,
             ssim,
+            lpips,
         }
     }
 
@@ -86,9 +91,9 @@ impl SplatTrainer {
         &mut self,
         scene_extent: f32,
         iter: u32,
-        batch: &SceneBatch<Autodiff<MainBackend>>,
-        splats: Splats<Autodiff<MainBackend>>,
-    ) -> (Splats<Autodiff<MainBackend>>, TrainStepStats<MainBackend>) {
+        batch: &SceneBatch<DiffBackend>,
+        splats: Splats<DiffBackend>,
+    ) -> (Splats<DiffBackend>, TrainStepStats<MainBackend>) {
         let mut splats = splats;
 
         let [img_h, img_w, _] = batch.img_tensor.dims();
@@ -99,7 +104,7 @@ impl SplatTrainer {
             // results just seem worse.
             let background = Vec3::ZERO;
 
-            let diff_out = <Autodiff<MainBackend> as SplatForwardDiff<_>>::render_splats(
+            let diff_out = <DiffBackend as SplatForwardDiff<_>>::render_splats(
                 camera,
                 glam::uvec2(img_w as u32, img_h as u32),
                 splats.means.val().into_primitive().tensor(),
@@ -124,28 +129,36 @@ impl SplatTrainer {
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
         let gt_rgb = batch.img_tensor.clone().slice(s![.., .., 0..3]);
 
-        let l1_rgb = (pred_rgb.clone() - gt_rgb).abs();
+        let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();
 
-        let total_err = if self.config.ssim_weight > 0.0 {
-            let gt_rgb = batch.img_tensor.clone().slice(s![.., .., 0..3]);
-            let ssim_err = self.ssim.ssim(pred_rgb, gt_rgb);
+        let total_err = if let Some(ssim) = &self.ssim {
+            let ssim_err = ssim.ssim(pred_rgb.clone(), gt_rgb.clone());
             l1_rgb * (1.0 - self.config.ssim_weight) - (ssim_err * self.config.ssim_weight)
         } else {
             l1_rgb
         };
 
-        let loss = if batch.has_alpha() {
+        let total_err = if batch.has_alpha() {
             let alpha_input = batch.img_tensor.clone().slice(s![.., .., 3..4]);
 
             if batch.alpha_is_mask {
-                (total_err * alpha_input).mean()
+                total_err * alpha_input
             } else {
                 let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);
-                total_err.mean()
-                    + (alpha_input - pred_alpha).abs().mean() * self.config.match_alpha_weight
+                total_err + (alpha_input - pred_alpha).abs() * self.config.match_alpha_weight
             }
         } else {
-            total_err.mean()
+            total_err
+        };
+
+        let loss = total_err.mean();
+
+        // TODO: Support masked lpips.
+        let loss = if let Some(lpips) = &self.lpips {
+            loss + lpips.lpips(pred_rgb.unsqueeze_dim(0), gt_rgb.unsqueeze_dim(0))
+                * self.config.lpips_loss_weight
+        } else {
+            loss
         };
 
         let opac_loss_weight = self.config.opac_loss_weight;
@@ -291,8 +304,8 @@ impl SplatTrainer {
     pub async fn refine_if_needed(
         &mut self,
         iter: u32,
-        splats: Splats<Autodiff<MainBackend>>,
-    ) -> (Splats<Autodiff<MainBackend>>, Option<RefineStats>) {
+        splats: Splats<DiffBackend>,
+    ) -> (Splats<DiffBackend>, Option<RefineStats>) {
         if iter == 0 || iter % self.config.refine_every != 0 {
             return (splats, None);
         }
@@ -382,10 +395,10 @@ impl SplatTrainer {
     fn refine_splats(
         &mut self,
         device: &WgpuDevice,
-        mut record: HashMap<ParamId, AdaptorRecord<AdamScaled, Autodiff<MainBackend>>>,
-        mut splats: Splats<Autodiff<MainBackend>>,
+        mut record: HashMap<ParamId, AdaptorRecord<AdamScaled, DiffBackend>>,
+        mut splats: Splats<DiffBackend>,
         add_indices: HashSet<i32>,
-    ) -> Splats<Autodiff<MainBackend>> {
+    ) -> Splats<DiffBackend> {
         let refine_count = add_indices.len();
 
         if refine_count > 0 {
@@ -476,8 +489,8 @@ impl SplatTrainer {
 }
 
 fn map_splats_and_opt(
-    mut splats: Splats<Autodiff<MainBackend>>,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, Autodiff<MainBackend>>>,
+    mut splats: Splats<DiffBackend>,
+    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, DiffBackend>>,
     map_mean: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
     map_rotation: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
     map_scale: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
@@ -489,7 +502,7 @@ fn map_splats_and_opt(
     map_opt_scale: impl Fn(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
     map_opt_coeffs: impl Fn(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
     map_opt_opac: impl Fn(Tensor<MainBackend, 1>) -> Tensor<MainBackend, 1>,
-) -> Splats<Autodiff<MainBackend>> {
+) -> Splats<DiffBackend> {
     splats.means = splats
         .means
         .map(|x| Tensor::from_inner(map_mean(x.inner())).require_grad());
@@ -542,15 +555,11 @@ fn map_opt<B: AutodiffBackend, const D: usize>(
 // Args:
 //   mask: bool[n]. If True, prune this Gaussian.
 async fn prune_points(
-    mut splats: Splats<Autodiff<MainBackend>>,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, Autodiff<MainBackend>>>,
+    mut splats: Splats<DiffBackend>,
+    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, DiffBackend>>,
     mut refiner: RefineRecord<MainBackend>,
     prune: Tensor<MainBackend, 1, Bool>,
-) -> (
-    Splats<Autodiff<MainBackend>>,
-    RefineRecord<MainBackend>,
-    u32,
-) {
+) -> (Splats<DiffBackend>, RefineRecord<MainBackend>, u32) {
     assert_eq!(
         prune.dims()[0] as u32,
         splats.num_splats(),

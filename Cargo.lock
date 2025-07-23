@@ -1153,6 +1153,7 @@ dependencies = [
  "hashbrown 0.15.4",
  "image",
  "log",
+ "lpips",
  "rand 0.9.1",
  "tracing",
 ]
