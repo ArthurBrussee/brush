@@ -6,7 +6,6 @@ use burn::nn::conv::Conv2dConfig;
 use burn::nn::pool::MaxPool2d;
 use burn::nn::pool::MaxPool2dConfig;
 use burn::record::HalfPrecisionSettings;
-use burn::record::NamedMpkGzFileRecorder;
 use burn::record::Recorder;
 use burn::tensor::Device;
 use burn::tensor::activation::relu;
@@ -101,42 +100,9 @@ impl<B: Backend> LpipsModel<B> {
                 imgs_b = self.max_pool.forward(imgs_b);
             }
 
-            // TODO: This is a dumb workaround as currently autotuning runs out of memory
-            // when the resolution is too high.
-            //
-            // Slice images into parts, process separately, then concatenate
-            let [batch_size, channels, height, width] = imgs_a.dims();
-            let slice_height = height / 2;
-
-            // Slice imgs_a into top and bottom parts
-            let imgs_a_top =
-                imgs_a
-                    .clone()
-                    .slice([0..batch_size, 0..channels, 0..slice_height, 0..width]);
-            let imgs_a_bottom =
-                imgs_a
-                    .clone()
-                    .slice([0..batch_size, 0..channels, slice_height..height, 0..width]);
-
-            // Slice imgs_b into top and bottom parts
-            let imgs_b_top =
-                imgs_b
-                    .clone()
-                    .slice([0..batch_size, 0..channels, 0..slice_height, 0..width]);
-            let imgs_b_bottom =
-                imgs_b
-                    .clone()
-                    .slice([0..batch_size, 0..channels, slice_height..height, 0..width]);
-
             // Process each part through the block
-            let imgs_a_top_processed = block.forward(imgs_a_top);
-            let imgs_a_bottom_processed = block.forward(imgs_a_bottom);
-            let imgs_b_top_processed = block.forward(imgs_b_top);
-            let imgs_b_bottom_processed = block.forward(imgs_b_bottom);
-
-            // Concatenate the processed parts back together
-            imgs_a = Tensor::cat(vec![imgs_a_top_processed, imgs_a_bottom_processed], 2);
-            imgs_b = Tensor::cat(vec![imgs_b_top_processed, imgs_b_bottom_processed], 2);
+            imgs_a = block.forward(imgs_a);
+            imgs_b = block.forward(imgs_b);
 
             let normed_a = norm_vec(imgs_a.clone());
             let normed_b = norm_vec(imgs_b.clone());
@@ -189,15 +155,16 @@ impl LpipsModelConfig {
 
 #[cfg(not(target_family = "wasm"))]
 pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
+    use burn::record::BinBytesRecorder;
+
     let model = LpipsModelConfig::new().init::<B>(device);
-    let exe_path = std::env::current_exe().expect("Need current .exe path");
-    let model_path = exe_path
-        .parent()
-        .expect("Need parent directory")
-        .join("./burn_mapped");
+    // It's not great, but just about manageable.
+    #[allow(clippy::large_include_file)]
+    let bytes = include_bytes!("../burn_mapped.bin");
+
     model.load_record(
-        NamedMpkGzFileRecorder::<HalfPrecisionSettings>::default()
-            .load(model_path, device)
+        BinBytesRecorder::<HalfPrecisionSettings>::default()
+            .load(bytes.into(), device)
             .expect("Should decode state successfully"),
     )
 }

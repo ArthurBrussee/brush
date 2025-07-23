@@ -10,7 +10,7 @@ brush-render.path = "../brush-render"
 brush-kernel.path = "../brush-kernel"
 brush-dataset.path = "../brush-dataset"
 brush-render-bwd.path = "../brush-render-bwd"
-lpips.path = "../lpips"
+
 
 anyhow.workspace = true
 image.workspace = true
@@ -24,6 +24,9 @@ hashbrown.workspace = true
 burn.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+lpips.path = "../lpips"
 
 [lints]
 workspace = true

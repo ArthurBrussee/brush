@@ -36,7 +36,6 @@ use burn::{
 use burn_cubecl::cubecl::Runtime;
 use glam::Vec3;
 use hashbrown::{HashMap, HashSet};
-use lpips::LpipsModel;
 use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
@@ -55,7 +54,7 @@ pub struct SplatTrainer {
     ssim: Option<Ssim<DiffBackend>>,
 
     #[cfg(not(target_family = "wasm"))]
-    lpips: Option<LpipsModel<DiffBackend>>,
+    lpips: Option<lpips::LpipsModel<DiffBackend>>,
 }
 
 fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
