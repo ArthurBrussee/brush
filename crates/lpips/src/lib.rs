@@ -163,8 +163,8 @@ pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
     let bytes = include_bytes!("../burn_mapped.bin");
 
     model.load_record(
-        BinBytesRecorder::<HalfPrecisionSettings>::default()
-            .load(bytes.into(), device)
+        BinBytesRecorder::<HalfPrecisionSettings, &[u8]>::default()
+            .load(bytes, device)
             .expect("Should decode state successfully"),
     )
 }
