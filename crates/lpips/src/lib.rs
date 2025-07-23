@@ -187,6 +187,7 @@ impl LpipsModelConfig {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
     let model = LpipsModelConfig::new().init::<B>(device);
     let exe_path = std::env::current_exe().expect("Need current .exe path");

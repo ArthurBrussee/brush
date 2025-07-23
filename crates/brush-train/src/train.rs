@@ -49,10 +49,13 @@ pub struct SplatTrainer {
     config: TrainConfig,
     sched_mean: ExponentialLrScheduler,
     sched_scale: ExponentialLrScheduler,
-    ssim: Option<Ssim<DiffBackend>>,
-    lpips: Option<LpipsModel<DiffBackend>>,
     refine_record: Option<RefineRecord<MainBackend>>,
     optim: Option<OptimizerType>,
+
+    ssim: Option<Ssim<DiffBackend>>,
+
+    #[cfg(not(target_family = "wasm"))]
+    lpips: Option<LpipsModel<DiffBackend>>,
 }
 
 fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -74,8 +77,6 @@ impl SplatTrainer {
         const SSIM_WINDOW_SIZE: usize = 11; // Could be configurable but meh, rather keep consistent.
         let ssim = (config.ssim_weight > 0.0).then(|| Ssim::new(SSIM_WINDOW_SIZE, 3, device));
 
-        let lpips = (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device));
-
         Self {
             config: config.clone(),
             sched_mean: lr_mean.init().expect("Mean lr schedule must be valid."),
@@ -83,7 +84,8 @@ impl SplatTrainer {
             optim: None,
             refine_record: None,
             ssim,
-            lpips,
+            #[cfg(not(target_family = "wasm"))]
+            lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
         }
     }
 
@@ -154,6 +156,7 @@ impl SplatTrainer {
         let loss = total_err.mean();
 
         // TODO: Support masked lpips.
+        #[cfg(not(target_family = "wasm"))]
         let loss = if let Some(lpips) = &self.lpips {
             loss + lpips.lpips(pred_rgb.unsqueeze_dim(0), gt_rgb.unsqueeze_dim(0))
                 * self.config.lpips_loss_weight
