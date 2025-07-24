@@ -20,6 +20,8 @@ fn is_console() -> bool {
 
 #[allow(clippy::unnecessary_wraps)] // Error isn't need on wasm but that's ok.
 fn main() -> Result<(), anyhow::Error> {
+    let args = Cli::parse().validate()?;
+
     #[cfg(target_family = "windows")]
     if args.with_viewer && !is_console() {
         // Hide the console window on windows when running as a GUI.
@@ -44,7 +46,6 @@ fn main() -> Result<(), anyhow::Error> {
         .build()
         .expect("Failed to initialize tokio runtime")
         .block_on(async move {
-            let args = Cli::parse().validate()?;
             let context = std::sync::Arc::new(brush_ui::ui_process::UiProcess::new());
 
             env_logger::builder()
