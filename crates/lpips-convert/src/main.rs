@@ -5,10 +5,10 @@ use burn::record::FullPrecisionSettings;
 use burn::record::HalfPrecisionSettings;
 use burn::record::Recorder;
 use burn::tensor::backend::Backend;
-use lpips::{LpipsModel, LpipsModelConfig};
+use lpips::LpipsModel;
 
 fn convert_lpips<B: Backend>(device: &B::Device) {
-    let model = LpipsModelConfig::new().init::<B>(device);
+    let model = LpipsModel::<B>::new(device);
     let record: <LpipsModel<B> as Module<B>>::Record =
         burn_import::pytorch::PyTorchFileRecorder::<FullPrecisionSettings>::default()
             .load(

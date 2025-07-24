@@ -116,11 +116,8 @@ impl<B: Backend> LpipsModel<B> {
     }
 }
 
-#[derive(Config)]
-pub struct LpipsModelConfig {}
-
-impl LpipsModelConfig {
-    pub fn init<B: Backend>(&self, device: &B::Device) -> LpipsModel<B> {
+impl<B: Backend> LpipsModel<B> {
+    pub fn new(device: &B::Device) -> Self {
         // Could have different variations here but just doing VGG for now.
         let blocks = [
             (2, 3, 64),
@@ -145,7 +142,7 @@ impl LpipsModelConfig {
             })
             .collect();
 
-        LpipsModel {
+        Self {
             blocks,
             heads,
             max_pool: MaxPool2dConfig::new([2, 2]).with_strides([2, 2]).init(),
@@ -157,7 +154,7 @@ impl LpipsModelConfig {
 pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
     use burn::record::BinBytesRecorder;
 
-    let model = LpipsModelConfig::new().init::<B>(device);
+    let model = LpipsModel::<B>::new(device);
     // It's not great, but just about manageable.
     #[allow(clippy::large_include_file)]
     let bytes = include_bytes!("../burn_mapped.bin");

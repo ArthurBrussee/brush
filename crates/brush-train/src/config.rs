@@ -77,7 +77,6 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "0.1")]
     pub match_alpha_weight: f32,
 
-    #[config(default = 0.0)]
     #[arg(long, help_heading = "Refine options", default_value = "0.0")]
     pub lpips_loss_weight: f32,
 }
