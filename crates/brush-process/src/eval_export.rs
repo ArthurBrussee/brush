@@ -10,7 +10,6 @@ pub async fn eval_save_to_disk<B: Backend>(sample: &EvalSample<B>, path: &Path) 
     {
         use image::Rgb32FImage;
         log::info!("Saving eval image to disk.");
-
         let img = sample.rendered.clone();
         let [h, w, _] = [img.dims()[0], img.dims()[1], img.dims()[2]];
         let data = sample
@@ -20,11 +19,10 @@ pub async fn eval_save_to_disk<B: Backend>(sample: &EvalSample<B>, path: &Path) 
             .await
             .into_vec::<f32>()
             .expect("Wrong type");
-
         let img: image::DynamicImage = Rgb32FImage::from_raw(w as u32, h as u32, data)
             .expect("Failed to create image from tensor")
             .into();
-
+        let img: image::DynamicImage = img.into_rgb8().into();
         let parent = path.parent().expect("Eval must have a filename");
         tokio::fs::create_dir_all(parent).await?;
         log::info!("Saving eval view to {path:?}");
