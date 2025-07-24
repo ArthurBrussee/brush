@@ -127,7 +127,7 @@ impl App {
             cc.egui_ctx
                 .load_texture("nearest_view_tex", color_img, TextureOptions::default());
 
-        let config = TrainConfig::new();
+        let config = TrainConfig::default();
         spawn_train_loop(
             image.clone(),
             camera.clone(),

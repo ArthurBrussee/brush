@@ -1,8 +1,9 @@
 use crate::{BrushVfs, VfsConstructError};
 use rrfd::PickFileError;
+use serde::Deserialize;
 use std::{path::Path, str::FromStr};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
 pub enum DataSource {
     PickFile,
     PickDirectory,

@@ -3,7 +3,9 @@
 use brush_process::{config::ProcessArgs, message::ProcessMessage};
 use brush_vfs::DataSource;
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
+use clap_serde_derive::ClapSerde;
 use indicatif::{ProgressBar, ProgressStyle};
+use serde::Deserialize;
 use std::time::Duration;
 use tokio_stream::{Stream, StreamExt};
 
@@ -14,6 +16,7 @@ use tokio_stream::{Stream, StreamExt};
     arg_required_else_help = false,
     about = "Brush - universal splats"
 )]
+#[derive(ClapSerde, Deserialize)]
 pub struct Cli {
     /// Source to load from (path or URL).
     #[arg(value_name = "PATH_OR_URL")]

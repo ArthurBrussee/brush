@@ -7,8 +7,9 @@ use crate::{
 };
 use eframe::egui;
 use egui::ThemePreference;
-use egui_tiles::{SimplificationOptions, Tile, Tiles};
+use egui_tiles::{SimplificationOptions, Tile, TileId, Tiles};
 use glam::Vec3;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub(crate) struct AppTree {
@@ -25,7 +26,7 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
     fn pane_ui(
         &mut self,
         ui: &mut egui::Ui,
-        _tile_id: egui_tiles::TileId,
+        _tile_id: TileId,
         pane: &mut PaneType,
     ) -> egui_tiles::UiResponse {
         egui::Frame::new()
@@ -136,7 +137,6 @@ impl App {
 
     fn receive_messages(&mut self) {
         let mut messages = vec![];
-
         while let Some(message) = self.tree_ctx.process.try_recv_message() {
             messages.push(message);
         }
@@ -184,34 +184,34 @@ impl eframe::App for App {
         let process = self.tree_ctx.process.clone();
 
         // Recursive function to compute visibility bottom-up
-        let mut tile_visibility = std::collections::HashMap::new();
+        let mut tile_visibility = HashMap::new();
 
         fn compute_visibility(
-            tile_id: egui_tiles::TileId,
+            tile_id: TileId,
             tiles: &Tiles<PaneType>,
-            process: &Arc<UiProcess>,
-            memo: &mut std::collections::HashMap<egui_tiles::TileId, bool>,
+            process: &UiProcess,
+            memo: &mut HashMap<TileId, bool>,
         ) -> bool {
             if let Some(&cached) = memo.get(&tile_id) {
                 return cached;
             }
-            let visible = match tiles.get(tile_id) {
-                Some(Tile::Pane(pane)) => pane.is_visible(process),
-                Some(Tile::Container(container)) => {
+
+            let c = tiles.get(tile_id).expect("Must come from valid parent");
+            let visible = match c {
+                Tile::Pane(pane) => pane.is_visible(process),
+                Tile::Container(container) => {
                     // Container is visible if any child is visible
                     container
                         .active_children()
                         .any(|&child_id| compute_visibility(child_id, tiles, process, memo))
                 }
-                None => false,
             };
             memo.insert(tile_id, visible);
             visible
         }
 
         // Compute visibility for all tiles
-        let all_tile_ids: Vec<_> = self.tree.tiles.iter().map(|(id, _)| *id).collect();
-        for tile_id in all_tile_ids {
+        for tile_id in self.tree.tiles.tile_ids().collect::<Vec<_>>() {
             self.tree.set_visible(
                 tile_id,
                 compute_visibility(tile_id, &self.tree.tiles, &process, &mut tile_visibility),

@@ -14,7 +14,6 @@ pub struct SettingsPanel {
 impl SettingsPanel {
     pub(crate) fn new() -> Self {
         Self {
-            // Nb: Important to just start with the default values here, so CLI and UI match defaults.
             args: ProcessArgs::default(),
             url: "splat.com/example.ply".to_owned(),
             send_args: None,

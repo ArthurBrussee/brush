@@ -1,7 +1,7 @@
 use brush_dataset::config::{LoadDataseConfig, ModelConfig};
 use brush_train::config::TrainConfig;
-use burn::config::Config;
-use clap::Args;
+use burn::{config::Config, serde::Deserialize};
+use clap::{Args, Parser};
 
 #[derive(Config, Args)]
 pub struct ProcessConfig {
@@ -44,7 +44,7 @@ pub struct ProcessConfig {
     pub export_name: String,
 }
 
-#[derive(Config, Args)]
+#[derive(Parser, Clone, Deserialize)]
 pub struct ProcessArgs {
     #[clap(flatten)]
     pub train_config: TrainConfig,
@@ -60,13 +60,7 @@ pub struct ProcessArgs {
 
 impl Default for ProcessArgs {
     fn default() -> Self {
-        Self {
-            train_config: TrainConfig::new(),
-            model_config: ModelConfig::new(),
-            load_config: LoadDataseConfig::new(),
-            process_config: ProcessConfig::new(),
-            rerun_config: RerunConfig::new(),
-        }
+        Self::parse_from([""])
     }
 }
 

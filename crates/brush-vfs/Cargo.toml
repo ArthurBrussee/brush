@@ -10,6 +10,7 @@ rrfd.path = "../rrfd"
 
 thiserror.workspace = true
 zip.workspace = true
+serde.workspace = true
 
 tokio-stream.workspace = true
 path-clean = "1.0.1"

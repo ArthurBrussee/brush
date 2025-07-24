@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 indicatif.workspace = true
 clap.workspace = true
+clap-serde-derive.workspace = true
+serde.workspace = true
 brush-process.path = "../brush-process"
 brush-vfs.path = "../brush-vfs"
 
