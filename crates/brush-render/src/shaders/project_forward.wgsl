@@ -41,8 +41,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     // these gaussians just die off while optimizing. For the viewer, the importer
     // atm always normalizes the quaternions.
     // Phrase as positive to bail on NaN.
-    valid &= length(quat) > 1e-32;
-    quat = normalize(quat);
+    let quat_norm_sqr = dot(quat, quat);
+    valid &= quat_norm_sqr > 1e-8;
+    quat *= inverseSqrt(quat_norm_sqr);
 
     let cov3d = helpers::calc_cov3d(scale, quat);
     let cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
