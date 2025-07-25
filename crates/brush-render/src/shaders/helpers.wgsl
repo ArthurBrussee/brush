@@ -141,21 +141,18 @@ fn calc_cov3d(scale: vec3f, quat: vec4f) -> mat3x3f {
 }
 
 fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f) -> mat3x2f {
-    let tan_fov = 0.5 * vec2f(img_size.xy) / focal;
-
-    let lims_pos = (vec2f(img_size.xy) - pixel_center) / focal + 0.3f * tan_fov;
-    let lims_neg = pixel_center / focal + 0.3f * tan_fov;
-
+    let lims_pos = (1.15f * vec2f(img_size.xy) - pixel_center) / focal;
+    let lims_neg = (-0.15f * vec2f(img_size.xy) - pixel_center) / focal;
     let rz = 1.0 / mean_c.z;
-    let rz2 = rz * rz;
 
-    // Get ndc coords +- clipped to the frustum.
-    let t = mean_c.z * clamp(mean_c.xy * rz, -lims_neg, lims_pos);
+    // Get normalized image coords +- clipped to the frustum.
+    let uv_clipped = clamp(mean_c.xy * rz, lims_neg, lims_pos);
 
+    let duv_dxy = focal * rz;
     let J = mat3x2f(
-        vec2f(focal.x * rz, 0.0),
-        vec2f(0.0, focal.y * rz),
-        -focal * t * rz2
+        vec2f(duv_dxy.x, 0.0),
+        vec2f(0.0, duv_dxy.y),
+        -duv_dxy * uv_clipped
     );
 
     return J;
