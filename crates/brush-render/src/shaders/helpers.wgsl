@@ -203,14 +203,9 @@ fn calc_vis(pixel_coord: vec2f, conic: vec3f, xy: vec2f) -> f32 {
 }
 
 fn compute_bbox_extent(cov2d: mat2x2f, power_threshold: f32) -> vec2f {
-    let extent = min(3.33f, sqrt(2.0f * power_threshold));
-    let det = determinant(cov2d);
-    let b = 0.5f * (cov2d[0][0] + cov2d[1][1]);
-    let v1 = b + sqrt(max(0.01f, b * b - det));
-    let radius = extent * sqrt(v1);
     return vec2f(
-        min(extent * sqrt(cov2d[0][0]), radius),
-        min(extent * sqrt(cov2d[1][1]), radius),
+        sqrt(2.0f * power_threshold * cov2d[0][0]),
+        sqrt(2.0f * power_threshold * cov2d[1][1]),
     );
 }
 
