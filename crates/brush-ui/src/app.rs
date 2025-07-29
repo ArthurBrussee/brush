@@ -40,8 +40,13 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
 
     /// What are the rules for simplifying the tree?
     fn simplification_options(&self) -> SimplificationOptions {
+        let all_panes_must_have_tabs = match self.process.ui_mode() {
+            UiMode::Default => true,
+            UiMode::FullScreenSplat | UiMode::EmbeddedViewer => false,
+        };
+
         SimplificationOptions {
-            all_panes_must_have_tabs: self.process.ui_mode() == UiMode::Default,
+            all_panes_must_have_tabs,
             ..Default::default()
         }
     }
@@ -49,10 +54,10 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
     /// Width of the gap between tiles in a horizontal or vertical layout,
     /// and between rows/columns in a grid layout.
     fn gap_width(&self, _style: &egui::Style) -> f32 {
-        if self.process.ui_mode() == UiMode::FullScreenSplat {
-            0.0
-        } else {
-            0.5
+        match self.process.ui_mode() {
+            UiMode::Default => 0.5,
+            UiMode::FullScreenSplat => 0.0,
+            UiMode::EmbeddedViewer => 0.0,
         }
     }
 }
@@ -182,6 +187,8 @@ impl eframe::App for App {
             let new_mode = match current_mode {
                 UiMode::Default => UiMode::FullScreenSplat,
                 UiMode::FullScreenSplat => UiMode::Default,
+                // Don't allow exiting this mode.
+                UiMode::EmbeddedViewer => UiMode::EmbeddedViewer,
             };
             self.tree_ctx.process.set_ui_mode(new_mode);
         }

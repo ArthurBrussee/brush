@@ -20,9 +20,13 @@ use wgpu::{Adapter, Features};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[wasm_bindgen]
 pub enum UiMode {
+    // Default UI with data loading, stats view etc.
     #[default]
     Default,
+    // Show the splat fullscreen, but allow toggling, and control panels.
     FullScreenSplat,
+    // Render as an embedded viewer which does nothing except render the splat.
+    EmbeddedViewer,
 }
 
 pub fn create_egui_options() -> WgpuConfiguration {

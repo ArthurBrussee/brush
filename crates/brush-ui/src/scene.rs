@@ -77,10 +77,10 @@ impl ScenePanel {
         ui: &mut egui::Ui,
         process: &UiProcess,
         splats: Option<Splats<MainBackend>>,
+        interactive: bool,
     ) -> egui::Rect {
         let mut size = ui.available_size();
         let view = process.selected_view();
-
         if let Some(view) = view {
             let aspect_ratio = view.image.aspect_ratio();
             if size.x / size.y > aspect_ratio {
@@ -96,7 +96,9 @@ impl ScenePanel {
             egui::Sense::drag(),
         );
 
-        process.tick_controls(&response, ui);
+        if interactive {
+            process.tick_controls(&response, ui);
+        }
 
         // Get camera after modifying the controls.
         let mut camera = process.current_camera();
@@ -479,7 +481,9 @@ Note: In browser training can be slower. For bigger training runs consider using
                 .floor() as usize;
 
             let splats = self.view_splats.get(frame).cloned();
-            let rect = self.draw_splats(ui, process, splats.clone());
+            let interactive =
+                matches!(process.ui_mode(), UiMode::Default | UiMode::FullScreenSplat);
+            let rect = self.draw_splats(ui, process, splats.clone(), interactive);
 
             // Floating play/pause button if needed.
             if self.view_splats.len() > 1 && self.view_splats.len() as u32 == self.frame_count {
@@ -515,7 +519,9 @@ Note: In browser training can be slower. For bigger training runs consider using
                     });
             }
 
-            self.controls_box(ui, process, splats, rect);
+            if interactive {
+                self.controls_box(ui, process, splats, rect);
+            }
         }
     }
 
