@@ -356,6 +356,20 @@ fn export_current_splat<B: Backend>(splat: Splats<B>) {
     });
 }
 
+impl ScenePanel {
+    fn reset(&mut self) {
+        self.last_draw = None;
+        self.last_state = None;
+        self.view_splats = vec![];
+        self.frame_count = 0;
+        self.frame = 0.0;
+        self.live_update = true;
+        self.paused = false;
+        self.err = None;
+        self.backbuffer.reset();
+    }
+}
+
 impl AppPane for ScenePanel {
     fn title(&self) -> String {
         "Scene".to_owned()
@@ -363,22 +377,29 @@ impl AppPane for ScenePanel {
 
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
-            ProcessMessage::NewSource => {
-                self.last_draw = None;
-                self.view_splats = vec![];
-                self.frame_count = 0;
-                self.frame = 0.0;
-                self.live_update = true;
-                self.paused = false;
-                self.err = None;
-                self.backbuffer.reset();
-                self.last_state = None;
+            // ProcessMessage::NewSource => {
+            //     self.last_draw = None;
+            //     self.view_splats = vec![];
+            //     self.frame_count = 0;
+            //     self.frame = 0.0;
+            //     self.live_update = true;
+            //     self.paused = false;
+            //     self.err = None;
+            //     self.backbuffer.reset();
+            //     self.last_state = None;
+            // }
+            ProcessMessage::StartLoading { training } => {
+                // If training reset. Otherwise, we're viewing the "next" splat, keep things around until loading is done.
+                if *training {
+                    self.reset();
+                }
             }
             ProcessMessage::ViewSplats {
                 up_axis,
                 splats,
                 frame,
                 total_frames,
+                progress,
             } => {
                 // Training does also handle this but in the dataset.
                 if !process.is_training() {

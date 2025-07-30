@@ -213,6 +213,7 @@ async fn load_dataset_inner(
                             total_splats: init_splat.num_splats(),
                             frame_count: 1,
                             current_frame: 0,
+                            progress: 1.0,
                         },
                         splats: init_splat,
                     })

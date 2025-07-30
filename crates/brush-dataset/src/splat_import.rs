@@ -26,6 +26,7 @@ pub struct ParseMetadata {
     pub total_splats: u32,
     pub frame_count: u32,
     pub current_frame: u32,
+    pub progress: f32,
 }
 
 pub struct SplatMessage {
@@ -276,6 +277,7 @@ fn parse_ply<T: AsyncBufRead + Unpin + 'static>(
                             up_axis,
                             frame_count: 0,
                             current_frame: 0,
+                            progress: i as f32 / vertex.count as f32,
                         },
                         splats,
                     })
@@ -395,6 +397,8 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
 
         let mut valid = vec![true; vertex.count];
 
+        let sh_vals = header.elements.get(2);
+
         for i in 0..vertex.count {
             // Occasionally yield.
             yielder.try_yield().await;
@@ -433,6 +437,10 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
 
             // Occasionally send some updated splats.
             if (i - last_update) >= update_every || i == vertex.count - 1 {
+                // Leave 20% of progress for loading the SH's, just an estimate.
+                let max_time = if sh_vals.is_some() { 0.8 } else { 1.0 };
+                let progress = i as f32 / vertex.count as f32 * max_time;
+
                 emitter
                     .emit(SplatMessage {
                         meta: ParseMetadata {
@@ -440,6 +448,7 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
                             up_axis,
                             frame_count: 0,
                             current_frame: 0,
+                            progress,
                         },
                         splats: Splats::from_raw(
                             &means,
@@ -455,7 +464,7 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
             }
         }
 
-        if let Some(sh_vals) = header.elements.get(2) {
+        if let Some(sh_vals) = sh_vals {
             // Bit of a hack - use the unquantized parser as that handles SH values. Really we don't need
             // the entire splat parser though.
             let parser = Parser::<ParsedGaussian<false>>::new();
@@ -496,6 +505,7 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
                         up_axis,
                         frame_count: 0,
                         current_frame: 0,
+                        progress: 1.0,
                     },
                     splats: Splats::from_raw(
                         &means,
@@ -584,6 +594,7 @@ fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
                                     up_axis,
                                     frame_count,
                                     current_frame: frame,
+                                    progress: i as f32 / element.count as f32,
                                 },
                                 splats: Splats::from_raw(
                                     &means,
@@ -637,6 +648,7 @@ fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
                             up_axis,
                             frame_count,
                             current_frame: frame,
+                            progress: 1.0,
                         },
                         splats,
                     })
@@ -719,6 +731,7 @@ fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
                             up_axis,
                             frame_count,
                             current_frame: frame,
+                            progress: 1.0,
                         },
                         splats: Splats::from_tensor_data(
                             means,

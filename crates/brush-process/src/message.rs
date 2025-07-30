@@ -19,6 +19,7 @@ pub enum ProcessMessage {
         splats: Box<Splats<MainBackend>>,
         frame: u32,
         total_frames: u32,
+        progress: f32,
     },
     /// Loaded a bunch of viewpoints to train on.
     Dataset {

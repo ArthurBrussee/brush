@@ -55,6 +55,7 @@ pub(crate) async fn view_stream(
                     splats: Box::new(message.splats),
                     frame,
                     total_frames,
+                    progress: message.meta.progress,
                 })
                 .await;
         }

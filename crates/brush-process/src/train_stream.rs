@@ -74,6 +74,7 @@ pub(crate) async fn train_stream(
                 splats: Box::new(message.splats.clone()),
                 frame: 0,
                 total_frames: 0,
+                progress: message.meta.progress,
             })
             .await;
         initial_splats = Some(message.splats);
