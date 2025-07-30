@@ -74,12 +74,7 @@ impl AppPane for StatsPanel {
                 self.cur_sh_degree = 0;
                 self.last_eval = None;
             }
-            ProcessMessage::ViewSplats {
-                up_axis: _,
-                splats,
-                frame,
-                total_frames: _,
-            } => {
+            ProcessMessage::ViewSplats { splats, frame, .. } => {
                 self.num_splats = splats.num_splats();
                 self.frames = *frame;
                 self.cur_sh_degree = splats.sh_degree();

@@ -40,6 +40,8 @@ pub struct ScenePanel {
     pub(crate) last_draw: Option<Instant>,
 
     view_splats: Vec<Splats<MainBackend>>,
+
+    fully_loaded: bool,
     frame_count: u32,
     frame: f32,
 
@@ -65,10 +67,10 @@ impl ScenePanel {
             view_splats: vec![],
             live_update: true,
             paused: false,
-
             last_state: None,
             frame_count: 0,
             frame: 0.0,
+            fully_loaded: false,
         }
     }
 
@@ -366,7 +368,6 @@ impl ScenePanel {
         self.live_update = true;
         self.paused = false;
         self.err = None;
-        self.backbuffer.reset();
     }
 }
 
@@ -377,19 +378,8 @@ impl AppPane for ScenePanel {
 
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
-            // ProcessMessage::NewSource => {
-            //     self.last_draw = None;
-            //     self.view_splats = vec![];
-            //     self.frame_count = 0;
-            //     self.frame = 0.0;
-            //     self.live_update = true;
-            //     self.paused = false;
-            //     self.err = None;
-            //     self.backbuffer.reset();
-            //     self.last_state = None;
-            // }
             ProcessMessage::StartLoading { training } => {
-                // If training reset. Otherwise, we're viewing the "next" splat, keep things around until loading is done.
+                // If training reset. Otherwise, keep existing splats until new ones are fully loaded.
                 if *training {
                     self.reset();
                 }
@@ -401,16 +391,34 @@ impl AppPane for ScenePanel {
                 total_frames,
                 progress,
             } => {
-                // Training does also handle this but in the dataset.
                 if !process.is_training() {
                     if let Some(up_axis) = up_axis {
                         process.set_model_up(*up_axis);
                     }
                 }
 
-                self.view_splats.truncate(*frame as usize);
-                self.view_splats.push(*splats.clone());
                 self.frame_count = *total_frames;
+                let done_loading = *progress >= 1.0;
+
+                // For animated splats (total_frames > 1), always show streaming
+                if *total_frames > 1 {
+                    // Clear existing splats for animations to show streaming
+                    if *frame == 0 {
+                        self.view_splats.clear();
+                    }
+                    self.view_splats
+                        .resize(*frame as usize + 1, splats.as_ref().clone());
+                } else {
+                    // Static splat - only replace when fully loaded (progress = 1.0) or if we haven't fully loaded a splat
+                    // yet.
+                    if done_loading || !self.fully_loaded {
+                        self.view_splats = vec![splats.as_ref().clone()];
+                    }
+                }
+
+                if done_loading {
+                    self.fully_loaded = true;
+                }
 
                 // Mark redraw as dirty if we're live updating.
                 if self.live_update {
@@ -493,6 +501,7 @@ Note: In browser training can be slower. For bigger training runs consider using
             if !self.paused {
                 self.frame += delta_time;
             }
+
             if self.view_splats.len() as u32 != self.frame_count {
                 let max_t = (self.view_splats.len() - 1) as f32 / FPS;
                 self.frame = self.frame.min(max_t);
@@ -502,6 +511,7 @@ Note: In browser training can be slower. For bigger training runs consider using
                 .floor() as usize;
 
             let splats = self.view_splats.get(frame).cloned();
+
             let interactive =
                 matches!(process.ui_mode(), UiMode::Default | UiMode::FullScreenSplat);
             let rect = self.draw_splats(ui, process, splats.clone(), interactive);

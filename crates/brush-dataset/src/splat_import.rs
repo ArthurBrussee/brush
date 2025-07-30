@@ -185,6 +185,10 @@ pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
     })
 }
 
+fn progress(index: usize, len: usize) -> f32 {
+    ((index + 1) as f32) / len as f32
+}
+
 fn parse_ply<T: AsyncBufRead + Unpin + 'static>(
     mut reader: T,
     subsample_points: Option<u32>,
@@ -277,7 +281,7 @@ fn parse_ply<T: AsyncBufRead + Unpin + 'static>(
                             up_axis,
                             frame_count: 0,
                             current_frame: 0,
-                            progress: i as f32 / vertex.count as f32,
+                            progress: progress(i, vertex.count),
                         },
                         splats,
                     })
@@ -439,7 +443,7 @@ fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
             if (i - last_update) >= update_every || i == vertex.count - 1 {
                 // Leave 20% of progress for loading the SH's, just an estimate.
                 let max_time = if sh_vals.is_some() { 0.8 } else { 1.0 };
-                let progress = i as f32 / vertex.count as f32 * max_time;
+                let progress = progress(i, vertex.count) * max_time;
 
                 emitter
                     .emit(SplatMessage {
@@ -594,7 +598,7 @@ fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
                                     up_axis,
                                     frame_count,
                                     current_frame: frame,
-                                    progress: i as f32 / element.count as f32,
+                                    progress: progress(i, element.count),
                                 },
                                 splats: Splats::from_raw(
                                     &means,
