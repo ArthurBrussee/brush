@@ -22,7 +22,6 @@ glam.workspace = true
 tracing.workspace = true
 web-time.workspace = true
 log.workspace = true
-ply-rs.workspace = true
 rand.workspace = true
 
 tokio_with_wasm.workspace = true

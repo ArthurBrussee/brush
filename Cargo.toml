@@ -65,8 +65,6 @@ naga_oil = { version = "0.18", default-features = false }
 # Backends are chosen per platform.
 wgpu = { version = "25", default-features = false, features = ["naga-ir"] }
 
-# The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
-ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 
 serde-ply.path = "../serde_ply"
 

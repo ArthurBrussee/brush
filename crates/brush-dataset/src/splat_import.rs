@@ -4,11 +4,11 @@ use brush_render::{MainBackend, gaussian_splats::inverse_sigmoid, sh::rgb_to_sh}
 use brush_vfs::{DynStream, SendNotWasm};
 use burn::backend::wgpu::WgpuDevice;
 use burn::tensor::{Tensor, TensorData};
-use glam::{Quat, Vec3, Vec4, Vec4Swizzles};
+use glam::{Vec3, Vec4, Vec4Swizzles};
 use serde::Deserialize;
 use serde::de::DeserializeSeed;
-use serde_ply::RowVisitor;
-use thiserror::Error;
+use serde::ser::Error;
+use serde_ply::{PlyError, RowVisitor};
 use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncBufRead, AsyncRead, BufReader};
 
@@ -46,24 +46,11 @@ fn interleave_coeffs(sh_dc: Vec3, sh_rest: &[f32], result: &mut Vec<f32>) {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum SplatImportError {
-    #[error("IO error while importing ply file.")]
-    Io(#[from] std::io::Error),
-
-    #[error("Invalid ply format")]
-    InvalidFormat,
-
-    #[error("Failed to parse ply file.")]
-    ParseError(#[from] serde_ply::PlyError),
-}
-
-async fn read_up_to<T: AsyncRead + Unpin>(
+async fn read_chunk<T: AsyncRead + Unpin>(
     reader: &mut T,
     buf: &mut Vec<u8>,
-    read_amount: usize,
-) -> tokio::io::Result<usize> {
-    buf.reserve(read_amount);
+) -> tokio::io::Result<()> {
+    buf.reserve(8 * 1024 * 1024);
     let mut total_read = buf.len();
     while total_read < buf.capacity() {
         let bytes_read = reader.read_buf(buf).await?;
@@ -72,21 +59,28 @@ async fn read_up_to<T: AsyncRead + Unpin>(
         }
         total_read += bytes_read;
     }
-    Ok(total_read)
+    if total_read == 0 {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "Unexpected EOF",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
     reader: T,
     subsample_points: Option<u32>,
     device: WgpuDevice,
-) -> impl DynStream<Result<SplatMessage, SplatImportError>> {
+) -> impl DynStream<Result<SplatMessage, PlyError>> {
     try_fn_stream(|emitter| async move {
         // set up a reader
         let mut reader = BufReader::with_capacity(1024 * 32, reader);
 
         // TODO: Just make chunk ply take in data and try to get a header? Simpler maybe.
         let mut file = serde_ply::ChunkPlyFile::new();
-        let _ = read_up_to(&mut reader, file.buffer_mut(), 1024 * 1024).await?;
+        read_chunk(&mut reader, file.buffer_mut()).await?;
 
         let header = file.header().expect("Must have header");
         // Parse some metadata.
@@ -121,27 +115,20 @@ pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
         } else if has_vertex {
             PlyFormat::Ply
         } else {
-            return Err(SplatImportError::InvalidFormat);
+            return Err(PlyError::custom("Unknown format"));
         };
+
+        let subsample = subsample_points.unwrap_or(1) as usize;
 
         match ply_type {
             PlyFormat::Ply => {
-                parse_ply(
-                    reader,
-                    subsample_points,
-                    device,
-                    &mut file,
-                    up_axis,
-                    &emitter,
-                )
-                .await?;
+                parse_ply(reader, subsample, device, &mut file, up_axis, &emitter).await?;
             }
             PlyFormat::Brush4DCompressed => {
-                parse_delta_ply(reader, subsample_points, device, file, up_axis, &emitter).await?;
+                parse_delta_ply(reader, subsample, device, file, up_axis, &emitter).await?;
             }
             PlyFormat::SuperSplatCompressed => {
-                parse_compressed_ply(reader, subsample_points, device, file, up_axis, &emitter)
-                    .await?;
+                parse_compressed_ply(reader, subsample, device, file, up_axis, &emitter).await?;
             }
         }
 
@@ -155,28 +142,29 @@ fn progress(index: usize, len: usize) -> f32 {
 
 async fn parse_ply<T: AsyncBufRead + Unpin>(
     mut reader: T,
-    subsample_points: Option<u32>,
+    subsample: usize,
     device: WgpuDevice,
     file: &mut serde_ply::ChunkPlyFile,
     up_axis: Option<Vec3>,
-    emitter: &TryStreamEmitter<SplatMessage, SplatImportError>,
-) -> Result<Splats<MainBackend>, SplatImportError> {
+    emitter: &TryStreamEmitter<SplatMessage, PlyError>,
+) -> Result<Splats<MainBackend>, PlyError> {
     let header = file.header().expect("Must have header");
     let vertex = header
         .get_element("vertex")
-        .ok_or(SplatImportError::InvalidFormat)?;
+        .ok_or(PlyError::custom("Unknown format"))?;
 
-    let total_splats = vertex.count;
-    let mut means = Vec::with_capacity(total_splats);
+    let max_splats = vertex.count / subsample;
+
+    let mut means = Vec::with_capacity(max_splats * 3);
     let mut log_scales = vertex
         .has_property("scale_0")
-        .then(|| Vec::with_capacity(total_splats));
+        .then(|| Vec::with_capacity(max_splats * 3));
     let mut rotations = vertex
         .has_property("rot_0")
-        .then(|| Vec::with_capacity(total_splats));
+        .then(|| Vec::with_capacity(max_splats * 4));
     let mut opacity = vertex
         .has_property("opacity")
-        .then(|| Vec::with_capacity(total_splats));
+        .then(|| Vec::with_capacity(max_splats));
     let sh_count = vertex
         .properties
         .iter()
@@ -186,38 +174,22 @@ async fn parse_ply<T: AsyncBufRead + Unpin>(
                 || matches!(x.name.as_str(), "r" | "g" | "b" | "red" | "green" | "blue")
         })
         .count();
-    let mut coeffs = (sh_count > 0).then(|| Vec::with_capacity(total_splats * sh_count));
+    let mut coeffs = (sh_count > 0).then(|| Vec::with_capacity(max_splats * sh_count));
 
-    let update_every = total_splats.div_ceil(5);
-    let mut splat_count: usize = 0;
+    let update_every = max_splats.div_ceil(5);
+    let mut row_index: usize = 0;
     let mut last_update = 0;
 
     loop {
-        read_up_to(&mut reader, file.buffer_mut(), 16 * 1024 * 1024).await?;
-
-        let Some(element) = file.current_element() else {
-            return Err(SplatImportError::InvalidFormat);
-        };
-
-        if element.name != "vertex" {
-            return Err(SplatImportError::InvalidFormat);
-        }
+        read_chunk(&mut reader, file.buffer_mut()).await?;
 
         RowVisitor::new(|mut gauss: PlyGaussian| {
-            if !gauss.is_finite() {
+            row_index += 1;
+            if row_index % subsample != 0 {
                 return;
             }
 
-            splat_count += 1;
-
-            // Don't add subsampled gaussians.
-            if let Some(subsample) = subsample_points
-                && splat_count % (subsample as usize) == 0
-            {
-                return;
-            }
-
-            means.push(Vec3::new(gauss.x, gauss.y, gauss.z));
+            means.extend([gauss.x, gauss.y, gauss.z]);
 
             // Prefer rgb if specified.
             if let Some(r) = gauss.red
@@ -239,16 +211,10 @@ async fn parse_ply<T: AsyncBufRead + Unpin>(
             }
 
             if let Some(scales) = &mut log_scales {
-                scales.push(Vec3::new(gauss.scale_0, gauss.scale_1, gauss.scale_2));
+                scales.extend([gauss.scale_0, gauss.scale_1, gauss.scale_2]);
             }
             if let Some(rotation) = &mut rotations {
-                // Ply files are in scalar order.
-                rotation.push(Quat::from_xyzw(
-                    gauss.rot_1,
-                    gauss.rot_2,
-                    gauss.rot_3,
-                    gauss.rot_0,
-                ));
+                rotation.extend([gauss.rot_0, gauss.rot_1, gauss.rot_2, gauss.rot_3]);
             }
             if let Some(opacity) = &mut opacity {
                 opacity.push(gauss.opacity);
@@ -256,32 +222,32 @@ async fn parse_ply<T: AsyncBufRead + Unpin>(
         })
         .deserialize(&mut *file)?;
 
-        if splat_count - last_update > update_every || splat_count == total_splats {
+        if row_index - last_update > update_every || row_index == max_splats {
             let splats = Splats::from_raw(
-                &means,
-                rotations.as_deref(),
-                log_scales.as_deref(),
-                coeffs.as_deref(),
-                opacity.as_deref(),
+                means.clone(),
+                rotations.clone(),
+                log_scales.clone(),
+                coeffs.clone(),
+                opacity.clone(),
                 &device,
             );
 
             emitter
                 .emit(SplatMessage {
                     meta: ParseMetadata {
-                        total_splats: total_splats as u32,
+                        total_splats: max_splats as u32,
                         up_axis,
                         frame_count: 0,
                         current_frame: 0,
-                        progress: progress(splat_count, total_splats),
+                        progress: progress(row_index, max_splats),
                     },
                     splats: splats.clone(),
                 })
                 .await;
 
-            last_update = splat_count;
+            last_update = row_index;
 
-            if splat_count == total_splats {
+            if row_index == max_splats {
                 return Ok(splats);
             }
         }
@@ -290,15 +256,15 @@ async fn parse_ply<T: AsyncBufRead + Unpin>(
 
 async fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
     mut reader: T,
-    subsample_points: Option<u32>,
+    subsample: usize,
     device: WgpuDevice,
     mut file: serde_ply::ChunkPlyFile,
     up_axis: Option<Vec3>,
-    emitter: &TryStreamEmitter<SplatMessage, SplatImportError>,
-) -> Result<(), SplatImportError> {
+    emitter: &TryStreamEmitter<SplatMessage, PlyError>,
+) -> Result<(), PlyError> {
     let splats = parse_ply(
         &mut reader,
-        subsample_points,
+        subsample,
         device.clone(),
         &mut file,
         up_axis,
@@ -317,40 +283,36 @@ async fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
 
     let mut frame = 0;
 
-    fn dequant_or_f32<'de, D>(deserializer: D) -> Result<f32, D::Error>
+    fn de_quant<'de, D>(deserializer: D) -> Result<f32, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        struct DequantOrF32Visitor;
-        impl<'de> serde::de::Visitor<'de> for DequantOrF32Visitor {
+        struct Dequant;
+        impl<'de> serde::de::Visitor<'de> for Dequant {
             type Value = f32;
-
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a float or a quantized value")
+                formatter.write_str("a quantized value or a float")
             }
-
             fn visit_f32<E>(self, value: f32) -> Result<f32, E> {
                 Ok(value)
             }
-
             fn visit_u8<E>(self, value: u8) -> Result<f32, E> {
                 Ok(value as f32 / (u8::MAX - 1) as f32)
             }
-
             fn visit_u16<E>(self, value: u16) -> Result<f32, E> {
                 Ok(value as f32 / (u16::MAX - 1) as f32)
             }
         }
-        deserializer.deserialize_any(DequantOrF32Visitor)
+        deserializer.deserialize_any(Dequant)
     }
 
     #[derive(Deserialize, Default)]
     struct Frame {
-        #[serde(deserialize_with = "dequant_or_f32")]
+        #[serde(deserialize_with = "de_quant")]
         x: f32,
-        #[serde(deserialize_with = "dequant_or_f32")]
+        #[serde(deserialize_with = "de_quant")]
         y: f32,
-        #[serde(deserialize_with = "dequant_or_f32")]
+        #[serde(deserialize_with = "de_quant")]
         z: f32,
 
         scale_0: f32,
@@ -363,23 +325,19 @@ async fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
         rot_3: f32,
     }
 
+    // Leave unscaled if there are no meta_delta_ frames present.
     let mut min_mean = Vec3::ZERO;
-    let mut max_mean = Vec3::ZERO;
+    let mut max_mean = Vec3::ONE;
 
     let mut min_scale = Vec3::ZERO;
-    let mut max_scale = Vec3::ZERO;
+    let mut max_scale = Vec3::ONE;
 
     let mut min_rot = Vec4::ZERO;
-    let mut max_rot = Vec4::ZERO;
+    let mut max_rot = Vec4::ONE;
+    let mut row_count = 0;
 
-    loop {
-        if read_up_to(&mut reader, file.buffer_mut(), 16 * 1024 * 1024).await? == 0 {
-            break;
-        }
-
-        let Some(element) = file.current_element() else {
-            break;
-        };
+    while let Some(element) = file.current_element().cloned() {
+        read_chunk(&mut reader, file.buffer_mut()).await?;
 
         if element.name.starts_with("meta_delta_min_") {
             RowVisitor::new(|meta: Frame| {
@@ -405,6 +363,11 @@ async fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
             // actual values afterwards.
             // Let's only animate transforms for now.
             RowVisitor::new(|meta: Frame| {
+                row_count += 1;
+                if row_count % subsample != 0 {
+                    return;
+                }
+
                 let mean = glam::vec3(meta.x, meta.y, meta.z) * (max_mean - min_mean) + min_mean;
                 let scale = glam::vec3(meta.scale_0, meta.scale_1, meta.scale_2)
                     * (max_scale - min_scale)
@@ -458,12 +421,12 @@ async fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
 
 async fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
     mut reader: T,
-    subsample_points: Option<u32>,
+    subsample: usize,
     device: WgpuDevice,
     mut file: serde_ply::ChunkPlyFile,
     up_axis: Option<Vec3>,
-    emitter: &TryStreamEmitter<SplatMessage, SplatImportError>,
-) -> Result<(), SplatImportError> {
+    emitter: &TryStreamEmitter<SplatMessage, PlyError>,
+) -> Result<(), PlyError> {
     #[derive(Default, Deserialize)]
     struct QuantMeta {
         min_x: f32,
@@ -508,18 +471,10 @@ async fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
 
     let mut quant_metas = vec![];
 
-    loop {
-        if read_up_to(&mut reader, file.buffer_mut(), 16 * 1024 * 1024).await? == 0 {
-            return Err(SplatImportError::InvalidFormat);
-        }
-        let Some(element) = file.current_element() else {
-            return Err(SplatImportError::InvalidFormat);
-        };
-        // Deserialize until we're done with the chunk element.
-        if element.name != "chunk" {
-            break;
-        }
-
+    while let Some(element) = file.current_element()
+        && element.name == "chunk"
+    {
+        read_chunk(&mut reader, file.buffer_mut()).await?;
         RowVisitor::new(|meta: QuantMeta| {
             quant_metas.push(meta);
         })
@@ -528,23 +483,23 @@ async fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
 
     let vertex = file
         .current_element()
-        .ok_or(SplatImportError::InvalidFormat)?;
+        .ok_or(PlyError::custom("Unknown format"))?;
     if vertex.name != "vertex" {
-        return Err(SplatImportError::InvalidFormat);
+        return Err(PlyError::custom("Unknown format"));
     }
-    let total_splats = vertex.count;
+    let max_splats = vertex.count / subsample;
 
-    let mut means = Vec::with_capacity(total_splats);
+    let mut means = Vec::with_capacity(max_splats * 3);
     // Atm, unlike normal plys, these values aren't optional.
-    let mut log_scales = Vec::with_capacity(total_splats);
-    let mut rotations = Vec::with_capacity(total_splats);
-    let mut sh_coeffs = Vec::with_capacity(total_splats);
-    let mut opacity = Vec::with_capacity(total_splats);
+    let mut log_scales = Vec::with_capacity(max_splats * 3);
+    let mut rotations = Vec::with_capacity(max_splats * 4);
+    let mut sh_coeffs = Vec::with_capacity(max_splats * 3);
+    let mut opacity = Vec::with_capacity(max_splats);
 
-    let update_every = total_splats.div_ceil(5);
+    let update_every = max_splats.div_ceil(5);
     let mut last_update = 0;
 
-    let mut splat_count = 0;
+    let mut row_count = 0;
 
     let sh_vals = file
         .header()
@@ -553,89 +508,79 @@ async fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
         .get(2)
         .cloned();
 
-    loop {
-        if read_up_to(&mut reader, file.buffer_mut(), 16 * 1024 * 1024).await? == 0 {
-            return Err(SplatImportError::InvalidFormat);
-        }
-        let Some(element) = file.current_element() else {
-            return Err(SplatImportError::InvalidFormat);
-        };
-        // Deserialize until we're done with the chunk element.
-        if element.name != "vertex" {
-            break;
-        }
+    while let Some(element) = file.current_element()
+        && element.name == "vertex"
+    {
+        read_chunk(&mut reader, file.buffer_mut()).await?;
 
         RowVisitor::new(|splat: QuantSplat| {
-            // Doing this after first reading and parsing the points is quite wasteful, but
-            // we do need to advance the reader.
-            if let Some(subsample) = subsample_points
-                && splat_count % subsample as usize != 0
-            {
+            let quant_data = &quant_metas[row_count / 256];
+            row_count += 1;
+            if row_count % subsample != 0 {
                 return;
             }
-
-            let quant_data = &quant_metas[splat_count / 256];
-
-            means.push(quant_data.mean(splat.mean));
-            log_scales.push(quant_data.scale(splat.log_scale));
-            rotations.push(splat.rotation);
-
+            means.extend(quant_data.mean(splat.mean).to_array());
+            log_scales.extend(quant_data.scale(splat.log_scale).to_array());
+            // Nb: Scalar order.
+            rotations.extend([
+                splat.rotation.w,
+                splat.rotation.x,
+                splat.rotation.y,
+                splat.rotation.z,
+            ]);
             // Compressed ply specifies things in post-activated values. Convert to pre-activated values.
             opacity.push(inverse_sigmoid(splat.rgba.w));
-
             // These come in as RGB colors. Convert to base SH coeffecients.
             let sh_dc = rgb_to_sh(quant_data.color(splat.rgba.xyz()));
             sh_coeffs.extend([sh_dc.x, sh_dc.y, sh_dc.z]);
-
-            splat_count += 1;
         })
         .deserialize(&mut file)?;
 
         // Occasionally send some updated splats.
-        if (splat_count - last_update) >= update_every || splat_count == total_splats {
+        if (row_count - last_update) >= update_every || row_count == max_splats {
             // Leave 20% of progress for loading the SH's, just an estimate.
             let max_time = if sh_vals.is_some() { 0.8 } else { 1.0 };
-            let progress = progress(splat_count, total_splats) * max_time;
+            let progress = progress(row_count, max_splats) * max_time;
             emitter
                 .emit(SplatMessage {
                     meta: ParseMetadata {
-                        total_splats: total_splats as u32,
+                        total_splats: max_splats as u32,
                         up_axis,
                         frame_count: 0,
                         current_frame: 0,
                         progress,
                     },
                     splats: Splats::from_raw(
-                        &means,
-                        Some(&rotations),
-                        Some(&log_scales),
-                        Some(&sh_coeffs),
-                        Some(&opacity),
+                        means.clone(),
+                        Some(rotations.clone()),
+                        Some(log_scales.clone()),
+                        Some(sh_coeffs.clone()),
+                        Some(opacity.clone()),
                         &device,
                     ),
                 })
                 .await;
-            last_update = splat_count;
+            last_update = row_count;
         }
     }
 
     if let Some(sh_vals) = sh_vals {
-        if sh_vals.name != "sh" {
-            return Err(SplatImportError::InvalidFormat);
-        }
-
         let sh_count = sh_vals.properties.len();
         let mut total_coeffs = Vec::with_capacity(sh_vals.count * (3 + sh_count));
         let mut splat_index = 0;
 
-        loop {
-            if read_up_to(&mut reader, file.buffer_mut(), 16 * 1024 * 1024).await? == 0
-                || file.current_element().is_none()
-            {
-                break;
-            }
+        let mut row_count = 0;
+
+        while let Some(element) = file.current_element()
+            && element.name == "sh"
+        {
+            read_chunk(&mut reader, file.buffer_mut()).await?;
 
             RowVisitor::new(|quant_sh: QuantSh| {
+                row_count += 1;
+                if row_count % subsample != 0 {
+                    return;
+                }
                 let dc = glam::vec3(
                     sh_coeffs[splat_index * 3],
                     sh_coeffs[splat_index * 3 + 1],
@@ -650,18 +595,18 @@ async fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
         emitter
             .emit(SplatMessage {
                 meta: ParseMetadata {
-                    total_splats: splat_count as u32,
+                    total_splats: means.len() as u32,
                     up_axis,
                     frame_count: 0,
                     current_frame: 0,
                     progress: 1.0,
                 },
                 splats: Splats::from_raw(
-                    &means,
-                    Some(&rotations),
-                    Some(&log_scales),
-                    Some(&total_coeffs),
-                    Some(&opacity),
+                    means,
+                    Some(rotations),
+                    Some(log_scales),
+                    Some(total_coeffs),
+                    Some(opacity),
                     &device,
                 ),
             })

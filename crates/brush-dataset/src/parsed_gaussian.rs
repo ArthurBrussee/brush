@@ -1,29 +1,20 @@
 use crate::quant::{decode_quat, decode_vec_8_8_8_8, decode_vec_11_10_11};
 
 use glam::{Quat, Vec3, Vec4};
-use serde::{Deserialize, Serialize};
 use serde::{self, Deserializer};
+use serde::{Deserialize, Serialize};
 
-fn de_vec_11_10_11<'de, D>(deserializer: D) -> Result<Vec3, D::Error>
-where
-    D: Deserializer<'de>,
-{
+fn de_vec_11_10_11<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec3, D::Error> {
     let value = u32::deserialize(deserializer)?;
     Ok(decode_vec_11_10_11(value))
 }
 
-fn de_packed_quat<'de, D>(deserializer: D) -> Result<Quat, D::Error>
-where
-    D: Deserializer<'de>,
-{
+fn de_packed_quat<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Quat, D::Error> {
     let value = u32::deserialize(deserializer)?;
     Ok(decode_quat(value))
 }
 
-fn de_vec_8_8_8_8<'de, D>(deserializer: D) -> Result<Vec4, D::Error>
-where
-    D: Deserializer<'de>,
-{
+fn de_vec_8_8_8_8<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec4, D::Error> {
     let value = u32::deserialize(deserializer)?;
     let vec = decode_vec_8_8_8_8(value);
     Ok(vec)
@@ -31,13 +22,13 @@ where
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct QuantSplat {
-    #[serde(alias = "packed_position", deserialize_with = "de_vec_11_10_11")]
+    #[serde(rename = "packed_position", deserialize_with = "de_vec_11_10_11")]
     pub(crate) mean: Vec3,
-    #[serde(alias = "packed_scale", deserialize_with = "de_vec_11_10_11")]
+    #[serde(rename = "packed_scale", deserialize_with = "de_vec_11_10_11")]
     pub(crate) log_scale: Vec3,
-    #[serde(alias = "packed_rotation", deserialize_with = "de_packed_quat")]
+    #[serde(rename = "packed_rotation", deserialize_with = "de_packed_quat")]
     pub(crate) rotation: Quat,
-    #[serde(alias = "packed_color", deserialize_with = "de_vec_8_8_8_8")]
+    #[serde(rename = "packed_color", deserialize_with = "de_vec_8_8_8_8")]
     pub(crate) rgba: Vec4,
 }
 
@@ -46,12 +37,10 @@ pub(crate) struct PlyGaussian {
     pub(crate) x: f32,
     pub(crate) y: f32,
     pub(crate) z: f32,
-    // Scale (log).
     pub(crate) scale_0: f32,
     pub(crate) scale_1: f32,
     pub(crate) scale_2: f32,
     pub(crate) opacity: f32,
-    // Rot (w, x, y, z).
     pub(crate) rot_0: f32,
     pub(crate) rot_1: f32,
     pub(crate) rot_2: f32,
@@ -63,7 +52,6 @@ pub(crate) struct PlyGaussian {
     #[serde(default)]
     pub(crate) f_dc_2: f32,
 
-    // Optional r/g/b overrides.
     #[serde(alias = "r")]
     #[serde(skip_serializing)]
     pub(crate) red: Option<f32>,
@@ -74,97 +62,166 @@ pub(crate) struct PlyGaussian {
     #[serde(skip_serializing)]
     pub(crate) blue: Option<f32>,
 
-    // Higher order SH coefficients. Optional.
     #[serde(default)]
-    pub(crate) f_rest_0: f32,
-    #[serde(default)]
-    pub(crate) f_rest_1: f32,
-    #[serde(default)]
-    pub(crate) f_rest_2: f32,
-    #[serde(default)]
-    pub(crate) f_rest_3: f32,
-    #[serde(default)]
-    pub(crate) f_rest_4: f32,
-    #[serde(default)]
-    pub(crate) f_rest_5: f32,
-    #[serde(default)]
-    pub(crate) f_rest_6: f32,
-    #[serde(default)]
-    pub(crate) f_rest_7: f32,
-    #[serde(default)]
-    pub(crate) f_rest_8: f32,
-    #[serde(default)]
-    pub(crate) f_rest_9: f32,
-    #[serde(default)]
-    pub(crate) f_rest_10: f32,
-    #[serde(default)]
-    pub(crate) f_rest_11: f32,
-    #[serde(default)]
-    pub(crate) f_rest_12: f32,
-    #[serde(default)]
-    pub(crate) f_rest_13: f32,
-    #[serde(default)]
-    pub(crate) f_rest_14: f32,
-    #[serde(default)]
-    pub(crate) f_rest_15: f32,
-    #[serde(default)]
-    pub(crate) f_rest_16: f32,
-    #[serde(default)]
-    pub(crate) f_rest_17: f32,
-    #[serde(default)]
-    pub(crate) f_rest_18: f32,
-    #[serde(default)]
-    pub(crate) f_rest_19: f32,
-    #[serde(default)]
-    pub(crate) f_rest_20: f32,
-    #[serde(default)]
-    pub(crate) f_rest_21: f32,
-    #[serde(default)]
-    pub(crate) f_rest_22: f32,
-    #[serde(default)]
-    pub(crate) f_rest_23: f32,
-    #[serde(default)]
-    pub(crate) f_rest_24: f32,
-    #[serde(default)]
-    pub(crate) f_rest_25: f32,
-    #[serde(default)]
-    pub(crate) f_rest_26: f32,
-    #[serde(default)]
-    pub(crate) f_rest_27: f32,
-    #[serde(default)]
-    pub(crate) f_rest_28: f32,
-    #[serde(default)]
-    pub(crate) f_rest_29: f32,
-    #[serde(default)]
-    pub(crate) f_rest_30: f32,
-    #[serde(default)]
-    pub(crate) f_rest_31: f32,
-    #[serde(default)]
-    pub(crate) f_rest_32: f32,
-    #[serde(default)]
-    pub(crate) f_rest_33: f32,
-    #[serde(default)]
-    pub(crate) f_rest_34: f32,
-    #[serde(default)]
-    pub(crate) f_rest_35: f32,
-    #[serde(default)]
-    pub(crate) f_rest_36: f32,
-    #[serde(default)]
-    pub(crate) f_rest_37: f32,
-    #[serde(default)]
-    pub(crate) f_rest_38: f32,
-    #[serde(default)]
-    pub(crate) f_rest_39: f32,
-    #[serde(default)]
-    pub(crate) f_rest_40: f32,
-    #[serde(default)]
-    pub(crate) f_rest_41: f32,
-    #[serde(default)]
-    pub(crate) f_rest_42: f32,
-    #[serde(default)]
-    pub(crate) f_rest_43: f32,
-    #[serde(default)]
-    pub(crate) f_rest_44: f32,
+    pub(crate) sh_rest: ShCoeffs,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+pub(crate) struct ShCoeffs {
+    #[serde(default, rename = "f_rest_0")]
+    pub(crate) c0: f32,
+    #[serde(default, rename = "f_rest_1")]
+    pub(crate) c1: f32,
+    #[serde(default, rename = "f_rest_2")]
+    pub(crate) c2: f32,
+    #[serde(default, rename = "f_rest_3")]
+    pub(crate) c3: f32,
+    #[serde(default, rename = "f_rest_4")]
+    pub(crate) c4: f32,
+    #[serde(default, rename = "f_rest_5")]
+    pub(crate) c5: f32,
+    #[serde(default, rename = "f_rest_6")]
+    pub(crate) c6: f32,
+    #[serde(default, rename = "f_rest_7")]
+    pub(crate) c7: f32,
+    #[serde(default, rename = "f_rest_8")]
+    pub(crate) c8: f32,
+    #[serde(default, rename = "f_rest_9")]
+    pub(crate) c9: f32,
+    #[serde(default, rename = "f_rest_10")]
+    pub(crate) c10: f32,
+    #[serde(default, rename = "f_rest_11")]
+    pub(crate) c11: f32,
+    #[serde(default, rename = "f_rest_12")]
+    pub(crate) c12: f32,
+    #[serde(default, rename = "f_rest_13")]
+    pub(crate) c13: f32,
+    #[serde(default, rename = "f_rest_14")]
+    pub(crate) c14: f32,
+    #[serde(default, rename = "f_rest_15")]
+    pub(crate) c15: f32,
+    #[serde(default, rename = "f_rest_16")]
+    pub(crate) c16: f32,
+    #[serde(default, rename = "f_rest_17")]
+    pub(crate) c17: f32,
+    #[serde(default, rename = "f_rest_18")]
+    pub(crate) c18: f32,
+    #[serde(default, rename = "f_rest_19")]
+    pub(crate) c19: f32,
+    #[serde(default, rename = "f_rest_20")]
+    pub(crate) c20: f32,
+    #[serde(default, rename = "f_rest_21")]
+    pub(crate) c21: f32,
+    #[serde(default, rename = "f_rest_22")]
+    pub(crate) c22: f32,
+    #[serde(default, rename = "f_rest_23")]
+    pub(crate) c23: f32,
+    #[serde(default, rename = "f_rest_24")]
+    pub(crate) c24: f32,
+    #[serde(default, rename = "f_rest_25")]
+    pub(crate) c25: f32,
+    #[serde(default, rename = "f_rest_26")]
+    pub(crate) c26: f32,
+    #[serde(default, rename = "f_rest_27")]
+    pub(crate) c27: f32,
+    #[serde(default, rename = "f_rest_28")]
+    pub(crate) c28: f32,
+    #[serde(default, rename = "f_rest_29")]
+    pub(crate) c29: f32,
+    #[serde(default, rename = "f_rest_30")]
+    pub(crate) c30: f32,
+    #[serde(default, rename = "f_rest_31")]
+    pub(crate) c31: f32,
+    #[serde(default, rename = "f_rest_32")]
+    pub(crate) c32: f32,
+    #[serde(default, rename = "f_rest_33")]
+    pub(crate) c33: f32,
+    #[serde(default, rename = "f_rest_34")]
+    pub(crate) c34: f32,
+    #[serde(default, rename = "f_rest_35")]
+    pub(crate) c35: f32,
+    #[serde(default, rename = "f_rest_36")]
+    pub(crate) c36: f32,
+    #[serde(default, rename = "f_rest_37")]
+    pub(crate) c37: f32,
+    #[serde(default, rename = "f_rest_38")]
+    pub(crate) c38: f32,
+    #[serde(default, rename = "f_rest_39")]
+    pub(crate) c39: f32,
+    #[serde(default, rename = "f_rest_40")]
+    pub(crate) c40: f32,
+    #[serde(default, rename = "f_rest_41")]
+    pub(crate) c41: f32,
+    #[serde(default, rename = "f_rest_42")]
+    pub(crate) c42: f32,
+    #[serde(default, rename = "f_rest_43")]
+    pub(crate) c43: f32,
+    #[serde(default, rename = "f_rest_44")]
+    pub(crate) c44: f32,
+}
+
+impl ShCoeffs {
+    pub(crate) fn from_slice(sh_rest: &[f32]) -> Self {
+        let get = |index| sh_rest.get(index).copied().unwrap_or(0.0);
+        Self {
+            c0: get(0),
+            c1: get(1),
+            c2: get(2),
+            c3: get(3),
+            c4: get(4),
+            c5: get(5),
+            c6: get(6),
+            c7: get(7),
+            c8: get(8),
+            c9: get(9),
+            c10: get(10),
+            c11: get(11),
+            c12: get(12),
+            c13: get(13),
+            c14: get(14),
+            c15: get(15),
+            c16: get(16),
+            c17: get(17),
+            c18: get(18),
+            c19: get(19),
+            c20: get(20),
+            c21: get(21),
+            c22: get(22),
+            c23: get(23),
+            c24: get(24),
+            c25: get(25),
+            c26: get(26),
+            c27: get(27),
+            c28: get(28),
+            c29: get(29),
+            c30: get(30),
+            c31: get(31),
+            c32: get(32),
+            c33: get(33),
+            c34: get(34),
+            c35: get(35),
+            c36: get(36),
+            c37: get(37),
+            c38: get(38),
+            c39: get(39),
+            c40: get(40),
+            c41: get(41),
+            c42: get(42),
+            c43: get(43),
+            c44: get(44),
+        }
+    }
+
+    pub(crate) fn to_array(&self) -> [f32; 45] {
+        [
+            self.c0, self.c1, self.c2, self.c3, self.c4, self.c5, self.c6, self.c7, self.c8,
+            self.c9, self.c10, self.c11, self.c12, self.c13, self.c14, self.c15, self.c16,
+            self.c17, self.c18, self.c19, self.c20, self.c21, self.c22, self.c23, self.c24,
+            self.c25, self.c26, self.c27, self.c28, self.c29, self.c30, self.c31, self.c32,
+            self.c33, self.c34, self.c35, self.c36, self.c37, self.c38, self.c39, self.c40,
+            self.c41, self.c42, self.c43, self.c44,
+        ]
+    }
 }
 
 impl PlyGaussian {
@@ -194,52 +251,12 @@ impl PlyGaussian {
             red: None,
             green: None,
             blue: None,
-            f_rest_0: sh_rest.first().copied().unwrap_or(0.0),
-            f_rest_1: sh_rest.get(1).copied().unwrap_or(0.0),
-            f_rest_2: sh_rest.get(2).copied().unwrap_or(0.0),
-            f_rest_3: sh_rest.get(3).copied().unwrap_or(0.0),
-            f_rest_4: sh_rest.get(4).copied().unwrap_or(0.0),
-            f_rest_5: sh_rest.get(5).copied().unwrap_or(0.0),
-            f_rest_6: sh_rest.get(6).copied().unwrap_or(0.0),
-            f_rest_7: sh_rest.get(7).copied().unwrap_or(0.0),
-            f_rest_8: sh_rest.get(8).copied().unwrap_or(0.0),
-            f_rest_9: sh_rest.get(9).copied().unwrap_or(0.0),
-            f_rest_10: sh_rest.get(10).copied().unwrap_or(0.0),
-            f_rest_11: sh_rest.get(11).copied().unwrap_or(0.0),
-            f_rest_12: sh_rest.get(12).copied().unwrap_or(0.0),
-            f_rest_13: sh_rest.get(13).copied().unwrap_or(0.0),
-            f_rest_14: sh_rest.get(14).copied().unwrap_or(0.0),
-            f_rest_15: sh_rest.get(15).copied().unwrap_or(0.0),
-            f_rest_16: sh_rest.get(16).copied().unwrap_or(0.0),
-            f_rest_17: sh_rest.get(17).copied().unwrap_or(0.0),
-            f_rest_18: sh_rest.get(18).copied().unwrap_or(0.0),
-            f_rest_19: sh_rest.get(19).copied().unwrap_or(0.0),
-            f_rest_20: sh_rest.get(20).copied().unwrap_or(0.0),
-            f_rest_21: sh_rest.get(21).copied().unwrap_or(0.0),
-            f_rest_22: sh_rest.get(22).copied().unwrap_or(0.0),
-            f_rest_23: sh_rest.get(23).copied().unwrap_or(0.0),
-            f_rest_24: sh_rest.get(24).copied().unwrap_or(0.0),
-            f_rest_25: sh_rest.get(25).copied().unwrap_or(0.0),
-            f_rest_26: sh_rest.get(26).copied().unwrap_or(0.0),
-            f_rest_27: sh_rest.get(27).copied().unwrap_or(0.0),
-            f_rest_28: sh_rest.get(28).copied().unwrap_or(0.0),
-            f_rest_29: sh_rest.get(29).copied().unwrap_or(0.0),
-            f_rest_30: sh_rest.get(30).copied().unwrap_or(0.0),
-            f_rest_31: sh_rest.get(31).copied().unwrap_or(0.0),
-            f_rest_32: sh_rest.get(32).copied().unwrap_or(0.0),
-            f_rest_33: sh_rest.get(33).copied().unwrap_or(0.0),
-            f_rest_34: sh_rest.get(34).copied().unwrap_or(0.0),
-            f_rest_35: sh_rest.get(35).copied().unwrap_or(0.0),
-            f_rest_36: sh_rest.get(36).copied().unwrap_or(0.0),
-            f_rest_37: sh_rest.get(37).copied().unwrap_or(0.0),
-            f_rest_38: sh_rest.get(38).copied().unwrap_or(0.0),
-            f_rest_39: sh_rest.get(39).copied().unwrap_or(0.0),
-            f_rest_40: sh_rest.get(40).copied().unwrap_or(0.0),
-            f_rest_41: sh_rest.get(41).copied().unwrap_or(0.0),
-            f_rest_42: sh_rest.get(42).copied().unwrap_or(0.0),
-            f_rest_43: sh_rest.get(43).copied().unwrap_or(0.0),
-            f_rest_44: sh_rest.get(44).copied().unwrap_or(0.0),
+            sh_rest: ShCoeffs::from_slice(sh_rest),
         }
+    }
+
+    pub(crate) fn sh_rest_coeffs(&self) -> [f32; 45] {
+        self.sh_rest.to_array()
     }
 }
 
@@ -253,214 +270,107 @@ where
 
 #[derive(Deserialize)]
 pub(crate) struct QuantSh {
-    // Higher order SH coefficients. Optional.
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_0: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_1: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_2: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_3: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_4: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_5: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_6: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_7: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_8: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_9: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_10: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_11: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_12: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_13: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_14: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_15: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_16: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_17: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_18: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_19: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_20: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_21: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_22: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_23: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_24: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_25: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_26: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_27: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_28: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_29: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_30: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_31: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_32: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_33: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_34: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_35: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_36: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_37: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_38: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_39: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_40: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_41: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_42: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_43: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_44: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_0")]
+    pub(crate) c0: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_1")]
+    pub(crate) c1: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_2")]
+    pub(crate) c2: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_3")]
+    pub(crate) c3: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_4")]
+    pub(crate) c4: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_5")]
+    pub(crate) c5: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_6")]
+    pub(crate) c6: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_7")]
+    pub(crate) c7: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_8")]
+    pub(crate) c8: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_9")]
+    pub(crate) c9: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_10")]
+    pub(crate) c10: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_11")]
+    pub(crate) c11: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_12")]
+    pub(crate) c12: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_13")]
+    pub(crate) c13: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_14")]
+    pub(crate) c14: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_15")]
+    pub(crate) c15: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_16")]
+    pub(crate) c16: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_17")]
+    pub(crate) c17: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_18")]
+    pub(crate) c18: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_19")]
+    pub(crate) c19: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_20")]
+    pub(crate) c20: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_21")]
+    pub(crate) c21: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_22")]
+    pub(crate) c22: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_23")]
+    pub(crate) c23: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_24")]
+    pub(crate) c24: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_25")]
+    pub(crate) c25: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_26")]
+    pub(crate) c26: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_27")]
+    pub(crate) c27: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_28")]
+    pub(crate) c28: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_29")]
+    pub(crate) c29: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_30")]
+    pub(crate) c30: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_31")]
+    pub(crate) c31: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_32")]
+    pub(crate) c32: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_33")]
+    pub(crate) c33: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_34")]
+    pub(crate) c34: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_35")]
+    pub(crate) c35: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_36")]
+    pub(crate) c36: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_37")]
+    pub(crate) c37: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_38")]
+    pub(crate) c38: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_39")]
+    pub(crate) c39: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_40")]
+    pub(crate) c40: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_41")]
+    pub(crate) c41: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_42")]
+    pub(crate) c42: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_43")]
+    pub(crate) c43: f32,
+    #[serde(default, deserialize_with = "de_quant_sh", rename = "f_rest_44")]
+    pub(crate) c44: f32,
 }
+
 impl QuantSh {
     pub(crate) fn coeffs(&self) -> [f32; 45] {
         [
-            self.f_rest_0,
-            self.f_rest_1,
-            self.f_rest_2,
-            self.f_rest_3,
-            self.f_rest_4,
-            self.f_rest_5,
-            self.f_rest_6,
-            self.f_rest_7,
-            self.f_rest_8,
-            self.f_rest_9,
-            self.f_rest_10,
-            self.f_rest_11,
-            self.f_rest_12,
-            self.f_rest_13,
-            self.f_rest_14,
-            self.f_rest_15,
-            self.f_rest_16,
-            self.f_rest_17,
-            self.f_rest_18,
-            self.f_rest_19,
-            self.f_rest_20,
-            self.f_rest_21,
-            self.f_rest_22,
-            self.f_rest_23,
-            self.f_rest_24,
-            self.f_rest_25,
-            self.f_rest_26,
-            self.f_rest_27,
-            self.f_rest_28,
-            self.f_rest_29,
-            self.f_rest_30,
-            self.f_rest_31,
-            self.f_rest_32,
-            self.f_rest_33,
-            self.f_rest_34,
-            self.f_rest_35,
-            self.f_rest_36,
-            self.f_rest_37,
-            self.f_rest_38,
-            self.f_rest_39,
-            self.f_rest_40,
-            self.f_rest_41,
-            self.f_rest_42,
-            self.f_rest_43,
-            self.f_rest_44,
+            self.c0, self.c1, self.c2, self.c3, self.c4, self.c5, self.c6, self.c7, self.c8,
+            self.c9, self.c10, self.c11, self.c12, self.c13, self.c14, self.c15, self.c16,
+            self.c17, self.c18, self.c19, self.c20, self.c21, self.c22, self.c23, self.c24,
+            self.c25, self.c26, self.c27, self.c28, self.c29, self.c30, self.c31, self.c32,
+            self.c33, self.c34, self.c35, self.c36, self.c37, self.c38, self.c39, self.c40,
+            self.c41, self.c42, self.c43, self.c44,
         ]
-    }
-}
-
-impl PlyGaussian {
-    pub(crate) fn sh_rest_coeffs(&self) -> [f32; 45] {
-        [
-            self.f_rest_0,
-            self.f_rest_1,
-            self.f_rest_2,
-            self.f_rest_3,
-            self.f_rest_4,
-            self.f_rest_5,
-            self.f_rest_6,
-            self.f_rest_7,
-            self.f_rest_8,
-            self.f_rest_9,
-            self.f_rest_10,
-            self.f_rest_11,
-            self.f_rest_12,
-            self.f_rest_13,
-            self.f_rest_14,
-            self.f_rest_15,
-            self.f_rest_16,
-            self.f_rest_17,
-            self.f_rest_18,
-            self.f_rest_19,
-            self.f_rest_20,
-            self.f_rest_21,
-            self.f_rest_22,
-            self.f_rest_23,
-            self.f_rest_24,
-            self.f_rest_25,
-            self.f_rest_26,
-            self.f_rest_27,
-            self.f_rest_28,
-            self.f_rest_29,
-            self.f_rest_30,
-            self.f_rest_31,
-            self.f_rest_32,
-            self.f_rest_33,
-            self.f_rest_34,
-            self.f_rest_35,
-            self.f_rest_36,
-            self.f_rest_37,
-            self.f_rest_38,
-            self.f_rest_39,
-            self.f_rest_40,
-            self.f_rest_41,
-            self.f_rest_42,
-            self.f_rest_43,
-            self.f_rest_44,
-        ]
-    }
-}
-
-impl PlyGaussian {
-    pub(crate) fn is_finite(&self) -> bool {
-        self.x.is_finite()
-            && self.y.is_finite()
-            && self.z.is_finite()
-            && self.rot_0.is_finite()
-            && self.rot_1.is_finite()
-            && self.rot_2.is_finite()
-            && self.rot_3.is_finite()
-            && self.opacity.is_finite()
-            && self.scale_0.is_finite()
-            && self.scale_1.is_finite()
-            && self.scale_2.is_finite()
     }
 }

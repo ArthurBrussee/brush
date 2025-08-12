@@ -59,7 +59,6 @@ skip = [
     { name = 'unicode-width' },
 
     # Custom ply fork.
-    { name = "ply-rs" },         # Custom fork & rerun version.
     { name = 'peg' },            # Custom ply fork & rerun version.
     { name = 'peg-macros' },     # Custom ply fork & rerun version.
     { name = 'peg-runtime' },    # Custom ply fork & rerun version.
