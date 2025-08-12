@@ -23,10 +23,10 @@ impl SettingsPanel {
 
     fn ui_window(&mut self, ui: &egui::Ui) {
         // Check if the receiver is closed and set send_args to None if it is
-        if let Some(sender) = &self.send_args {
-            if sender.is_closed() {
-                self.send_args = None;
-            }
+        if let Some(sender) = &self.send_args
+            && sender.is_closed()
+        {
+            self.send_args = None;
         }
 
         if self.send_args.is_none() {
@@ -131,11 +131,10 @@ impl SettingsPanel {
                 ui.heading("Process");
                 ui.label("Random seed:");
                 let mut seed_str = self.args.process_config.seed.to_string();
-                if ui.text_edit_singleline(&mut seed_str).changed() {
-                    if let Ok(seed) = seed_str.parse::<u64>() {
+                if ui.text_edit_singleline(&mut seed_str).changed()
+                    && let Ok(seed) = seed_str.parse::<u64>() {
                         self.args.process_config.seed = seed;
                     }
-                }
 
                 ui.label("Start at iteration:");
                 slider(ui, &mut self.args.process_config.start_iter, 0..=10000, "", false);

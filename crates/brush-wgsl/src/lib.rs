@@ -220,24 +220,24 @@ pub fn build_modules(paths: &[&str], includes: &[&str], output_path: &str) -> Re
                 _ => continue,
             };
 
-            if let Some(type_and_value) = type_and_value {
-                if let Some(mangled_name) = t.1.name.as_ref() {
-                    let (m, name) = mod_name_from_mangled(mangled_name);
-                    let constant_str = vec![format!("pub const {name}: {type_and_value};")];
+            if let Some(type_and_value) = type_and_value
+                && let Some(mangled_name) = t.1.name.as_ref()
+            {
+                let (m, name) = mod_name_from_mangled(mangled_name);
+                let constant_str = vec![format!("pub const {name}: {type_and_value};")];
 
-                    let map = if m == mod_name || m.is_empty() {
-                        &mut constants
-                    } else {
-                        match modules.get_mut(&m).unwrap() {
-                            ModuleInfo::Include {
-                                constants,
-                                types: _,
-                            } => constants,
-                            ModuleInfo::File { .. } => panic!("Unsupported export type"),
-                        }
-                    };
-                    map.insert(name.clone(), constant_str);
-                }
+                let map = if m == mod_name || m.is_empty() {
+                    &mut constants
+                } else {
+                    match modules.get_mut(&m).unwrap() {
+                        ModuleInfo::Include {
+                            constants,
+                            types: _,
+                        } => constants,
+                        ModuleInfo::File { .. } => panic!("Unsupported export type"),
+                    }
+                };
+                map.insert(name.clone(), constant_str);
             }
         }
 

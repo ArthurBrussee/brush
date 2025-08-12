@@ -268,10 +268,10 @@ impl ScenePanel {
                                     }
                                 });
 
-                                if let Some(splats) = splats {
-                                    if ui.small_button("⬆ Export").clicked() {
-                                        export_current_splat(splats);
-                                    }
+                                if let Some(splats) = splats
+                                    && ui.small_button("⬆ Export").clicked()
+                                {
+                                    export_current_splat(splats);
                                 }
 
                                 ui.add_space(4.0);
@@ -359,15 +359,12 @@ fn export_current_splat<B: Backend>(splat: Splats<B>) {
 }
 
 impl ScenePanel {
-    fn reset(&mut self) {
+    fn reset_splats(&mut self) {
         self.last_draw = None;
         self.last_state = None;
         self.view_splats = vec![];
         self.frame_count = 0;
         self.frame = 0.0;
-        self.live_update = true;
-        self.paused = false;
-        self.err = None;
     }
 }
 
@@ -378,10 +375,14 @@ impl AppPane for ScenePanel {
 
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
+            ProcessMessage::NewSource => {
+                self.live_update = true;
+                self.err = None;
+            }
             ProcessMessage::StartLoading { training } => {
                 // If training reset. Otherwise, keep existing splats until new ones are fully loaded.
                 if *training {
-                    self.reset();
+                    self.reset_splats();
                 }
             }
             ProcessMessage::ViewSplats {
@@ -391,10 +392,10 @@ impl AppPane for ScenePanel {
                 total_frames,
                 progress,
             } => {
-                if !process.is_training() {
-                    if let Some(up_axis) = up_axis {
-                        process.set_model_up(*up_axis);
-                    }
+                if !process.is_training()
+                    && let Some(up_axis) = up_axis
+                {
+                    process.set_model_up(*up_axis);
                 }
 
                 self.frame_count = *total_frames;

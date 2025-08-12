@@ -162,7 +162,7 @@ impl BrushVfs {
             let path = PathBuf::from("input.ply");
             let reader = Arc::new(Mutex::new(Some(reader)));
             Ok(Self {
-                lookup: lookup_from_paths(&[path.clone()]),
+                lookup: lookup_from_paths(std::slice::from_ref(&path)),
                 container: VfsContainer::Manual {
                     readers: HashMap::from([(path, reader)]),
                 },

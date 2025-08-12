@@ -1,13 +1,18 @@
-use crate::parsed_gaussian::ParsedGaussian;
+use std::vec;
+
 use brush_render::gaussian_splats::Splats;
 use burn::prelude::Backend;
-use glam::{Quat, Vec3};
-use ply_rs::{
-    ply::{self, Ply, PropertyDef, PropertyType, ScalarType},
-    writer::Writer,
-};
+use serde::Serialize;
+use serde_ply::{PlyError, PlyFormat::BinaryLittleEndian};
 
-async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Vec<ParsedGaussian<false>> {
+use crate::parsed_gaussian::PlyGaussian;
+
+#[derive(Serialize)]
+struct Ply {
+    vertex: Vec<PlyGaussian>,
+}
+
+async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Ply {
     let means = splats
         .means
         .val()
@@ -47,7 +52,7 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Vec<ParsedGaussian<fa
 
     let sh_coeffs_num = splats.sh_coeffs.dims()[1];
 
-    (0..splats.num_splats())
+    let vertices = (0..splats.num_splats())
         .filter_map(|i| {
             let i = i as usize;
             // Read SH data from [coeffs, channel] format to
@@ -62,69 +67,35 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Vec<ParsedGaussian<fa
                 &splat_sh[sh_coeffs_num * 2..sh_coeffs_num * 3],
             ];
 
+            let mean = glam::vec3(means[i * 3], means[i * 3 + 1], means[i * 3 + 2]);
+            let scale = glam::vec3(
+                log_scales[i * 3],
+                log_scales[i * 3 + 1],
+                log_scales[i * 3 + 2],
+            );
+            let rot = glam::Vec4::new(
+                rotations[i * 4],
+                rotations[i * 4 + 1],
+                rotations[i * 4 + 2],
+                rotations[i * 4 + 3],
+            );
             let sh_dc = glam::vec3(sh_red[0], sh_green[0], sh_blue[0]);
             let sh_coeffs_rest = [&sh_red[1..], &sh_green[1..], &sh_blue[1..]].concat();
-
-            let splat = ParsedGaussian {
-                mean: Vec3::new(means[i * 3], means[i * 3 + 1], means[i * 3 + 2]),
-                log_scale: Vec3::new(
-                    log_scales[i * 3],
-                    log_scales[i * 3 + 1],
-                    log_scales[i * 3 + 2],
-                ),
-                opacity: opacities[i],
-                rotation: Quat::from_xyzw(
-                    rotations[i * 4 + 1],
-                    rotations[i * 4 + 2],
-                    rotations[i * 4 + 3],
-                    rotations[i * 4],
-                ),
-                sh_dc,
-                sh_coeffs_rest,
-            };
-
+            let splat =
+                PlyGaussian::from_data(mean, scale, rot, sh_dc, opacities[i], &sh_coeffs_rest);
             splat.is_finite().then_some(splat)
         })
-        .collect()
+        .collect();
+    Ply { vertex: vertices }
 }
 
-pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> std::io::Result<Vec<u8>> {
+pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, PlyError> {
     let splats = splats.with_normed_rotations();
+    let ply = read_splat_data(splats.clone()).await;
 
-    let data = read_splat_data(splats.clone()).await;
-
-    let property_names = vec![
-        "x", "y", "z", "scale_0", "scale_1", "scale_2", "opacity", "rot_0", "rot_1", "rot_2",
-        "rot_3", "f_dc_0", "f_dc_1", "f_dc_2",
+    let comments = vec![
+        "Exported from Brush".to_owned(),
+        "Vertical axis: y".to_owned(),
     ];
-
-    let mut properties: Vec<PropertyDef> = property_names
-        .into_iter()
-        .map(|name| PropertyDef::new(name, PropertyType::Scalar(ScalarType::Float)))
-        .collect();
-
-    let sh_coeffs_rest = (splats.sh_coeffs.dims()[1] - 1) * 3;
-
-    for i in 0..sh_coeffs_rest {
-        properties.push(PropertyDef::new(
-            &format!("f_rest_{i}"),
-            PropertyType::Scalar(ScalarType::Float),
-        ));
-    }
-
-    let mut ply: Ply<ParsedGaussian<false>> = Ply::new();
-
-    // Create PLY header
-    let mut vertex = ply::ElementDef::new("vertex");
-    vertex.properties = properties;
-    ply.header.elements.push(vertex);
-    ply.header.encoding = ply::Encoding::BinaryLittleEndian;
-    ply.header.comments.push("Exported from Brush".to_owned());
-    ply.header.comments.push("Vertical axis: y".to_owned());
-    ply.payload.insert("vertex".to_owned(), data);
-
-    let mut buf = vec![];
-    let writer = Writer::<ParsedGaussian<false>>::new();
-    writer.write_ply(&mut buf, &mut ply)?;
-    Ok(buf)
+    serde_ply::to_bytes(&ply, BinaryLittleEndian, comments)
 }

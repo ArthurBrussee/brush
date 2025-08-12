@@ -155,10 +155,10 @@ impl UiProcess {
         let mut inner = self.write();
         let ctx = DeviceContext { device, ctx };
         inner.cur_device_ctx = Some(ctx.clone());
-        if let Some(process) = &mut inner.running_process {
-            if let Some(send) = process.send_device.take() {
-                send.send(ctx).expect("Failed to send device");
-            }
+        if let Some(process) = &mut inner.running_process
+            && let Some(send) = process.send_device.take()
+        {
+            send.send(ctx).expect("Failed to send device");
         }
     }
 

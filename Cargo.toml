@@ -68,6 +68,8 @@ wgpu = { version = "25", default-features = false, features = ["naga-ir"] }
 # The default ply-rs has a really bad slowdown. Use a forked version which is a good amount faster.
 ply-rs.git = "https://github.com/ArthurBrussee/ply-rs.git"
 
+serde-ply.path = "../serde_ply"
+
 burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',

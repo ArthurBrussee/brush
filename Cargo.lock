@@ -1009,6 +1009,7 @@ dependencies = [
  "ply-rs 0.2.0",
  "rand 0.9.1",
  "serde",
+ "serde-ply",
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
@@ -8213,6 +8214,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e2c6ed6606019b4e29e69dbaba95b11854410e5347d525002456dbbb786b6"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde-ply"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "serde",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

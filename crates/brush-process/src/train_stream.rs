@@ -136,56 +136,56 @@ pub(crate) async fn train_stream(
 
         // Check if we want to evaluate _next iteration_. Small detail, but this ensures we evaluate
         // before doing a refine.
-        if iter % process_config.eval_every == 0 || is_last_step {
-            if let Some(eval_scene) = eval_scene.as_mut() {
-                let mut psnr = 0.0;
-                let mut ssim = 0.0;
-                let mut count = 0;
+        if (iter % process_config.eval_every == 0 || is_last_step)
+            && let Some(eval_scene) = eval_scene.as_mut()
+        {
+            let mut psnr = 0.0;
+            let mut ssim = 0.0;
+            let mut count = 0;
 
-                log::info!("Running evaluation for iteration {iter}");
+            log::info!("Running evaluation for iteration {iter}");
 
-                for (i, view) in eval_scene.views.iter().enumerate() {
-                    let eval_img = view.image.load().await?;
-                    let sample = eval_stats(
-                        &splats.valid(),
-                        &view.camera,
-                        eval_img,
-                        view.image.is_masked(),
-                        &device,
-                    )
-                    .context("Failed to run eval for sample.")?;
+            for (i, view) in eval_scene.views.iter().enumerate() {
+                let eval_img = view.image.load().await?;
+                let sample = eval_stats(
+                    &splats.valid(),
+                    &view.camera,
+                    eval_img,
+                    view.image.is_masked(),
+                    &device,
+                )
+                .context("Failed to run eval for sample.")?;
 
-                    count += 1;
-                    psnr += sample.psnr.clone().into_scalar_async().await;
-                    ssim += sample.ssim.clone().into_scalar_async().await;
+                count += 1;
+                psnr += sample.psnr.clone().into_scalar_async().await;
+                ssim += sample.ssim.clone().into_scalar_async().await;
 
-                    if process_args.process_config.eval_save_to_disk {
-                        let img_name = Path::new(&view.image.path)
-                            .file_stem()
-                            .expect("No file name for eval view.")
-                            .to_string_lossy();
-                        let path = Path::new(&export_path)
-                            .join(format!("eval_{iter}"))
-                            .join(format!("{img_name}.png"));
-                        eval_save_to_disk(&sample, &path).await?;
-                    }
-
-                    visualize.log_eval_sample(iter, i as u32, sample).await?;
+                if process_args.process_config.eval_save_to_disk {
+                    let img_name = Path::new(&view.image.path)
+                        .file_stem()
+                        .expect("No file name for eval view.")
+                        .to_string_lossy();
+                    let path = Path::new(&export_path)
+                        .join(format!("eval_{iter}"))
+                        .join(format!("{img_name}.png"));
+                    eval_save_to_disk(&sample, &path).await?;
                 }
 
-                psnr /= count as f32;
-                ssim /= count as f32;
-
-                visualize.log_eval_stats(iter, psnr, ssim)?;
-
-                let message = ProcessMessage::EvalResult {
-                    iter,
-                    avg_psnr: psnr,
-                    avg_ssim: ssim,
-                };
-
-                emitter.emit(message).await;
+                visualize.log_eval_sample(iter, i as u32, sample).await?;
             }
+
+            psnr /= count as f32;
+            ssim /= count as f32;
+
+            visualize.log_eval_stats(iter, psnr, ssim)?;
+
+            let message = ProcessMessage::EvalResult {
+                iter,
+                avg_psnr: psnr,
+                avg_ssim: ssim,
+            };
+
+            emitter.emit(message).await;
         }
 
         let client = WgpuRuntime::client(&device);
@@ -211,10 +211,10 @@ pub(crate) async fn train_stream(
                 .with_context(|| format!("Failed to export ply {export_path:?}"))?;
         }
 
-        if let Some(every) = process_args.rerun_config.rerun_log_splats_every {
-            if iter % every == 0 || is_last_step {
-                visualize.log_splats(iter, splats.valid()).await?;
-            }
+        if let Some(every) = process_args.rerun_config.rerun_log_splats_every
+            && (iter % every == 0 || is_last_step)
+        {
+            visualize.log_splats(iter, splats.valid()).await?;
         }
 
         visualize.log_splat_stats(iter, &splats)?;
