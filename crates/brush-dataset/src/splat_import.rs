@@ -310,14 +310,19 @@ async fn parse_delta_ply<T: AsyncRead + Unpin + 'static>(
         y: f32,
         #[serde(deserialize_with = "de_quant")]
         z: f32,
-
+        #[serde(deserialize_with = "de_quant")]
         scale_0: f32,
+        #[serde(deserialize_with = "de_quant")]
         scale_1: f32,
+        #[serde(deserialize_with = "de_quant")]
         scale_2: f32,
-
+        #[serde(deserialize_with = "de_quant")]
         rot_0: f32,
+        #[serde(deserialize_with = "de_quant")]
         rot_1: f32,
+        #[serde(deserialize_with = "de_quant")]
         rot_2: f32,
+        #[serde(deserialize_with = "de_quant")]
         rot_3: f32,
     }
 
