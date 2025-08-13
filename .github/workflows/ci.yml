@@ -14,7 +14,7 @@ jobs:
     name: Format + check + test
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
 
@@ -58,7 +58,7 @@ jobs:
     name: Check wasm32 + wasm-bindgen
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.88.0
@@ -88,7 +88,7 @@ jobs:
     name: cargo-deny ${{ matrix.target }}
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           rust-version: "1.88.0"
@@ -104,7 +104,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: true
       - uses: dtolnay/rust-toolchain@master
