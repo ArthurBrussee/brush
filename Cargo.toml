@@ -65,8 +65,7 @@ naga_oil = { version = "0.18", default-features = false }
 # Backends are chosen per platform.
 wgpu = { version = "25", default-features = false, features = ["naga-ir"] }
 
-
-serde-ply.path = "../serde_ply"
+serde-ply = "0.2.0"
 
 burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',

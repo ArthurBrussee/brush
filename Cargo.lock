@@ -8178,7 +8178,9 @@ dependencies = [
 
 [[package]]
 name = "serde-ply"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "212c51773bcbf2d1316ea35263fe0797f1ad1d335618cc2be99026aa714e60be"
 dependencies = [
  "byteorder",
  "serde",

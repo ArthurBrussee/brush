@@ -6,11 +6,10 @@ use burn::backend::wgpu::WgpuDevice;
 use burn::tensor::{Tensor, TensorData};
 use glam::{Vec3, Vec4, Vec4Swizzles};
 use serde::Deserialize;
-use serde::de::DeserializeSeed;
-use serde::ser::Error;
-use serde_ply::{PlyError, RowVisitor};
+use serde::de::{DeserializeSeed, Error};
+use serde_ply::{DeserializeError, RowVisitor};
+use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
-use tokio::io::{AsyncBufRead, AsyncRead, BufReader};
 
 use crate::parsed_gaussian::{PlyGaussian, QuantSh, QuantSplat};
 
@@ -70,16 +69,13 @@ async fn read_chunk<T: AsyncRead + Unpin>(
 }
 
 pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
-    reader: T,
+    mut reader: T,
     subsample_points: Option<u32>,
     device: WgpuDevice,
-) -> impl DynStream<Result<SplatMessage, PlyError>> {
+) -> impl DynStream<Result<SplatMessage, DeserializeError>> {
     try_fn_stream(|emitter| async move {
-        // set up a reader
-        let mut reader = BufReader::with_capacity(1024 * 32, reader);
-
         // TODO: Just make chunk ply take in data and try to get a header? Simpler maybe.
-        let mut file = serde_ply::ChunkPlyFile::new();
+        let mut file = serde_ply::PlyChunkedReader::new();
         read_chunk(&mut reader, file.buffer_mut()).await?;
 
         let header = file.header().expect("Must have header");
@@ -115,7 +111,7 @@ pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
         } else if has_vertex {
             PlyFormat::Ply
         } else {
-            return Err(PlyError::custom("Unknown format"));
+            return Err(DeserializeError::custom("Unknown format"));
         };
 
         let subsample = subsample_points.unwrap_or(1) as usize;
@@ -140,18 +136,18 @@ fn progress(index: usize, len: usize) -> f32 {
     ((index + 1) as f32) / len as f32
 }
 
-async fn parse_ply<T: AsyncBufRead + Unpin>(
+async fn parse_ply<T: AsyncRead + Unpin>(
     mut reader: T,
     subsample: usize,
     device: WgpuDevice,
-    file: &mut serde_ply::ChunkPlyFile,
+    file: &mut serde_ply::PlyChunkedReader,
     up_axis: Option<Vec3>,
-    emitter: &TryStreamEmitter<SplatMessage, PlyError>,
-) -> Result<Splats<MainBackend>, PlyError> {
+    emitter: &TryStreamEmitter<SplatMessage, DeserializeError>,
+) -> Result<Splats<MainBackend>, DeserializeError> {
     let header = file.header().expect("Must have header");
     let vertex = header
         .get_element("vertex")
-        .ok_or(PlyError::custom("Unknown format"))?;
+        .ok_or(DeserializeError::custom("Unknown format"))?;
 
     let max_splats = vertex.count / subsample;
 
@@ -254,14 +250,14 @@ async fn parse_ply<T: AsyncBufRead + Unpin>(
     }
 }
 
-async fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
+async fn parse_delta_ply<T: AsyncRead + Unpin + 'static>(
     mut reader: T,
     subsample: usize,
     device: WgpuDevice,
-    mut file: serde_ply::ChunkPlyFile,
+    mut file: serde_ply::PlyChunkedReader,
     up_axis: Option<Vec3>,
-    emitter: &TryStreamEmitter<SplatMessage, PlyError>,
-) -> Result<(), PlyError> {
+    emitter: &TryStreamEmitter<SplatMessage, DeserializeError>,
+) -> Result<(), DeserializeError> {
     let splats = parse_ply(
         &mut reader,
         subsample,
@@ -419,14 +415,14 @@ async fn parse_delta_ply<T: AsyncBufRead + Unpin + 'static>(
     Ok(())
 }
 
-async fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
+async fn parse_compressed_ply<T: AsyncRead + Unpin + 'static>(
     mut reader: T,
     subsample: usize,
     device: WgpuDevice,
-    mut file: serde_ply::ChunkPlyFile,
+    mut file: serde_ply::PlyChunkedReader,
     up_axis: Option<Vec3>,
-    emitter: &TryStreamEmitter<SplatMessage, PlyError>,
-) -> Result<(), PlyError> {
+    emitter: &TryStreamEmitter<SplatMessage, DeserializeError>,
+) -> Result<(), DeserializeError> {
     #[derive(Default, Deserialize)]
     struct QuantMeta {
         min_x: f32,
@@ -483,9 +479,9 @@ async fn parse_compressed_ply<T: AsyncBufRead + Unpin + 'static>(
 
     let vertex = file
         .current_element()
-        .ok_or(PlyError::custom("Unknown format"))?;
+        .ok_or(DeserializeError::custom("Unknown format"))?;
     if vertex.name != "vertex" {
-        return Err(PlyError::custom("Unknown format"));
+        return Err(DeserializeError::custom("Unknown format"));
     }
     let max_splats = vertex.count / subsample;
 
