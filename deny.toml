@@ -58,11 +58,7 @@ skip = [
     { name = 'thiserror-impl' },
     { name = 'unicode-width' },
 
-    # Custom ply fork.
-    { name = 'peg' },            # Custom ply fork & rerun version.
-    { name = 'peg-macros' },     # Custom ply fork & rerun version.
-    { name = 'peg-runtime' },    # Custom ply fork & rerun version.
-    { name = 'cargo_metadata' }, # Duplicate from custom ply + rerun
+    { name = 'cargo_metadata' }, # Duplicate from ply_rs + rerun
 
     # Other
     { name = "core-foundation" },     # Egui has two?
