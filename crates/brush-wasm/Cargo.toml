@@ -37,9 +37,6 @@ log.workspace = true
 # wasm_js random backend needs to be enabled explicitly.
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
-# Enable native webgpu backend.
-wgpu = { workspace = true, features = ["webgpu"] }
-
 [package.metadata.wasm-pack.profile.dev.wasm-bindgen]
 dwarf-debug-info = true
 
@@ -47,7 +44,7 @@ dwarf-debug-info = true
 wasm-opt = ["--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
 
 [package.metadata.cargo-shear]
-ignored = ["getrandom"] # Need winit to set backend.
+ignored = ["getrandom"]
 
 
 [lints]

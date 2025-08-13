@@ -13,7 +13,6 @@ brush-dataset.path = "../brush-dataset"
 brush-vfs.path = "../brush-vfs"
 
 burn-wgpu.workspace = true
-serde.workspace = true
 
 alphanumeric-sort.workspace = true
 anyhow.workspace = true

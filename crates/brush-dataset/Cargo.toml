@@ -20,7 +20,6 @@ serde-ply.workspace = true
 glam.workspace = true
 
 tracing.workspace = true
-web-time.workspace = true
 log.workspace = true
 rand.workspace = true
 

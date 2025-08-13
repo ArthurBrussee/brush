@@ -987,7 +987,6 @@ dependencies = [
  "humantime",
  "indicatif",
  "log",
- "serde",
  "tokio-stream",
  "tracing",
 ]
@@ -1015,7 +1014,6 @@ dependencies = [
  "tokio-stream",
  "tokio_with_wasm",
  "tracing",
- "web-time",
 ]
 
 [[package]]
@@ -1065,7 +1063,6 @@ dependencies = [
  "log",
  "rand 0.9.1",
  "rerun",
- "serde",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -1228,7 +1225,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-logger",
  "web-sys",
- "wgpu",
 ]
 
 [[package]]
