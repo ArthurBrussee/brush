@@ -50,7 +50,7 @@ pub enum ProcessMessage {
         avg_psnr: f32,
         avg_ssim: f32,
     },
-    /// Some warning occured during the process, but the process can continue.
+    /// Some warning occurred during the process, but the process can continue.
     Warning {
         error: anyhow::Error,
     },
