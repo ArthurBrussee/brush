@@ -270,8 +270,6 @@ async fn run_eval(
     Ok(())
 }
 
-use anyhow::anyhow;
-
 async fn export_checkpoint(
     process_args: &ProcessArgs,
     process_config: &ProcessConfig,
