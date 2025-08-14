@@ -77,7 +77,7 @@ fn interleave_coeffs(sh_dc: Vec3, sh_rest: &[f32], result: &mut Vec<f32>) {
 }
 
 async fn read_chunk<T: AsyncRead + Unpin>(
-    reader: &mut T,
+    mut reader: T,
     buf: &mut Vec<u8>,
 ) -> tokio::io::Result<()> {
     buf.reserve(8 * 1024 * 1024);
@@ -99,7 +99,7 @@ async fn read_chunk<T: AsyncRead + Unpin>(
     }
 }
 
-pub async fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
+pub async fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
     reader: T,
     subsample_points: Option<u32>,
     device: WgpuDevice,
@@ -113,7 +113,7 @@ pub async fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
     splat
 }
 
-pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
+pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
     mut reader: T,
     subsample_points: Option<u32>,
     device: WgpuDevice,
