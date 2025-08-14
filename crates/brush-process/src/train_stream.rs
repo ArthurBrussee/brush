@@ -25,7 +25,7 @@ use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
 use std::{path::Path, sync::Arc};
-use tokio::{fs, sync::oneshot::Receiver};
+use tokio::sync::oneshot::Receiver;
 use tracing::{Instrument, trace_span};
 use web_time::{Duration, Instant};
 
@@ -161,9 +161,6 @@ pub(crate) async fn train_stream(
                 .await;
         }
 
-        // TODO: Want to support this on WASM somehow. Maybe have user pick a file once,
-        // and write to it repeatedly?
-        #[cfg(not(target_family = "wasm"))]
         if iter % process_config.export_every == 0 || is_last_step {
             let res = export_checkpoint(&process_args, process_config, splats.valid(), iter).await;
             warner
@@ -276,21 +273,27 @@ async fn export_checkpoint(
     splats: Splats<MainBackend>,
     iter: u32,
 ) -> Result<(), anyhow::Error> {
-    let total_steps = process_args.train_config.total_steps;
-    let digits = ((total_steps as f64).log10().floor() as usize) + 1;
-    let export_name = process_config
-        .export_name
-        .replace("{iter}", &format!("{iter:0digits$}"));
-    let export_path = Path::new(&process_config.export_path).to_owned();
-    fs::create_dir_all(&export_path)
-        .await
-        .context("Creating export directory")?;
-    let splat_data = splat_to_ply(splats)
-        .await
-        .context("Serializing splat data")?;
-    fs::write(export_path.join(&export_name), splat_data)
-        .await
-        .context(format!("Failed to export ply {export_path:?}"))?;
+    // TODO: Want to support this on WASM somehow. Maybe have user pick a file once,
+    // and write to it repeatedly?
+    #[cfg(not(target_family = "wasm"))]
+    {
+        use tokio::fs;
+        let total_steps = process_args.train_config.total_steps;
+        let digits = ((total_steps as f64).log10().floor() as usize) + 1;
+        let export_name = process_config
+            .export_name
+            .replace("{iter}", &format!("{iter:0digits$}"));
+        let export_path = Path::new(&process_config.export_path).to_owned();
+        fs::create_dir_all(&export_path)
+            .await
+            .context("Creating export directory")?;
+        let splat_data = splat_to_ply(splats)
+            .await
+            .context("Serializing splat data")?;
+        fs::write(export_path.join(&export_name), splat_data)
+            .await
+            .context(format!("Failed to export ply {export_path:?}"))?;
+    }
     Ok(())
 }
 
