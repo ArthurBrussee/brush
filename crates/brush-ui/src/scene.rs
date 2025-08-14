@@ -3,7 +3,7 @@ use brush_process::message::ProcessMessage;
 use core::f32;
 use egui::{Align2, Area, Frame, Pos2, Ui, epaint::mutex::RwLock as EguiRwLock};
 use std::sync::Arc;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use brush_render::{
     MainBackend,
@@ -57,7 +57,7 @@ impl ErrorDisplay {
     }
 }
 
-async fn try_export(splat: Splats<MainBackend>) -> Result<(), anyhow::Error> {
+async fn export(splat: Splats<MainBackend>) -> Result<(), anyhow::Error> {
     let data = splat_export::splat_to_ply(splat).await?;
     rrfd::save_file("export.ply", data).await?;
     Ok(())
@@ -104,7 +104,10 @@ pub struct ScenePanel {
     err: Option<ErrorDisplay>,
     warnings: Vec<ErrorDisplay>,
 
-    export_channel: (Sender<anyhow::Error>, Receiver<anyhow::Error>),
+    export_channel: (
+        UnboundedSender<anyhow::Error>,
+        UnboundedReceiver<anyhow::Error>,
+    ),
 
     // Keep track of what was last rendered.
     last_state: Option<RenderState>,
@@ -116,7 +119,7 @@ impl ScenePanel {
         queue: wgpu::Queue,
         renderer: Arc<EguiRwLock<Renderer>>,
     ) -> Self {
-        let channel = tokio::sync::mpsc::channel(1);
+        let channel = tokio::sync::mpsc::unbounded_channel();
         Self {
             backbuffer: BurnTexture::new(renderer, device, queue),
             last_draw: None,
@@ -239,7 +242,7 @@ impl ScenePanel {
         ui: &egui::Ui,
         process: &UiProcess,
         splats: Option<Splats<MainBackend>>,
-        rect: egui::Rect,
+        pos: egui::Pos2,
     ) {
         let inner = |ui: &mut egui::Ui| {
             if process.is_loading() {
@@ -317,14 +320,14 @@ impl ScenePanel {
                             && ui.small_button("⬆ Export").clicked()
                         {
                             let sender = self.export_channel.0.clone();
+                            let ctx = ui.ctx().clone();
                             tokio_wasm::task::spawn(async move {
-                                if let Err(e) = try_export(splats).await {
-                                    // Don't care if this fails.
-                                    let _ = sender.send(e).await;
+                                if let Err(e) = export(splats).await {
+                                    let _ = sender.send(e.context("Failed to export splat"));
+                                    ctx.request_repaint();
                                 }
                             });
                         }
-
                         ui.add_space(4.0);
                         ui.separator();
                         ui.add_space(4.0);
@@ -388,13 +391,7 @@ impl ScenePanel {
                 });
         };
 
-        box_ui(
-            "controls_box",
-            ui,
-            Align2::LEFT_TOP,
-            egui::pos2(rect.min.x, rect.min.y),
-            inner,
-        );
+        box_ui("controls_box", ui, Align2::LEFT_TOP, pos, inner);
     }
 
     fn draw_play_pause(&mut self, ui: &egui::Ui, rect: Rect) {
@@ -432,67 +429,53 @@ impl ScenePanel {
         }
     }
 
-    fn draw_warnings(&mut self, ui: &egui::Ui, rect: Rect) {
+    fn draw_warnings(&mut self, ui: &egui::Ui, pos: Pos2) {
         if self.warnings.is_empty() {
             return;
         }
 
         let inner = |ui: &mut egui::Ui| {
-            let style = ui.style_mut();
-            let fill = style.visuals.window_fill;
-            style.visuals.window_fill =
-                Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 200);
-            let frame = Frame::window(style);
+            ui.set_max_width(300.0);
+            ui.set_max_height(200.0);
 
-            frame.show(ui, |ui| {
-                ui.set_max_width(300.0);
-                ui.set_max_height(200.0);
+            // Warning header with icon
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("⚠").size(16.0).color(Color32::YELLOW));
+                ui.label(
+                    egui::RichText::new("Warnings")
+                        .strong()
+                        .color(Color32::YELLOW),
+                );
 
-                // Warning header with icon
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("⚠").size(16.0).color(Color32::YELLOW));
-                    ui.label(
-                        egui::RichText::new("Warnings")
-                            .strong()
-                            .color(Color32::YELLOW),
-                    );
+                ui.add_space(10.0);
 
-                    ui.add_space(10.0);
+                if ui.button("clear").clicked() {
+                    self.warnings.clear();
+                }
+            });
 
-                    if ui.button("clear").clicked() {
-                        self.warnings.clear();
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 8.0;
+
+                    for warning in &self.warnings {
+                        ui.scope(|ui| {
+                            ui.visuals_mut().override_text_color =
+                                Some(Color32::from_rgb(255, 220, 120));
+                            warning.draw(ui);
+                        });
+                        ui.add_space(4.0);
                     }
                 });
-
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(6.0);
-
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 8.0;
-
-                        for warning in &self.warnings {
-                            ui.scope(|ui| {
-                                ui.visuals_mut().override_text_color =
-                                    Some(Color32::from_rgb(255, 220, 120));
-                                warning.draw(ui);
-                            });
-                            ui.add_space(4.0);
-                        }
-                    });
-            });
         };
 
-        box_ui(
-            "warnings_box",
-            ui,
-            Align2::RIGHT_TOP,
-            egui::pos2(rect.max.x, rect.min.y),
-            inner,
-        );
+        box_ui("warnings_box", ui, Align2::RIGHT_TOP, pos, inner);
     }
 }
 
@@ -589,6 +572,11 @@ impl AppPane for ScenePanel {
             return;
         }
 
+        // Handle export errors
+        while let Ok(err) = self.export_channel.1.try_recv() {
+            self.warnings.push(ErrorDisplay::new(&err));
+        }
+
         let cur_time = Instant::now();
 
         let delta_time = self.last_draw.map_or(0.0, |x| x.elapsed().as_secs_f32());
@@ -636,8 +624,9 @@ impl AppPane for ScenePanel {
         if interactive {
             // Floating play/pause button if needed.
             self.draw_play_pause(ui, rect);
-            self.controls_box(ui, process, splats, rect);
-            self.draw_warnings(ui, rect);
+            self.controls_box(ui, process, splats, egui::pos2(rect.min.x, rect.min.y));
+            let pos = egui::pos2(ui.available_rect_before_wrap().max.x, rect.min.y);
+            self.draw_warnings(ui, pos);
         }
     }
 

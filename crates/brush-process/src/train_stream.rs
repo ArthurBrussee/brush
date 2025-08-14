@@ -278,8 +278,6 @@ async fn export_checkpoint(
     splats: Splats<MainBackend>,
     iter: u32,
 ) -> Result<(), anyhow::Error> {
-    Err(anyhow!("For whatever reason..."))?;
-
     let total_steps = process_args.train_config.total_steps;
     let digits = ((total_steps as f64).log10().floor() as usize) + 1;
     let export_name = process_config
