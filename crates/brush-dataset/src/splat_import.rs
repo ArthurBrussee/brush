@@ -1,3 +1,4 @@
+use std::pin::pin;
 use std::time::Duration;
 
 use async_fn_stream::{TryStreamEmitter, try_fn_stream};
@@ -103,13 +104,9 @@ pub async fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
     subsample_points: Option<u32>,
     device: WgpuDevice,
 ) -> Result<SplatMessage, DeserializeError> {
-    let mut stream = std::pin::pin!(stream_splat_from_ply(
-        reader,
-        subsample_points,
-        device,
-        false
-    ));
-    if let Some(splat) = stream.next().await {
+    let stream = stream_splat_from_ply(reader, subsample_points, device, false);
+
+    if let Some(splat) = pin!(stream).next().await {
         let splat = splat?;
         if splat.meta.frame_count != 0 && splat.meta.frame_count != 1 {
             return Err(DeserializeError::custom(format!(

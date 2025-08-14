@@ -116,10 +116,9 @@ pub async fn process_ui(
             sp.println("ℹ️  running in debug mode, compile with --release for best performance");
     }
 
-    let mut stream = std::pin::pin!(stream);
     let mut duration = Duration::from_secs(0);
 
-    // TODO: Unify logging & CLI UI somehow.
+    let mut stream = std::pin::pin!(stream);
     while let Some(msg) = stream.next().await {
         let _span = trace_span!("CLI UI").entered();
 

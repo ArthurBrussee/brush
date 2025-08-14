@@ -1,6 +1,6 @@
 use crate::message::ProcessMessage;
 
-use std::sync::Arc;
+use std::{pin::pin, sync::Arc};
 
 use async_fn_stream::TryStreamEmitter;
 use brush_dataset::splat_import;
@@ -33,8 +33,7 @@ pub(crate) async fn view_stream(
             true,
         );
 
-        let mut splat_stream = std::pin::pin!(splat_stream);
-
+        let mut splat_stream = pin!(splat_stream);
         while let Some(message) = splat_stream.next().await {
             let message = message?;
 
