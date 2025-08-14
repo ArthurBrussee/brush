@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::Context;
 use async_fn_stream::TryStreamEmitter;
-use brush_dataset::scene_loader::SceneLoader;
+use brush_dataset::{load_dataset, scene_loader::SceneLoader};
 use brush_render::{
     MainBackend,
     gaussian_splats::{RandomSplatsConfig, Splats},
@@ -19,7 +19,6 @@ use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
 use tokio::sync::oneshot::Receiver;
-use tokio_stream::StreamExt;
 use tracing::{Instrument, trace_span};
 use web_time::{Duration, Instant};
 
@@ -47,8 +46,8 @@ pub(crate) async fn train_stream(
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     log::info!("Loading dataset");
-    let (mut splat_stream, dataset) =
-        brush_dataset::load_dataset(vfs.clone(), &process_args.load_config, &device).await?;
+    let (initial_splats, dataset) =
+        load_dataset(vfs.clone(), &process_args.load_config, &device).await?;
     visualize.log_scene(&dataset.train, process_args.rerun_config.rerun_max_img_size)?;
     log::info!("Dataset loaded");
     emitter
@@ -60,30 +59,25 @@ pub(crate) async fn train_stream(
     let estimated_up = dataset.estimate_up();
 
     log::info!("Loading initial splats if any.");
-    // Read initial splats if any.
-    let mut initial_splats = None;
 
-    while let Some(message) = splat_stream.next().await {
-        let message = message?;
-
+    if let Some(init) = &initial_splats {
         emitter
             .emit(ProcessMessage::ViewSplats {
                 // If the metadata has an up axis prefer that, otherwise estimate
                 // the up direction.
-                up_axis: message.meta.up_axis.or(Some(estimated_up)),
-                splats: Box::new(message.splats.clone()),
+                up_axis: init.meta.up_axis.or(Some(estimated_up)),
+                splats: Box::new(init.splats.clone()),
                 frame: 0,
                 total_frames: 0,
-                progress: message.meta.progress,
+                progress: init.meta.progress,
             })
             .await;
-        initial_splats = Some(message.splats);
     }
 
     emitter.emit(ProcessMessage::DoneLoading).await;
 
-    let splats = if let Some(splats) = initial_splats {
-        splats
+    let splats = if let Some(init_msg) = initial_splats {
+        init_msg.splats
     } else {
         log::info!("Starting with random splat config.");
 

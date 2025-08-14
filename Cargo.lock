@@ -1014,6 +1014,7 @@ dependencies = [
  "tokio-stream",
  "tokio_with_wasm",
  "tracing",
+ "web-time",
 ]
 
 [[package]]

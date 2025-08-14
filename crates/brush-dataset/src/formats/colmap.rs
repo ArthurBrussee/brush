@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use super::{DataStream, FormatError};
+use super::FormatError;
 use crate::{
     Dataset,
     config::LoadDataseConfig,
@@ -8,7 +8,6 @@ use crate::{
     scene::{LoadImage, SceneView},
     splat_import::{ParseMetadata, SplatMessage},
 };
-use async_fn_stream::try_fn_stream;
 use brush_render::{
     camera::{self, Camera},
     gaussian_splats::Splats,
@@ -53,7 +52,7 @@ pub(crate) async fn load_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
     device: &WgpuDevice,
-) -> Option<Result<(DataStream<SplatMessage>, Dataset), FormatError>> {
+) -> Option<Result<(Option<SplatMessage>, Dataset), FormatError>> {
     log::info!("Loading colmap dataset");
 
     let (cam_path, img_path) = if let Some(path) = vfs.files_ending_in("cameras.bin").next() {
@@ -75,7 +74,7 @@ async fn load_dataset_inner(
     device: &WgpuDevice,
     cam_path: PathBuf,
     img_path: PathBuf,
-) -> Result<(DataStream<SplatMessage>, Dataset), FormatError> {
+) -> Result<(Option<SplatMessage>, Dataset), FormatError> {
     let is_binary = cam_path.ends_with("cameras.bin");
 
     let cam_model_data = {
@@ -157,75 +156,72 @@ async fn load_dataset_inner(
         }
     }
 
-    let device = device.clone();
-    let load_args = load_args.clone();
-    let init_stream = try_fn_stream(|emitter| async move {
-        let points_path = { vfs.files_ending_in("points3d.txt").next() }
-            .or_else(|| vfs.files_ending_in("points3d.bin").next());
+    let init = try_load_init(vfs, device, load_args).await;
+    let dataset = Dataset::from_views(train_views, eval_views);
+    Ok((init, dataset))
+}
 
-        let Some(points_path) = points_path else {
-            return Ok(());
-        };
+async fn try_load_init(
+    vfs: Arc<BrushVfs>,
+    device: &WgpuDevice,
+    load_args: &LoadDataseConfig,
+) -> Option<SplatMessage> {
+    let points_path = { vfs.files_ending_in("points3d.txt").next() }
+        .or_else(|| vfs.files_ending_in("points3d.bin").next())?;
 
-        let is_binary = matches!(
-            points_path.extension().and_then(|p| p.to_str()),
-            Some("bin")
-        );
+    let is_binary = matches!(
+        points_path.extension().and_then(|p| p.to_str()),
+        Some("bin")
+    );
 
-        // Extract COLMAP sfm points.
-        let points_data = {
-            // At this point the VFS has said this file exists so just unwrap.
-            let mut points_file = vfs.reader_at_path(&points_path).await.expect("unreachable");
-            colmap_reader::read_points3d(&mut points_file, is_binary).await
-        };
+    // Extract COLMAP sfm points.
+    let points_data = {
+        // At this point the VFS has said this file exists so just unwrap.
+        let mut points_file = vfs.reader_at_path(&points_path).await.expect("unreachable");
+        colmap_reader::read_points3d(&mut points_file, is_binary).await
+    };
 
-        // Ignore empty points data.
-        if let Ok(points_data) = points_data
-            && !points_data.is_empty()
-        {
-            log::info!("Starting from colmap points {}", points_data.len());
+    let Ok(points_data) = points_data else {
+        return None;
+    };
 
-            // The ply importer handles subsampling normally. Here we just
-            // do it manually.
-            let step = load_args.subsample_points.unwrap_or(1) as usize;
+    if points_data.is_empty() {
+        return None;
+    }
 
-            let positions: Vec<f32> = points_data
-                .values()
-                .step_by(step)
-                .flat_map(|p| p.xyz.to_array())
-                .collect();
-            let colors: Vec<f32> = points_data
-                .values()
-                .step_by(step)
-                .flat_map(|p| {
-                    let sh = rgb_to_sh(glam::vec3(
-                        p.rgb[0] as f32 / 255.0,
-                        p.rgb[1] as f32 / 255.0,
-                        p.rgb[2] as f32 / 255.0,
-                    ));
-                    [sh.x, sh.y, sh.z]
-                })
-                .collect();
-            let init_splat = Splats::from_raw(positions, None, None, Some(colors), None, &device);
-            emitter
-                .emit(SplatMessage {
-                    meta: ParseMetadata {
-                        up_axis: None,
-                        total_splats: init_splat.num_splats(),
-                        frame_count: 1,
-                        current_frame: 0,
-                        progress: 1.0,
-                    },
-                    splats: init_splat,
-                })
-                .await;
-        }
+    // Ignore empty points data.
+    log::info!("Starting from colmap points {}", points_data.len());
 
-        Ok(())
-    });
+    // The ply importer handles subsampling normally. Here we just
+    // do it manually.
+    let step = load_args.subsample_points.unwrap_or(1) as usize;
 
-    Ok((
-        Box::pin(init_stream),
-        Dataset::from_views(train_views, eval_views),
-    ))
+    let positions: Vec<f32> = points_data
+        .values()
+        .step_by(step)
+        .flat_map(|p| p.xyz.to_array())
+        .collect();
+    let colors: Vec<f32> = points_data
+        .values()
+        .step_by(step)
+        .flat_map(|p| {
+            let sh = rgb_to_sh(glam::vec3(
+                p.rgb[0] as f32 / 255.0,
+                p.rgb[1] as f32 / 255.0,
+                p.rgb[2] as f32 / 255.0,
+            ));
+            [sh.x, sh.y, sh.z]
+        })
+        .collect();
+    let init_splat = Splats::from_raw(positions, None, None, Some(colors), None, device);
+    Some(SplatMessage {
+        meta: ParseMetadata {
+            up_axis: None,
+            total_splats: init_splat.num_splats(),
+            frame_count: 1,
+            current_frame: 0,
+            progress: 1.0,
+        },
+        splats: init_splat,
+    })
 }

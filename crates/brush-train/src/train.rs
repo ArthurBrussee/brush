@@ -310,7 +310,7 @@ impl SplatTrainer {
         iter: u32,
         splats: Splats<DiffBackend>,
     ) -> (Splats<DiffBackend>, Option<RefineStats>) {
-        if iter == 0 || iter % self.config.refine_every != 0 {
+        if iter == 0 || !iter.is_multiple_of(self.config.refine_every) {
             return (splats, None);
         }
 

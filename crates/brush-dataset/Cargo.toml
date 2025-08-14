@@ -29,6 +29,8 @@ async-fn-stream.workspace = true
 clap.workspace = true
 path-clean = "1.0.1"
 
+web-time.workspace = true
+
 [target.'cfg(target_family = "wasm")'.dependencies]
 tokio = { workspace = true, features = ["io-util"] }
 

@@ -3,19 +3,17 @@ use crate::{
     config::LoadDataseConfig,
     splat_import::{SplatMessage, load_splat_from_ply},
 };
-use brush_vfs::{BrushVfs, DynStream};
+use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
 use path_clean::PathClean;
+use serde_ply::DeserializeError;
 use std::{
     path::{Path, PathBuf},
-    pin::Pin,
     sync::Arc,
 };
 
 pub mod colmap;
 pub mod nerfstudio;
-
-pub type DataStream<T> = Pin<Box<dyn DynStream<Result<T, serde_ply::DeserializeError>>>>;
 
 use thiserror::Error;
 
@@ -32,6 +30,9 @@ pub enum FormatError {
 
     #[error("Error when decoding format: {0}")]
     InvalidFormat(String),
+
+    #[error("Error loading splat data: {0}")]
+    PlyError(#[from] DeserializeError),
 }
 
 #[derive(Debug, Error)]
@@ -50,7 +51,7 @@ pub async fn load_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
     device: &WgpuDevice,
-) -> Result<(DataStream<SplatMessage>, Dataset), DatasetError> {
+) -> Result<(Option<SplatMessage>, Dataset), DatasetError> {
     let nerfstudio_fmt = nerfstudio::read_dataset(vfs.clone(), load_args, device).await;
 
     let format = if let Some(fmt) = nerfstudio_fmt {
@@ -75,23 +76,19 @@ pub async fn load_dataset(
         })
     };
 
-    let init_stream = if let Some(main_path) = main_ply_path {
+    let init_splat = if let Some(main_path) = main_ply_path {
         log::info!("Using ply {main_path:?} as initial point cloud.");
 
         let reader = vfs
             .reader_at_path(main_path)
             .await
             .map_err(serde_ply::DeserializeError)?;
-        Box::pin(load_splat_from_ply(
-            reader,
-            load_args.subsample_points,
-            device.clone(),
-        ))
+        Some(load_splat_from_ply(reader, load_args.subsample_points, device.clone()).await?)
     } else {
         format.0
     };
 
-    Ok((init_stream, format.1))
+    Ok((init_splat, format.1))
 }
 
 fn find_mask_path(vfs: &BrushVfs, path: &Path) -> Option<PathBuf> {

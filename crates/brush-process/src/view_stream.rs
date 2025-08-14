@@ -26,10 +26,11 @@ pub(crate) async fn view_stream(
             .await;
 
         let sub_sample = None; // Subsampling a trained ply doesn't really make sense.
-        let splat_stream = splat_import::load_splat_from_ply(
+        let splat_stream = splat_import::stream_splat_from_ply(
             vfs.reader_at_path(path).await?,
             sub_sample,
             device.clone(),
+            true,
         );
 
         let mut splat_stream = std::pin::pin!(splat_stream);

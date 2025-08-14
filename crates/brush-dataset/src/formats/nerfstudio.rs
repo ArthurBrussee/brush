@@ -1,13 +1,12 @@
-use super::DataStream;
 use super::FormatError;
 use super::find_mask_path;
+use crate::splat_import::load_splat_from_ply;
 use crate::{
     Dataset,
     config::LoadDataseConfig,
     scene::{LoadImage, SceneView},
-    splat_import::{SplatMessage, load_splat_from_ply},
+    splat_import::SplatMessage,
 };
-use async_fn_stream::try_fn_stream;
 use brush_render::camera::fov_to_focal;
 use brush_render::camera::{Camera, focal_to_fov};
 use brush_vfs::BrushVfs;
@@ -15,7 +14,6 @@ use burn::backend::wgpu::WgpuDevice;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
-use tokio_stream::StreamExt;
 
 #[derive(serde::Deserialize, Clone)]
 #[allow(unused)] // not reading camera distortions yet.
@@ -191,7 +189,7 @@ pub async fn read_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
     device: &WgpuDevice,
-) -> Option<Result<(DataStream<SplatMessage>, Dataset), FormatError>> {
+) -> Option<Result<(Option<SplatMessage>, Dataset), FormatError>> {
     log::info!("Loading nerfstudio dataset");
 
     let json_files: Vec<_> = vfs.files_with_extension("json").collect();
@@ -215,7 +213,7 @@ async fn read_dataset_inner(
     device: &WgpuDevice,
     json_files: Vec<std::path::PathBuf>,
     transforms_path: std::path::PathBuf,
-) -> Result<(DataStream<SplatMessage>, Dataset), FormatError> {
+) -> Result<(Option<SplatMessage>, Dataset), FormatError> {
     let mut buf = String::new();
     vfs.reader_at_path(&transforms_path)
         .await?
@@ -276,29 +274,22 @@ async fn read_dataset_inner(
     let device = device.clone();
     let load_args = load_args.clone();
 
-    let splat_stream = try_fn_stream(|emitter| async move {
-        if let Some(init) = train_scene.ply_file_path {
-            let init_path = transforms_path
-                .parent()
-                .expect("Transforms path must be a filename")
-                .join(init);
+    let mut init_splat = None;
 
-            let ply_data = vfs.reader_at_path(&init_path).await;
+    if let Some(init_path) = train_scene.ply_file_path {
+        let init_path = transforms_path
+            .parent()
+            .expect("Transforms path must be a filename")
+            .join(init_path);
 
-            if let Ok(ply_data) = ply_data {
-                let splat_stream =
-                    load_splat_from_ply(ply_data, load_args.subsample_points, device.clone());
+        let ply_data = vfs.reader_at_path(&init_path).await;
 
-                let mut splat_stream = std::pin::pin!(splat_stream);
-
-                // If successfully extracted, sent this splat as an initial splat.
-                while let Some(Ok(splat)) = splat_stream.next().await {
-                    emitter.emit(splat).await;
-                }
-            }
+        if let Ok(ply_data) = ply_data {
+            init_splat = Some(
+                load_splat_from_ply(ply_data, load_args.subsample_points, device.clone()).await?,
+            );
         }
-        Ok(())
-    });
+    }
 
-    Ok((Box::pin(splat_stream), dataset))
+    Ok((init_splat, dataset))
 }

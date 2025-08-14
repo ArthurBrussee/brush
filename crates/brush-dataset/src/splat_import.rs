@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use async_fn_stream::{TryStreamEmitter, try_fn_stream};
 use brush_render::gaussian_splats::Splats;
 use brush_render::{MainBackend, gaussian_splats::inverse_sigmoid, sh::rgb_to_sh};
@@ -7,11 +9,14 @@ use burn::tensor::{Tensor, TensorData};
 use glam::{Vec3, Vec4, Vec4Swizzles};
 use serde::Deserialize;
 use serde::de::{DeserializeSeed, Error};
-use serde_ply::{DeserializeError, RowVisitor};
+use serde_ply::{DeserializeError, PlyChunkedReader, RowVisitor};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
+use tokio_stream::StreamExt;
 
 use crate::parsed_gaussian::{PlyGaussian, QuantSh, QuantSplat};
+
+type StreamEmitter = TryStreamEmitter<SplatMessage, DeserializeError>;
 
 pub struct ParseMetadata {
     pub up_axis: Option<Vec3>,
@@ -30,6 +35,31 @@ enum PlyFormat {
     Ply,
     Brush4DCompressed,
     SuperSplatCompressed,
+}
+
+struct TimedUpdate {
+    last_update: web_time::Instant,
+    update_every: Option<web_time::Duration>,
+}
+
+impl TimedUpdate {
+    fn new(update_every: Option<web_time::Duration>) -> Self {
+        Self {
+            last_update: web_time::Instant::now(),
+            update_every,
+        }
+    }
+
+    fn should_update(&mut self) -> bool {
+        if let Some(duration) = self.update_every
+            && self.last_update.elapsed() >= duration
+        {
+            self.last_update = web_time::Instant::now();
+            return true;
+        }
+
+        false
+    }
 }
 
 fn interleave_coeffs(sh_dc: Vec3, sh_rest: &[f32], result: &mut Vec<f32>) {
@@ -68,14 +98,41 @@ async fn read_chunk<T: AsyncRead + Unpin>(
     }
 }
 
-pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
+pub async fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
+    reader: T,
+    subsample_points: Option<u32>,
+    device: WgpuDevice,
+) -> Result<SplatMessage, DeserializeError> {
+    let mut stream = std::pin::pin!(stream_splat_from_ply(
+        reader,
+        subsample_points,
+        device,
+        false
+    ));
+    if let Some(splat) = stream.next().await {
+        let splat = splat?;
+        if splat.meta.frame_count != 0 && splat.meta.frame_count != 1 {
+            return Err(DeserializeError::custom(format!(
+                "Can't load single splat from animated ply: {}",
+                splat.meta.frame_count
+            )));
+        }
+        return Ok(splat);
+    }
+    Err(DeserializeError::custom(
+        "Couldn't load single splat from ply",
+    ))
+}
+
+pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
     mut reader: T,
     subsample_points: Option<u32>,
     device: WgpuDevice,
+    streaming: bool,
 ) -> impl DynStream<Result<SplatMessage, DeserializeError>> {
     try_fn_stream(|emitter| async move {
         // TODO: Just make chunk ply take in data and try to get a header? Simpler maybe.
-        let mut file = serde_ply::PlyChunkedReader::new();
+        let mut file = PlyChunkedReader::new();
         read_chunk(&mut reader, file.buffer_mut()).await?;
 
         let header = file.header().expect("Must have header");
@@ -115,19 +172,29 @@ pub fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
         };
 
         let subsample = subsample_points.unwrap_or(1) as usize;
+        let mut updater = TimedUpdate::new(streaming.then(|| Duration::from_millis(1500)));
 
         match ply_type {
             PlyFormat::Ply => {
-                parse_ply(reader, subsample, device, &mut file, up_axis, &emitter).await?;
+                parse_ply(
+                    reader,
+                    subsample,
+                    device,
+                    &mut file,
+                    up_axis,
+                    &emitter,
+                    &mut updater,
+                )
+                .await?;
             }
             PlyFormat::Brush4DCompressed => {
-                parse_delta_ply(reader, subsample, device, file, up_axis, &emitter).await?;
+                parse_delta_ply(reader, subsample, device, file, up_axis, emitter, updater).await?;
             }
             PlyFormat::SuperSplatCompressed => {
-                parse_compressed_ply(reader, subsample, device, file, up_axis, &emitter).await?;
+                parse_compressed_ply(reader, subsample, device, file, up_axis, emitter, updater)
+                    .await?;
             }
         }
-
         Ok(())
     })
 }
@@ -140,15 +207,15 @@ async fn parse_ply<T: AsyncRead + Unpin>(
     mut reader: T,
     subsample: usize,
     device: WgpuDevice,
-    file: &mut serde_ply::PlyChunkedReader,
+    file: &mut PlyChunkedReader,
     up_axis: Option<Vec3>,
-    emitter: &TryStreamEmitter<SplatMessage, DeserializeError>,
+    emitter: &StreamEmitter,
+    update: &mut TimedUpdate,
 ) -> Result<Splats<MainBackend>, DeserializeError> {
     let header = file.header().expect("Must have header");
     let vertex = header
         .get_element("vertex")
         .ok_or(DeserializeError::custom("Unknown format"))?;
-
     let max_splats = vertex.count / subsample;
 
     let mut means = Vec::with_capacity(max_splats * 3);
@@ -171,17 +238,14 @@ async fn parse_ply<T: AsyncRead + Unpin>(
         })
         .count();
     let mut coeffs = (sh_count > 0).then(|| Vec::with_capacity(max_splats * sh_count));
-
-    let update_every = max_splats.div_ceil(5);
     let mut row_index: usize = 0;
-    let mut last_update = 0;
 
     loop {
         read_chunk(&mut reader, file.buffer_mut()).await?;
 
         RowVisitor::new(|mut gauss: PlyGaussian| {
             row_index += 1;
-            if row_index % subsample != 0 {
+            if !row_index.is_multiple_of(subsample) {
                 return;
             }
 
@@ -218,7 +282,7 @@ async fn parse_ply<T: AsyncRead + Unpin>(
         })
         .deserialize(&mut *file)?;
 
-        if row_index - last_update > update_every || row_index == max_splats {
+        if update.should_update() || row_index == max_splats {
             let splats = Splats::from_raw(
                 means.clone(),
                 rotations.clone(),
@@ -233,15 +297,13 @@ async fn parse_ply<T: AsyncRead + Unpin>(
                     meta: ParseMetadata {
                         total_splats: max_splats as u32,
                         up_axis,
+                        progress: progress(row_index, max_splats),
                         frame_count: 0,
                         current_frame: 0,
-                        progress: progress(row_index, max_splats),
                     },
                     splats: splats.clone(),
                 })
                 .await;
-
-            last_update = row_index;
 
             if row_index == max_splats {
                 return Ok(splats);
@@ -250,13 +312,14 @@ async fn parse_ply<T: AsyncRead + Unpin>(
     }
 }
 
-async fn parse_delta_ply<T: AsyncRead + Unpin + 'static>(
+async fn parse_delta_ply<T: AsyncRead + Unpin>(
     mut reader: T,
     subsample: usize,
     device: WgpuDevice,
-    mut file: serde_ply::PlyChunkedReader,
+    mut file: PlyChunkedReader,
     up_axis: Option<Vec3>,
-    emitter: &TryStreamEmitter<SplatMessage, DeserializeError>,
+    emitter: StreamEmitter,
+    mut update: TimedUpdate,
 ) -> Result<(), DeserializeError> {
     let splats = parse_ply(
         &mut reader,
@@ -264,7 +327,8 @@ async fn parse_delta_ply<T: AsyncRead + Unpin + 'static>(
         device.clone(),
         &mut file,
         up_axis,
-        emitter,
+        &emitter,
+        &mut update,
     )
     .await?;
 
@@ -362,13 +426,11 @@ async fn parse_delta_ply<T: AsyncRead + Unpin + 'static>(
 
             // The splat we decode is normed to 0-1 (if quantized), so rescale to
             // actual values afterwards.
-            // Let's only animate transforms for now.
             RowVisitor::new(|meta: Frame| {
                 row_count += 1;
                 if row_count % subsample != 0 {
                     return;
                 }
-
                 let mean = glam::vec3(meta.x, meta.y, meta.z) * (max_mean - min_mean) + min_mean;
                 let scale = glam::vec3(meta.scale_0, meta.scale_1, meta.scale_2)
                     * (max_scale - min_scale)
@@ -412,7 +474,6 @@ async fn parse_delta_ply<T: AsyncRead + Unpin + 'static>(
                     ),
                 })
                 .await;
-
             frame += 1;
         }
     }
@@ -420,13 +481,14 @@ async fn parse_delta_ply<T: AsyncRead + Unpin + 'static>(
     Ok(())
 }
 
-async fn parse_compressed_ply<T: AsyncRead + Unpin + 'static>(
+async fn parse_compressed_ply<T: AsyncRead + Unpin>(
     mut reader: T,
     subsample: usize,
     device: WgpuDevice,
-    mut file: serde_ply::PlyChunkedReader,
+    mut file: PlyChunkedReader,
     up_axis: Option<Vec3>,
-    emitter: &TryStreamEmitter<SplatMessage, DeserializeError>,
+    emitter: StreamEmitter,
+    mut update: TimedUpdate,
 ) -> Result<(), DeserializeError> {
     #[derive(Default, Deserialize)]
     struct QuantMeta {
@@ -485,6 +547,7 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin + 'static>(
     let vertex = file
         .current_element()
         .ok_or(DeserializeError::custom("Unknown format"))?;
+
     if vertex.name != "vertex" {
         return Err(DeserializeError::custom("Unknown format"));
     }
@@ -496,9 +559,6 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin + 'static>(
     let mut rotations = Vec::with_capacity(max_splats * 4);
     let mut sh_coeffs = Vec::with_capacity(max_splats * 3);
     let mut opacity = Vec::with_capacity(max_splats);
-
-    let update_every = max_splats.div_ceil(5);
-    let mut last_update = 0;
 
     let mut row_count = 0;
 
@@ -538,7 +598,7 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin + 'static>(
         .deserialize(&mut file)?;
 
         // Occasionally send some updated splats.
-        if (row_count - last_update) >= update_every || row_count == max_splats {
+        if update.should_update() || row_count == max_splats {
             // Leave 20% of progress for loading the SH's, just an estimate.
             let max_time = if sh_vals.is_some() { 0.8 } else { 1.0 };
             let progress = progress(row_count, max_splats) * max_time;
@@ -561,7 +621,6 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin + 'static>(
                     ),
                 })
                 .await;
-            last_update = row_count;
         }
     }
 
