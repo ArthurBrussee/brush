@@ -1,24 +1,31 @@
-use std::path::Path;
-use std::sync::Arc;
-
 use crate::{
-    config::ProcessArgs, eval_export::eval_save_to_disk, message::ProcessMessage,
+    config::{ProcessArgs, ProcessConfig, RerunConfig},
+    emit_warnings::WarningEmitter,
+    eval_export::eval_save_to_disk,
+    message::ProcessMessage,
     visualize_tools::VisualizeTools,
 };
 use anyhow::Context;
 use async_fn_stream::TryStreamEmitter;
-use brush_dataset::{load_dataset, scene_loader::SceneLoader};
+use brush_dataset::{
+    load_dataset, scene::Scene, scene_loader::SceneLoader, splat_export::splat_to_ply,
+};
 use brush_render::{
     MainBackend,
     gaussian_splats::{RandomSplatsConfig, Splats},
 };
-use brush_train::{eval::eval_stats, train::SplatTrainer};
+use brush_train::{
+    eval::eval_stats,
+    msg::{RefineStats, TrainStepStats},
+    train::SplatTrainer,
+};
 use brush_vfs::BrushVfs;
-use burn::{module::AutodiffModule, prelude::Backend};
+use burn::{backend::Autodiff, module::AutodiffModule, prelude::Backend};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
-use tokio::sync::oneshot::Receiver;
+use std::{path::Path, sync::Arc};
+use tokio::{fs, sync::oneshot::Receiver};
 use tracing::{Instrument, trace_span};
 use web_time::{Duration, Instant};
 
@@ -29,6 +36,8 @@ pub(crate) async fn train_stream(
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
+
+    let warner = WarningEmitter::new(&emitter);
 
     emitter
         .emit(ProcessMessage::StartLoading { training: true })
@@ -48,7 +57,13 @@ pub(crate) async fn train_stream(
     log::info!("Loading dataset");
     let (initial_splats, dataset) =
         load_dataset(vfs.clone(), &process_args.load_config, &device).await?;
-    visualize.log_scene(&dataset.train, process_args.rerun_config.rerun_max_img_size)?;
+
+    warner
+        .warn_if_err(
+            visualize.log_scene(&dataset.train, process_args.rerun_config.rerun_max_img_size),
+        )
+        .await;
+
     log::info!("Dataset loaded");
     emitter
         .emit(ProcessMessage::Dataset {
@@ -57,7 +72,6 @@ pub(crate) async fn train_stream(
         .await;
 
     let estimated_up = dataset.estimate_up();
-
     log::info!("Loading initial splats if any.");
 
     if let Some(init) = &initial_splats {
@@ -90,7 +104,6 @@ pub(crate) async fn train_stream(
             .train
             .adjusted_bounds(bounds_extent * 0.25, bounds_extent);
         let config = RandomSplatsConfig::new();
-
         Splats::from_random_config(&config, adjusted_bounds, &mut rng, &device)
     };
 
@@ -121,109 +134,60 @@ pub(crate) async fn train_stream(
             .await;
         splats = new_splats;
 
-        #[allow(unused)]
-        let export_path = Path::new(&process_config.export_path).to_owned();
-
         // We just finished iter 'iter', now starting iter + 1.
         let iter = iter + 1;
         let is_last_step = iter == process_args.train_config.total_steps;
+
+        // Add up time from this step.
+        train_duration += step_time.elapsed();
 
         // Check if we want to evaluate _next iteration_. Small detail, but this ensures we evaluate
         // before doing a refine.
         if (iter % process_config.eval_every == 0 || is_last_step)
             && let Some(eval_scene) = eval_scene.as_mut()
         {
-            let mut psnr = 0.0;
-            let mut ssim = 0.0;
-            let mut count = 0;
-
-            log::info!("Running evaluation for iteration {iter}");
-
-            for (i, view) in eval_scene.views.iter().enumerate() {
-                let eval_img = view.image.load().await?;
-                let sample = eval_stats(
-                    &splats.valid(),
-                    &view.camera,
-                    eval_img,
-                    view.image.is_masked(),
-                    &device,
-                )
-                .context("Failed to run eval for sample.")?;
-
-                count += 1;
-                psnr += sample.psnr.clone().into_scalar_async().await;
-                ssim += sample.ssim.clone().into_scalar_async().await;
-
-                if process_args.process_config.eval_save_to_disk {
-                    let img_name = Path::new(&view.image.path)
-                        .file_stem()
-                        .expect("No file name for eval view.")
-                        .to_string_lossy();
-                    let path = Path::new(&export_path)
-                        .join(format!("eval_{iter}"))
-                        .join(format!("{img_name}.png"));
-                    eval_save_to_disk(&sample, &path).await?;
-                }
-
-                visualize.log_eval_sample(iter, i as u32, sample).await?;
-            }
-
-            psnr /= count as f32;
-            ssim /= count as f32;
-
-            visualize.log_eval_stats(iter, psnr, ssim)?;
-
-            let message = ProcessMessage::EvalResult {
+            let res = run_eval(
+                &device,
+                &emitter,
+                &visualize,
+                process_config,
+                splats.valid(),
                 iter,
-                avg_psnr: psnr,
-                avg_ssim: ssim,
-            };
-
-            emitter.emit(message).await;
+                eval_scene,
+            )
+            .await;
+            warner
+                .warn_if_err(res.context(format!("Failed evaluation at iteration {iter}")))
+                .await;
         }
 
-        let client = WgpuRuntime::client(&device);
-        visualize.log_memory(iter, &client.memory_usage())?;
-
-        // TODO: Support this on WASM somehow. Maybe have user pick a file once,
+        // TODO: Want to support this on WASM somehow. Maybe have user pick a file once,
         // and write to it repeatedly?
         #[cfg(not(target_family = "wasm"))]
         if iter % process_config.export_every == 0 || is_last_step {
-            let total_steps = process_args.train_config.total_steps;
-
-            // Ad-hoc format string.
-            let digits = (total_steps as f64).log10().ceil() as usize;
-            let export_name = process_config
-                .export_name
-                .replace("{iter}", &format!("{iter:0digits$}"));
-
-            tokio::fs::create_dir_all(&export_path).await?;
-
-            let splat_data = brush_dataset::splat_export::splat_to_ply(splats.valid()).await?;
-            tokio::fs::write(export_path.join(&export_name), splat_data)
-                .await
-                .with_context(|| format!("Failed to export ply {export_path:?}"))?;
+            let res = export_checkpoint(&process_args, process_config, splats.valid(), iter).await;
+            warner
+                .warn_if_err(res.context(format!("Export at iteration {iter} failed")))
+                .await;
         }
 
-        if let Some(every) = process_args.rerun_config.rerun_log_splats_every
-            && (iter % every == 0 || is_last_step)
-        {
-            visualize.log_splats(iter, splats.valid()).await?;
-        }
+        let res = rerun_log(
+            &process_args.rerun_config,
+            &visualize,
+            splats.clone(),
+            &stats,
+            iter,
+            is_last_step,
+            &device,
+            refine.as_ref(),
+        )
+        .await;
 
-        visualize.log_splat_stats(iter, &splats)?;
+        warner
+            .warn_if_err(res.context("Rerun visualization failed"))
+            .await;
 
-        // Log out train stats.
-        if iter % process_args.rerun_config.rerun_log_train_stats_every == 0 || is_last_step {
-            visualize.log_train_stats(iter, stats.clone()).await?;
-        }
-
-        // Add up time from this step.
-        train_duration += step_time.elapsed();
-
-        // Emit some messages. Important to not count these in the training time (as this might pause).
         if let Some(stats) = refine {
-            visualize.log_refine_stats(iter, &stats)?;
             emitter
                 .emit(ProcessMessage::RefineStep {
                     stats: Box::new(stats),
@@ -246,5 +210,120 @@ pub(crate) async fn train_stream(
         }
     }
 
+    Ok(())
+}
+
+async fn run_eval(
+    device: &WgpuDevice,
+    emitter: &TryStreamEmitter<ProcessMessage, anyhow::Error>,
+    visualize: &VisualizeTools,
+    process_config: &ProcessConfig,
+    splats: Splats<MainBackend>,
+    iter: u32,
+    eval_scene: &Scene,
+) -> Result<(), anyhow::Error> {
+    let mut psnr = 0.0;
+    let mut ssim = 0.0;
+    let mut count = 0;
+    log::info!("Running evaluation for iteration {iter}");
+
+    for (i, view) in eval_scene.views.iter().enumerate() {
+        let eval_img = view.image.load().await?;
+        let sample = eval_stats(
+            &splats,
+            &view.camera,
+            eval_img,
+            view.image.is_masked(),
+            device,
+        )
+        .context("Failed to run eval for sample.")?;
+
+        count += 1;
+        psnr += sample.psnr.clone().into_scalar_async().await;
+        ssim += sample.ssim.clone().into_scalar_async().await;
+
+        let export_path = Path::new(&process_config.export_path).to_owned();
+        if process_config.eval_save_to_disk {
+            let img_name = Path::new(&view.image.path)
+                .file_stem()
+                .expect("No file name for eval view.")
+                .to_string_lossy();
+            let path = Path::new(&export_path)
+                .join(format!("eval_{iter}"))
+                .join(format!("{img_name}.png"));
+            eval_save_to_disk(&sample, &path).await?;
+        }
+
+        visualize.log_eval_sample(iter, i as u32, sample).await?;
+    }
+    psnr /= count as f32;
+    ssim /= count as f32;
+    visualize.log_eval_stats(iter, psnr, ssim)?;
+    emitter
+        .emit(ProcessMessage::EvalResult {
+            iter,
+            avg_psnr: psnr,
+            avg_ssim: ssim,
+        })
+        .await;
+
+    Ok(())
+}
+
+use anyhow::anyhow;
+
+async fn export_checkpoint(
+    process_args: &ProcessArgs,
+    process_config: &ProcessConfig,
+    splats: Splats<MainBackend>,
+    iter: u32,
+) -> Result<(), anyhow::Error> {
+    Err(anyhow!("For whatever reason..."))?;
+
+    let total_steps = process_args.train_config.total_steps;
+    let digits = ((total_steps as f64).log10().floor() as usize) + 1;
+    let export_name = process_config
+        .export_name
+        .replace("{iter}", &format!("{iter:0digits$}"));
+    let export_path = Path::new(&process_config.export_path).to_owned();
+    fs::create_dir_all(&export_path)
+        .await
+        .context("Creating export directory")?;
+    let splat_data = splat_to_ply(splats)
+        .await
+        .context("Serializing splat data")?;
+    fs::write(export_path.join(&export_name), splat_data)
+        .await
+        .context(format!("Failed to export ply {export_path:?}"))?;
+    Ok(())
+}
+
+async fn rerun_log(
+    rerun_config: &RerunConfig,
+    visualize: &VisualizeTools,
+    splats: Splats<Autodiff<MainBackend>>,
+    stats: &TrainStepStats<MainBackend>,
+    iter: u32,
+    is_last_step: bool,
+    device: &WgpuDevice,
+    refine: Option<&RefineStats>,
+) -> Result<(), anyhow::Error> {
+    visualize.log_splat_stats(iter, &splats)?;
+
+    if let Some(every) = rerun_config.rerun_log_splats_every
+        && (iter.is_multiple_of(every) || is_last_step)
+    {
+        visualize.log_splats(iter, splats.valid()).await?;
+    }
+    // Log out train stats.
+    if iter.is_multiple_of(rerun_config.rerun_log_train_stats_every) || is_last_step {
+        visualize.log_train_stats(iter, stats.clone()).await?;
+    }
+    let client = WgpuRuntime::client(device);
+    visualize.log_memory(iter, &client.memory_usage())?;
+    // Emit some messages. Important to not count these in the training time (as this might pause).
+    if let Some(stats) = refine {
+        visualize.log_refine_stats(iter, stats)?;
+    }
     Ok(())
 }

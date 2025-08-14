@@ -194,6 +194,10 @@ pub async fn process_ui(
                     "Eval iter {iter}: PSNR {avg_psnr}, ssim {avg_ssim}"
                 ));
             }
+            ProcessMessage::Warning { error } => {
+                log::warn!("{error}");
+                sp.println("⚠️: {error}")?;
+            }
         }
     }
 

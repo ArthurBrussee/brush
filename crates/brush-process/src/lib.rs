@@ -6,5 +6,6 @@ pub mod process;
 pub mod train_stream;
 pub mod view_stream;
 
+mod emit_warnings;
 mod eval_export;
 mod visualize_tools;

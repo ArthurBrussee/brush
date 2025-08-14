@@ -227,7 +227,6 @@ mod visualize_tools_impl {
         pub fn log_splat_stats<B: Backend>(&self, iter: u32, splats: &Splats<B>) -> Result<()> {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
-
                 let num = splats.num_splats();
                 self.rec
                     .log("splats/num_splats", &rerun::Scalars::new(vec![num as f64]))?;
