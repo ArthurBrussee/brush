@@ -105,20 +105,12 @@ pub async fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
     device: WgpuDevice,
 ) -> Result<SplatMessage, DeserializeError> {
     let stream = stream_splat_from_ply(reader, subsample_points, device, false);
-
-    if let Some(splat) = pin!(stream).next().await {
-        let splat = splat?;
-        if splat.meta.frame_count != 0 && splat.meta.frame_count != 1 {
-            return Err(DeserializeError::custom(format!(
-                "Can't load single splat from animated ply: {}",
-                splat.meta.frame_count
-            )));
-        }
-        return Ok(splat);
-    }
-    Err(DeserializeError::custom(
-        "Couldn't load single splat from ply",
-    ))
+    let Some(splat) = pin!(stream).next().await else {
+        return Err(DeserializeError::custom(
+            "Couldn't load single splat from ply",
+        ));
+    };
+    splat
 }
 
 pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin + 'static>(
