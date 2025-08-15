@@ -186,22 +186,23 @@ pub(crate) fn render_forward(
             num_visible.clone(),
             shaders::project_visible::WORKGROUP_SIZE,
         );
-
-        // Normal execute as loops in here could be iffy.
-        client.execute(
-            ProjectVisible::task(),
-            CubeCount::Dynamic(num_vis_wg.handle.binding()),
-            Bindings::new().with_buffers(vec![
-                uniforms_buffer.clone().handle.binding(),
-                means.handle.binding(),
-                log_scales.handle.binding(),
-                quats.handle.binding(),
-                sh_coeffs.handle.binding(),
-                raw_opacities.handle.binding(),
-                global_from_compact_gid.handle.clone().binding(),
-                projected_splats.handle.clone().binding(),
-            ]),
-        );
+        // SAFETY: Kernel checked to have no OOB, bounded loops.
+        unsafe {
+            client.execute_unchecked(
+                ProjectVisible::task(),
+                CubeCount::Dynamic(num_vis_wg.handle.binding()),
+                Bindings::new().with_buffers(vec![
+                    uniforms_buffer.clone().handle.binding(),
+                    means.handle.binding(),
+                    log_scales.handle.binding(),
+                    quats.handle.binding(),
+                    sh_coeffs.handle.binding(),
+                    raw_opacities.handle.binding(),
+                    global_from_compact_gid.handle.clone().binding(),
+                    projected_splats.handle.clone().binding(),
+                ]),
+            );
+        }
     });
 
     // Each intersection maps to a gaussian.
@@ -221,16 +222,19 @@ pub(crate) fn render_forward(
 
         // First do a prepass to compute the tile counts, then fill in intersection counts.
         tracing::trace_span!("MapGaussiansToIntersectPrepass").in_scope(|| {
-            client.execute(
-                MapGaussiansToIntersect::task(true),
-                CubeCount::Dynamic(num_vis_map_wg.clone().handle.binding()),
-                Bindings::new().with_buffers(vec![
-                    uniforms_buffer.clone().handle.binding(),
-                    projected_splats.clone().handle.binding(),
-                    splat_intersect_counts.clone().handle.binding(),
-                    tile_intersect_counts.clone().handle.binding(),
-                ]),
-            );
+            // SAFETY: Kernel checked to have no OOB, bounded loops.
+            unsafe {
+                client.execute_unchecked(
+                    MapGaussiansToIntersect::task(true),
+                    CubeCount::Dynamic(num_vis_map_wg.clone().handle.binding()),
+                    Bindings::new().with_buffers(vec![
+                        uniforms_buffer.clone().handle.binding(),
+                        projected_splats.clone().handle.binding(),
+                        splat_intersect_counts.clone().handle.binding(),
+                        tile_intersect_counts.clone().handle.binding(),
+                    ]),
+                );
+            }
         });
 
         // TODO: Only need to do this up to num_visible gaussians really.
@@ -243,17 +247,20 @@ pub(crate) fn render_forward(
             create_tensor::<1, _>([max_intersects as usize], device, client, DType::I32);
 
         tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
-            client.execute(
-                MapGaussiansToIntersect::task(false),
-                CubeCount::Dynamic(num_vis_map_wg.clone().handle.binding()),
-                Bindings::new().with_buffers(vec![
-                    uniforms_buffer.clone().handle.binding(),
-                    projected_splats.clone().handle.binding(),
-                    cum_tiles_hit.clone().handle.binding(),
-                    tile_id_from_isect.clone().handle.binding(),
-                    compact_gid_from_isect.clone().handle.binding(),
-                ]),
-            );
+            // SAFETY: Kernel checked to have no OOB, bounded loops.
+            unsafe {
+                client.execute_unchecked(
+                    MapGaussiansToIntersect::task(false),
+                    CubeCount::Dynamic(num_vis_map_wg.clone().handle.binding()),
+                    Bindings::new().with_buffers(vec![
+                        uniforms_buffer.clone().handle.binding(),
+                        projected_splats.clone().handle.binding(),
+                        cum_tiles_hit.clone().handle.binding(),
+                        tile_id_from_isect.clone().handle.binding(),
+                        compact_gid_from_isect.clone().handle.binding(),
+                    ]),
+                );
+            }
         });
 
         // Create a tensor containing just the number of intersections.
@@ -321,13 +328,14 @@ pub(crate) fn render_forward(
     // see the BWD_INFO define in the rasterize shader.
     let raster_task = Rasterize::task(bwd_info);
 
-    // Use safe execution as kernel has some looping which might be unbounded (depending on overflow rules?
-    // idk, the slow down seems tiny anyway so might as well).
-    client.execute(
-        raster_task,
-        calc_cube_count([img_size.x, img_size.y], Rasterize::WORKGROUP_SIZE),
-        bindings,
-    );
+    // SAFETY: Kernel checked to have no OOB, bounded loops.
+    unsafe {
+        client.execute_unchecked(
+            raster_task,
+            calc_cube_count([img_size.x, img_size.y], Rasterize::WORKGROUP_SIZE),
+            bindings,
+        );
+    }
 
     (
         out_img,
