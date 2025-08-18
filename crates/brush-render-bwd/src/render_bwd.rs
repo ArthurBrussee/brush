@@ -55,7 +55,6 @@ pub(crate) fn render_backward(
     let v_means = MainBackendBase::float_zeros([num_points, 3].into(), device);
     let v_scales = MainBackendBase::float_zeros([num_points, 3].into(), device);
     let v_quats = MainBackendBase::float_zeros([num_points, 4].into(), device);
-
     let v_coeffs = MainBackendBase::float_zeros(
         [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
         device,
@@ -70,10 +69,9 @@ pub(crate) fn render_backward(
             .y
             .div_ceil(brush_render::shaders::helpers::TILE_WIDTH),
     );
-    let invocations = tile_bounds.x * tile_bounds.y;
 
     // These gradients are atomically added to so important to zero them.
-    let v_grads = MainBackendBase::float_zeros([num_points, 9].into(), device);
+    let v_grads = MainBackendBase::float_zeros([num_points, 8].into(), device);
     let v_refine_weight = MainBackendBase::float_zeros([num_points, 2].into(), device);
 
     let hard_floats =
@@ -89,16 +87,18 @@ pub(crate) fn render_backward(
         unsafe {
             client.execute_unchecked(
                 RasterizeBackwards::task(hard_floats),
-                CubeCount::Static(invocations, 1, 1),
+                CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
                 Bindings::new().with_buffers(vec![
-                    uniforms_buffer.clone().handle.binding(),
+                    uniforms_buffer.handle.clone().binding(),
                     compact_gid_from_isect.handle.binding(),
+                    global_from_compact_gid.handle.clone().binding(),
                     tile_offsets.handle.binding(),
                     projected_splats.handle.binding(),
                     out_img.handle.binding(),
                     v_output.handle.binding(),
-                    v_grads.clone().handle.binding(),
-                    v_refine_weight.clone().handle.binding(),
+                    v_grads.handle.clone().binding(),
+                    v_opac.handle.clone().binding(),
+                    v_refine_weight.handle.clone().binding(),
                 ]),
             );
         }
@@ -118,7 +118,6 @@ pub(crate) fn render_backward(
                 means.clone().handle.binding(),
                 v_grads.clone().handle.binding(),
                 v_coeffs.handle.clone().binding(),
-                v_opac.handle.clone().binding(),
             ]),
         );
     }

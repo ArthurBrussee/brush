@@ -7,7 +7,6 @@
 @group(0) @binding(3) var<storage, read> v_grads: array<f32>;
 
 @group(0) @binding(4) var<storage, read_write> v_coeffs: array<f32>;
-@group(0) @binding(5) var<storage, read_write> v_opacs: array<f32>;
 
 const SH_C0: f32 = 0.2820947917738781f;
 
@@ -152,7 +151,7 @@ fn write_coeffs(base_id: ptr<function, i32>, val: vec3f) {
 }
 
 @compute
-@workgroup_size(256, 1, 1)
+@workgroup_size(64, 1, 1)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
     let compact_gid = i32(gid.x);
 
@@ -162,7 +161,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // Load colors gradients.
     let v_color = vec3f(v_grads[compact_gid * 9 + 5], v_grads[compact_gid * 9 + 6], v_grads[compact_gid * 9 + 7]);
-    let v_opac = v_grads[compact_gid * 9 + 8];
 
     // Convert RGB to global SH gradients.
     let global_gid = global_from_compact_gid[compact_gid];
@@ -208,7 +206,4 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             }
         }
     }
-
-    // Sigmoid was already accounted for in rasterize_backwards.
-    v_opacs[global_gid] = v_opac;
 }

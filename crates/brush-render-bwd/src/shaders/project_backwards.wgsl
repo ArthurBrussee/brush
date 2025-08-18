@@ -147,7 +147,7 @@ fn persp_proj_vjp(
 }
 
 @compute
-@workgroup_size(256, 1, 1)
+@workgroup_size(64, 1, 1)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
     let compact_gid = i32(gid.x);
     if compact_gid >= uniforms.num_visible {

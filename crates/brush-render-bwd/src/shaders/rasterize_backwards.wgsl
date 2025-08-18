@@ -2,20 +2,23 @@
 
 @group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
 
-@group(0) @binding(1) var<storage, read> compact_gid_from_isect: array<i32>;
-@group(0) @binding(2) var<storage, read> tile_offsets: array<i32>;
+@group(0) @binding(1) var<storage, read> compact_gid_from_isect: array<u32>;
+@group(0) @binding(2) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(3) var<storage, read> tile_offsets: array<u32>;
 
-@group(0) @binding(3) var<storage, read> projected_splats: array<helpers::ProjectedSplat>;
+@group(0) @binding(4) var<storage, read> projected_splats: array<helpers::ProjectedSplat>;
 
-@group(0) @binding(4) var<storage, read> output: array<vec4f>;
-@group(0) @binding(5) var<storage, read> v_output: array<vec4f>;
+@group(0) @binding(5) var<storage, read> output: array<vec4f>;
+@group(0) @binding(6) var<storage, read> v_output: array<vec4f>;
 
 #ifdef HARD_FLOAT
-    @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<f32>>;
-    @group(0) @binding(7) var<storage, read_write> v_refine_grad: array<atomic<f32>>;
+    @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<f32>>;
+    @group(0) @binding(8) var<storage, read_write> v_opacs: array<atomic<f32>>;
+    @group(0) @binding(9) var<storage, read_write> v_refines: array<atomic<f32>>;
 #else
-    @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<u32>>;
-    @group(0) @binding(7) var<storage, read_write> v_refine_grad: array<atomic<u32>>;
+    @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<u32>>;
+    @group(0) @binding(8) var<storage, read_write> v_opacs: array<atomic<u32>>;
+    @group(0) @binding(9) var<storage, read_write> v_refines: array<atomic<u32>>;
 #endif
 
 const BATCH_SIZE = helpers::TILE_SIZE;
@@ -44,27 +47,13 @@ fn write_grads_atomic(id: u32, grads: f32) {
 #endif
 }
 
-fn write_refine_atomic(id: u32, grads: f32) {
-    let p = &v_refine_grad[id];
-#ifdef HARD_FLOAT
-    atomicAdd(p, grads);
-#else
-    var old_value = atomicLoad(p);
-    loop {
-        let cas = atomicCompareExchangeWeak(p, old_value, add_bitcast(old_value, grads));
-        if cas.exchanged { break; } else { old_value = cas.old_value; }
-    }
-#endif
-}
-
 // kernel function for rasterizing each tile
 // each thread treats a single pixel
 // each thread group uses the same gaussian data in a tile
 @compute
-@workgroup_size(helpers::TILE_SIZE, 1, 1)
+@workgroup_size(256, 1, 1)
 fn main(
     @builtin(global_invocation_id) global_id: vec3u,
-    @builtin(workgroup_id) workgroup_id: vec3u,
     @builtin(local_invocation_index) local_idx: u32,
     @builtin(subgroup_size) subgroup_size: u32,
     @builtin(subgroup_invocation_id) subgroup_invocation_id: u32
@@ -72,7 +61,7 @@ fn main(
     let img_size = uniforms.img_size;
     let tile_bounds = uniforms.tile_bounds;
 
-    let tile_id = workgroup_id.x;
+    let tile_id = global_id.x / helpers::TILE_SIZE;
 
     let tile_loc = vec2u(tile_id % tile_bounds.x, tile_id / tile_bounds.x);
     let pixel_coordi = tile_loc * helpers::TILE_WIDTH + vec2u(
@@ -105,8 +94,8 @@ fn main(
     // have all threads in tile process the same gaussians in batches
     // first collect gaussians between the bin counts.
     let range = vec2u(
-        u32(clamp(tile_offsets[tile_id], 0, i32(uniforms.max_intersects))),
-        u32(clamp(tile_offsets[tile_id + 1], 0, i32(uniforms.max_intersects)))
+        clamp(tile_offsets[tile_id], 0u, uniforms.max_intersects),
+        clamp(tile_offsets[tile_id + 1], 0u, uniforms.max_intersects)
     );
     let num_batches = helpers::ceil_div(range.y - range.x, u32(helpers::TILE_SIZE));
 
@@ -121,13 +110,8 @@ fn main(
     for (var b = 0u; b < num_batches; b++) {
         let batch_start = range.x + b * helpers::TILE_SIZE;
 
-        // Wait for all in flight threads and check whether we're all done.
-        //
-        // HACK: Annoyingly workgroupUniformLoad doesn't work for atomics...
-        done_count_uniform = atomicLoad(&done_count);
-        if workgroupUniformLoad(&done_count_uniform) >= helpers::TILE_SIZE {
-            break;
-        }
+        // Wait for all threads to finish loading.
+        workgroupBarrier();
 
         // process gaussians in the current batch for this pixel
         let remaining = min(helpers::TILE_SIZE, range.y - batch_start);
@@ -136,7 +120,7 @@ fn main(
         if local_idx < remaining {
             let load_isect_id = batch_start + local_idx;
             let load_compact_gid = u32(compact_gid_from_isect[load_isect_id]);
-            local_id[local_idx] = load_compact_gid;
+            local_id[local_idx] = global_from_compact_gid[load_compact_gid];
             local_batch[local_idx] = projected_splats[load_compact_gid];
         }
 
@@ -144,13 +128,24 @@ fn main(
         workgroupBarrier();
 
         for (var t = 0u; t < remaining; t++) {
-            var valid = inside && !done;
+            var valid = inside;
 
             var alpha: f32;
             var color: vec4f;
             var gaussian: f32;
             var delta: vec2f;
             var conic: vec3f;
+            var next_T = T;
+
+            var v_xy_local = vec2f(0.0f);
+            var v_conic_local = vec3f(0.0f);
+            var v_rgb_local = vec3f(0.0f);
+            var v_alpha_local = 0.0f;
+            var v_refine_local = vec2f(0.0f);
+
+            if next_T <= 1e-4f {
+                valid = false;
+            }
 
             if valid {
                 let projected = local_batch[t];
@@ -164,26 +159,12 @@ fn main(
                 gaussian = exp(-sigma);
                 alpha = min(0.999f, color.a * gaussian);
 
-                if (sigma < 0.0f || alpha < 1.0f / 255.0f) {
-                    valid = false;
-                }
-            }
-
-            var next_T = T;
-            if valid {
                 next_T = T * (1.0f - alpha);
-                if next_T <= 1e-4f {
-                    atomicAdd(&done_count, 1u);
-                    done = true;
+
+                if sigma < 0.0f || alpha < 1.0f / 255.0f || next_T <= 1e-4f {
                     valid = false;
                 }
             }
-
-            var v_xy_local = vec2f(0.0f);
-            var v_conic_local = vec3f(0.0f);
-            var v_rgb_local = vec3f(0.0f);
-            var v_alpha_local = 0.0f;
-            var v_refine_local = vec2f(0.0f);
 
             if valid {
                 let vis = alpha * T;
@@ -220,41 +201,38 @@ fn main(
                 T = next_T;
             }
 
-            let v_xy_sum = subgroupAdd(v_xy_local);
-            let v_conic_sum = subgroupAdd(v_conic_local);
-            let v_colors_sum = subgroupAdd(vec4f(v_rgb_local, v_alpha_local));
-            let v_refine_sum = subgroupAdd(v_refine_local);
-
-            // Note: We can't move this earlier in the file as the subgroupAdd has to be on
-            // uniform control flow according to the WebGPU spec. In practice we know it's fine - the control
-            // flow is 100% uniform _for the subgroup_, but that isn't enough and Chrome validation chokes on it.
             if subgroupAny(valid) {
-                // Queue a new gradient if this subgroup has any.
-                // The gradient is sum of all gradients in the subgroup.
-                let compact_gid = local_id[t];
-                switch subgroup_invocation_id {
-                    case 0u:  { write_grads_atomic(compact_gid * 9 + 0, v_xy_sum.x); }
-                    case 1u:  { write_grads_atomic(compact_gid * 9 + 1, v_xy_sum.y); }
-                    case 2u:  { write_grads_atomic(compact_gid * 9 + 2, v_conic_sum.x); }
-                    case 3u:  { write_grads_atomic(compact_gid * 9 + 3, v_conic_sum.y); }
-                    case 4u:  { write_grads_atomic(compact_gid * 9 + 4, v_conic_sum.z); }
-                    case 5u:  { write_grads_atomic(compact_gid * 9 + 5, v_colors_sum.x); }
-                    case 6u:  { write_grads_atomic(compact_gid * 9 + 6, v_colors_sum.y); }
-                    case 7u:  {
-                        write_grads_atomic(compact_gid * 9 + 7, v_colors_sum.z);
+                let v_xy_sum = subgroupAdd(v_xy_local);
+                let v_conic_sum = subgroupAdd(v_conic_local);
+                let v_colors_sum = subgroupAdd(v_rgb_local);
+                let v_alpha_sum = subgroupAdd(v_alpha_local);
+                let v_refine_sum = subgroupAdd(v_refine_local);
 
-                        // Subgroups of size 8 need to be handled separately as there's not enough threads to write
-                        // all the gaussian fields. The next size (16) is fine.
-                        if subgroup_size == 8u {
-                            write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w);
-                            write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x);
-                            write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y);
-                        }
-                    }
-                    case 8u:  { write_grads_atomic(compact_gid * 9 + 8, v_colors_sum.w); }
-                    case 9u:  { write_refine_atomic(compact_gid * 2 + 0, v_refine_sum.x); }
-                    case 10u: { write_refine_atomic(compact_gid * 2 + 1, v_refine_sum.y); }
-                    default: {}
+                let compact_gid = local_id[t];
+
+                // Note: We can't move this earlier in the file as the subgroupAdd has to be on
+                // uniform control flow according to the WebGPU spec. In practice we know it's fine - the control
+                // flow is 100% uniform _for the subgroup_, but that isn't enough and Chrome validation chokes on it.
+                if subgroup_invocation_id == 0u {
+                    // Queue a new gradient if this subgroup has any.
+                    // The gradient is sum of all gradients in the subgroup.
+                    write_grads_atomic(compact_gid * 8 + 0, v_xy_sum.x);
+                    write_grads_atomic(compact_gid * 8 + 1, v_xy_sum.y);
+
+                    write_grads_atomic(compact_gid * 8 + 2, v_conic_sum.x);
+                    write_grads_atomic(compact_gid * 8 + 3, v_conic_sum.y);
+                    write_grads_atomic(compact_gid * 8 + 4, v_conic_sum.z);
+
+                    write_grads_atomic(compact_gid * 8 + 5, v_colors_sum.x);
+                    write_grads_atomic(compact_gid * 8 + 6, v_colors_sum.y);
+                    write_grads_atomic(compact_gid * 8 + 7, v_colors_sum.z);
+
+                    #ifdef HARD_FLOAT
+                        atomicAdd(&v_opacs[compact_gid], v_alpha_sum);
+
+                        atomicAdd(&v_refines[compact_gid * 2 + 0], v_refine_sum.x);
+                        atomicAdd(&v_refines[compact_gid * 2 + 1], v_refine_sum.y);
+                    #endif
                 }
             }
         }
