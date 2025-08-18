@@ -99,11 +99,10 @@ skip = [
     { name = "pulp" },      # Burn-import weirdness.
 
     # Older versions in rerun.
-    { name = "bincode" },
     { name = "toml" },
     { name = "toml_datetime" },
     { name = "serde_spanned" },
-    { name = "socket" },
+    { name = "socket2" },
 ]
 
 [licenses]
