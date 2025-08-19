@@ -3,8 +3,8 @@
 #import helpers;
 
 struct IsectInfo {
-    compact_gid: i32,
-    tile_id: i32,
+    compact_gid: u32,
+    tile_id: u32,
 }
 
 @group(0) @binding(0) var<storage, read_write> uniforms: helpers::RenderUniforms;
@@ -15,7 +15,7 @@ struct IsectInfo {
 @group(0) @binding(4) var<storage, read> coeffs: array<helpers::PackedVec3>;
 @group(0) @binding(5) var<storage, read> raw_opacities: array<f32>;
 
-@group(0) @binding(6) var<storage, read> global_from_compact_gid: array<i32>;
+@group(0) @binding(6) var<storage, read> global_from_compact_gid: array<u32>;
 
 @group(0) @binding(7) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
 
@@ -167,7 +167,7 @@ fn read_coeffs(base_id: ptr<function, u32>) -> vec3f {
 @compute
 @workgroup_size(256, 1, 1)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-    let compact_gid = i32(gid.x);
+    let compact_gid = gid.x;
 
     if compact_gid >= uniforms.num_visible {
         return;

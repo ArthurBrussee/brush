@@ -20,7 +20,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     let threads_per_group = shaders::prefix_sum_helpers::THREADS_PER_GROUP as usize;
     let num = input.shape.dims[0];
     let client = &input.client;
-    let outputs = create_tensor(input.shape.dims::<1>(), &input.device, client, DType::I32);
+    let outputs = create_tensor(input.shape.dims::<1>(), &input.device, DType::I32);
 
     // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
@@ -43,12 +43,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     let mut work_sz = num;
     while work_sz > threads_per_group {
         work_sz = work_sz.div_ceil(threads_per_group);
-        group_buffer.push(create_tensor::<1, WgpuRuntime>(
-            [work_sz],
-            &input.device,
-            client,
-            DType::I32,
-        ));
+        group_buffer.push(create_tensor([work_sz], &input.device, DType::I32));
         work_size.push(work_sz);
     }
 

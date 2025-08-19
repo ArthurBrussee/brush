@@ -70,12 +70,7 @@ pub fn radix_argsort(
             client,
         );
 
-        let count_buf = create_tensor::<1, WgpuRuntime>(
-            [(max_needed_wgs as usize) * 16],
-            device,
-            client,
-            DType::I32,
-        );
+        let count_buf = create_tensor([(max_needed_wgs as usize) * 16], device, DType::I32);
 
         // use safe distpatch as dynamic work count isn't verified.
         client.execute(
@@ -90,8 +85,7 @@ pub fn radix_argsort(
         );
 
         {
-            let reduced_buf =
-                create_tensor::<1, WgpuRuntime>([BLOCK_SIZE as usize], device, client, DType::I32);
+            let reduced_buf = create_tensor([BLOCK_SIZE as usize], device, DType::I32);
 
             client.execute(
                 SortReduce::task(),
@@ -126,9 +120,8 @@ pub fn radix_argsort(
             );
         }
 
-        let output_keys = create_tensor::<1, _>([max_n as usize], device, client, cur_keys.dtype());
-        let output_values =
-            create_tensor::<1, _>([max_n as usize], device, client, cur_vals.dtype());
+        let output_keys = create_tensor([max_n as usize], device, cur_keys.dtype());
+        let output_values = create_tensor([max_n as usize], device, cur_vals.dtype());
 
         client.execute(
             SortScatter::task(),

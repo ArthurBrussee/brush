@@ -132,8 +132,8 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             projected_splats: client.tensor_uninitialized(vec![num_points, proj_size], DType::F32),
             uniforms_buffer: client.tensor_uninitialized(vec![uniforms_size], DType::I32),
             tile_offsets: client.tensor_uninitialized(
-                vec![(tile_bounds.y * tile_bounds.x) as usize + 1],
-                DType::I32,
+                vec![tile_bounds.y as usize, tile_bounds.x as usize, 2],
+                DType::U32,
             ),
             compact_gid_from_isect: client
                 .tensor_uninitialized(vec![max_intersects as usize], DType::I32),

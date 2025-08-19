@@ -29,18 +29,17 @@ pub struct RenderAux<B: Backend> {
 
 impl<B: Backend> RenderAux<B> {
     pub fn calc_tile_depth(&self) -> Tensor<B, 2, Int> {
-        let tile_offsets: Tensor<B, 1, Int> = Tensor::from_primitive(self.tile_offsets.clone());
-
-        let n_bins = tile_offsets.dims()[0];
-        let max = tile_offsets.clone().slice([1..n_bins]);
-        let min = tile_offsets.slice([0..n_bins - 1]);
+        let tile_offsets: Tensor<B, 3, Int> = Tensor::from_primitive(self.tile_offsets.clone());
+        let max = tile_offsets.clone().slice(s![.., .., 1]);
+        let min = tile_offsets.slice(s![.., .., 0]);
         let [w, h] = self.img_size.into();
         let [ty, tx] = [h.div_ceil(TILE_WIDTH), w.div_ceil(TILE_WIDTH)];
         (max - min).reshape([ty as usize, tx as usize])
     }
 
     pub fn num_intersections(&self) -> Tensor<B, 1, Int> {
-        Tensor::from_primitive(self.tile_offsets.clone()).slice(s![-1])
+        todo!();
+        // Tensor::from_primitive(self.tile_offsets.clone()).slice(s![-1])
     }
 
     pub fn num_visible(&self) -> Tensor<B, 1, Int> {
@@ -88,7 +87,7 @@ impl<B: Backend> RenderAux<B> {
             "Splat projecteion contains NaN values"
         );
 
-        let tile_offsets: Tensor<B, 1, Int> = Tensor::from_primitive(self.tile_offsets.clone());
+        let tile_offsets: Tensor<B, 3, Int> = Tensor::from_primitive(self.tile_offsets.clone());
 
         let tile_offsets = tile_offsets
             .into_data()

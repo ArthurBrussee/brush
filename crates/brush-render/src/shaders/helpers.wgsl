@@ -25,10 +25,10 @@ struct RenderUniforms {
     // Number of visible gaussians, written by project_forward.
     // This needs to be non-atomic for other kernels as you can't have
     // read-only atomic data.
-    num_visible: atomic<i32>,
+    num_visible: atomic<u32>,
 #else
     // Number of visible gaussians.
-    num_visible: i32,
+    num_visible: u32,
 #endif
 
     total_splats: u32,
