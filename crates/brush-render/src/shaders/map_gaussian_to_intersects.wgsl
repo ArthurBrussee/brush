@@ -9,7 +9,7 @@
     @group(0) @binding(2) var<storage, read> splat_cum_hit_counts: array<u32>;
     @group(0) @binding(3) var<storage, read_write> tile_id_from_isect: array<u32>;
     @group(0) @binding(4) var<storage, read_write> compact_gid_from_isect: array<u32>;
-    @group(0) @binding(5) var<storage, read_write> num_intersections: u32;
+    @group(0) @binding(5) var<storage, read_write> num_intersections: array<u32>;
 #endif
 
 @compute
@@ -19,7 +19,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
 #ifndef PREPASS
     if gid.x == 0 {
-        num_intersections = splat_cum_hit_counts[uniforms.num_visible - 1];
+        num_intersections[0] = splat_cum_hit_counts[uniforms.num_visible];
     }
 #endif
 
@@ -41,10 +41,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let tile_bbox_min = tile_bbox.xy;
     let tile_bbox_max = tile_bbox.zw;
 
-    #ifdef PREPASS
-        var num_tiles_hit = 0u;
-    #else
-        var isect_id = splat_cum_hit_counts[compact_gid];
+    var num_tiles_hit = 0u;
+
+    #ifndef PREPASS
+        let base_isect_id = splat_cum_hit_counts[compact_gid];
     #endif
 
     // Nb: It's really really important here the two dispatches
@@ -62,19 +62,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         if helpers::will_primitive_contribute(vec2u(tx, ty), mean2d, conic, power_threshold) {
             let tile_id = tx + ty * uniforms.tile_bounds.x;
 
-        #ifdef PREPASS
-            // TODO: Want to bail here if the tile is saturated with gaussians, but not clear
-            // how the prepass and final pass would agree.
-            num_tiles_hit += 1;
-        #else
+        #ifndef PREPASS
+            let isect_id = base_isect_id + num_tiles_hit;
             // Nb: isect_id MIGHT be out of bounds here for degenerate cases.
             // These kernels should be launched with bounds checking, so that these
             // writes are ignored. This will skip these intersections.
             tile_id_from_isect[isect_id] = tile_id;
             compact_gid_from_isect[isect_id] = compact_gid;
-
-            isect_id += 1;
         #endif
+
+            num_tiles_hit += 1u;
         }
     }
 

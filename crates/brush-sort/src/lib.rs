@@ -77,10 +77,10 @@ pub fn radix_argsort(
             SortCount::task(),
             CubeCount::Dynamic(num_wgs.clone().handle.binding()),
             Bindings::new().with_buffers(vec![
-                uniforms_buffer.clone().handle.binding(),
-                n_sort.clone().handle.binding(),
+                uniforms_buffer.handle.clone().binding(),
+                n_sort.handle.clone().binding(),
                 cur_keys.handle.clone().binding(),
-                count_buf.clone().handle.binding(),
+                count_buf.handle.clone().binding(),
             ]),
         );
 
@@ -89,11 +89,11 @@ pub fn radix_argsort(
 
             client.execute(
                 SortReduce::task(),
-                CubeCount::Dynamic(num_reduce_wgs.clone().handle.binding()),
+                CubeCount::Dynamic(num_reduce_wgs.handle.clone().binding()),
                 Bindings::new().with_buffers(vec![
-                    n_sort.clone().handle.binding(),
-                    count_buf.clone().handle.binding(),
-                    reduced_buf.clone().handle.binding(),
+                    n_sort.handle.clone().binding(),
+                    count_buf.handle.clone().binding(),
+                    reduced_buf.handle.clone().binding(),
                 ]),
             );
 
@@ -103,8 +103,8 @@ pub fn radix_argsort(
                     SortScan::task(),
                     CubeCount::Static(1, 1, 1),
                     Bindings::new().with_buffers(vec![
-                        n_sort.clone().handle.binding(),
-                        reduced_buf.clone().handle.binding(),
+                        n_sort.handle.clone().binding(),
+                        reduced_buf.handle.clone().binding(),
                     ]),
                 );
             }
@@ -113,9 +113,9 @@ pub fn radix_argsort(
                 SortScanAdd::task(),
                 CubeCount::Dynamic(num_reduce_wgs.handle.clone().binding()),
                 Bindings::new().with_buffers(vec![
-                    n_sort.clone().handle.binding(),
-                    reduced_buf.clone().handle.binding(),
-                    count_buf.clone().handle.binding(),
+                    n_sort.handle.clone().binding(),
+                    reduced_buf.handle.clone().binding(),
+                    count_buf.handle.clone().binding(),
                 ]),
             );
         }
@@ -125,10 +125,10 @@ pub fn radix_argsort(
 
         client.execute(
             SortScatter::task(),
-            CubeCount::Dynamic(num_wgs.clone().handle.binding()),
+            CubeCount::Dynamic(num_wgs.handle.clone().binding()),
             Bindings::new().with_buffers(vec![
                 uniforms_buffer.handle.clone().binding(),
-                n_sort.clone().handle.binding(),
+                n_sort.handle.clone().binding(),
                 cur_keys.handle.clone().binding(),
                 cur_vals.handle.clone().binding(),
                 count_buf.handle.clone().binding(),

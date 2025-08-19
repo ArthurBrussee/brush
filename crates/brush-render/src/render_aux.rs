@@ -20,6 +20,7 @@ pub struct RenderAux<B: Backend> {
     /// The packed projected splat information, see `ProjectedSplat` in helpers.wgsl
     pub projected_splats: FloatTensor<B>,
     pub uniforms_buffer: IntTensor<B>,
+    pub num_intersections: IntTensor<B>,
     pub tile_offsets: IntTensor<B>,
     pub compact_gid_from_isect: IntTensor<B>,
     pub global_from_compact_gid: IntTensor<B>,
@@ -38,8 +39,7 @@ impl<B: Backend> RenderAux<B> {
     }
 
     pub fn num_intersections(&self) -> Tensor<B, 1, Int> {
-        todo!();
-        // Tensor::from_primitive(self.tile_offsets.clone()).slice(s![-1])
+        Tensor::from_primitive(self.num_intersections.clone())
     }
 
     pub fn num_visible(&self) -> Tensor<B, 1, Int> {
@@ -100,9 +100,10 @@ impl<B: Backend> RenderAux<B> {
             );
         }
 
-        for i in 0..tile_offsets.len() - 1 {
-            let start = tile_offsets[i];
-            let end = tile_offsets[i + 1];
+        for i in 0..(tile_offsets.len() - 1) / 2 {
+            // Check pairs of start/end points.
+            let start = tile_offsets[i * 2];
+            let end = tile_offsets[i * 2 + 1];
             assert!(
                 start >= 0 && end >= 0,
                 "Invalid elements in tile offsets. Start {start} ending at {end}"

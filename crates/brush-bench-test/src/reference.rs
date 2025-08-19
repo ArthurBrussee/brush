@@ -153,7 +153,7 @@ async fn test_reference() -> Result<()> {
             )?;
         }
 
-        // aux.debug_assert_valid();
+        aux.debug_assert_valid();
 
         let num_visible: Tensor<DiffBack, 1, Int> = aux.num_visible();
         let num_visible = num_visible.into_scalar_async().await as usize;

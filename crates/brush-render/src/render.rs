@@ -140,13 +140,13 @@ pub(crate) fn render_forward(
                 calc_cube_count([total_splats as u32], ProjectSplats::WORKGROUP_SIZE),
                 Bindings::new().with_buffers(
                 vec![
-                    uniforms_buffer.clone().handle.binding(),
-                    means.clone().handle.binding(),
-                    quats.clone().handle.binding(),
-                    log_scales.clone().handle.binding(),
-                    raw_opacities.clone().handle.binding(),
-                    global_from_presort_gid.clone().handle.binding(),
-                    depths.clone().handle.binding(),
+                    uniforms_buffer.handle.clone().binding(),
+                    means.handle.clone().binding(),
+                    quats.handle.clone().binding(),
+                    log_scales.handle.clone().binding(),
+                    raw_opacities.handle.clone().binding(),
+                    global_from_presort_gid.handle.clone().binding(),
+                    depths.handle.clone().binding(),
                 ]),
             );
         });
@@ -198,7 +198,7 @@ pub(crate) fn render_forward(
     });
 
     // Each intersection maps to a gaussian.
-    let (tile_offsets, compact_gid_from_isect) = {
+    let (tile_offsets, compact_gid_from_isect, num_intersections) = {
         let num_tiles = tile_bounds.x * tile_bounds.y;
 
         let splat_intersect_counts = MainBackendBase::int_zeros([total_splats + 1].into(), device);
@@ -214,11 +214,11 @@ pub(crate) fn render_forward(
             unsafe {
                 client.execute_unchecked(
                     MapGaussiansToIntersect::task(true),
-                    CubeCount::Dynamic(num_vis_map_wg.clone().handle.binding()),
+                    CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
                     Bindings::new().with_buffers(vec![
-                        uniforms_buffer.clone().handle.binding(),
-                        projected_splats.clone().handle.binding(),
-                        splat_intersect_counts.clone().handle.binding(),
+                        uniforms_buffer.handle.clone().binding(),
+                        projected_splats.handle.clone().binding(),
+                        splat_intersect_counts.handle.clone().binding(),
                     ]),
                 );
             }
@@ -237,11 +237,11 @@ pub(crate) fn render_forward(
             unsafe {
                 client.execute_unchecked(
                     MapGaussiansToIntersect::task(false),
-                    CubeCount::Dynamic(num_vis_map_wg.clone().handle.binding()),
+                    CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
                     Bindings::new().with_buffers(vec![
                         uniforms_buffer.handle.clone().binding(),
                         projected_splats.handle.clone().binding(),
-                        cum_tiles_hit.handle.clone().binding(),
+                        cum_tiles_hit.handle.binding(),
                         tile_id_from_isect.handle.clone().binding(),
                         compact_gid_from_isect.handle.clone().binding(),
                         num_intersections.handle.clone().binding(),
@@ -264,7 +264,7 @@ pub(crate) fn render_forward(
                 )
             });
 
-        #[cube(launch)]
+        #[cube(launch_unchecked)]
         pub fn get_tile_offsets(
             tile_id_from_isect: &Tensor<u32>,
             tile_offsets: &mut Tensor<u32>,
@@ -276,21 +276,19 @@ pub(crate) fn render_forward(
             if isect_id >= inter {
                 terminate!();
             }
+            let prev_tid = tile_id_from_isect[isect_id - 1];
+            let tid = tile_id_from_isect[isect_id];
 
             if isect_id == inter - 1 {
-                let tid = tile_id_from_isect[isect_id];
-                tile_offsets[tid * 2 + 1] = isect_id;
-                terminate!();
+                // Write the end of the previous tile.
+                tile_offsets[tid * 2 + 1] = ABSOLUTE_POS + 1;
             }
 
-            let tid = tile_id_from_isect[isect_id];
-            let next_tid = tile_id_from_isect[isect_id + 1];
-
-            if tid != next_tid {
-                // Write the end of current tile.
-                tile_offsets[tid * 2 + 1] = isect_id;
-                // Write start of next tile.
-                tile_offsets[next_tid * 2] = isect_id;
+            if tid != prev_tid {
+                // Write the end of the previous tile.
+                tile_offsets[prev_tid * 2 + 1] = ABSOLUTE_POS;
+                // Write start of this tile.
+                tile_offsets[tid * 2] = ABSOLUTE_POS;
             }
         }
 
@@ -306,7 +304,7 @@ pub(crate) fn render_forward(
 
         // SAFETY: Safe kernel.
         unsafe {
-            get_tile_offsets::launch::<WgpuRuntime>(
+            get_tile_offsets::launch_unchecked::<WgpuRuntime>(
                 client,
                 cube_count,
                 cube_dim,
@@ -316,7 +314,7 @@ pub(crate) fn render_forward(
             );
         }
 
-        (tile_offsets, compact_gid_from_isect)
+        (tile_offsets, compact_gid_from_isect, num_intersections)
     };
 
     let _span = tracing::trace_span!("Rasterize").entered();
@@ -374,6 +372,7 @@ pub(crate) fn render_forward(
         RenderAux {
             uniforms_buffer,
             tile_offsets,
+            num_intersections,
             projected_splats,
             compact_gid_from_isect,
             global_from_compact_gid,

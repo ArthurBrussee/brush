@@ -78,7 +78,7 @@ fn main(
 
             // Visibility is written to global ID's.
             #ifdef BWD_INFO
-                load_gid[local_idx] = u32(global_from_compact_gid[compact_gid]);
+                load_gid[local_idx] = global_from_compact_gid[compact_gid];
             #endif
         }
         // Wait for all writes to complete.
@@ -91,6 +91,7 @@ fn main(
             let xy = vec2f(projected.xy_x, projected.xy_y);
             let conic = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
             let color = vec4f(projected.color_r, projected.color_g, projected.color_b, projected.color_a);
+
 
             let delta = xy - pixel_coord;
             let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
@@ -126,9 +127,9 @@ fn main(
 
         // Nb: This also acts as a workgroup barrier.
         if workgroupUniformLoad(&done_count_uniform) >= helpers::TILE_SIZE {
-            // Write new maximum value for this tile.
-            // tile_offsets[tile_id * 2 + 1] = batch_start + t;
-            // break;
+            // Write new maximum end ID for this tile (exclusive).
+            tile_offsets[tile_id * 2 + 1] = batch_start + t + 1u;
+            break;
         }
     }
 
@@ -138,7 +139,7 @@ fn main(
         let final_color = vec4f(pix_out + T * uniforms.background.rgb, 1.0 - T);
 
         #ifdef BWD_INFO
-            out_img[pix_id] = final_color + 1.0;
+            out_img[pix_id] = final_color;
         #else
             let colors_u = vec4u(clamp(final_color * 255.0, vec4f(0.0), vec4f(255.0)));
             let packed: u32 = colors_u.x | (colors_u.y << 8u) | (colors_u.z << 16u) | (colors_u.w << 24u);

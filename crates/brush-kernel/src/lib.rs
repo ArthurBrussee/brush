@@ -238,7 +238,7 @@ pub fn create_dispatch_buffer(
             Bindings::new()
                 .with_buffers(vec![
                     thread_nums.handle.binding(),
-                    ret.clone().handle.binding(),
+                    ret.handle.clone().binding(),
                 ])
                 .with_metadata(data),
         );

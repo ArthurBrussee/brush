@@ -68,6 +68,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                 let [
                     projected_splats,
                     uniforms_buffer,
+                    num_intersections,
                     tile_offsets,
                     compact_gid_from_isect,
                     global_from_compact_gid,
@@ -94,6 +95,10 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                     aux.projected_splats,
                 );
                 h.register_int_tensor::<MainBackendBase>(&uniforms_buffer.id, aux.uniforms_buffer);
+                h.register_int_tensor::<MainBackendBase>(
+                    &num_intersections.id,
+                    aux.num_intersections,
+                );
                 h.register_int_tensor::<MainBackendBase>(&tile_offsets.id, aux.tile_offsets);
                 h.register_int_tensor::<MainBackendBase>(
                     &compact_gid_from_isect.id,
@@ -130,14 +135,15 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
 
         let aux = RenderAux::<Self> {
             projected_splats: client.tensor_uninitialized(vec![num_points, proj_size], DType::F32),
-            uniforms_buffer: client.tensor_uninitialized(vec![uniforms_size], DType::I32),
+            uniforms_buffer: client.tensor_uninitialized(vec![uniforms_size], DType::U32),
+            num_intersections: client.tensor_uninitialized(vec![1], DType::U32),
             tile_offsets: client.tensor_uninitialized(
                 vec![tile_bounds.y as usize, tile_bounds.x as usize, 2],
                 DType::U32,
             ),
             compact_gid_from_isect: client
-                .tensor_uninitialized(vec![max_intersects as usize], DType::I32),
-            global_from_compact_gid: client.tensor_uninitialized(vec![num_points], DType::I32),
+                .tensor_uninitialized(vec![max_intersects as usize], DType::U32),
+            global_from_compact_gid: client.tensor_uninitialized(vec![num_points], DType::U32),
             visible: client.tensor_uninitialized(visible_shape, DType::F32),
             img_size,
         };
@@ -147,6 +153,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
         let output_tensors = [
             &aux.projected_splats,
             &aux.uniforms_buffer,
+            &aux.num_intersections,
             &aux.tile_offsets,
             &aux.compact_gid_from_isect,
             &aux.global_from_compact_gid,
