@@ -7,11 +7,11 @@ use crate::{
     render_aux::RenderAux,
     sh::sh_degree_from_coeffs,
 };
+use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::frontend::CompilationArg;
 use burn_cubecl::cubecl::prelude::{ABSOLUTE_POS, Tensor};
 use burn_cubecl::cubecl::server::Bindings;
 use burn_cubecl::cubecl::{self, terminate};
-use burn_cubecl::cubecl::{calculate_cube_count_elemwise, cube};
 
 use brush_kernel::create_dispatch_buffer;
 use brush_kernel::create_tensor;
@@ -272,7 +272,6 @@ pub(crate) fn render_forward(
         ) {
             let inter = num_inter[0];
             let isect_id = ABSOLUTE_POS;
-
             if isect_id >= inter {
                 terminate!();
             }
@@ -283,7 +282,6 @@ pub(crate) fn render_forward(
                 // Write the end of the previous tile.
                 tile_offsets[tid * 2 + 1] = ABSOLUTE_POS + 1;
             }
-
             if tid != prev_tid {
                 // Write the end of the previous tile.
                 tile_offsets[prev_tid * 2 + 1] = ABSOLUTE_POS;
@@ -293,8 +291,9 @@ pub(crate) fn render_forward(
         }
 
         // TODO: Could do a dynamic sparse dispatch here.
-        let cube_dim = CubeDim::default();
-        let cube_count = calculate_cube_count_elemwise(max_intersects as usize, cube_dim);
+        let cube_dim = CubeDim::new_1d(256);
+        let num_vis_map_wg = create_dispatch_buffer(num_intersections.clone(), [256, 1, 1]);
+        let cube_count = CubeCount::Dynamic(num_vis_map_wg.handle.binding());
 
         // Tiles without splats will be written as having a range of [0, 0].
         let tile_offsets = MainBackendBase::int_zeros(
