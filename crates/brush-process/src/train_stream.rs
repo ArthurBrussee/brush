@@ -7,9 +7,7 @@ use crate::{
 };
 use anyhow::Context;
 use async_fn_stream::TryStreamEmitter;
-use brush_dataset::{
-    load_dataset, scene::Scene, scene_loader::SceneLoader, splat_export::splat_to_ply,
-};
+use brush_dataset::{load_dataset, scene::Scene, scene_loader::SceneLoader};
 use brush_render::{
     MainBackend,
     gaussian_splats::{RandomSplatsConfig, Splats},
@@ -287,12 +285,19 @@ async fn export_checkpoint(
         fs::create_dir_all(&export_path)
             .await
             .context("Creating export directory")?;
-        let splat_data = splat_to_ply(splats)
+        let splat_data = brush_dataset::splat_export::splat_to_ply(splats)
             .await
             .context("Serializing splat data")?;
         fs::write(export_path.join(&export_name), splat_data)
             .await
             .context(format!("Failed to export ply {export_path:?}"))?;
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = process_args;
+        let _ = process_config;
+        let _ = splats;
+        let _ = iter;
     }
     Ok(())
 }

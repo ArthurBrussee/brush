@@ -103,6 +103,7 @@ skip = [
     { name = "toml_datetime" },
     { name = "serde_spanned" },
     { name = "socket2" },
+    { name = "prettyplease" },
 ]
 
 [licenses]
