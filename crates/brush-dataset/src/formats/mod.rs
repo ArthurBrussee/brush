@@ -52,16 +52,17 @@ pub async fn load_dataset(
     load_args: &LoadDataseConfig,
     device: &WgpuDevice,
 ) -> Result<(Option<SplatMessage>, Dataset), DatasetError> {
-    let nerfstudio_fmt = nerfstudio::read_dataset(vfs.clone(), load_args, device).await;
+    let mut dataset = colmap::load_dataset(vfs.clone(), load_args, device).await;
 
-    let format = if let Some(fmt) = nerfstudio_fmt {
-        fmt?
-    } else {
-        let Some(stream) = colmap::load_dataset(vfs.clone(), load_args, device).await else {
-            return Err(DatasetError::FormatNotSupported);
-        };
-        stream?
+    if dataset.is_none() {
+        dataset = nerfstudio::read_dataset(vfs.clone(), load_args, device).await;
+    }
+
+    let Some(dataset) = dataset else {
+        return Err(DatasetError::FormatNotSupported);
     };
+
+    let (data_splat_init, dataset) = dataset?;
 
     // If there's an initial ply file, override the init stream with that.
     let ply_paths: Vec<_> = vfs.files_with_extension("ply").collect();
@@ -85,10 +86,10 @@ pub async fn load_dataset(
             .map_err(serde_ply::DeserializeError)?;
         Some(load_splat_from_ply(reader, load_args.subsample_points, device.clone()).await?)
     } else {
-        format.0
+        data_splat_init
     };
 
-    Ok((init_splat, format.1))
+    Ok((init_splat, dataset))
 }
 
 fn find_mask_path(vfs: &BrushVfs, path: &Path) -> Option<PathBuf> {
