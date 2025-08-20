@@ -67,7 +67,6 @@ fn write_opac_atomic(id: u32, grads: f32) {
 #endif
 }
 
-
 // kernel function for rasterizing each tile
 // each thread treats a single pixel
 // each thread group uses the same gaussian data in a tile
@@ -195,6 +194,8 @@ fn main(
                 }
             }
 
+            // Note: This isn't uniform control flow according to the WebGPU spec. In practice we know it's fine - the control
+            // flow is 100% uniform _for the subgroup_, but that isn't enough and Chrome validation chokes on it.
             if subgroupAny(hasGrad) {
                 v_xy_local = subgroupAdd(v_xy_local);
                 v_conic_local = subgroupAdd(v_conic_local);
@@ -202,26 +203,25 @@ fn main(
                 v_alpha_local = subgroupAdd(v_alpha_local);
                 v_refine_local = subgroupAdd(v_refine_local);
 
-                // Note: We can't move this earlier in the file as the subgroupAdd has to be on
-                // uniform control flow according to the WebGPU spec. In practice we know it's fine - the control
-                // flow is 100% uniform _for the subgroup_, but that isn't enough and Chrome validation chokes on it.
-                if subgroup_invocation_id == 0u {
-                    let global_gid = thread_gid[t];
+                let global_gid = thread_gid[t];
 
+                if subgroup_invocation_id == 0u {
+                    // Spreading this over threads seems to make no difference.
                     write_grads_atomic(global_gid * 8 + 0, v_xy_local.x);
                     write_grads_atomic(global_gid * 8 + 1, v_xy_local.y);
+
                     write_grads_atomic(global_gid * 8 + 2, v_conic_local.x);
                     write_grads_atomic(global_gid * 8 + 3, v_conic_local.y);
                     write_grads_atomic(global_gid * 8 + 4, v_conic_local.z);
+
                     write_grads_atomic(global_gid * 8 + 5, v_rgb_local.x);
                     write_grads_atomic(global_gid * 8 + 6, v_rgb_local.y);
                     write_grads_atomic(global_gid * 8 + 7, v_rgb_local.z);
 
-                    #ifdef HARD_FLOAT
-                        write_opac_atomic(global_gid, v_alpha_local);
-                        write_refine_atomic(global_gid * 2 + 0, v_refine_local.x);
-                        write_refine_atomic(global_gid * 2 + 1, v_refine_local.y);
-                    #endif
+                    write_opac_atomic(global_gid, v_alpha_local);
+
+                    write_refine_atomic(global_gid * 2 + 0, v_refine_local.x);
+                    write_refine_atomic(global_gid * 2 + 1, v_refine_local.y);
                 }
             }
         }
