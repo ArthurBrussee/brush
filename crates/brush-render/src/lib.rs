@@ -36,7 +36,11 @@ pub struct RenderStats {
     pub num_intersections: u32,
 }
 
-const INTERSECTS_UPPER_BOUND: u32 = 256 * 65535;
+// The maximum number of intersections that can be rendered.
+//
+// Bounded by max nr. of dispatches for the intersection kernel.
+const INTERSECTS_UPPER_BOUND: u32 = 512 * 65535;
+// The maximum number of gaussians that can be rendered.
 const GAUSSIANS_UPPER_BOUND: u32 = 256 * 65535;
 
 pub trait SplatForward<B: Backend> {

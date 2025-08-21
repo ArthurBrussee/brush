@@ -290,8 +290,7 @@ pub(crate) fn render_forward(
             }
         }
 
-        // TODO: Could do a dynamic sparse dispatch here.
-        let cube_dim = CubeDim::new_1d(256);
+        let cube_dim = CubeDim::new_1d(512);
         let num_vis_map_wg = create_dispatch_buffer(num_intersections.clone(), [256, 1, 1]);
         let cube_count = CubeCount::Dynamic(num_vis_map_wg.handle.binding());
 
