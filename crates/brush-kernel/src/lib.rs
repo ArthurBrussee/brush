@@ -48,7 +48,13 @@ pub fn module_to_compiled<C: Compiler>(
     // Dawn annoyingly wants some extra syntax to enable subgroups,
     // so just hack this in when running on wasm.
     #[cfg(target_family = "wasm")]
-    let shader_string = if shader_string.contains("subgroupAdd") {
+    // Ideally include all subgroup functions here but meh.
+    let shader_string = if shader_string.contains("subgroupAdd")
+        || shader_string.contains("subgroupAny")
+        || shader_string.contains("subgroupMax")
+        || shader_string.contains("subgroupBroadcast")
+        || shader_string.contains("subgroupShuffle")
+    {
         "enable subgroups;\n".to_owned() + &shader_string
     } else {
         shader_string

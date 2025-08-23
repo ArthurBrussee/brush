@@ -18,12 +18,6 @@
     @group(0) @binding(9) var<storage, read_write> v_refines: array<atomic<u32>>;
 #endif
 
-const BATCH_SIZE = helpers::TILE_SIZE;
-
-// Gaussians gathered in batch.
-var<workgroup> local_batch: array<helpers::ProjectedSplat, BATCH_SIZE>;
-var<workgroup> thread_gid: array<u32, BATCH_SIZE>;
-
 fn add_bitcast(cur: u32, add: f32) -> u32 {
     return bitcast<u32>(bitcast<f32>(cur) + add);
 }
@@ -71,27 +65,26 @@ fn write_opac_atomic(id: u32, grads: f32) {
 // each thread treats a single pixel
 // each thread group uses the same gaussian data in a tile
 @compute
-@workgroup_size(256, 1, 1)
+@workgroup_size(helpers::CHUNK_SIZE, 1, 1)
 fn main(
     @builtin(global_invocation_id) global_id: vec3u,
     @builtin(local_invocation_index) local_idx: u32,
+
     @builtin(subgroup_size) subgroup_size: u32,
     @builtin(subgroup_invocation_id) subgroup_invocation_id: u32
 ) {
-    let img_size = uniforms.img_size;
-    let tile_bounds = uniforms.tile_bounds;
-    let tile_id = global_id.x / helpers::TILE_SIZE;
-    let tile_loc = vec2u(tile_id % tile_bounds.x, tile_id / tile_bounds.x);
-    let pixel_coordi = tile_loc * helpers::TILE_WIDTH + vec2u(
-        local_idx % helpers::TILE_WIDTH,
-        local_idx / helpers::TILE_WIDTH
-    );
-    let pix_id = pixel_coordi.x + pixel_coordi.y * img_size.x;
-    let pixel_coord = vec2f(pixel_coordi) + 0.5f;
+    let pix_loc = helpers::map_1d_to_2d(global_id.x, uniforms.tile_bounds.x);
+    let pix_id = pix_loc.x + pix_loc.y * uniforms.img_size.x;
+    let pixel_coord = vec2f(pix_loc) + 0.5f;
+    let tile_loc = vec2u(pix_loc.x / helpers::TILE_WIDTH, pix_loc.y / helpers::TILE_WIDTH);
+    let chunk_loc = vec2u(pix_loc.x / helpers::CHUNK_WIDTH, pix_loc.y / helpers::CHUNK_WIDTH);
+    let tile_id = tile_loc.x + tile_loc.y * uniforms.tile_bounds.x;
+    let inside = pix_loc.x < uniforms.img_size.x && pix_loc.y < uniforms.img_size.y;
 
-    // return if out of bounds
-    // keep not rasterizing threads around for reading data
-    let inside = pixel_coordi.x < img_size.x && pixel_coordi.y < img_size.y;
+    let group_id = local_idx / subgroup_size;
+    let rect_min = subgroupMin(pixel_coord);
+    let rect_max = subgroupMax(pixel_coord);
+    let sub_rect = vec4f(rect_min.x, rect_min.y, rect_max.x, rect_max.y);
 
     // final values from forward pass before background blend
     let final_color = output[pix_id];
@@ -110,46 +103,51 @@ fn main(
     // have all threads in tile process the same gaussians in batches
     // first collect gaussians between the bin counts.
     let range = vec2u(tile_offsets[tile_id * 2], tile_offsets[tile_id * 2 + 1]);
-    let num_batches = helpers::ceil_div(range.y - range.x, u32(helpers::TILE_SIZE));
+    let num_batches = helpers::ceil_div(range.y - range.x, subgroup_size);
 
     // current visibility left to render
     var T = 1.0f;
     var rgb_pixel = vec3f(0.0f);
+    var done = !inside;
 
     // each thread loads one gaussian at a time before rasterizing its
     // designated pixel
     for (var b = 0u; b < num_batches; b++) {
-        let batch_start = range.x + b * helpers::TILE_SIZE;
+        let batch_start = range.x + b * subgroup_size;
 
         // process gaussians in the current batch for this pixel
-        let remaining = min(helpers::TILE_SIZE, range.y - batch_start);
+        let remaining = min(subgroup_size, range.y - batch_start);
 
-        // Each thread first gathers one gaussian.
-        if local_idx < remaining {
-            let load_isect_id = batch_start + local_idx;
-            let load_compact_gid = compact_gid_from_isect[load_isect_id];
-            thread_gid[local_idx] = global_from_compact_gid[load_compact_gid];
-            local_batch[local_idx] = projected_splats[load_compact_gid];
-        }
+        let load_isect_id = batch_start + subgroup_invocation_id;
+        let compact_gid = compact_gid_from_isect[load_isect_id];
+        let projected = projected_splats[compact_gid];
 
-        // Wait for all threads to finish loading.
-        workgroupBarrier();
+        let xy_load = vec2f(projected.xy_x, projected.xy_y);
+        let conic_load = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
+        let color_load = vec4f(projected.color_r, projected.color_g, projected.color_b, projected.color_a);
+
+        let power_threshold = log(color_load.w * 255.0f);
+        let chunk_visible_load = helpers::will_primitive_contribute(sub_rect, xy_load, conic_load, power_threshold);
+        let vis_ballot = subgroupBallot(chunk_visible_load);
 
         for (var t = 0u; t < remaining; t++) {
-            var v_xy_local = vec2f(0.0f);
-            var v_conic_local = vec3f(0.0f);
-            var v_rgb_local = vec3f(0.0f);
-            var v_alpha_local = 0.0f;
-            var v_refine_local = vec2f(0.0f);
+            // TODO: Support subgroup size 64.
+            if (vis_ballot.x & (1u << t)) == 0u {
+                continue;
+            }
 
+            var v_xy_local: vec2f = vec2f(0.0f, 0.0f);
+            var v_conic_local: vec3f = vec3f(0.0f, 0.0f, 0.0f);
+            var v_rgb_local: vec3f = vec3f(0.0f, 0.0f, 0.0f);
+            var v_alpha_local: f32 = 0.0f;
+            var v_refine_local: vec2f = vec2f(0.0f, 0.0f);
             var hasGrad = false;
 
-            if inside && T > 1e-4f {
-                let projected = local_batch[t];
-                let xy = vec2f(projected.xy_x, projected.xy_y);
-                let conic = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
-                let color = vec4f(projected.color_r, projected.color_g, projected.color_b, projected.color_a);
+            let xy = subgroupShuffle(xy_load, t);
+            let conic = subgroupShuffle(conic_load, t);
+            let color = subgroupShuffle(color_load, t);
 
+            if T > 1e-4f && !done {
                 let delta = xy - pixel_coord;
 
                 let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
@@ -158,7 +156,9 @@ fn main(
 
                 let next_T = T * (1.0f - alpha);
 
-                if sigma >= 0.0f && alpha >= 1.0f / 255.0f && next_T > 1e-4f {
+                if next_T <= 1e-4f {
+                    done = true;
+                } else if sigma >= 0.0f && alpha >= 1.0f / 255.0f {
                     let vis = alpha * T;
 
                     // update v_colors for this gaussian
@@ -189,21 +189,24 @@ fn main(
                         v_refine_local = abs(v_xy_local);
                     }
 
-                    T = next_T;
                     hasGrad = true;
+                    T = next_T;
                 }
             }
+
+            // TODO: Do we really need to shuffle this?
+            let global_gid_load = global_from_compact_gid[compact_gid];
 
             // Note: This isn't uniform control flow according to the WebGPU spec. In practice we know it's fine - the control
             // flow is 100% uniform _for the subgroup_, but that isn't enough and Chrome validation chokes on it.
             if subgroupAny(hasGrad) {
+                let global_gid = subgroupShuffle(global_gid_load, t);
+
                 v_xy_local = subgroupAdd(v_xy_local);
                 v_conic_local = subgroupAdd(v_conic_local);
                 v_rgb_local = subgroupAdd(v_rgb_local);
                 v_alpha_local = subgroupAdd(v_alpha_local);
                 v_refine_local = subgroupAdd(v_refine_local);
-
-                let global_gid = thread_gid[t];
 
                 if subgroup_invocation_id == 0u {
                     // Spreading this over threads seems to make no difference.
@@ -225,8 +228,5 @@ fn main(
                 }
             }
         }
-
-        // Wait for all gradients to be written.
-        workgroupBarrier();
     }
 }

@@ -59,7 +59,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         let tx = (tile_idx % tile_bbox_width) + tile_bbox_min.x;
         let ty = (tile_idx / tile_bbox_width) + tile_bbox_min.y;
 
-        if helpers::will_primitive_contribute(vec2u(tx, ty), mean2d, conic, power_threshold) {
+        let rect = helpers::tile_rect(vec2u(tx, ty));
+        if helpers::will_primitive_contribute(rect, mean2d, conic, power_threshold) {
             let tile_id = tx + ty * uniforms.tile_bounds.x;
 
         #ifndef PREPASS

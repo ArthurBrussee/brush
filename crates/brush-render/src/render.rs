@@ -360,7 +360,7 @@ pub(crate) fn render_forward(
     unsafe {
         client.execute_unchecked(
             raster_task,
-            calc_cube_count([img_size.x, img_size.y], Rasterize::WORKGROUP_SIZE),
+            CubeCount::Static(tile_bounds.x * tile_bounds.y * 4, 1, 1),
             bindings,
         );
     }
