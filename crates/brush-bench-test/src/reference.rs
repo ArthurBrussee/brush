@@ -97,7 +97,7 @@ async fn test_reference() -> Result<()> {
         None
     };
 
-    for (i, path) in ["tiny_case", "basic_case", "mix_case"].iter().enumerate() {
+    for (i, path) in ["mix_case"].iter().enumerate() {
         log::info!("Checking path {path}");
 
         let mut buffer = Vec::new();

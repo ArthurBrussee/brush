@@ -141,7 +141,7 @@ pub(crate) fn render_backward(
         unsafe {
             client.execute_unchecked(
                 RasterizeBackwards::task(hard_floats),
-                CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
+                CubeCount::Static(tile_bounds.x * tile_bounds.y * 4, 1, 1),
                 Bindings::new().with_buffers(vec![
                     uniforms_buffer.handle.clone().binding(),
                     compact_gid_from_isect.handle.binding(),

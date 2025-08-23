@@ -2,6 +2,38 @@ const TILE_WIDTH: u32 = 16u;
 // Nb: TILE_SIZE should be <= 256 for max compatibility.
 const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 
+const CHUNK_WIDTH: u32 = 8u;
+// Nb: This has to divide evenly.
+const CHUNK_PER_EDGE: u32 = TILE_WIDTH / CHUNK_WIDTH;
+const CHUNK_SIZE: u32 = CHUNK_WIDTH * CHUNK_WIDTH;
+
+// Helper function to compact bits for 2D z-order decoding
+fn compact_bits_16(v: u32) -> u32 {
+    var x = v & 0x55555555u;
+    x = (x | (x >> 1u)) & 0x33333333u;
+    x = (x | (x >> 2u)) & 0x0F0F0F0Fu;
+    x = (x | (x >> 4u)) & 0x00FF00FFu;
+    x = (x | (x >> 8u)) & 0x0000FFFFu;
+    return x;
+}
+
+// Decode z-order to 2D coordinates
+fn decode_morton_2d(morton: u32) -> vec2<u32> {
+    let x = compact_bits_16(morton);
+    let y = compact_bits_16(morton >> 1u);
+    return vec2<u32>(x, y);
+}
+
+fn map_1d_to_2d(id: u32, tiles_per_row: u32) -> vec2<u32> {
+    let tile_id = id / TILE_SIZE;
+    let within_tile_id = id % TILE_SIZE;
+
+    let tile_x = tile_id % tiles_per_row;
+    let tile_y = tile_id / tiles_per_row;
+
+    return vec2u(tile_x * TILE_WIDTH, tile_y * TILE_WIDTH) + decode_morton_2d(within_tile_id);
+}
+
 struct RenderUniforms {
     // View matrix transform world to view position.
     viewmat: mat4x4f,
@@ -199,17 +231,26 @@ fn compute_bbox_extent(cov2d: mat2x2f, power_threshold: f32) -> vec2f {
     );
 }
 
-// Based on method from StopThePop: https://arxiv.org/pdf/2402.00525.
-fn will_primitive_contribute(tile: vec2u, mean: vec2f, conic: vec3f, power_threshold: f32) -> bool {
+fn tile_rect(tile: vec2u) -> vec4f {
     let rect_min = vec2f(tile * TILE_WIDTH);
     let rect_max = rect_min + f32(TILE_WIDTH);
+    return vec4f(rect_min.x, rect_min.y, rect_max.x, rect_max.y);
+}
 
-    let x_left = mean.x < rect_min.x;
-    let x_right = mean.x > rect_max.x;
+fn chunk_rect(chunk: vec2u) -> vec4f {
+    let rect_min = vec2f(chunk * CHUNK_WIDTH);
+    let rect_max = rect_min + f32(CHUNK_WIDTH);
+    return vec4f(rect_min.x, rect_min.y, rect_max.x, rect_max.y);
+}
+
+// Based on method from StopThePop: https://arxiv.org/pdf/2402.00525.
+fn will_primitive_contribute(rect: vec4f, mean: vec2f, conic: vec3f, power_threshold: f32) -> bool {
+    let x_left = mean.x < rect.x;
+    let x_right = mean.x > rect.z;
     let in_x_range = !(x_left || x_right);
 
-    let y_above = mean.y < rect_min.y;
-    let y_below = mean.y > rect_max.y;
+    let y_above = mean.y < rect.y;
+    let y_below = mean.y > rect.w;
     let in_y_range = !(y_above || y_below);
 
     if (in_x_range && in_y_range) {
@@ -217,13 +258,15 @@ fn will_primitive_contribute(tile: vec2u, mean: vec2f, conic: vec3f, power_thres
     }
 
     let closest_corner = vec2f(
-        select(rect_max.x, rect_min.x, x_left),
-        select(rect_max.y, rect_min.y, y_above)
+        select(rect.z, rect.x, x_left),
+        select(rect.w, rect.y, y_above)
     );
 
+    let width = rect.z - rect.x;
+    let height = rect.w - rect.y;
     let d = vec2f(
-        select(-f32(TILE_WIDTH), f32(TILE_WIDTH), x_left),
-        select(-f32(TILE_WIDTH), f32(TILE_WIDTH), y_above)
+        select(-f32(width), f32(width), x_left),
+        select(-f32(height), f32(height), y_above)
     );
 
     let diff = mean - closest_corner;
