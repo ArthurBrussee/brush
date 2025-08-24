@@ -3,7 +3,7 @@
 @group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
 @group(0) @binding(1) var<storage, read> compact_gid_from_isect: array<u32>;
 @group(0) @binding(2) var<storage, read> tile_offsets: array<u32>;
-@group(0) @binding(3) var<storage, read> projected_splats: array<helpers::ProjectedSplat>;
+@group(0) @binding(3) var<storage, read> projected: array<vec4f>;
 
 #ifdef BWD_INFO
     @group(0) @binding(4) var<storage, read_write> out_img: array<vec4f>;
@@ -66,23 +66,28 @@ fn main(
 
         let load_isect_id = batch_start + subgroup_invocation_id;
         let compact_gid = compact_gid_from_isect[load_isect_id];
-        let projected = projected_splats[compact_gid];
 
         #ifdef BWD_INFO
             let load_gid = global_from_compact_gid[compact_gid];
         #endif
 
-        let xy_load = vec2f(projected.xy_x, projected.xy_y);
-        let conic_load = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
-        let color_load = vec4f(projected.color_r, projected.color_g, projected.color_b, projected.color_a);
+        let c1 = projected[compact_gid + uniforms.total_splats * 0];
+        let c2 =  projected[compact_gid + uniforms.total_splats * 1];
 
-        let power_threshold = log(color_load.w * 255.0f);
-        let chunk_visible_load = helpers::will_primitive_contribute(sub_rect, xy_load, conic_load, power_threshold);
-        let vis_ballot = subgroupBallot(chunk_visible_load);
+        let xy_load = c1.xy;
+
+        let conic_load = c2.xyz;
+        var color_load = vec4f(0.0f, 0.0f, 0.0f, c2.w);
+
+        let power_threshold = c1.z;
+        let chunk_visible = select(0u, 1u, helpers::will_primitive_contribute(sub_rect, xy_load, conic_load, power_threshold));
+
+        if chunk_visible == 1u {
+            color_load = vec4f(max(projected[compact_gid + uniforms.total_splats * 2].rgb, vec3f(0.0)), color_load.w);
+        }
 
         for (var t = 0u; t < remaining; t++) {
-            // TODO: Support subgroup size 64.
-            if (vis_ballot.x & (1u << t)) == 0u {
+            if subgroupShuffle(chunk_visible, t) == 0u {
                 continue;
             }
 
@@ -110,8 +115,7 @@ fn main(
                         #endif
 
                         let vis = alpha * T;
-                        let clamped_rgb = max(color.rgb, vec3f(0.0));
-                        pix_out += clamped_rgb * vis;
+                        pix_out += color.rgb * vis;
                         T = next_T;
                     }
                 }
