@@ -4,7 +4,7 @@
 @group(0) @binding(1) var<storage, read> compact_gid_from_isect: array<u32>;
 @group(0) @binding(2) var<storage, read> global_from_compact_gid: array<u32>;
 @group(0) @binding(3) var<storage, read> tile_offsets: array<u32>;
-@group(0) @binding(4) var<storage, read> projected_splats: array<helpers::ProjectedSplat>;
+@group(0) @binding(4) var<storage, read> projected: array<vec4f>;
 @group(0) @binding(5) var<storage, read> output: array<vec4f>;
 @group(0) @binding(6) var<storage, read> v_output: array<vec4f>;
 
@@ -89,7 +89,7 @@ fn main(
     // final values from forward pass before background blend
     let final_color = output[pix_id];
     let T_final = 1.0f - final_color.a;
-    let rgb_pixel_final = vec3f(final_color.rgb) - T_final * uniforms.background.rgb;
+    let rgb_pixel_final = final_color.rgb - T_final * uniforms.background.rgb;
 
     // df/d_out for this pixel
     var v_out = vec4f(0.0f);
@@ -120,27 +120,30 @@ fn main(
 
         let load_isect_id = batch_start + subgroup_invocation_id;
         let compact_gid = compact_gid_from_isect[load_isect_id];
-        let projected = projected_splats[compact_gid];
 
-        let xy_load = vec2f(projected.xy_x, projected.xy_y);
-        let conic_load = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
-        let color_load = vec4f(projected.color_r, projected.color_g, projected.color_b, projected.color_a);
+        let c1 = projected[compact_gid + uniforms.total_splats * 0];
+        let c2 = projected[compact_gid + uniforms.total_splats * 1];
 
-        let power_threshold = log(color_load.w * 255.0f);
-        let chunk_visible_load = helpers::will_primitive_contribute(sub_rect, xy_load, conic_load, power_threshold);
-        let vis_ballot = subgroupBallot(chunk_visible_load);
+        let xy_load = c1.xy;
+        let conic_load = c2.xyz;
+        var color_load = vec4f(0.0f, 0.0f, 0.0f, c2.w);
+        let power_threshold = c1.z;
+        let chunk_visible = select(0u, 1u, helpers::will_primitive_contribute(sub_rect, xy_load, conic_load, power_threshold));
+
+        if chunk_visible == 1u {
+            color_load = vec4f(projected[compact_gid + uniforms.total_splats * 2].rgb, color_load.w);
+        }
 
         for (var t = 0u; t < remaining; t++) {
-            // TODO: Support subgroup size 64.
-            if (vis_ballot.x & (1u << t)) == 0u {
+            if subgroupShuffle(chunk_visible, t) == 0u {
                 continue;
             }
 
-            var v_xy_local: vec2f = vec2f(0.0f, 0.0f);
-            var v_conic_local: vec3f = vec3f(0.0f, 0.0f, 0.0f);
-            var v_rgb_local: vec3f = vec3f(0.0f, 0.0f, 0.0f);
-            var v_alpha_local: f32 = 0.0f;
-            var v_refine_local: vec2f = vec2f(0.0f, 0.0f);
+            var v_xy_local = vec2f(0.0f, 0.0f);
+            var v_conic_local = vec3f(0.0f, 0.0f, 0.0f);
+            var v_rgb_local = vec3f(0.0f, 0.0f, 0.0f);
+            var v_alpha_local = 0.0f;
+            var v_refine_local = vec2f(0.0f, 0.0f);
             var hasGrad = false;
 
             let xy = subgroupShuffle(xy_load, t);

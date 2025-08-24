@@ -17,7 +17,7 @@ struct IsectInfo {
 
 @group(0) @binding(6) var<storage, read> global_from_compact_gid: array<u32>;
 
-@group(0) @binding(7) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(7) var<storage, read_write> projected: array<vec4f>;
 
 struct ShCoeffs {
     b0_c0: vec3f,
@@ -241,9 +241,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
     var color = sh_coeffs_to_color(sh_degree, viewdir, sh) + vec3f(0.5);
 
-    projected[compact_gid] = helpers::create_projected_splat(
-        mean2d,
-        vec3f(conic[0][0], conic[0][1], conic[1][1]),
-        vec4f(color, opac)
-    );
+    projected[compact_gid + uniforms.total_splats * 0] = vec4f(mean2d.x, mean2d.y, log(opac * 255.0), 0.0);
+    projected[compact_gid + uniforms.total_splats * 1] = vec4f(conic[0][0], conic[0][1], conic[1][1], opac);
+    projected[compact_gid + uniforms.total_splats * 2] = vec4f(color, 0.0f);
 }

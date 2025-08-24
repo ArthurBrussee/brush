@@ -6,6 +6,7 @@ use crate::{
     kernels::{MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
     render_aux::RenderAux,
     sh::sh_degree_from_coeffs,
+    shaders::helpers,
 };
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::frontend::CompilationArg;
@@ -26,7 +27,7 @@ use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
 use burn_wgpu::{CubeDim, CubeTensor};
 use glam::{Vec3, uvec2};
-use std::mem::{offset_of, size_of};
+use std::mem::offset_of;
 
 pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
     uvec2(
@@ -117,9 +118,9 @@ pub(crate) fn render_forward(
         sh_degree,
         total_splats: total_splats as u32,
         max_intersects,
+        background: [background.x, background.y, background.z, 1.0],
         // Nb: Bit of a hack as these aren't _really_ uniforms but are written to by the shaders.
         num_visible: 0,
-        background: [background.x, background.y, background.z, 1.0],
     };
 
     // Nb: This contains both static metadata and some dynamic data so can't pass this as metadata to execute. In the future
@@ -169,8 +170,8 @@ pub(crate) fn render_forward(
 
     // Create a buffer of 'projected' splats, that is,
     // project XY, projected conic, and converted color.
-    let projected_size = size_of::<shaders::helpers::ProjectedSplat>() / size_of::<f32>();
-    let projected_splats = create_tensor([total_splats, projected_size], device, DType::F32);
+    // let projected_size = size_of::<shaders::helpers::ProjectedSplat>() / size_of::<f32>();
+    let projected_splats = create_tensor([total_splats * 12], device, DType::F32);
 
     tracing::trace_span!("ProjectVisible").in_scope(|| {
         // Create a buffer to determine how many threads to dispatch for all visible splats.
@@ -360,7 +361,11 @@ pub(crate) fn render_forward(
     unsafe {
         client.execute_unchecked(
             raster_task,
-            CubeCount::Static(tile_bounds.x * tile_bounds.y * 4, 1, 1),
+            CubeCount::Static(
+                tile_bounds.x * tile_bounds.y * (helpers::TILE_SIZE / helpers::CHUNK_SIZE),
+                1,
+                1,
+            ),
             bindings,
         );
     }

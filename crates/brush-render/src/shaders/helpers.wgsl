@@ -1,11 +1,11 @@
-const TILE_WIDTH: u32 = 16u;
+const TILE_WIDTH: u32 = 32u;
 // Nb: TILE_SIZE should be <= 256 for max compatibility.
 const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 
 const CHUNK_WIDTH: u32 = 8u;
-// Nb: This has to divide evenly.
-const CHUNK_PER_EDGE: u32 = TILE_WIDTH / CHUNK_WIDTH;
 const CHUNK_SIZE: u32 = CHUNK_WIDTH * CHUNK_WIDTH;
+// Nb: This has to divide evenly.
+const CHUNKS_PER_TILE: u32 = TILE_SIZE / CHUNK_SIZE;
 
 // Helper function to compact bits for 2D z-order decoding
 fn compact_bits_16(v: u32) -> u32 {
@@ -68,23 +68,6 @@ struct RenderUniforms {
 
     // Nb: Alpha is ignored atm.
     background: vec4f,
-}
-
-// nb: this struct has a bunch of padding but that's probably fine.
-struct ProjectedSplat {
-    xy_x: f32,
-    xy_y: f32,
-    conic_x: f32,
-    conic_y: f32,
-    conic_z: f32,
-    color_r: f32,
-    color_g: f32,
-    color_b: f32,
-    color_a: f32,
-}
-
-fn create_projected_splat(xy: vec2f, conic: vec3f, color: vec4f) -> ProjectedSplat {
-    return ProjectedSplat(xy.x, xy.y, conic.x, conic.y, conic.z, color.r, color.g, color.b, color.a);
 }
 
 struct PackedVec3 {
