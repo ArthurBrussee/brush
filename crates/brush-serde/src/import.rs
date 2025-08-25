@@ -665,7 +665,6 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,7 +717,9 @@ mod tests {
 
         // Test no subsampling
         let cursor = Cursor::new(ply_bytes.clone());
-        let imported_message = load_splat_from_ply(cursor, None, device.clone()).await.unwrap();
+        let imported_message = load_splat_from_ply(cursor, None, device.clone())
+            .await
+            .unwrap();
         assert_eq!(imported_message.splats.num_splats(), 4);
 
         // Test subsample every 2nd splat

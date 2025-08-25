@@ -41,7 +41,11 @@ mod test_utils {
 
             means.extend([offset, offset + 1.0, offset + 2.0]);
             rotations.extend([1.0, 0.0, 0.0, 0.0]);
-            log_scales.extend([-0.1 + offset * 0.05, 0.2 + offset * 0.05, -0.3 + offset * 0.05]);
+            log_scales.extend([
+                -0.1 + offset * 0.05,
+                0.2 + offset * 0.05,
+                -0.3 + offset * 0.05,
+            ]);
 
             for _ in 0..3 {
                 sh_coeffs.push(0.5 + offset * 0.1);

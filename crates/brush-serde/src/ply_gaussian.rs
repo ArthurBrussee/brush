@@ -1,8 +1,8 @@
 use crate::quant::{decode_quat, decode_vec_8_8_8_8, decode_vec_11_10_11};
 
 use glam::{Quat, Vec3, Vec4};
-use serde::{self, Deserializer};
 use serde::Deserialize;
+use serde::{self, Deserializer};
 
 fn de_vec_11_10_11<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec3, D::Error> {
     let value = u32::deserialize(deserializer)?;
