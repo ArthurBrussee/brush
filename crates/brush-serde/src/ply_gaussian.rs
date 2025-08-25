@@ -2,7 +2,7 @@ use crate::quant::{decode_quat, decode_vec_8_8_8_8, decode_vec_11_10_11};
 
 use glam::{Quat, Vec3, Vec4};
 use serde::{self, Deserializer};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 fn de_vec_11_10_11<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec3, D::Error> {
     let value = u32::deserialize(deserializer)?;
@@ -21,7 +21,7 @@ fn de_vec_8_8_8_8<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec4, D:
 }
 
 #[derive(Deserialize, Debug)]
-pub(crate) struct QuantSplat {
+pub struct QuantSplat {
     #[serde(rename = "packed_position", deserialize_with = "de_vec_11_10_11")]
     pub(crate) mean: Vec3,
     #[serde(rename = "packed_scale", deserialize_with = "de_vec_11_10_11")]
@@ -55,8 +55,8 @@ where
     deserializer.deserialize_any(Dequant)
 }
 
-#[derive(Serialize, Deserialize)]
-pub(crate) struct PlyGaussian {
+#[derive(Deserialize)]
+pub struct PlyGaussian {
     pub(crate) x: f32,
     pub(crate) y: f32,
     pub(crate) z: f32,
@@ -237,7 +237,7 @@ macro_rules! sh_coeffs_array {
 }
 
 impl PlyGaussian {
-    pub(crate) fn sh_rest_coeffs(&self) -> [f32; 45] {
+    pub fn sh_rest_coeffs(&self) -> [f32; 45] {
         sh_coeffs_array!(self)
     }
 }
@@ -251,7 +251,7 @@ where
 }
 
 #[derive(Deserialize)]
-pub(crate) struct QuantSh {
+pub struct QuantSh {
     #[serde(default, deserialize_with = "de_quant_sh")]
     pub(crate) f_rest_0: f32,
     #[serde(default, deserialize_with = "de_quant_sh")]
@@ -345,7 +345,7 @@ pub(crate) struct QuantSh {
 }
 
 impl QuantSh {
-    pub(crate) fn coeffs(&self) -> [f32; 45] {
+    pub fn coeffs(&self) -> [f32; 45] {
         sh_coeffs_array!(self)
     }
 }

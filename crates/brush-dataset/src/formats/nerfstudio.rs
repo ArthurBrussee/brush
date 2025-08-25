@@ -1,14 +1,13 @@
 use super::FormatError;
 use super::find_mask_path;
-use crate::splat_import::load_splat_from_ply;
 use crate::{
     Dataset,
     config::LoadDataseConfig,
     scene::{LoadImage, SceneView},
-    splat_import::SplatMessage,
 };
 use brush_render::camera::fov_to_focal;
 use brush_render::camera::{Camera, focal_to_fov};
+use brush_serde::{SplatMessage, load_splat_from_ply};
 use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
 use std::path::Path;

@@ -6,13 +6,13 @@ use crate::{
     config::LoadDataseConfig,
     formats::find_mask_path,
     scene::{LoadImage, SceneView},
-    splat_import::{ParseMetadata, SplatMessage},
 };
 use brush_render::{
     camera::{self, Camera},
     gaussian_splats::Splats,
     sh::rgb_to_sh,
 };
+use brush_serde::{ParseMetadata, SplatMessage};
 use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
 use std::collections::HashMap;

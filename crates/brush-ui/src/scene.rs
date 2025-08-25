@@ -1,5 +1,5 @@
-use brush_dataset::splat_export;
 use brush_process::message::ProcessMessage;
+use brush_serde;
 use core::f32;
 use egui::{Align2, Area, Frame, Pos2, Ui, epaint::mutex::RwLock as EguiRwLock};
 use std::sync::Arc;
@@ -58,7 +58,7 @@ impl ErrorDisplay {
 }
 
 async fn export(splat: Splats<MainBackend>) -> Result<(), anyhow::Error> {
-    let data = splat_export::splat_to_ply(splat).await?;
+    let data = brush_serde::splat_to_ply(splat).await?;
     rrfd::save_file("export.ply", data).await?;
     Ok(())
 }

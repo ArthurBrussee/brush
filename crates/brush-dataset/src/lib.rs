@@ -3,12 +3,8 @@
 pub mod config;
 pub mod scene;
 pub mod scene_loader;
-pub mod splat_export;
-pub mod splat_import;
 
 mod formats;
-mod parsed_gaussian;
-mod quant;
 
 pub use formats::load_dataset;
 

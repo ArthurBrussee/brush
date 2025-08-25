@@ -285,7 +285,7 @@ async fn export_checkpoint(
         fs::create_dir_all(&export_path)
             .await
             .context("Creating export directory")?;
-        let splat_data = brush_dataset::splat_export::splat_to_ply(splats)
+        let splat_data = brush_serde::splat_to_ply(splats)
             .await
             .context("Serializing splat data")?;
         fs::write(export_path.join(&export_name), splat_data)

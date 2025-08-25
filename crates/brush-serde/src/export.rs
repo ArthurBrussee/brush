@@ -226,12 +226,13 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
 
 pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, SerializeError> {
     let splats = splats.with_normed_rotations();
+    let sh_degree = splats.sh_degree();
     let ply = read_splat_data(splats.clone()).await;
 
     let comments = vec![
         "Exported from Brush".to_owned(),
         "Vertical axis: y".to_owned(),
-        format!("SH degree: {}", splats.sh_degree()),
+        format!("SH degree: {}", sh_degree),
     ];
     serde_ply::to_bytes(&ply, SerializeOptions::binary_le().with_comments(comments))
 }
@@ -239,7 +240,7 @@ pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, Seri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::splat_import::load_splat_from_ply;
+    use crate::import::load_splat_from_ply;
     use brush_render::gaussian_splats::Splats;
     use burn::backend::Wgpu;
     use std::io::Cursor;

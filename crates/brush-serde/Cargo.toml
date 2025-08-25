@@ -1,5 +1,5 @@
 [package]
-name = "brush-dataset"
+name = "brush-serde"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -8,30 +8,21 @@ license.workspace = true
 [dependencies]
 brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
-brush-serde.path = "../brush-serde"
-colmap-reader.path = "../colmap-reader"
 
 burn.workspace = true
-
-thiserror = { workspace = true }
-image.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 glam.workspace = true
-
-tracing.workspace = true
-log.workspace = true
-rand.workspace = true
-
-tokio_with_wasm.workspace = true
-clap.workspace = true
-path-clean = "1.0.1"
+serde.workspace = true
+serde-ply.workspace = true
+tokio-stream.workspace = true
+async-fn-stream.workspace = true
+web-time.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 tokio = { workspace = true, features = ["io-util"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["io-util", "fs", "macros"] }
+
 
 [lints]
 workspace = true

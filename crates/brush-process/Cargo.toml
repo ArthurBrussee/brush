@@ -11,6 +11,7 @@ brush-render.path = "../brush-render"
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
 brush-vfs.path = "../brush-vfs"
+brush-serde.path = "../brush-serde"
 
 burn-wgpu.workspace = true
 

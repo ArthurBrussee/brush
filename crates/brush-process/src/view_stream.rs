@@ -3,7 +3,7 @@ use crate::message::ProcessMessage;
 use std::{pin::pin, sync::Arc};
 
 use async_fn_stream::TryStreamEmitter;
-use brush_dataset::splat_import;
+use brush_serde;
 use brush_vfs::BrushVfs;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
@@ -26,7 +26,7 @@ pub(crate) async fn view_stream(
             .await;
 
         let sub_sample = None; // Subsampling a trained ply doesn't really make sense.
-        let splat_stream = splat_import::stream_splat_from_ply(
+        let splat_stream = brush_serde::stream_splat_from_ply(
             vfs.reader_at_path(path).await?,
             sub_sample,
             device.clone(),

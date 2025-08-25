@@ -10,6 +10,7 @@ brush-dataset.path = "../brush-dataset"
 brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
 brush-process.path = "../brush-process"
+brush-serde.path = "../brush-serde"
 rrfd.path = "../rrfd"
 
 log.workspace = true

@@ -1,12 +1,8 @@
-use crate::{
-    Dataset,
-    config::LoadDataseConfig,
-    splat_import::{SplatMessage, load_splat_from_ply},
-};
+use crate::{Dataset, config::LoadDataseConfig};
+use brush_serde::{DeserializeError, SplatMessage, load_splat_from_ply};
 use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
 use path_clean::PathClean;
-use serde_ply::DeserializeError;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -41,7 +37,7 @@ pub enum DatasetError {
     FormatError(#[from] FormatError),
 
     #[error("Failed to load initial point cloud.")]
-    InitialPointCloudError(#[from] serde_ply::DeserializeError),
+    InitialPointCloudError(#[from] DeserializeError),
 
     #[error("Format not recognized: Only colmap and nerfstudio json are supported.")]
     FormatNotSupported,
@@ -83,7 +79,7 @@ pub async fn load_dataset(
         let reader = vfs
             .reader_at_path(main_path)
             .await
-            .map_err(serde_ply::DeserializeError)?;
+            .map_err(DeserializeError)?;
         Some(load_splat_from_ply(reader, load_args.subsample_points, device.clone()).await?)
     } else {
         data_splat_init

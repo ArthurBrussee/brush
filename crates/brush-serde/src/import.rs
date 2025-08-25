@@ -15,7 +15,7 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
 
-use crate::parsed_gaussian::{PlyGaussian, QuantSh, QuantSplat};
+use crate::ply_gaussian::{PlyGaussian, QuantSh, QuantSplat};
 
 type StreamEmitter = TryStreamEmitter<SplatMessage, DeserializeError>;
 
@@ -663,4 +663,153 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
     }
 
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::export::splat_to_ply;
+    use brush_render::gaussian_splats::Splats;
+    use burn::backend::Wgpu;
+    use burn::backend::wgpu::WgpuDevice;
+    use std::io::Cursor;
+
+    type TestBackend = Wgpu;
+
+    fn create_test_splats(sh_degree: u32) -> Splats<TestBackend> {
+        create_test_splats_with_count(sh_degree, 1)
+    }
+
+    fn create_test_splats_with_count(sh_degree: u32, num_splats: usize) -> Splats<TestBackend> {
+        let device = WgpuDevice::default();
+        let coeffs_per_channel = brush_render::sh::sh_coeffs_for_degree(sh_degree) as usize;
+
+        let mut means = Vec::new();
+        let mut rotations = Vec::new();
+        let mut log_scales = Vec::new();
+        let mut sh_coeffs = Vec::new();
+        let mut opacities = Vec::new();
+
+        for i in 0..num_splats {
+            let offset = i as f32;
+
+            // Means: different position for each splat
+            means.extend([offset, offset + 1.0, offset + 2.0]);
+
+            // Rotations: identity for all
+            rotations.extend([1.0, 0.0, 0.0, 0.0]);
+
+            // Log scales: slightly different for each
+            log_scales.extend([-0.1 + offset * 0.05, 0.2 + offset * 0.05, -0.3 + offset * 0.05]);
+
+            // SH coefficients: different DC values for each splat
+            for _ in 0..3 { // 3 channels
+                sh_coeffs.push(0.5 + offset * 0.1); // DC
+                for j in 1..coeffs_per_channel {
+                    sh_coeffs.push(j as f32 * 0.1 + offset * 0.01);
+                }
+            }
+
+            // Opacities: different for each
+            opacities.push(0.8 - offset * 0.1);
+        }
+
+        Splats::<TestBackend>::from_raw(
+            means,
+            Some(rotations),
+            Some(log_scales),
+            Some(sh_coeffs),
+            Some(opacities),
+            &device,
+        )
+        .with_sh_degree(sh_degree)
+    }
+
+    #[tokio::test]
+    async fn test_import_basic_functionality() {
+        let device = WgpuDevice::default();
+
+        let original_splats = create_test_splats(1);
+        let ply_bytes = splat_to_ply(original_splats.clone()).await.unwrap();
+
+        let cursor = Cursor::new(ply_bytes);
+        let imported_message = load_splat_from_ply(cursor, None, device).await.unwrap();
+
+        assert_eq!(imported_message.splats.num_splats(), 1);
+        assert_eq!(imported_message.splats.sh_degree(), 1);
+        assert_eq!(imported_message.meta.total_splats, 1);
+    }
+
+    #[tokio::test]
+    async fn test_import_different_sh_degrees() {
+        let device = WgpuDevice::default();
+
+        for degree in [0, 1, 2] {
+            let original_splats = create_test_splats(degree);
+            let ply_bytes = splat_to_ply(original_splats).await.unwrap();
+
+            let cursor = Cursor::new(ply_bytes);
+            let imported_message = load_splat_from_ply(cursor, None, device.clone())
+                .await
+                .unwrap();
+
+            assert_eq!(imported_message.splats.sh_degree(), degree);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_import_with_subsample() {
+        let device = WgpuDevice::default();
+
+        // Create multiple splats with simple data to avoid PLY generation issues
+        let means = vec![
+            0.0, 0.0, 0.0,  // splat 0
+            1.0, 1.0, 1.0,  // splat 1
+            2.0, 2.0, 2.0,  // splat 2
+            3.0, 3.0, 3.0,  // splat 3
+        ];
+        let rotations = vec![
+            1.0, 0.0, 0.0, 0.0,  // splat 0
+            1.0, 0.0, 0.0, 0.0,  // splat 1
+            1.0, 0.0, 0.0, 0.0,  // splat 2
+            1.0, 0.0, 0.0, 0.0,  // splat 3
+        ];
+        let log_scales = vec![
+            0.0, 0.0, 0.0,  // splat 0
+            0.1, 0.1, 0.1,  // splat 1
+            0.2, 0.2, 0.2,  // splat 2
+            0.3, 0.3, 0.3,  // splat 3
+        ];
+        let sh_coeffs = vec![
+            0.5, 0.3, 0.1,  // splat 0 DC
+            0.6, 0.4, 0.2,  // splat 1 DC
+            0.7, 0.5, 0.3,  // splat 2 DC
+            0.8, 0.6, 0.4,  // splat 3 DC
+        ];
+        let opacities = vec![0.5, 0.6, 0.7, 0.8];
+
+        let original_splats = Splats::<TestBackend>::from_raw(
+            means,
+            Some(rotations),
+            Some(log_scales),
+            Some(sh_coeffs),
+            Some(opacities),
+            &device,
+        ).with_sh_degree(0);
+
+        assert_eq!(original_splats.num_splats(), 4);
+
+        let ply_bytes = splat_to_ply(original_splats).await.unwrap();
+
+        // Test no subsampling
+        let cursor = Cursor::new(ply_bytes.clone());
+        let imported_message = load_splat_from_ply(cursor, None, device.clone()).await.unwrap();
+        assert_eq!(imported_message.splats.num_splats(), 4);
+
+        // Test subsample every 2nd splat
+        let cursor = Cursor::new(ply_bytes);
+        let imported_message = load_splat_from_ply(cursor, Some(2), device).await.unwrap();
+        assert_eq!(imported_message.splats.num_splats(), 2);
+    }
 }

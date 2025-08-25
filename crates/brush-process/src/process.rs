@@ -8,7 +8,7 @@ use tokio::sync::oneshot::Receiver;
 use tokio_stream::Stream;
 
 #[allow(unused)]
-use brush_dataset::splat_export;
+use brush_serde;
 
 use crate::{
     config::ProcessArgs, message::ProcessMessage, train_stream::train_stream,
