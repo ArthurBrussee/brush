@@ -283,7 +283,6 @@ redundant_clone = "warn"
 iter_over_hash_type = "warn"
 missing_assert_message = "warn"
 should_panic_without_expect = "warn"
-unwrap_used = "warn"
 
 
 # Too many false positives

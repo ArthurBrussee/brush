@@ -252,23 +252,20 @@ mod tests {
             .into_data_async()
             .await
             .into_vec()
-            .unwrap();
+            .expect("Failed to convert SH coefficients to vector");
         let import_sh: Vec<f32> = imported
             .sh_coeffs
             .val()
             .into_data_async()
             .await
             .into_vec()
-            .unwrap();
+            .expect("Failed to convert SH coefficients to vector");
 
         assert_eq!(orig_sh.len(), import_sh.len());
         for (i, (&orig, &imported)) in orig_sh.iter().zip(import_sh.iter()).enumerate() {
             assert!(
                 (orig - imported).abs() < 1e-6_f32,
-                "SH coeffs mismatch at index {}: orig={}, imported={}",
-                i,
-                orig,
-                imported
+                "SH coeffs mismatch at index {i}: orig={orig}, imported={imported}",
             );
         }
     }
@@ -306,14 +303,13 @@ mod tests {
             let actual_rest_fields = ply_string.matches("property float f_rest_").count();
             assert_eq!(
                 actual_rest_fields, expected_rest_fields,
-                "Degree {} should have {} f_rest_ fields",
-                degree, expected_rest_fields
+                "Degree {degree} should have {expected_rest_fields} f_rest_ fields",
             );
 
             assert!(ply_string.contains("f_dc_0"));
             if expected_rest_fields > 0 {
                 assert!(ply_string.contains("f_rest_0"));
-                assert!(!ply_string.contains(&format!("f_rest_{}", expected_rest_fields)));
+                assert!(!ply_string.contains(&format!("f_rest_{expected_rest_fields}")));
             } else {
                 assert!(!ply_string.contains("f_rest_0"));
             }
@@ -326,12 +322,14 @@ mod tests {
 
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);
-            let ply_bytes = splat_to_ply(original_splats.clone()).await.unwrap();
+            let ply_bytes = splat_to_ply(original_splats.clone())
+                .await
+                .expect("Failed to serialize splats");
 
             let cursor = Cursor::new(ply_bytes);
             let imported_message = load_splat_from_ply(cursor, None, device.clone())
                 .await
-                .unwrap();
+                .expect("Failed to deserialize splats");
             let imported_splats = imported_message.splats;
 
             assert_eq!(imported_splats.sh_degree(), degree);
