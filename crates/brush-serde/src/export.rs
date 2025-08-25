@@ -241,38 +241,9 @@ pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, Seri
 mod tests {
     use super::*;
     use crate::import::load_splat_from_ply;
-    use brush_render::gaussian_splats::Splats;
-    use burn::backend::Wgpu;
+    use crate::test_utils::{TestBackend, create_test_splats};
+    use burn::backend::wgpu::WgpuDevice;
     use std::io::Cursor;
-
-    type TestBackend = Wgpu;
-
-    fn create_test_splats(
-        sh_degree: u32,
-        device: &<TestBackend as burn::prelude::Backend>::Device,
-    ) -> Splats<TestBackend> {
-        let coeffs_per_channel = sh_coeffs_for_degree(sh_degree) as usize;
-        let mut sh_coeffs = vec![];
-
-        // Generate test coefficients: DC + rest
-        for _ in 0..3 {
-            // 3 channels
-            sh_coeffs.push(0.5); // DC
-            for j in 1..coeffs_per_channel {
-                sh_coeffs.push(j as f32 * 0.1);
-            }
-        }
-
-        Splats::<TestBackend>::from_raw(
-            vec![0.0, 0.0, 0.0],
-            Some(vec![1.0, 0.0, 0.0, 0.0]),
-            Some(vec![0.0, 0.0, 0.0]),
-            Some(sh_coeffs),
-            Some(vec![0.5]),
-            device,
-        )
-        .with_sh_degree(sh_degree)
-    }
 
     async fn assert_coeffs_match(orig: &Splats<TestBackend>, imported: &Splats<TestBackend>) {
         let orig_sh: Vec<f32> = orig
@@ -304,10 +275,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sh_degree_exports() {
-        let device = Default::default();
-
         for degree in 0..=2 {
-            let splats = create_test_splats(degree, &device);
+            let splats = create_test_splats(degree);
             assert_eq!(splats.sh_degree(), degree);
 
             let ply_data = read_splat_data(splats.clone()).await;
@@ -327,12 +296,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_ply_field_count_matches_sh_degree() {
-        let device = Default::default();
-
         let test_cases = [(0, 0), (1, 9), (2, 24)];
 
         for (degree, expected_rest_fields) in test_cases {
-            let splats = create_test_splats(degree, &device);
+            let splats = create_test_splats(degree);
             let ply_bytes = splat_to_ply(splats).await.unwrap();
             let ply_string = String::from_utf8_lossy(&ply_bytes);
 
@@ -355,10 +322,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_roundtrip_sh_coefficient_ordering() {
-        let device = Default::default();
+        let device = WgpuDevice::default();
 
         for degree in [0, 1, 2] {
-            let original_splats = create_test_splats(degree, &device);
+            let original_splats = create_test_splats(degree);
             let ply_bytes = splat_to_ply(original_splats.clone()).await.unwrap();
 
             let cursor = Cursor::new(ply_bytes);
