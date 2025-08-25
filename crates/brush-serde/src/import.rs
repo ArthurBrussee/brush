@@ -205,7 +205,8 @@ async fn parse_ply<T: AsyncRead + Unpin>(
     let vertex = header
         .get_element("vertex")
         .ok_or(DeserializeError::custom("Unknown format"))?;
-    let max_splats = vertex.count / subsample;
+    let total_splats = vertex.count;
+    let max_splats = total_splats / subsample;
 
     let mut means = Vec::with_capacity(max_splats * 3);
     let mut log_scales = vertex
@@ -237,7 +238,6 @@ async fn parse_ply<T: AsyncRead + Unpin>(
             if !row_index.is_multiple_of(subsample) {
                 return;
             }
-
             means.extend([gauss.x, gauss.y, gauss.z]);
 
             // Prefer rgb if specified.
@@ -271,7 +271,7 @@ async fn parse_ply<T: AsyncRead + Unpin>(
         })
         .deserialize(&mut *file)?;
 
-        if update.should_update() || row_index == max_splats {
+        if update.should_update() || row_index == total_splats {
             let splats = Splats::from_raw(
                 means.clone(),
                 rotations.clone(),
@@ -286,7 +286,7 @@ async fn parse_ply<T: AsyncRead + Unpin>(
                     meta: ParseMetadata {
                         total_splats: max_splats as u32,
                         up_axis,
-                        progress: progress(row_index, max_splats),
+                        progress: progress(row_index, total_splats),
                         frame_count: 0,
                         current_frame: 0,
                     },
@@ -294,7 +294,7 @@ async fn parse_ply<T: AsyncRead + Unpin>(
                 })
                 .await;
 
-            if row_index == max_splats {
+            if row_index == total_splats {
                 return Ok(splats);
             }
         }
@@ -540,8 +540,8 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
     if vertex.name != "vertex" {
         return Err(DeserializeError::custom("Unknown format"));
     }
-    let max_splats = vertex.count / subsample;
-
+    let total_splats = vertex.count;
+    let max_splats = total_splats / subsample;
     let mut means = Vec::with_capacity(max_splats * 3);
     // Atm, unlike normal plys, these values aren't optional.
     let mut log_scales = Vec::with_capacity(max_splats * 3);
@@ -587,10 +587,10 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
         .deserialize(&mut file)?;
 
         // Occasionally send some updated splats.
-        if update.should_update() || row_count == max_splats {
+        if update.should_update() || row_count == total_splats {
             // Leave 20% of progress for loading the SH's, just an estimate.
             let max_time = if sh_vals.is_some() { 0.8 } else { 1.0 };
-            let progress = progress(row_count, max_splats) * max_time;
+            let progress = progress(row_count, total_splats) * max_time;
             emitter
                 .emit(SplatMessage {
                     meta: ParseMetadata {
@@ -762,42 +762,8 @@ mod tests {
     async fn test_import_with_subsample() {
         let device = WgpuDevice::default();
 
-        // Create multiple splats with simple data to avoid PLY generation issues
-        let means = vec![
-            0.0, 0.0, 0.0,  // splat 0
-            1.0, 1.0, 1.0,  // splat 1
-            2.0, 2.0, 2.0,  // splat 2
-            3.0, 3.0, 3.0,  // splat 3
-        ];
-        let rotations = vec![
-            1.0, 0.0, 0.0, 0.0,  // splat 0
-            1.0, 0.0, 0.0, 0.0,  // splat 1
-            1.0, 0.0, 0.0, 0.0,  // splat 2
-            1.0, 0.0, 0.0, 0.0,  // splat 3
-        ];
-        let log_scales = vec![
-            0.0, 0.0, 0.0,  // splat 0
-            0.1, 0.1, 0.1,  // splat 1
-            0.2, 0.2, 0.2,  // splat 2
-            0.3, 0.3, 0.3,  // splat 3
-        ];
-        let sh_coeffs = vec![
-            0.5, 0.3, 0.1,  // splat 0 DC
-            0.6, 0.4, 0.2,  // splat 1 DC
-            0.7, 0.5, 0.3,  // splat 2 DC
-            0.8, 0.6, 0.4,  // splat 3 DC
-        ];
-        let opacities = vec![0.5, 0.6, 0.7, 0.8];
-
-        let original_splats = Splats::<TestBackend>::from_raw(
-            means,
-            Some(rotations),
-            Some(log_scales),
-            Some(sh_coeffs),
-            Some(opacities),
-            &device,
-        ).with_sh_degree(0);
-
+        // Create 4 test splats
+        let original_splats = create_test_splats_with_count(0, 4);
         assert_eq!(original_splats.num_splats(), 4);
 
         let ply_bytes = splat_to_ply(original_splats).await.unwrap();
