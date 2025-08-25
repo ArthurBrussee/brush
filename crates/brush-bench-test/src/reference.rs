@@ -8,7 +8,7 @@ use brush_rerun::burn_to_rerun::{BurnToImage, BurnToRerun};
 use burn::{
     backend::{Autodiff, Wgpu, wgpu::WgpuDevice},
     prelude::Backend,
-    tensor::{Float, Int, Tensor, TensorPrimitive},
+    tensor::{Tensor, TensorPrimitive},
 };
 use glam::Vec3;
 use safetensors::SafeTensors;
@@ -97,7 +97,7 @@ async fn test_reference() -> Result<()> {
         None
     };
 
-    for (i, path) in ["mix_case"].iter().enumerate() {
+    for (i, path) in ["tiny_case", "basic_case", "mix_case"].iter().enumerate() {
         log::info!("Checking path {path}");
 
         let mut buffer = Vec::new();

@@ -1,9 +1,6 @@
-const TILE_WIDTH: u32 = 32u;
-// Nb: TILE_SIZE should be <= 256 for max compatibility.
+const TILE_WIDTH: u32 = 16u;
 const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
-
-const CHUNK_WIDTH: u32 = 8u;
-const CHUNK_SIZE: u32 = CHUNK_WIDTH * CHUNK_WIDTH;
+const CHUNK_SIZE: u32 = 128u;
 // Nb: This has to divide evenly.
 const CHUNKS_PER_TILE: u32 = TILE_SIZE / CHUNK_SIZE;
 
@@ -217,12 +214,6 @@ fn compute_bbox_extent(cov2d: mat2x2f, power_threshold: f32) -> vec2f {
 fn tile_rect(tile: vec2u) -> vec4f {
     let rect_min = vec2f(tile * TILE_WIDTH);
     let rect_max = rect_min + f32(TILE_WIDTH);
-    return vec4f(rect_min.x, rect_min.y, rect_max.x, rect_max.y);
-}
-
-fn chunk_rect(chunk: vec2u) -> vec4f {
-    let rect_min = vec2f(chunk * CHUNK_WIDTH);
-    let rect_max = rect_min + f32(CHUNK_WIDTH);
     return vec4f(rect_min.x, rect_min.y, rect_max.x, rect_max.y);
 }
 

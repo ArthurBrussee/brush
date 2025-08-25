@@ -77,7 +77,6 @@ fn main(
     let pix_id = pix_loc.x + pix_loc.y * uniforms.img_size.x;
     let pixel_coord = vec2f(pix_loc) + 0.5f;
     let tile_loc = vec2u(pix_loc.x / helpers::TILE_WIDTH, pix_loc.y / helpers::TILE_WIDTH);
-    let chunk_loc = vec2u(pix_loc.x / helpers::CHUNK_WIDTH, pix_loc.y / helpers::CHUNK_WIDTH);
     let tile_id = tile_loc.x + tile_loc.y * uniforms.tile_bounds.x;
     let inside = pix_loc.x < uniforms.img_size.x && pix_loc.y < uniforms.img_size.y;
 
@@ -120,6 +119,7 @@ fn main(
 
         let load_isect_id = batch_start + subgroup_invocation_id;
         let compact_gid = compact_gid_from_isect[load_isect_id];
+        let global_gid_load = global_from_compact_gid[compact_gid];
 
         let c1 = projected[compact_gid + uniforms.total_splats * 0];
         let c2 = projected[compact_gid + uniforms.total_splats * 1];
@@ -197,8 +197,6 @@ fn main(
                 }
             }
 
-            // TODO: Do we really need to shuffle this?
-            let global_gid_load = global_from_compact_gid[compact_gid];
 
             // Note: This isn't uniform control flow according to the WebGPU spec. In practice we know it's fine - the control
             // flow is 100% uniform _for the subgroup_, but that isn't enough and Chrome validation chokes on it.

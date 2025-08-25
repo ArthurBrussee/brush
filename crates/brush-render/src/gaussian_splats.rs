@@ -259,11 +259,11 @@ impl<B: Backend> Splats<B> {
 
     // TODO: This should probably exist in Burn. Maybe make a PR.
     pub fn into_autodiff<BDiff: AutodiffBackend<InnerBackend = B>>(self) -> Splats<BDiff> {
-        let (means_id, means) = self.means.consume();
-        let (rotation_id, rotation) = self.rotation.consume();
-        let (log_scales_id, log_scales) = self.log_scales.consume();
-        let (sh_coeffs_id, sh_coeffs) = self.sh_coeffs.consume();
-        let (raw_opacity_id, raw_opacity) = self.raw_opacity.consume();
+        let (means_id, means, _) = self.means.consume();
+        let (rotation_id, rotation, _) = self.rotation.consume();
+        let (log_scales_id, log_scales, _) = self.log_scales.consume();
+        let (sh_coeffs_id, sh_coeffs, _) = self.sh_coeffs.consume();
+        let (raw_opacity_id, raw_opacity, _) = self.raw_opacity.consume();
 
         Splats::<BDiff> {
             means: Param::initialized(means_id, Tensor::from_inner(means).require_grad()),
