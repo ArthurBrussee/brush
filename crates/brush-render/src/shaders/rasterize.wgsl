@@ -71,8 +71,9 @@ fn main(
             let load_gid = global_from_compact_gid[compact_gid];
         #endif
 
+        // TODO: Would be so nice to pack these so that we can load a single float4 per splat.
         let c1 = projected[compact_gid + uniforms.total_splats * 0];
-        let c2 =  projected[compact_gid + uniforms.total_splats * 1];
+        let c2 = projected[compact_gid + uniforms.total_splats * 1];
 
         let xy_load = c1.xy;
 
@@ -80,17 +81,16 @@ fn main(
         var color_load = vec4f(0.0f, 0.0f, 0.0f, c2.w);
 
         let power_threshold = c1.z;
-        let chunk_visible = select(0u, 1u, helpers::will_primitive_contribute(sub_rect, xy_load, conic_load, power_threshold));
+        let chunk_visible = helpers::will_primitive_contribute(sub_rect, xy_load, conic_load, power_threshold);
 
-        if chunk_visible == 1u {
+        if chunk_visible {
             color_load = vec4f(max(projected[compact_gid + uniforms.total_splats * 2].rgb, vec3f(0.0)), color_load.w);
         }
 
-        for (var t = 0u; t < remaining; t++) {
-            if subgroupShuffle(chunk_visible, t) == 0u {
-                continue;
-            }
+        let chunk_visible_u = select(0u, 1u, chunk_visible);
 
+        for (var t = 0u; t < remaining; t++) {
+        #ifdef WEBGPU
             // Broadcast from right sg element.
             let xy = subgroupShuffle(xy_load, t);
             let conic = subgroupShuffle(conic_load, t);
@@ -98,35 +98,52 @@ fn main(
             #ifdef BWD_INFO
                 let gid = subgroupShuffle(load_gid, t);
             #endif
+        #endif
 
-            if !done {
-                let delta = xy - pixel_coord;
-                let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
-                let alpha = min(0.999f, color.a * exp(-sigma));
+            if subgroupShuffle(chunk_visible_u, t) == 1u {
+                // On WebGPU, this isn't allowed to be AFTER the shuffle... It actually really hurts
+                // performance however, so... I guess on non webGPU platforms make use of this.
+                #ifndef WEBGPU
+                    // Broadcast from right sg element.
+                    let xy = subgroupShuffle(xy_load, t);
+                    let conic = subgroupShuffle(conic_load, t);
+                    let color = subgroupShuffle(color_load, t);
+                    #ifdef BWD_INFO
+                        let gid = subgroupShuffle(load_gid, t);
+                    #endif
+                #endif
 
-                if sigma >= 0.0f && alpha >= 1.0f / 255.0f {
-                    let next_T = T * (1.0 - alpha);
+                if !done {
+                    let delta = xy - pixel_coord;
+                    let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
+                    let alpha = min(0.999f, color.a * exp(-sigma));
 
-                    if next_T <= 1e-4f {
-                        done = true;
-                    } else {
-                        #ifdef BWD_INFO
-                            visible[gid] = 1.0;
-                        #endif
+                    if sigma >= 0.0f && alpha >= 1.0f / 255.0f {
+                        let next_T = T * (1.0 - alpha);
 
-                        let vis = alpha * T;
-                        pix_out += color.rgb * vis;
-                        T = next_T;
+                        if next_T <= 1e-4f {
+                            done = true;
+                        } else {
+                            #ifdef BWD_INFO
+                                visible[gid] = 1.0;
+                            #endif
+
+                            let vis = alpha * T;
+                            pix_out += color.rgb * vis;
+                            T = next_T;
+                        }
                     }
                 }
             }
         }
 
-        // TODO: Not allowed on the web because control flow would be non uniform ugh.
-        if subgroupAll(done) {
-            // TODO: Write subgroup max.
-            break;
-        }
+        // Not allowed on the web because control flow would be non uniform :/
+        #ifndef WEBGPU
+            if subgroupAll(done) {
+                // TODO: Write subgroup max here so we can use that in the backwards pass.
+                break;
+            }
+        #endif
     }
 
     if inside {
