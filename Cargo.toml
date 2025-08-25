@@ -254,7 +254,6 @@ str_to_string = "warn"
 
 string_lit_as_bytes = "warn"
 string_lit_chars_any = "warn"
-string_to_string = "warn"
 suspicious_command_arg_space = "warn"
 suspicious_xor_used_as_pow = "warn"
 todo = "warn"

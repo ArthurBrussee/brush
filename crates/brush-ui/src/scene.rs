@@ -1,5 +1,4 @@
 use brush_process::message::ProcessMessage;
-use brush_serde;
 use core::f32;
 use egui::{Align2, Area, Frame, Pos2, Ui, epaint::mutex::RwLock as EguiRwLock};
 use std::sync::Arc;
