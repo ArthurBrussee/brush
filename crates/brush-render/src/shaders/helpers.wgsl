@@ -1,4 +1,4 @@
-const TILE_WIDTH: u32 = 16u;
+const TILE_WIDTH: u32 = 32u;
 const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 const CHUNK_SIZE: u32 = 128u;
 // Nb: This has to divide evenly.
