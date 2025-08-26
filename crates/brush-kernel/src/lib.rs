@@ -71,13 +71,8 @@ pub fn module_to_compiled<C: Compiler>(
 }
 
 pub fn calc_kernel_id<T: 'static>(values: &[bool]) -> KernelId {
-    let mut kernel_id = KernelId::new::<T>();
-
-    for val in values.iter().copied() {
-        kernel_id = kernel_id.info(val);
-    }
-
-    kernel_id
+    let kernel_id = KernelId::new::<T>();
+    kernel_id.info(values.to_vec())
 }
 
 #[macro_export]
@@ -105,7 +100,6 @@ macro_rules! kernel_source_gen {
                 let map = std::collections::HashMap::new();
                 $(
                     let mut map = map;
-
                     if self.$field_name {
                         map.insert(stringify!($field_name).to_owned().to_uppercase(), naga_oil::compose::ShaderDefValue::Bool(true));
                     }
