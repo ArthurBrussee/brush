@@ -1,7 +1,6 @@
 use core::f32;
 
-use burn_cubecl::cubecl::prelude::mul;
-use egui::{Event, EventFilter, Response};
+use egui::{Event, Response};
 use glam::{Quat, Vec2, Vec3};
 
 use crate::app::CameraSettings;
@@ -172,7 +171,9 @@ impl CameraController {
         }
 
         if look_pan {
-            let drag_mult = self.focus_distance / response.rect.width().max(response.rect.height());
+            // let drag_mult = self.focus_distance / response.rect.width().max(response.rect.height());
+
+            let drag_mult = 1.0 / response.rect.width().max(response.rect.height());
 
             if let Some(multi_touch) = multi_touch {
                 // Use multi-touch translation for two-finger panning
