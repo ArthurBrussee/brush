@@ -118,6 +118,7 @@ alphanumeric-sort = "1.5.3"
 # cubecl-common = { path = "../cubecl/crates/cubecl-common" }
 # cubecl-std = { path = "../cubecl/crates/cubecl-std" }
 # cubecl-core = { path = "../cubecl/crates/cubecl-core" }
+# cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
 
 [patch.crates-io]
 wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }

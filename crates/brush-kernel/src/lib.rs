@@ -48,7 +48,13 @@ pub fn module_to_compiled<C: Compiler>(
     // Dawn annoyingly wants some extra syntax to enable subgroups,
     // so just hack this in when running on wasm.
     #[cfg(target_family = "wasm")]
-    let shader_string = if shader_string.contains("subgroupAdd") {
+    // Ideally include all subgroup functions here but meh.
+    let shader_string = if shader_string.contains("subgroupAdd")
+        || shader_string.contains("subgroupAny")
+        || shader_string.contains("subgroupMax")
+        || shader_string.contains("subgroupBroadcast")
+        || shader_string.contains("subgroupShuffle")
+    {
         "enable subgroups;\n".to_owned() + &shader_string
     } else {
         shader_string
@@ -65,13 +71,8 @@ pub fn module_to_compiled<C: Compiler>(
 }
 
 pub fn calc_kernel_id<T: 'static>(values: &[bool]) -> KernelId {
-    let mut kernel_id = KernelId::new::<T>();
-
-    for val in values.iter().copied() {
-        kernel_id = kernel_id.info(val);
-    }
-
-    kernel_id
+    let kernel_id = KernelId::new::<T>();
+    kernel_id.info(values.to_vec())
 }
 
 #[macro_export]
@@ -99,7 +100,6 @@ macro_rules! kernel_source_gen {
                 let map = std::collections::HashMap::new();
                 $(
                     let mut map = map;
-
                     if self.$field_name {
                         map.insert(stringify!($field_name).to_owned().to_uppercase(), naga_oil::compose::ShaderDefValue::Bool(true));
                     }

@@ -117,7 +117,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
 
         let num_points = means.shape[0];
 
-        let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / 4;
+        // let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / 4;
         let uniforms_size = size_of::<shaders::helpers::RenderUniforms>() / 4;
         let tile_bounds = calc_tile_bounds(img_size);
         let max_intersects = max_intersections(img_size, num_points as u32);
@@ -134,7 +134,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
         let visible_shape = if bwd_info { vec![num_points] } else { vec![1] };
 
         let aux = RenderAux::<Self> {
-            projected_splats: client.tensor_uninitialized(vec![num_points, proj_size], DType::F32),
+            projected_splats: client.tensor_uninitialized(vec![num_points * 12], DType::F32),
             uniforms_buffer: client.tensor_uninitialized(vec![uniforms_size], DType::U32),
             num_intersections: client.tensor_uninitialized(vec![1], DType::U32),
             tile_offsets: client.tensor_uninitialized(
