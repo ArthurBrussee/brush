@@ -1,5 +1,3 @@
-use crate::shaders::helpers;
-
 use super::shaders::{project_backwards, rasterize_backwards};
 use brush_kernel::{
     CubeCount, CubeDim, CubeTensor, calc_cube_count, create_tensor, kernel_source_gen,
@@ -143,11 +141,7 @@ pub(crate) fn render_backward(
         unsafe {
             client.execute_unchecked(
                 RasterizeBackwards::task(hard_floats),
-                CubeCount::Static(
-                    tile_bounds.x * tile_bounds.y * (helpers::TILE_SIZE / helpers::CHUNK_SIZE),
-                    1,
-                    1,
-                ),
+                CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
                 Bindings::new().with_buffers(vec![
                     uniforms_buffer.handle.clone().binding(),
                     compact_gid_from_isect.handle.binding(),

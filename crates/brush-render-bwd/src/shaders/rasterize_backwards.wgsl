@@ -53,45 +53,55 @@
     }
 #endif
 
+const THREAD_COUNT: u32 = 64u;
+const PIXELS_PER_THREAD: u32 = 4u;
 
-// const PIXELS_PER_THREAD_X = 2;
-// const PIXELS_PER_THREAD_Y = 2;
-// const PIXELS_PER_THREAD = PIXELS_PER_THREAD_X * PIXELS_PER_THREAD_Y;
-
-const NUM_VECS: u32 = helpers::TILE_SIZE * 3u;
+const NUM_VECS: u32 = THREAD_COUNT * 3u;
 var<workgroup> local_batch: array<vec4f, NUM_VECS>;
-var<workgroup> load_gid: array<u32, helpers::TILE_SIZE>;
+var<workgroup> load_gid: array<u32, THREAD_COUNT>;
 
 // kernel function for rasterizing each tile
 // each thread treats a single pixel
 // each thread group uses the same gaussian data in a tile
 @compute
-@workgroup_size(helpers::CHUNK_SIZE, 1, 1)
+@workgroup_size(THREAD_COUNT, 1, 1)
 fn main(
     @builtin(global_invocation_id) global_id: vec3u,
     @builtin(local_invocation_index) local_idx: u32,
     @builtin(subgroup_invocation_id) subgroup_invocation_id: u32
 ) {
-    let pix_loc = helpers::map_1d_to_2d(global_id.x, uniforms.tile_bounds.x);
-    let pix_id = pix_loc.x + pix_loc.y * uniforms.img_size.x;
-    let pixel_coord = vec2f(pix_loc) + 0.5f;
-    let tile_loc = vec2u(pix_loc.x / helpers::TILE_WIDTH, pix_loc.y / helpers::TILE_WIDTH);
-    let tile_id = tile_loc.x + tile_loc.y * uniforms.tile_bounds.x;
-    let inside = pix_loc.x < uniforms.img_size.x && pix_loc.y < uniforms.img_size.y;
+    var pix_locs = array<vec2u, PIXELS_PER_THREAD>();
+    var pix_ids = array<u32, PIXELS_PER_THREAD>();
+    var v_outs = array<vec4f, PIXELS_PER_THREAD>();
+    var pix_outs = array<vec4f, PIXELS_PER_THREAD>();
+    var dones = array<bool, PIXELS_PER_THREAD>();
+    var rgb_pixel_finals = array<vec3f, PIXELS_PER_THREAD>();
 
-    // final values from forward pass before background blend
-    let final_color = output[pix_id];
-    let T_final = 1.0f - final_color.a;
-    let rgb_pixel_final = final_color.rgb - T_final * uniforms.background.rgb;
+    for (var i = 0u; i < PIXELS_PER_THREAD; i++) {
+        // Process 4 consecutive pixels in the original linear order
+        let pix_id = global_id.x * PIXELS_PER_THREAD + i;
+        pix_locs[i] = helpers::map_1d_to_2d(pix_id, uniforms.tile_bounds.x);
+        pix_ids[i] = pix_locs[i].x + pix_locs[i].y * uniforms.img_size.x;
+        let inside = pix_locs[i].x < uniforms.img_size.x && pix_locs[i].y < uniforms.img_size.y;
 
-    // df/d_out for this pixel
-    var v_out = vec4f(0.0f);
-    if inside {
-        v_out = v_output[pix_id];
+        if inside {
+            let final_color = output[pix_ids[i]];
+            let T_final = 1.0f - final_color.a;
+            rgb_pixel_finals[i] = final_color.rgb - T_final * uniforms.background.rgb;
 
-        // precompute the gradient from the final alpha of the pixel as far as possible
-        v_out.a = (v_out.a - dot(uniforms.background.rgb, v_out.rgb)) * T_final;
+            let v_out = v_output[pix_ids[i]];
+            v_outs[i] = vec4f(v_out.rgb, (v_out.a - dot(uniforms.background.rgb, v_out.rgb)) * T_final);
+        } else {
+            v_outs[i] = vec4f(0.0);
+            rgb_pixel_finals[i] = vec3f(0.0);
+        }
+
+        pix_outs[i] = vec4f(0.0, 0.0, 0.0, 1.0);
+        dones[i] = !inside;
     }
+
+    let tile_loc = vec2u(pix_locs[0].x / helpers::TILE_WIDTH, pix_locs[0].y / helpers::TILE_WIDTH);
+    let tile_id = tile_loc.x + tile_loc.y * uniforms.tile_bounds.x;
 
     // have all threads in tile process the same gaussians in batches
     // first collect gaussians between the bin counts.
@@ -100,115 +110,111 @@ fn main(
         tile_offsets[tile_id * 2 + 1]
     );
 
-    // current visibility left to render
-    var pix_out = vec4f(0.0, 0.0, 0.0, 1.0);
-    var done = !inside;
-
     // each thread loads one gaussian at a time before rasterizing its
-    // designated pixel
-    for (var batch_start = range.x; batch_start < range.y; batch_start += helpers::CHUNK_SIZE) {
+    // designated pixels
+    for (var batch_start = range.x; batch_start < range.y; batch_start += THREAD_COUNT) {
         // process gaussians in the current batch for this pixel
-        let remaining = min(helpers::CHUNK_SIZE, range.y - batch_start);
+        let remaining = min(THREAD_COUNT, range.y - batch_start);
         let load_isect_id = batch_start + local_idx;
         let compact_gid = compact_gid_from_isect[load_isect_id];
 
         workgroupBarrier();
         if local_idx < remaining {
-            local_batch[local_idx + helpers::CHUNK_SIZE * 0] = projected[compact_gid + uniforms.total_splats * 0];
-            local_batch[local_idx + helpers::CHUNK_SIZE * 1] = projected[compact_gid + uniforms.total_splats * 1];
-            local_batch[local_idx + helpers::CHUNK_SIZE * 2] = projected[compact_gid + uniforms.total_splats * 2];
+            local_batch[local_idx * 3 + 0] = projected[compact_gid + uniforms.total_splats * 0];
+            local_batch[local_idx * 3 + 1] = projected[compact_gid + uniforms.total_splats * 1];
+            local_batch[local_idx * 3 + 2] = projected[compact_gid + uniforms.total_splats * 2];
             load_gid[local_idx] = global_from_compact_gid[compact_gid];
         }
         workgroupBarrier();
 
         for (var t = 0u; t < remaining; t++) {
-            var v_xy_local = vec2f(0.0f, 0.0f);
-            var v_conic_local = vec3f(0.0f, 0.0f, 0.0f);
-            var v_rgb_local = vec3f(0.0f, 0.0f, 0.0f);
-            var v_alpha_local = 0.0f;
-            var v_refine_local = vec2f(0.0f, 0.0f);
+            // Accumulate gradients for all 4 pixels for this gaussian
+            var v_xy_thread = vec2f(0.0f);
+            var v_conic_thread = vec3f(0.0f);
+            var v_rgb_thread = vec3f(0.0f);
+            var v_alpha_thread = 0.0f;
+            var v_refine_thread = vec2f(0.0f);
             var hasGrad = false;
 
-            let xy = local_batch[t].xy;
-            let conic_alpha = local_batch[t + helpers::CHUNK_SIZE * 1];
+            let xy = local_batch[t * 3 + 0].xy;
+            let conic_alpha = local_batch[t * 3 + 1];
             let conic = conic_alpha.xyz;
             let col_alpha = conic_alpha.w;
+            let color = local_batch[t * 3 + 2].rgb;
+            let clamped_rgb = max(color.rgb, vec3f(0.0f));
 
-            let delta = xy - pixel_coord;
+            // Process each of the 4 pixels for this gaussian
+            for (var i = 0u; i < PIXELS_PER_THREAD; i++) {
+                if dones[i] { continue; }
 
-            let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
-            let gaussian = exp(-sigma);
-            let alpha = min(0.999f, col_alpha * gaussian);
+                let delta = xy - (vec2f(pix_locs[i]) + 0.5f);
+                let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
+                let gaussian = exp(-sigma);
+                let alpha = min(0.999f, col_alpha * gaussian);
 
-            if sigma >= 0.0f && alpha >= 1.0f / 255.0f {
-                let next_T = pix_out.a * (1.0f - alpha);
-                if next_T <= 1e-4f {
-                    done = true;
-                    break;
+                if sigma >= 0.0f && alpha >= 1.0f / 255.0f {
+                    let next_T = pix_outs[i].a * (1.0f - alpha);
+                    if next_T <= 1e-4f {
+                        dones[i] = true;
+                        continue;
+                    }
+
+                    let vis = alpha * pix_outs[i].a;
+
+                    // update v_colors for this gaussian
+                    v_rgb_thread += select(vec3f(0.0f), vis * v_outs[i].rgb, color >= vec3f(0.0f));
+
+                    // add contribution of this gaussian to the pixel
+                    pix_outs[i] = vec4f(pix_outs[i].rgb + vis * clamped_rgb, pix_outs[i].a);
+
+                    // Account for alpha being clamped.
+                    if (col_alpha * gaussian <= 0.999f) {
+                        let ra = 1.0f / (1.0f - alpha);
+
+                        let v_alpha = dot(pix_outs[i].a * clamped_rgb + (pix_outs[i].rgb - rgb_pixel_finals[i]) * ra, v_outs[i].rgb) + v_outs[i].a * ra;
+
+                        let v_sigma = -alpha * v_alpha;
+                        v_conic_thread += vec3f(
+                            0.5f * v_sigma * delta.x * delta.x,
+                            v_sigma * delta.x * delta.y,
+                            0.5f * v_sigma * delta.y * delta.y
+                        );
+                        let v_xy_local = v_sigma * vec2f(
+                            conic.x * delta.x + conic.y * delta.y,
+                            conic.y * delta.x + conic.z * delta.y
+                        );
+                        v_xy_thread += v_xy_local;
+                        v_alpha_thread += alpha * (1.0f - col_alpha) * v_alpha;
+                        v_refine_thread += abs(v_xy_local);
+                    }
+
+                    hasGrad = true;
+                    pix_outs[i].a = next_T;
                 }
-
-                let color = local_batch[t + helpers::CHUNK_SIZE * 2].rgb;
-                let vis = alpha * pix_out.a;
-
-                // update v_colors for this gaussian
-                v_rgb_local = select(vec3f(0.0f), vis * v_out.rgb, color >= vec3f(0.0f));
-
-                // add contribution of this gaussian to the pixel
-                let clamped_rgb = max(color.rgb, vec3f(0.0f));
-                pix_out = vec4f(pix_out.rgb + vis * clamped_rgb, pix_out.a);
-
-                // Account for alpha being clamped.
-                if (col_alpha * gaussian <= 0.999f) {
-                    let ra = 1.0f / (1.0f - alpha);
-
-                    let v_alpha = dot(pix_out.a * clamped_rgb + (pix_out.rgb - rgb_pixel_final) * ra, v_out.rgb) + v_out.a * ra;
-
-                    let v_sigma = -alpha * v_alpha;
-                    v_conic_local = vec3f(
-                        0.5f * v_sigma * delta.x * delta.x,
-                        v_sigma * delta.x * delta.y,
-                        0.5f * v_sigma * delta.y * delta.y
-                    );
-                    v_xy_local = v_sigma * vec2f(
-                        conic.x * delta.x + conic.y * delta.y,
-                        conic.y * delta.x + conic.z * delta.y
-                    );
-                    v_alpha_local = alpha * (1.0f - col_alpha) * v_alpha;
-                    v_refine_local = abs(v_xy_local);
-                }
-
-                hasGrad = true;
-                pix_out.a = next_T;
             }
 
-            // Note: This isn't uniform control flow according to the WebGPU spec. In practice we know it's fine - the control
-            // flow is 100% uniform _for the subgroup_, but that isn't enough and Chrome validation chokes on it.
+            // Now do subgroup reduction on thread-accumulated gradients (4x fewer atomics!)
             if subgroupAny(hasGrad) {
-                v_xy_local = subgroupAdd(v_xy_local);
-                v_conic_local = subgroupAdd(v_conic_local);
-                v_rgb_local = subgroupAdd(v_rgb_local);
-                v_alpha_local = subgroupAdd(v_alpha_local);
-                v_refine_local = subgroupAdd(v_refine_local);
+                let sum_xy = subgroupAdd(v_xy_thread);
+                let sum_conic = subgroupAdd(v_conic_thread);
+                let sum_rgb = subgroupAdd(v_rgb_thread);
+                let sum_alpha = subgroupAdd(v_alpha_thread);
+                let sum_refine = subgroupAdd(v_refine_thread);
 
                 if subgroup_invocation_id == 0u {
                     let global_gid = load_gid[t];
 
-                    // Spreading this over threads seems to make no difference.
-                    write_grads_atomic(global_gid * 8 + 0, v_xy_local.x);
-                    write_grads_atomic(global_gid * 8 + 1, v_xy_local.y);
-
-                    write_grads_atomic(global_gid * 8 + 2, v_conic_local.x);
-                    write_grads_atomic(global_gid * 8 + 3, v_conic_local.y);
-                    write_grads_atomic(global_gid * 8 + 4, v_conic_local.z);
-
-                    write_grads_atomic(global_gid * 8 + 5, v_rgb_local.x);
-                    write_grads_atomic(global_gid * 8 + 6, v_rgb_local.y);
-                    write_grads_atomic(global_gid * 8 + 7, v_rgb_local.z);
-
-                    write_opac_atomic(global_gid, v_alpha_local);
-
-                    write_refine_atomic(global_gid * 2 + 0, v_refine_local.x);
-                    write_refine_atomic(global_gid * 2 + 1, v_refine_local.y);
+                    write_grads_atomic(global_gid * 8 + 0, sum_xy.x);
+                    write_grads_atomic(global_gid * 8 + 1, sum_xy.y);
+                    write_grads_atomic(global_gid * 8 + 2, sum_conic.x);
+                    write_grads_atomic(global_gid * 8 + 3, sum_conic.y);
+                    write_grads_atomic(global_gid * 8 + 4, sum_conic.z);
+                    write_grads_atomic(global_gid * 8 + 5, sum_rgb.x);
+                    write_grads_atomic(global_gid * 8 + 6, sum_rgb.y);
+                    write_grads_atomic(global_gid * 8 + 7, sum_rgb.z);
+                    write_opac_atomic(global_gid, sum_alpha);
+                    write_refine_atomic(global_gid * 2 + 0, sum_refine.x);
+                    write_refine_atomic(global_gid * 2 + 1, sum_refine.y);
                 }
             }
         }
