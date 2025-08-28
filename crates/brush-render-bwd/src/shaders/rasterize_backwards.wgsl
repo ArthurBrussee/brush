@@ -53,6 +53,11 @@
     }
 #endif
 
+
+// const PIXELS_PER_THREAD_X = 2;
+// const PIXELS_PER_THREAD_Y = 2;
+// const PIXELS_PER_THREAD = PIXELS_PER_THREAD_X * PIXELS_PER_THREAD_Y;
+
 const NUM_VECS: u32 = helpers::TILE_SIZE * 3u;
 var<workgroup> local_batch: array<vec4f, NUM_VECS>;
 var<workgroup> load_gid: array<u32, helpers::TILE_SIZE>;
@@ -74,10 +79,6 @@ fn main(
     let tile_id = tile_loc.x + tile_loc.y * uniforms.tile_bounds.x;
     let inside = pix_loc.x < uniforms.img_size.x && pix_loc.y < uniforms.img_size.y;
 
-    let rect_min = subgroupMin(pixel_coord);
-    let rect_max = subgroupMax(pixel_coord);
-    let sub_rect = vec4f(rect_min.x, rect_min.y, rect_max.x, rect_max.y);
-
     // final values from forward pass before background blend
     let final_color = output[pix_id];
     let T_final = 1.0f - final_color.a;
@@ -87,10 +88,10 @@ fn main(
     var v_out = vec4f(0.0f);
     if inside {
         v_out = v_output[pix_id];
-    }
 
-    // precompute the gradient from the final alpha of the pixel as far as possible
-    v_out.a = (v_out.a - dot(uniforms.background.rgb, v_out.rgb)) * T_final;
+        // precompute the gradient from the final alpha of the pixel as far as possible
+        v_out.a = (v_out.a - dot(uniforms.background.rgb, v_out.rgb)) * T_final;
+    }
 
     // have all threads in tile process the same gaussians in batches
     // first collect gaussians between the bin counts.
@@ -98,18 +99,14 @@ fn main(
         tile_offsets[tile_id * 2],
         tile_offsets[tile_id * 2 + 1]
     );
-    let num_batches = helpers::ceil_div(range.y - range.x, helpers::CHUNK_SIZE);
 
     // current visibility left to render
-    var T = 1.0f;
-    var rgb_pixel = vec3f(0.0f);
+    var pix_out = vec4f(0.0, 0.0, 0.0, 1.0);
     var done = !inside;
 
     // each thread loads one gaussian at a time before rasterizing its
     // designated pixel
-    for (var b = 0u; b < num_batches; b++) {
-        let batch_start = range.x + b * helpers::CHUNK_SIZE;
-
+    for (var batch_start = range.x; batch_start < range.y; batch_start += helpers::CHUNK_SIZE) {
         // process gaussians in the current batch for this pixel
         let remaining = min(helpers::CHUNK_SIZE, range.y - batch_start);
         let load_isect_id = batch_start + local_idx;
@@ -130,61 +127,58 @@ fn main(
             var v_rgb_local = vec3f(0.0f, 0.0f, 0.0f);
             var v_alpha_local = 0.0f;
             var v_refine_local = vec2f(0.0f, 0.0f);
-
             var hasGrad = false;
 
-            if !done {
-                let xy = local_batch[t].xy;
-                let conic_alpha = local_batch[t + helpers::CHUNK_SIZE * 1];
-                let conic = conic_alpha.xyz;
-                let col_alpha = conic_alpha.w;
+            let xy = local_batch[t].xy;
+            let conic_alpha = local_batch[t + helpers::CHUNK_SIZE * 1];
+            let conic = conic_alpha.xyz;
+            let col_alpha = conic_alpha.w;
 
-                let delta = xy - pixel_coord;
+            let delta = xy - pixel_coord;
 
-                let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
-                let gaussian = exp(-sigma);
-                let alpha = min(0.999f, col_alpha * gaussian);
+            let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
+            let gaussian = exp(-sigma);
+            let alpha = min(0.999f, col_alpha * gaussian);
 
-                let next_T = T * (1.0f - alpha);
-
+            if sigma >= 0.0f && alpha >= 1.0f / 255.0f {
+                let next_T = pix_out.a * (1.0f - alpha);
                 if next_T <= 1e-4f {
                     done = true;
-                } else if sigma >= 0.0f && alpha >= 1.0f / 255.0f {
-                    let color = local_batch[t + helpers::CHUNK_SIZE * 2].rgb;
-
-                    let vis = alpha * T;
-
-                    // update v_colors for this gaussian
-                    v_rgb_local = select(vec3f(0.0f), vis * v_out.rgb, color >= vec3f(0.0f));
-
-                    // add contribution of this gaussian to the pixel
-                    let clamped_rgb = max(color.rgb, vec3f(0.0f));
-                    rgb_pixel += vis * clamped_rgb;
-
-                    // Account for alpha being clamped.
-                    if (col_alpha * gaussian <= 0.999f) {
-                        let ra = 1.0f / (1.0f - alpha);
-
-                        let v_alpha = dot(T * clamped_rgb + (rgb_pixel - rgb_pixel_final) * ra, v_out.rgb)
-                                    + v_out.a * ra;
-
-                        let v_sigma = -alpha * v_alpha;
-                        v_conic_local = vec3f(
-                            0.5f * v_sigma * delta.x * delta.x,
-                            v_sigma * delta.x * delta.y,
-                            0.5f * v_sigma * delta.y * delta.y
-                        );
-                        v_xy_local = v_sigma * vec2f(
-                            conic.x * delta.x + conic.y * delta.y,
-                            conic.y * delta.x + conic.z * delta.y
-                        );
-                        v_alpha_local = alpha * (1.0f - col_alpha) * v_alpha;
-                        v_refine_local = abs(v_xy_local);
-                    }
-
-                    hasGrad = true;
-                    T = next_T;
+                    break;
                 }
+
+                let color = local_batch[t + helpers::CHUNK_SIZE * 2].rgb;
+                let vis = alpha * pix_out.a;
+
+                // update v_colors for this gaussian
+                v_rgb_local = select(vec3f(0.0f), vis * v_out.rgb, color >= vec3f(0.0f));
+
+                // add contribution of this gaussian to the pixel
+                let clamped_rgb = max(color.rgb, vec3f(0.0f));
+                pix_out = vec4f(pix_out.rgb + vis * clamped_rgb, pix_out.a);
+
+                // Account for alpha being clamped.
+                if (col_alpha * gaussian <= 0.999f) {
+                    let ra = 1.0f / (1.0f - alpha);
+
+                    let v_alpha = dot(pix_out.a * clamped_rgb + (pix_out.rgb - rgb_pixel_final) * ra, v_out.rgb) + v_out.a * ra;
+
+                    let v_sigma = -alpha * v_alpha;
+                    v_conic_local = vec3f(
+                        0.5f * v_sigma * delta.x * delta.x,
+                        v_sigma * delta.x * delta.y,
+                        0.5f * v_sigma * delta.y * delta.y
+                    );
+                    v_xy_local = v_sigma * vec2f(
+                        conic.x * delta.x + conic.y * delta.y,
+                        conic.y * delta.x + conic.z * delta.y
+                    );
+                    v_alpha_local = alpha * (1.0f - col_alpha) * v_alpha;
+                    v_refine_local = abs(v_xy_local);
+                }
+
+                hasGrad = true;
+                pix_out.a = next_T;
             }
 
             // Note: This isn't uniform control flow according to the WebGPU spec. In practice we know it's fine - the control

@@ -47,7 +47,6 @@ fn main(
 
     // Stupid hack as Chrome isn't convinced the range variable is uniform, which it better be.
     let range = workgroupUniformLoad(&range_uniform);
-    let num_batches = helpers::ceil_div(range.y - range.x, helpers::CHUNK_SIZE);
 
     // current visibility left to render
     var T = 1.0;
@@ -60,9 +59,7 @@ fn main(
 
     // each thread loads one gaussian at a time before rasterizing its
     // designated pixel
-    for (var b = 0u; b < num_batches; b++) {
-        let batch_start = range.x + b * helpers::CHUNK_SIZE;
-
+    for (var batch_start = range.x; batch_start < range.y; batch_start += helpers::CHUNK_SIZE) {
         // process gaussians in the current batch for this pixel
         let remaining = min(helpers::CHUNK_SIZE, range.y - batch_start);
 
