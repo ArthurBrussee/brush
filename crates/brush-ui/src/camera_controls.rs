@@ -1,7 +1,6 @@
 use core::f32;
 
-use burn_cubecl::cubecl::prelude::mul;
-use egui::{Event, EventFilter, Response};
+use egui::{Event, Response};
 use glam::{Quat, Vec2, Vec3};
 
 use crate::app::CameraSettings;
