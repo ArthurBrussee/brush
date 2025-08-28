@@ -4,7 +4,7 @@
 @group(0) @binding(1) var<storage, read> compact_gid_from_isect: array<u32>;
 @group(0) @binding(2) var<storage, read> global_from_compact_gid: array<u32>;
 @group(0) @binding(3) var<storage, read> tile_offsets: array<u32>;
-@group(0) @binding(4) var<storage, read> projected: array<vec4f>;
+@group(0) @binding(4) var<storage, read> projected: array<helpers::ProjectedSplat>;
 @group(0) @binding(5) var<storage, read> output: array<vec4f>;
 @group(0) @binding(6) var<storage, read> v_output: array<vec4f>;
 
@@ -55,9 +55,7 @@
 
 const THREAD_COUNT: u32 = 64u;
 const PIXELS_PER_THREAD: u32 = 4u;
-
-const NUM_VECS: u32 = THREAD_COUNT * 3u;
-var<workgroup> local_batch: array<vec4f, NUM_VECS>;
+var<workgroup> local_batch: array<helpers::ProjectedSplat, THREAD_COUNT>;
 var<workgroup> load_gid: array<u32, THREAD_COUNT>;
 
 // kernel function for rasterizing each tile
@@ -79,25 +77,23 @@ fn main(
 
     for (var i = 0u; i < PIXELS_PER_THREAD; i++) {
         // Process 4 consecutive pixels in the original linear order
-        let pix_id = global_id.x * PIXELS_PER_THREAD + i;
-        pix_locs[i] = helpers::map_1d_to_2d(pix_id, uniforms.tile_bounds.x);
-        pix_ids[i] = pix_locs[i].x + pix_locs[i].y * uniforms.img_size.x;
-        let inside = pix_locs[i].x < uniforms.img_size.x && pix_locs[i].y < uniforms.img_size.y;
+        let thread_id = global_id.x * PIXELS_PER_THREAD + i;
+        pix_locs[i] = helpers::map_1d_to_2d(thread_id, uniforms.tile_bounds.x);
+        let pix_id = pix_locs[i].x + pix_locs[i].y * uniforms.img_size.x;
+        pix_ids[i] = pix_id;
 
-        if inside {
-            let final_color = output[pix_ids[i]];
+        if pix_locs[i].x < uniforms.img_size.x && pix_locs[i].y < uniforms.img_size.y {
+            let final_color = output[pix_id];
+            let v_out = v_output[pix_id];
             let T_final = 1.0f - final_color.a;
             rgb_pixel_finals[i] = final_color.rgb - T_final * uniforms.background.rgb;
-
-            let v_out = v_output[pix_ids[i]];
             v_outs[i] = vec4f(v_out.rgb, (v_out.a - dot(uniforms.background.rgb, v_out.rgb)) * T_final);
+            dones[i] = false;
         } else {
-            v_outs[i] = vec4f(0.0);
-            rgb_pixel_finals[i] = vec3f(0.0);
+            dones[i] = true;
         }
 
         pix_outs[i] = vec4f(0.0, 0.0, 0.0, 1.0);
-        dones[i] = !inside;
     }
 
     let tile_loc = vec2u(pix_locs[0].x / helpers::TILE_WIDTH, pix_locs[0].y / helpers::TILE_WIDTH);
@@ -120,15 +116,12 @@ fn main(
 
         workgroupBarrier();
         if local_idx < remaining {
-            local_batch[local_idx * 3 + 0] = projected[compact_gid + uniforms.total_splats * 0];
-            local_batch[local_idx * 3 + 1] = projected[compact_gid + uniforms.total_splats * 1];
-            local_batch[local_idx * 3 + 2] = projected[compact_gid + uniforms.total_splats * 2];
             load_gid[local_idx] = global_from_compact_gid[compact_gid];
+            local_batch[local_idx] = projected[compact_gid];
         }
         workgroupBarrier();
 
         for (var t = 0u; t < remaining; t++) {
-            // Accumulate gradients for all 4 pixels for this gaussian
             var v_xy_thread = vec2f(0.0f);
             var v_conic_thread = vec3f(0.0f);
             var v_rgb_thread = vec3f(0.0f);
@@ -136,61 +129,62 @@ fn main(
             var v_refine_thread = vec2f(0.0f);
             var hasGrad = false;
 
-            let xy = local_batch[t * 3 + 0].xy;
-            let conic_alpha = local_batch[t * 3 + 1];
-            let conic = conic_alpha.xyz;
-            let col_alpha = conic_alpha.w;
-            let color = local_batch[t * 3 + 2].rgb;
+            let proj = local_batch[t];
+
+            let xy = vec2f(proj.xy_x, proj.xy_y);
+            let conic = vec3f(proj.conic_x, proj.conic_y, proj.conic_z);
+            let color = vec4f(proj.color_r, proj.color_g, proj.color_b, proj.color_a);
+
             let clamped_rgb = max(color.rgb, vec3f(0.0f));
 
-            // Process each of the 4 pixels for this gaussian
             for (var i = 0u; i < PIXELS_PER_THREAD; i++) {
                 if dones[i] { continue; }
 
                 let delta = xy - (vec2f(pix_locs[i]) + 0.5f);
                 let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
                 let gaussian = exp(-sigma);
-                let alpha = min(0.999f, col_alpha * gaussian);
+                let alpha = min(0.999f, color.a * gaussian);
 
-                if sigma >= 0.0f && alpha >= 1.0f / 255.0f {
-                    let next_T = pix_outs[i].a * (1.0f - alpha);
-                    if next_T <= 1e-4f {
-                        dones[i] = true;
-                        continue;
-                    }
-
-                    let vis = alpha * pix_outs[i].a;
-
-                    // update v_colors for this gaussian
-                    v_rgb_thread += select(vec3f(0.0f), vis * v_outs[i].rgb, color >= vec3f(0.0f));
-
-                    // add contribution of this gaussian to the pixel
-                    pix_outs[i] = vec4f(pix_outs[i].rgb + vis * clamped_rgb, pix_outs[i].a);
-
-                    // Account for alpha being clamped.
-                    if (col_alpha * gaussian <= 0.999f) {
-                        let ra = 1.0f / (1.0f - alpha);
-
-                        let v_alpha = dot(pix_outs[i].a * clamped_rgb + (pix_outs[i].rgb - rgb_pixel_finals[i]) * ra, v_outs[i].rgb) + v_outs[i].a * ra;
-
-                        let v_sigma = -alpha * v_alpha;
-                        v_conic_thread += vec3f(
-                            0.5f * v_sigma * delta.x * delta.x,
-                            v_sigma * delta.x * delta.y,
-                            0.5f * v_sigma * delta.y * delta.y
-                        );
-                        let v_xy_local = v_sigma * vec2f(
-                            conic.x * delta.x + conic.y * delta.y,
-                            conic.y * delta.x + conic.z * delta.y
-                        );
-                        v_xy_thread += v_xy_local;
-                        v_alpha_thread += alpha * (1.0f - col_alpha) * v_alpha;
-                        v_refine_thread += abs(v_xy_local);
-                    }
-
-                    hasGrad = true;
-                    pix_outs[i].a = next_T;
+                if sigma < 0.0f || alpha < 1.0f / 255.0f {
+                    continue;
                 }
+
+                let next_T = pix_outs[i].a * (1.0f - alpha);
+                if next_T <= 1e-4f {
+                    dones[i] = true;
+                    continue;
+                }
+
+                let vis = alpha * pix_outs[i].a;
+
+                // update v_colors for this gaussian
+                v_rgb_thread += select(vec3f(0.0f), vis * v_outs[i].rgb, color.rgb >= vec3f(0.0f));
+
+                // add contribution of this gaussian to the pixel
+                pix_outs[i] = vec4f(pix_outs[i].rgb + vis * clamped_rgb, pix_outs[i].a);
+
+                // Account for alpha being clamped.
+                if (color.a * gaussian <= 0.999f) {
+                    let ra = 1.0f / (1.0f - alpha);
+
+                    let v_alpha = dot(pix_outs[i].a * clamped_rgb + (pix_outs[i].rgb - rgb_pixel_finals[i]) * ra, v_outs[i].rgb) + v_outs[i].a * ra;
+
+                    let v_sigma = -alpha * v_alpha;
+                    v_conic_thread += vec3f(
+                        0.5f * v_sigma * delta.x * delta.x,
+                        v_sigma * delta.x * delta.y,
+                        0.5f * v_sigma * delta.y * delta.y
+                    );
+                    let v_xy_local = v_sigma * vec2f(
+                        conic.x * delta.x + conic.y * delta.y,
+                        conic.y * delta.x + conic.z * delta.y
+                    );
+                    v_xy_thread += v_xy_local;
+                    v_alpha_thread += alpha * (1.0f - color.a) * v_alpha;
+                    v_refine_thread += abs(v_xy_local);
+                }
+                hasGrad = true;
+                pix_outs[i].a = next_T;
             }
 
             // Now do subgroup reduction on thread-accumulated gradients (4x fewer atomics!)

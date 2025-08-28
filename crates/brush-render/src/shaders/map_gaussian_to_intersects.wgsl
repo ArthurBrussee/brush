@@ -1,7 +1,7 @@
 #import helpers;
 
 @group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
-@group(0) @binding(1) var<storage, read> projected: array<vec4f>;
+@group(0) @binding(1) var<storage, read> projected: array<helpers::ProjectedSplat>;
 
 #ifdef PREPASS
     @group(0) @binding(2) var<storage, read_write> splat_intersect_counts: array<atomic<u32>>;
@@ -27,12 +27,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         return;
     }
 
-    let c1 = projected[compact_gid + uniforms.total_splats * 0];
-    let c2 = projected[compact_gid + uniforms.total_splats * 1];
-
-    let mean2d = c1.xy;
-    let conic = c2.xyz;
-    var opac = c2.w;
+    let projected = projected[compact_gid];
+    let mean2d = vec2f(projected.xy_x, projected.xy_y);
+    let conic = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
+    let opac = projected.color_a;
 
     let power_threshold = log(opac * 255.0);
     let cov2d = helpers::inverse(mat2x2f(conic.x, conic.y, conic.y, conic.z));
