@@ -241,7 +241,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
     var color = sh_coeffs_to_color(sh_degree, viewdir, sh) + vec3f(0.5);
 
-    projected[compact_gid + uniforms.total_splats * 0] = vec4f(mean2d.x, mean2d.y, log(opac * 255.0), 0.0);
+    projected[compact_gid + uniforms.total_splats * 0] = vec4f(mean2d.x, mean2d.y, 0.0, 0.0);
     projected[compact_gid + uniforms.total_splats * 1] = vec4f(conic[0][0], conic[0][1], conic[1][1], opac);
     projected[compact_gid + uniforms.total_splats * 2] = vec4f(color, 0.0f);
 }

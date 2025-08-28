@@ -31,10 +31,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let c2 = projected[compact_gid + uniforms.total_splats * 1];
 
     let mean2d = c1.xy;
-    let power_threshold = c1.z;
     let conic = c2.xyz;
     var opac = c2.w;
 
+    let power_threshold = log(opac * 255.0);
     let cov2d = helpers::inverse(mat2x2f(conic.x, conic.y, conic.y, conic.z));
     let extent = helpers::compute_bbox_extent(cov2d, power_threshold);
     let tile_bbox = helpers::get_tile_bbox(mean2d, extent, uniforms.tile_bounds);

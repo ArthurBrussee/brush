@@ -29,9 +29,6 @@ var<workgroup> local_batch: array<vec4f, NUM_VECS>;
 fn main(
     @builtin(global_invocation_id) global_id: vec3u,
     @builtin(local_invocation_index) local_idx: u32,
-
-    // @builtin(subgroup_size) subgroup_size: u32,
-    // @builtin(subgroup_invocation_id) subgroup_invocation_id: u32
 ) {
     let pix_loc = helpers::map_1d_to_2d(global_id.x, uniforms.tile_bounds.x);
     let pix_id = pix_loc.x + pix_loc.y * uniforms.img_size.x;
@@ -69,14 +66,14 @@ fn main(
         // process gaussians in the current batch for this pixel
         let remaining = min(helpers::CHUNK_SIZE, range.y - batch_start);
 
+        let load_isect_id = batch_start + local_idx;
+        let compact_gid = compact_gid_from_isect[load_isect_id];
+
         workgroupBarrier();
         if local_idx < remaining {
-            let load_isect_id = batch_start + local_idx;
-
-            let compact_gid = compact_gid_from_isect[load_isect_id];
             local_batch[local_idx + helpers::CHUNK_SIZE * 0] = projected[compact_gid + uniforms.total_splats * 0];
-            // local_batch[local_idx + helpers::CHUNK_SIZE * 1] = projected[compact_gid + uniforms.total_splats * 1];
-            // local_batch[local_idx + helpers::CHUNK_SIZE * 2] = projected[compact_gid + uniforms.total_splats * 2];
+            local_batch[local_idx + helpers::CHUNK_SIZE * 1] = projected[compact_gid + uniforms.total_splats * 1];
+            local_batch[local_idx + helpers::CHUNK_SIZE * 2] = projected[compact_gid + uniforms.total_splats * 2];
 
             #ifdef BWD_INFO
                 load_gid[local_idx] = global_from_compact_gid[compact_gid];
@@ -84,11 +81,7 @@ fn main(
         }
         workgroupBarrier();
 
-        // let power_threshold = c1.z;
-        // let chunk_visible = helpers::will_primitive_contribute(sub_rect, xy_load, conic_load, power_threshold);
-        // let chunk_visible_u = select(0u, 1u, chunk_visible);
         for (var t = 0u; !done && t < remaining; t++) {
-            // Broadcast from right sg element.
             let xy = local_batch[t].xy;
             let conic_alpha = local_batch[t + helpers::CHUNK_SIZE * 1];
             let conic = conic_alpha.xyz;
@@ -110,19 +103,12 @@ fn main(
                     visible[load_gid[t]] = 1.0;
                 #endif
 
+                let color = local_batch[t + helpers::CHUNK_SIZE * 2];
                 let vis = alpha * T;
-                pix_out += local_batch[t + helpers::CHUNK_SIZE * 2].rgb * vis;
+                pix_out += max(color.rgb, vec3f(0.0)) * vis;
                 T = next_T;
             }
         }
-
-        // Not allowed on the web because control flow would be non uniform :/
-        // #ifndef WEBGPU
-        //     if subgroupAll(done) {
-        //         // TODO: Write subgroup max here so we can use that in the backwards pass.
-        //         break;
-        //     }
-        // #endif
     }
 
     if inside {
