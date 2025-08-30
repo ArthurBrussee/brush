@@ -36,7 +36,7 @@ fn spawn_train_loop(
     tokio::spawn(async move {
         let seed = 42;
 
-        <MainBackend as Backend>::seed(seed);
+        <MainBackend as Backend>::seed(&device, seed);
         let mut rng = rand::rngs::StdRng::from_seed([seed as u8; 32]);
 
         let init_bounds = BoundingBox::from_min_max(-Vec3::ONE * 5.0, Vec3::ONE * 5.0);
