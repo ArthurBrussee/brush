@@ -10,3 +10,6 @@ mod multinomial;
 mod quat_vec;
 mod ssim;
 mod stats;
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod integration_tests;

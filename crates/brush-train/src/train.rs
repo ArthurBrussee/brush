@@ -119,7 +119,7 @@ impl SplatTrainer {
             );
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
 
-            #[cfg(feature = "debug-validation")]
+            #[cfg(any(feature = "debug-validation", test))]
             diff_out.aux.debug_assert_valid();
 
             (img, diff_out.aux, diff_out.refine_weight_holder)

@@ -37,6 +37,12 @@ struct RunningProcess {
 /// over an await point, things shouldn't be able to deadlock.
 pub struct UiProcess(RwLock<UiProcessInner>);
 
+impl Default for UiProcess {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UiProcess {
     pub fn new() -> Self {
         Self(RwLock::new(UiProcessInner::new()))

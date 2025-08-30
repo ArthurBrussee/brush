@@ -17,7 +17,7 @@ path-clean = "1.0.1"
 tokio-util = { workspace = true, features = ["compat"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-tokio = { workspace = true, features = ["io-util"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
 web-sys = { workspace = true, features = [
     "Window",
     "Location",
@@ -31,7 +31,7 @@ wasm-bindgen-futures.workspace = true
 wasm-streams.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-tokio = { workspace = true, features = ["io-util", "fs"] }
+tokio = { workspace = true, features = ["io-util", "fs", "macros", "rt"] }
 reqwest.workspace = true
 
 [lints]

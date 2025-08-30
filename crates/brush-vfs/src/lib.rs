@@ -318,4 +318,107 @@ impl BrushVfs {
             }
         }
     }
+    pub fn empty() -> Self {
+        Self {
+            lookup: HashMap::new(),
+            container: VfsContainer::Manual {
+                readers: HashMap::new(),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use tokio::io::AsyncReadExt;
+
+    fn create_test_zip_data() -> Vec<u8> {
+        use std::io::Write;
+        use zip::{ZipWriter, write::SimpleFileOptions};
+
+        let mut buffer = Vec::new();
+        {
+            let mut zip = ZipWriter::new(Cursor::new(&mut buffer));
+
+            zip.start_file("test.txt", SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"hello world").unwrap();
+
+            zip.start_file("folder/data.json", SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"{\"key\": \"value\"}").unwrap();
+
+            zip.start_file("image.png", SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"fake png data").unwrap();
+
+            zip.start_file("README", SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"readme content").unwrap();
+
+            zip.finish().unwrap();
+        }
+        buffer
+    }
+
+    #[tokio::test]
+    async fn test_zip_vfs_workflow() {
+        // End-to-end test: create VFS, filter files, read content, handle paths
+        let zip_data = create_test_zip_data();
+        let reader = Cursor::new(zip_data);
+        let vfs = BrushVfs::from_reader(reader).await.unwrap();
+
+        // Should filter out extensionless files
+        assert_eq!(vfs.file_count(), 3);
+
+        // Test filtering and reading in one workflow
+        let json_files: Vec<_> = vfs.files_with_extension("json").collect();
+        assert_eq!(json_files.len(), 1);
+
+        let mut reader = vfs.reader_at_path(&json_files[0]).await.unwrap();
+        let mut content = String::new();
+        reader.read_to_string(&mut content).await.unwrap();
+        assert_eq!(content, "{\"key\": \"value\"}");
+
+        // Test case-insensitive path access
+        let mut reader = vfs.reader_at_path(Path::new("TEST.TXT")).await.unwrap();
+        let mut content = String::new();
+        reader.read_to_string(&mut content).await.unwrap();
+        assert_eq!(content, "hello world");
+
+        // Test error handling
+        let result = vfs.reader_at_path(Path::new("nonexistent.txt")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_format_detection_and_errors() {
+        // Test PLY format detection and reading
+        let ply_content = "ply\nformat ascii 1.0\nend_header\nvertex data";
+        let reader = Cursor::new(ply_content.as_bytes());
+        let vfs = BrushVfs::from_reader(reader).await.unwrap();
+
+        let mut reader = vfs.reader_at_path(Path::new("input.ply")).await.unwrap();
+        let mut content = String::new();
+        reader.read_to_string(&mut content).await.unwrap();
+        assert_eq!(content, ply_content);
+
+        // Test error cases - should fail, don't work around
+        let unknown_data = b"unknown file format";
+        let reader = Cursor::new(unknown_data.to_vec());
+        let result = BrushVfs::from_reader(reader).await;
+        assert!(matches!(result, Err(VfsConstructError::UnknownDataType)));
+
+        let html_data = b"<!DOCTYPE html>\n<html><body>Error page</body></html>";
+        let reader = Cursor::new(html_data.to_vec());
+        let result = BrushVfs::from_reader(reader).await;
+        match result {
+            Err(VfsConstructError::InvalidHtml(content)) => {
+                assert!(content.contains("<!DOCTYPE html>"));
+            }
+            _ => panic!("Expected InvalidHtml error"),
+        }
+    }
 }

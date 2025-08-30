@@ -23,6 +23,5 @@ tokio = { workspace = true, features = ["io-util"] }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["io-util", "fs", "macros"] }
 
-
 [lints]
 workspace = true

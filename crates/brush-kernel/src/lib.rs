@@ -246,3 +246,25 @@ pub fn create_dispatch_buffer(
 
     ret
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kernel_id_calculation() {
+        // Test kernel ID generation with different boolean flags
+        let id1 = calc_kernel_id::<CreateDispatchBuffer>(&[true, false]);
+        let id2 = calc_kernel_id::<CreateDispatchBuffer>(&[false, true]);
+        let id3 = calc_kernel_id::<CreateDispatchBuffer>(&[true, false]);
+
+        // Same flags should produce same ID
+        assert_eq!(id1, id3);
+        // Different flags should produce different IDs
+        assert_ne!(id1, id2);
+
+        // Empty flags should work
+        let id_empty = calc_kernel_id::<CreateDispatchBuffer>(&[]);
+        assert_ne!(id_empty, id1);
+    }
+}
