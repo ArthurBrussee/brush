@@ -49,7 +49,7 @@ pub(crate) async fn train_stream(
 
     let process_config = &process_args.process_config;
     log::info!("Using seed {}", process_config.seed);
-    <MainBackend as Backend>::seed(process_config.seed);
+    <MainBackend as Backend>::seed(&device, process_config.seed);
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     log::info!("Loading dataset");
