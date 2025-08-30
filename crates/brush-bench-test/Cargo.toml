@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 brush-render.path = "../brush-render"
 brush-render-bwd.path = "../brush-render-bwd"
+brush-train.path = "../brush-train"
+brush-dataset.path = "../brush-dataset"
 
 anyhow.workspace = true
 image.workspace = true
@@ -15,6 +17,7 @@ glam.workspace = true
 log.workspace = true
 burn.workspace = true
 bytemuck.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
 divan = "0.1.17"
@@ -24,9 +27,9 @@ rerun.workspace = true
 tokio.workspace = true
 
 [[bench]]
-name = "render_bench"
+name = "training_bench"
 harness = false
-path = "src/render_bench.rs"
+path = "src/training_bench.rs"
 
 [lints]
 workspace = true
