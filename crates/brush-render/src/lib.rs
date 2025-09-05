@@ -26,6 +26,7 @@ pub mod bounding_box;
 pub mod camera;
 pub mod gaussian_splats;
 pub mod render;
+pub mod validation;
 
 pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u32>;
 pub type MainBackend = Fusion<MainBackendBase>;

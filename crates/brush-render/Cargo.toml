@@ -24,6 +24,7 @@ glam.workspace = true
 tracing.workspace = true
 rand.workspace = true
 ball-tree.workspace = true
+log.workspace = true
 
 naga_oil.workspace = true
 wgpu.workspace = true

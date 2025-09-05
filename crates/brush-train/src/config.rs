@@ -73,6 +73,10 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "1e-8")]
     pub opac_loss_weight: f32,
 
+    /// Weight of the opacity loss.
+    #[arg(long, help_heading = "Training options", default_value = "1e-8")]
+    pub scale_loss_weight: f32,
+
     /// Weight of l1 loss on alpha if input view has transparency.
     #[arg(long, help_heading = "Refine options", default_value = "0.1")]
     pub match_alpha_weight: f32,

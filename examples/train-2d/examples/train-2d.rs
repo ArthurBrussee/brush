@@ -48,7 +48,8 @@ fn spawn_train_loop(
             &device,
         );
 
-        let mut trainer = SplatTrainer::new(&config, &device);
+        let bounds = splats.clone().get_bounds(1.0).await;
+        let mut trainer = SplatTrainer::new(&config, &device, bounds);
 
         // One batch of training data, it's the same every step so can just cosntruct it once.
         let batch = SceneBatch {
@@ -60,7 +61,7 @@ fn spawn_train_loop(
         let mut iter = 0;
 
         loop {
-            let (new_splats, _) = trainer.step(1.0, iter, &batch, splats);
+            let (new_splats, _) = trainer.step(iter, &batch, splats);
             let (new_splats, _) = trainer.refine_if_needed(iter, new_splats).await;
 
             splats = new_splats;

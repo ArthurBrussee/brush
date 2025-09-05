@@ -92,28 +92,22 @@ pub(crate) async fn train_stream(
         init_msg.splats
     } else {
         log::info!("Starting with random splat config.");
-
-        // By default, spawn the splats in bounds.
-        let bounds = dataset.train.bounds();
-        let bounds_extent = bounds.extent.length();
-        // Arbitrarily assume area of interest is 0.2 - 0.75 of scene bounds.
-        // Somewhat specific to the blender scenes
-        let adjusted_bounds = dataset
-            .train
-            .adjusted_bounds(bounds_extent * 0.25, bounds_extent);
+        // Create a bounding box the size of all the cameras plus a bit.
+        let mut bounds = dataset.train.bounds();
+        bounds.extent *= 1.25;
         let config = RandomSplatsConfig::new();
-        Splats::from_random_config(&config, adjusted_bounds, &mut rng, &device)
+        Splats::from_random_config(&config, bounds, &mut rng, &device)
     };
 
     let splats = splats.with_sh_degree(process_args.model_config.sh_degree);
     let mut splats = splats.into_autodiff();
 
+    let bounds = splats.clone().get_bounds(1.0).await;
     let mut eval_scene = dataset.eval;
-    let scene_extent = dataset.train.estimate_extent().unwrap_or(1.0);
 
     let mut train_duration = Duration::from_secs(0);
     let mut dataloader = SceneLoader::new(&dataset.train, 42, &device);
-    let mut trainer = SplatTrainer::new(&process_args.train_config, &device);
+    let mut trainer = SplatTrainer::new(&process_args.train_config, &device, bounds);
 
     log::info!("Start training loop.");
     for iter in process_args.process_config.start_iter..process_args.train_config.total_steps {
@@ -124,7 +118,7 @@ pub(crate) async fn train_stream(
             .instrument(trace_span!("Wait for next data batch"))
             .await;
 
-        let (new_splats, stats) = trainer.step(scene_extent, iter, &batch, splats);
+        let (new_splats, stats) = trainer.step(iter, &batch, splats);
         splats = new_splats;
         let (new_splats, refine) = trainer
             .refine_if_needed(iter, splats)

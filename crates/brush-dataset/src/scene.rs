@@ -191,12 +191,6 @@ fn camera_distance_penalty(cam_local_to_world: Affine3A, reference: Affine3A) ->
     penalty
 }
 
-fn find_two_smallest(v: Vec3) -> (f32, f32) {
-    let mut arr = v.to_array();
-    arr.sort_by(|a, b| a.partial_cmp(b).expect("NaN"));
-    (arr[0], arr[1])
-}
-
 impl Scene {
     pub fn new(views: Vec<SceneView>) -> Self {
         Self {
@@ -206,19 +200,11 @@ impl Scene {
 
     // Returns the extent of the cameras in the scene.
     pub fn bounds(&self) -> BoundingBox {
-        self.adjusted_bounds(0.0, 0.0)
-    }
-
-    // Returns the extent of the cameras in the scene, taking into account
-    // the near and far plane of the cameras.
-    pub fn adjusted_bounds(&self, cam_near: f32, cam_far: f32) -> BoundingBox {
         let (min, max) = self.views.iter().fold(
             (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
             |(min, max), view| {
                 let cam = &view.camera;
-                let pos1 = cam.position + cam.rotation * Vec3::Z * cam_near;
-                let pos2 = cam.position + cam.rotation * Vec3::Z * cam_far;
-                (min.min(pos1).min(pos2), max.max(pos1).max(pos2))
+                (min.min(cam.position), max.max(cam.position))
             },
         );
         BoundingBox::from_min_max(min, max)
@@ -236,17 +222,6 @@ impl Scene {
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(index, _)| index) // We return the index instead of the camera
-    }
-
-    pub fn estimate_extent(&self) -> Option<f32> {
-        if self.views.len() < 5 {
-            None
-        } else {
-            // TODO: This is really sensitive to outliers.
-            let bounds = self.bounds();
-            let smallest = find_two_smallest(bounds.extent * 2.0);
-            Some(smallest.0.hypot(smallest.1))
-        }
     }
 }
 
