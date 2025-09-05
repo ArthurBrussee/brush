@@ -376,9 +376,11 @@ impl<B: Backend> Splats<B> {
             .map(|chunk| (chunk[0], chunk[1], chunk[2]))
             .collect();
 
-        x_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        y_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // nans are treated as equal. Of course ideally no means are NaN, but, in case
+        // of some bad gradient blowups it's a bit annoying to just hard crash.
+        x_vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        y_vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         // Get upper and lower percentiles.
         let lower_idx = ((1.0 - percentile) / 2.0 * x_vals.len() as f32) as usize;

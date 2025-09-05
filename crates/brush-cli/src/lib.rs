@@ -48,6 +48,12 @@ pub async fn process_ui(
     stream: impl Stream<Item = anyhow::Result<ProcessMessage>>,
     process_args: ProcessArgs,
 ) -> Result<(), anyhow::Error> {
+    // TODO: Find a way to make logging and indicatif to play nicely with eachother.
+    // let mut stream = std::pin::pin!(stream);
+    // while let Some(msg) = stream.next().await {
+    //     let _ = msg?;
+    // }
+
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
             .expect("Invalid indacitif config")
