@@ -52,7 +52,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     let cov3d = helpers::calc_cov3d(scale, quat);
     let cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
 
-    if determinant(cov2d) < 0.0 {
+    if abs(determinant(cov2d)) < 1e-24 {
         return;
     }
 

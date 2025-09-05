@@ -12,11 +12,11 @@ pub struct TrainConfig {
     pub max_splats: u32,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "4e-5")]
+    #[arg(long, help_heading = "Training options", default_value = "1e-5")]
     pub lr_mean: f64,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "4e-7")]
+    #[arg(long, help_heading = "Training options", default_value = "1e-7")]
     pub lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
@@ -53,7 +53,7 @@ pub struct TrainConfig {
     pub refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[arg(long, help_heading = "Refine options", default_value = "0.00085")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.002")]
     pub growth_grad_threshold: f32,
 
     /// What fraction of splats that are deemed as needing to grow do actually grow.
@@ -62,7 +62,7 @@ pub struct TrainConfig {
     pub growth_select_fraction: f32,
 
     /// Period after which splat growth stops.
-    #[arg(long, help_heading = "Refine options", default_value = "12500")]
+    #[arg(long, help_heading = "Refine options", default_value = "15000")]
     pub growth_stop_iter: u32,
 
     /// Weight of SSIM loss (compared to l1 loss)

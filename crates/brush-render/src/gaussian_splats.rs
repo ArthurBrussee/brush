@@ -106,11 +106,9 @@ impl<B: Backend> Splats<B> {
                 })
                 .map(|p| p.max(1e-12))
                 .map(|p| p.ln() as f32)
+                .flat_map(|p| [p, p, p])
                 .collect();
-
-            Tensor::<B, 1>::from_floats(extents.as_slice(), device)
-                .reshape([n_splats, 1])
-                .repeat_dim(1, 3)
+            Tensor::<B, 1>::from_floats(extents.as_slice(), device).reshape([n_splats, 3])
         };
 
         let means_tensor = Tensor::from_data(TensorData::new(pos_data, [n_splats, 3]), device);
@@ -132,9 +130,7 @@ impl<B: Backend> Splats<B> {
                 device,
             )
         } else {
-            Tensor::<_, 1>::from_floats([0.5, 0.5, 0.5], device)
-                .unsqueeze::<3>()
-                .repeat_dim(0, n_splats)
+            Tensor::ones([n_splats, 1, 3], device) * 0.5
         };
 
         let raw_opacities = if let Some(raw_opacities) = opac_data {

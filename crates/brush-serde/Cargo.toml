@@ -10,6 +10,7 @@ brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
 
 burn.workspace = true
+burn-cubecl.workspace = true
 glam.workspace = true
 serde.workspace = true
 serde-ply.workspace = true
