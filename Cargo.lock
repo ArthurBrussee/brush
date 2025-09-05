@@ -1142,6 +1142,7 @@ dependencies = [
  "brush-render",
  "brush-vfs",
  "burn",
+ "burn-cubecl",
  "glam",
  "serde",
  "serde-ply",

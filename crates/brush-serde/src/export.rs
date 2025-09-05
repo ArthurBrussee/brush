@@ -114,6 +114,7 @@ impl Serialize for DynamicPlyGaussian {
 struct DynamicPly {
     vertex: Vec<DynamicPlyGaussian>,
 }
+pub use burn_cubecl::{CubeRuntime, cubecl::Compiler, tensor::CubeTensor};
 
 async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
     let means = splats

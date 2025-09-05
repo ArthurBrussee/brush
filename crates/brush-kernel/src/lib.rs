@@ -221,6 +221,10 @@ pub fn create_dispatch_buffer(
     thread_nums: CubeTensor<WgpuRuntime>,
     wg_size: [u32; 3],
 ) -> CubeTensor<WgpuRuntime> {
+    assert!(
+        thread_nums.is_contiguous(),
+        "Thread nums should be contiguous"
+    );
     let client = thread_nums.client;
     let ret = create_tensor([3], &thread_nums.device, DType::I32);
 

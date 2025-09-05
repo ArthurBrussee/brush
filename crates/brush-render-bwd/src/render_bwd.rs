@@ -137,6 +137,13 @@ pub(crate) fn render_backward(
         );
     });
 
+    assert!(v_means.is_contiguous(), "Grads must be contiguous");
+    assert!(v_quats.is_contiguous(), "Grads must be contiguous");
+    assert!(v_scales.is_contiguous(), "Grads must be contiguous");
+    assert!(v_coeffs.is_contiguous(), "Grads must be contiguous");
+    assert!(v_raw_opac.is_contiguous(), "Grads must be contiguous");
+    assert!(v_refine_weight.is_contiguous(), "Grads must be contiguous");
+
     SplatGrads {
         v_means,
         v_quats,

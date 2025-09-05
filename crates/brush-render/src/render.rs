@@ -366,6 +366,29 @@ pub(crate) fn render_forward(
         );
     }
 
+    // Sanity check the buffers.
+    assert!(
+        uniforms_buffer.is_contiguous(),
+        "Uniforms must be contigious"
+    );
+    assert!(
+        tile_offsets.is_contiguous(),
+        "Tile offsets must be contigious"
+    );
+    assert!(
+        global_from_compact_gid.is_contiguous(),
+        "Global from compact gid must be contigious"
+    );
+    assert!(visible.is_contiguous(), "Visible must be contigious");
+    assert!(
+        projected_splats.is_contiguous(),
+        "Projected splats must be contigious"
+    );
+    assert!(
+        num_intersections.is_contiguous(),
+        "Num intersections must be contigious"
+    );
+
     (
         out_img,
         RenderAux {
