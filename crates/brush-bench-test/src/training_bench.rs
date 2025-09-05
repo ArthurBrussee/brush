@@ -270,6 +270,8 @@ mod backward_rendering {
 
 #[divan::bench_group(max_time = 4)]
 mod training {
+    use brush_render::bounding_box::BoundingBox;
+
     use crate::{
         Backend, MainBackend, SPLAT_COUNTS, SplatTrainer, TrainConfig, Vec3, WgpuDevice,
         gen_splats, generate_training_batch,
@@ -283,11 +285,13 @@ mod training {
         let batches = [batch1, batch2];
         let config = TrainConfig::default();
         let mut splats = gen_splats(&device, splat_count);
-        let mut trainer = SplatTrainer::new(&config, &device);
+        let bounds =
+            BoundingBox::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        let mut trainer = SplatTrainer::new(&config, &device, bounds);
 
         for step in 0..50 {
             let batch = &batches[step % batches.len()];
-            let (new_splats, _) = trainer.step(10.0, step as u32, batch, splats);
+            let (new_splats, _) = trainer.step(step as u32, batch, splats);
             splats = new_splats;
         }
         MainBackend::sync(&device);

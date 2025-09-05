@@ -13,6 +13,7 @@ use crate::{
     GAUSSIANS_UPPER_BOUND, INTERSECTS_UPPER_BOUND,
     render::max_intersections,
     shaders::{self, helpers::TILE_WIDTH},
+    validation::validate_tensor_val,
 };
 
 #[derive(Debug, Clone)]
@@ -47,7 +48,7 @@ impl<B: Backend> RenderAux<B> {
         Tensor::from_primitive(self.uniforms_buffer.clone()).slice(s![num_vis_field_offset])
     }
 
-    pub fn debug_assert_valid(&self) {
+    pub fn validate_values(&self) {
         let num_intersects: Tensor<B, 1, Int> = self.num_intersections();
         let compact_gid_from_isect: Tensor<B, 1, Int> =
             Tensor::from_primitive(self.compact_gid_from_isect.clone());
@@ -79,13 +80,17 @@ impl<B: Backend> RenderAux<B> {
             "Brush doesn't support this many gaussians currently. {num_visible} > {GAUSSIANS_UPPER_BOUND}"
         );
 
-        let projected_splats: Tensor<B, 2> =
-            Tensor::from_primitive(TensorPrimitive::Float(self.projected_splats.clone()));
+        // Projected splats is only valid up to num_visible and undefined for other values.
+        if num_visible > 0 {
+            let projected_splats: Tensor<B, 2> =
+                Tensor::from_primitive(TensorPrimitive::Float(self.projected_splats.clone()));
+            let projected_splats = projected_splats.slice(s![0..num_visible]);
+            validate_tensor_val(&projected_splats, "projected_splats", None, None);
+        }
 
-        assert!(
-            !projected_splats.contains_nan().into_scalar().elem::<bool>(),
-            "Splat projecteion contains NaN values"
-        );
+        let visible: Tensor<B, 2> =
+            Tensor::from_primitive(TensorPrimitive::Float(self.visible.clone()));
+        validate_tensor_val(&visible, "visible", None, None);
 
         let tile_offsets: Tensor<B, 3, Int> = Tensor::from_primitive(self.tile_offsets.clone());
 
@@ -122,12 +127,12 @@ impl<B: Backend> RenderAux<B> {
             let compact_gid_from_isect = &compact_gid_from_isect
                 .slice([0..num_intersections as usize])
                 .into_data()
-                .into_vec::<i32>()
+                .into_vec::<u32>()
                 .expect("Failed to fetch compact_gid_from_isect");
 
             for (i, &compact_gid) in compact_gid_from_isect.iter().enumerate() {
                 assert!(
-                compact_gid >= 0 && compact_gid < num_visible,
+                compact_gid < num_visible as u32,
                 "Invalid gaussian ID in intersection buffer. {compact_gid} out of {num_visible}. At {i} out of {num_intersections} intersections. \n
 
                 {compact_gid_from_isect:?}

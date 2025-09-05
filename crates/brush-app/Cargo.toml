@@ -20,6 +20,8 @@ path = "src/bin.rs"
 # Brush deps.
 brush-ui.path = "../brush-ui"
 brush-render.path = "../brush-render"
+# Only needed for the validation feature atm.
+brush-train.path = "../brush-train"
 brush-process.path = "../brush-process"
 
 egui.workspace = true
@@ -73,4 +75,4 @@ workspace = true
 
 [features]
 tracy = ["dep:tracing-subscriber", "dep:tracing-tracy"]
-debug-validation = ["brush-render/debug-validation"]
+debug-validation = ["brush-render/debug-validation", "brush-train/debug-validation"]

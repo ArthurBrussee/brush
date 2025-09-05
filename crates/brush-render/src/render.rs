@@ -68,16 +68,17 @@ pub(crate) fn render_forward(
         "Can't render images with 0 size."
     );
 
-    let device = &means.device.clone();
-    let client = means.client.clone();
-
-    let _span = tracing::trace_span!("render_forward").entered();
-
+    // Tensor params might not be contiguous, convert them to contiguous tensors.
     let means = into_contiguous(means);
     let log_scales = into_contiguous(log_scales);
     let quats = into_contiguous(quats);
     let sh_coeffs = into_contiguous(sh_coeffs);
     let raw_opacities = into_contiguous(raw_opacities);
+
+    let device = &means.device.clone();
+    let client = means.client.clone();
+
+    let _span = tracing::trace_span!("render_forward").entered();
 
     // Check whether input dimensions are valid.
     DimCheck::new()

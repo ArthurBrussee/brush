@@ -43,6 +43,14 @@ pub fn radix_argsort(
     );
     assert_eq!(n_sort.shape.dims[0], 1, "Sort count must have one element");
     assert!(sorting_bits <= 32, "Can only sort up to 32 bits");
+    assert!(
+        input_keys.is_contiguous(),
+        "Please ensure input keys are contiguous"
+    );
+    assert!(
+        input_values.is_contiguous(),
+        "Please ensure input keys are contiguous"
+    );
 
     let _span = tracing::trace_span!("Radix sort").entered();
 

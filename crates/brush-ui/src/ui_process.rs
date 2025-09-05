@@ -1,6 +1,6 @@
 use crate::{UiMode, app::CameraSettings, camera_controls::CameraController};
 use anyhow::Result;
-use brush_dataset::{Dataset, scene::SceneView};
+use brush_dataset::scene::SceneView;
 use brush_process::{config::ProcessArgs, message::ProcessMessage, process::process_stream};
 use brush_render::camera::Camera;
 use brush_vfs::DataSource;
@@ -147,9 +147,7 @@ impl UiProcess {
         inner.camera = view.camera.clone();
         inner.controls.stop_movement();
         inner.view_aspect = Some(view.image.width() as f32 / view.image.height() as f32);
-        if let Some(extent) = inner.dataset.train.estimate_extent() {
-            inner.controls.focus_distance = extent / 3.0;
-        };
+        // TODO: Set focus distance based on splat extent.
     }
 
     pub fn set_model_up(&self, up_axis: Vec3) {
@@ -279,7 +277,6 @@ impl UiProcess {
 }
 
 struct UiProcessInner {
-    dataset: Dataset,
     is_loading: bool,
     is_training: bool,
     camera: Camera,
@@ -307,7 +304,6 @@ impl UiProcessInner {
             model_local_to_world: Affine3A::IDENTITY,
             view_aspect: None,
             splat_scale: None,
-            dataset: Dataset::empty(),
             is_loading: false,
             is_training: false,
             selected_view: None,
