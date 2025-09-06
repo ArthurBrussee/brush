@@ -1,17 +1,13 @@
 use super::shaders::{project_backwards, rasterize_backwards};
-use brush_kernel::{
-    CubeCount, CubeDim, CubeTensor, calc_cube_count, create_tensor, kernel_source_gen,
-};
+use brush_kernel::{CubeCount, CubeTensor, calc_cube_count, kernel_source_gen};
 
 use brush_render::MainBackendBase;
 use brush_render::sh::sh_coeffs_for_degree;
-use burn::tensor::DType;
+use burn::tensor::ops::FloatTensorOps;
 use burn::{backend::wgpu::WgpuRuntime, prelude::Backend, tensor::ops::FloatTensor};
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::frontend::CompilationArg;
-use burn_cubecl::cubecl::prelude::{ABSOLUTE_POS, Line, Tensor};
+use burn_cubecl::cubecl::AtomicFeature;
 use burn_cubecl::cubecl::server::Bindings;
-use burn_cubecl::cubecl::{AtomicFeature, calculate_cube_count_elemwise, cube, terminate};
+use burn_cubecl::kernel::into_contiguous;
 use glam::uvec2;
 
 kernel_source_gen!(ProjectBackwards {}, project_backwards);
@@ -43,6 +39,21 @@ pub(crate) fn render_backward(
     tile_offsets: CubeTensor<WgpuRuntime>,
     sh_degree: u32,
 ) -> SplatGrads<MainBackendBase> {
+    // Comes from loss, might not be contiguous.
+    let v_output = into_contiguous(v_output);
+
+    // Comes from params, might not be contiguous.
+    let means = into_contiguous(means);
+    let log_scales = into_contiguous(log_scales);
+    let quats = into_contiguous(quats);
+
+    // We're in charge of these, SHOULD be contiguous but might as well.
+    let projected_splats = into_contiguous(projected_splats);
+    let uniforms_buffer = into_contiguous(uniforms_buffer);
+    let compact_gid_from_isect = into_contiguous(compact_gid_from_isect);
+    let global_from_compact_gid = into_contiguous(global_from_compact_gid);
+    let tile_offsets = into_contiguous(tile_offsets);
+
     let device = &out_img.device;
     let img_dimgs = out_img.shape.dims;
     let img_size = glam::uvec2(img_dimgs[1] as u32, img_dimgs[0] as u32);
@@ -53,71 +64,17 @@ pub(crate) fn render_backward(
 
     // Setup tensors.
     // Nb: these are packed vec3 values, special care is taken in the kernel to respect alignment.
-    let v_means = create_tensor([num_points, 3], device, DType::F32);
-    let v_scales = create_tensor([num_points, 3], device, DType::F32);
-    let v_quats = create_tensor([num_points, 4], device, DType::F32);
-    let v_coeffs = create_tensor(
-        [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3],
+    let v_means = MainBackendBase::float_zeros([num_points, 3].into(), device);
+
+    let v_scales = MainBackendBase::float_zeros([num_points, 3].into(), device);
+    let v_quats = MainBackendBase::float_zeros([num_points, 4].into(), device);
+    let v_coeffs = MainBackendBase::float_zeros(
+        [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
         device,
-        DType::F32,
     );
-    let v_raw_opac = create_tensor([num_points], device, DType::F32);
-    let v_grads = create_tensor([num_points, 8], device, DType::F32);
-    let v_refine_weight = create_tensor([num_points, 2], device, DType::F32);
-
-    #[cube(launch_unchecked)]
-    pub fn zero_all_grads(
-        means: &mut Tensor<f32>,
-        scales: &mut Tensor<f32>,
-        v_quats: &mut Tensor<Line<f32>>,
-        v_coeffs: &mut Tensor<f32>,
-        v_opac: &mut Tensor<f32>,
-        v_grads: &mut Tensor<Line<f32>>,
-        v_refine_weight: &mut Tensor<Line<f32>>,
-        #[comptime] num_points: u32,
-        #[comptime] total_coeffs: u32,
-    ) {
-        if ABSOLUTE_POS >= num_points {
-            terminate!();
-        }
-        #[unroll]
-        for i in 0..3 {
-            means[ABSOLUTE_POS * 3 + i] = 0.0;
-            scales[ABSOLUTE_POS * 3 + i] = 0.0;
-        }
-        #[unroll]
-        for i in 0..2 {
-            v_grads[ABSOLUTE_POS * 2 + i] = Line::empty(4u32).fill(0.0);
-        }
-        #[unroll]
-        for i in 0..total_coeffs {
-            v_coeffs[ABSOLUTE_POS * total_coeffs + i] = 0.0;
-        }
-        v_quats[ABSOLUTE_POS] = Line::empty(4u32).fill(0.0);
-        v_opac[ABSOLUTE_POS] = 0.0;
-        v_refine_weight[ABSOLUTE_POS] = Line::empty(2u32).fill(0.0);
-    }
-
-    let cube_dim = CubeDim::default();
-    let cube_count = calculate_cube_count_elemwise(num_points, cube_dim);
-
-    // SAFETY: No OOB
-    unsafe {
-        zero_all_grads::launch_unchecked::<WgpuRuntime>(
-            client,
-            cube_count,
-            cube_dim,
-            v_means.as_tensor_arg::<f32>(1),
-            v_scales.as_tensor_arg::<f32>(1),
-            v_quats.as_tensor_arg::<f32>(4),
-            v_coeffs.as_tensor_arg::<f32>(1),
-            v_raw_opac.as_tensor_arg::<f32>(1),
-            v_grads.as_tensor_arg::<f32>(4),
-            v_refine_weight.as_tensor_arg::<f32>(2),
-            num_points as u32,
-            sh_coeffs_for_degree(sh_degree) * 3,
-        );
-    }
+    let v_raw_opac = MainBackendBase::float_zeros([num_points].into(), device);
+    let v_grads = MainBackendBase::float_zeros([num_points, 8].into(), device);
+    let v_refine_weight = MainBackendBase::float_zeros([num_points, 2].into(), device);
 
     let tile_bounds = uvec2(
         img_size
@@ -179,6 +136,13 @@ pub(crate) fn render_backward(
             ]),
         );
     });
+
+    assert!(v_means.is_contiguous(), "Grads must be contiguous");
+    assert!(v_quats.is_contiguous(), "Grads must be contiguous");
+    assert!(v_scales.is_contiguous(), "Grads must be contiguous");
+    assert!(v_coeffs.is_contiguous(), "Grads must be contiguous");
+    assert!(v_raw_opac.is_contiguous(), "Grads must be contiguous");
+    assert!(v_refine_weight.is_contiguous(), "Grads must be contiguous");
 
     SplatGrads {
         v_means,

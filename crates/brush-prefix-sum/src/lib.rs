@@ -17,6 +17,8 @@ kernel_source_gen!(PrefixSumAddScannedSums {}, prefix_sum_add_scanned_sums);
 use burn_wgpu::CubeTensor;
 
 pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
+    assert!(input.is_contiguous(), "Please ensure input is contiguous");
+
     let threads_per_group = shaders::prefix_sum_helpers::THREADS_PER_GROUP as usize;
     let num = input.shape.dims[0];
     let client = &input.client;

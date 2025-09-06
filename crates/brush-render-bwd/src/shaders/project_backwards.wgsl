@@ -64,7 +64,6 @@ fn sh_coeffs_to_color_fast_vjp(
     if (degree == 0) {
         return v_coeffs;
     }
-    let norm = normalize(viewdir);
     let x = viewdir.x;
     let y = viewdir.y;
     let z = viewdir.z;
@@ -358,9 +357,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
     }
 
-
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let mean_c = R * mean + viewmat[3].xyz;
+
     let rz = 1.0 / mean_c.z;
     let rz2 = rz * rz;
 

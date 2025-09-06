@@ -31,8 +31,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     let mean_c = R * mean + viewmat[3].xyz;
 
     // Check if this splat is 'valid' (aka visible). Phrase as positive to bail on NaN.
-    var valid = true;
-    valid &= (mean_c.z > 0.01 && mean_c.z < 1e10);
+    if mean_c.z < 0.01 || mean_c.z > 1e10 {
+        return;
+    }
 
     let scale = exp(helpers::as_vec(log_scales[global_gid]));
     var quat = quats[global_gid];
@@ -42,32 +43,37 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     // atm always normalizes the quaternions.
     // Phrase as positive to bail on NaN.
     let quat_norm_sqr = dot(quat, quat);
-    valid &= quat_norm_sqr > 1e-8;
+    if quat_norm_sqr < 1e-6 {
+        return;
+    }
+
     quat *= inverseSqrt(quat_norm_sqr);
 
     let cov3d = helpers::calc_cov3d(scale, quat);
     let cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
 
-    valid &= determinant(cov2d) > 0.0;
+    if abs(determinant(cov2d)) < 1e-24 {
+        return;
+    }
 
     // compute the projected mean
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
 
     let opac = helpers::sigmoid(raw_opacities[global_gid]);
 
-    // Phrase as positive to bail on NaN.
-    valid &= opac > 1.0 / 255.0;
-
-    let extent = helpers::compute_bbox_extent(cov2d, log(255.0f * opac));
-    valid &= extent.x > 0.0 && extent.y > 0.0;
-    valid &= mean2d.x + extent.x > 0 && mean2d.x - extent.x < f32(uniforms.img_size.x) &&
-             mean2d.y + extent.y > 0 && mean2d.y - extent.y < f32(uniforms.img_size.y);
-
-    // mask out gaussians outside the image region
-    if !valid {
+    if opac < 1.0 / 255.0 {
         return;
     }
 
+    let extent = helpers::compute_bbox_extent(cov2d, log(255.0f * opac));
+    if extent.x < 0.0 || extent.y < 0.0 {
+        return;
+    }
+
+    if mean2d.x + extent.x <= 0 || mean2d.x - extent.x >= f32(uniforms.img_size.x) ||
+       mean2d.y + extent.y <= 0 || mean2d.y - extent.y >= f32(uniforms.img_size.y) {
+        return;
+    }
     // Now write all the data to the buffers.
     let write_id = atomicAdd(&uniforms.num_visible, 1u);
     global_from_compact_gid[write_id] = global_gid;

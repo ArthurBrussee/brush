@@ -19,4 +19,10 @@ impl BoundingBox {
     pub fn max(&self) -> glam::Vec3 {
         self.center + self.extent
     }
+
+    pub fn median_size(&self) -> f32 {
+        let mut extents = [self.extent.x, self.extent.y, self.extent.z];
+        extents.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        extents[1]
+    }
 }

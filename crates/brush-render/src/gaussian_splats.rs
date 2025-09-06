@@ -4,6 +4,7 @@ use crate::{
     camera::Camera,
     render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
+    validation::validate_tensor_val,
 };
 use ball_tree::BallTree;
 use burn::{
@@ -100,16 +101,14 @@ impl<B: Backend> Splats<B> {
             let extents: Vec<_> = tree_pos
                 .iter()
                 .map(|p| {
-                    // Get average of 4 nearest distances.
+                    // Get half of the average of 2 nearest distances.
                     0.5 * tree.query().nn(p).skip(1).take(2).map(|x| x.1).sum::<f64>() / 2.0
                 })
                 .map(|p| p.max(1e-12))
                 .map(|p| p.ln() as f32)
+                .flat_map(|p| [p, p, p])
                 .collect();
-
-            Tensor::<B, 1>::from_floats(extents.as_slice(), device)
-                .reshape([n_splats, 1])
-                .repeat_dim(1, 3)
+            Tensor::<B, 1>::from_floats(extents.as_slice(), device).reshape([n_splats, 3])
         };
 
         let means_tensor = Tensor::from_data(TensorData::new(pos_data, [n_splats, 3]), device);
@@ -131,9 +130,7 @@ impl<B: Backend> Splats<B> {
                 device,
             )
         } else {
-            Tensor::<_, 1>::from_floats([0.5, 0.5, 0.5], device)
-                .unsqueeze::<3>()
-                .repeat_dim(0, n_splats)
+            Tensor::ones([n_splats, 1, 3], device) * 0.5
         };
 
         let raw_opacities = if let Some(raw_opacities) = opac_data {
@@ -232,6 +229,83 @@ impl<B: Backend> Splats<B> {
         self.means.device()
     }
 
+    pub fn validate_values(&self) {
+        let num_splats = self.num_splats();
+
+        // Validate means (positions)
+        validate_tensor_val(&self.means.val(), "means", None, None);
+
+        // Validate raw rotations and normalized rotations
+        validate_tensor_val(&self.rotation.val(), "raw_rotations", None, None);
+        let rotations = self.rotations_normed();
+        validate_tensor_val(&rotations, "normalized_rotations", None, None);
+
+        // Validate pre-activation scales (log_scales) and post-activation scales
+        validate_tensor_val(
+            &self.log_scales.val(),
+            "log_scales",
+            Some(-10.0),
+            Some(10.0),
+        );
+
+        let scales = self.scales();
+        validate_tensor_val(&scales, "scales", Some(1e-20), Some(10000.0));
+
+        // Validate SH coefficients
+        validate_tensor_val(&self.sh_coeffs.val(), "sh_coeffs", Some(-5.0), Some(5.0));
+
+        // Validate pre-activation opacity (raw_opacity) and post-activation opacity
+        validate_tensor_val(
+            &self.raw_opacity.val(),
+            "raw_opacity",
+            Some(-20.0),
+            Some(20.0),
+        );
+        let opacities = self.opacities();
+        validate_tensor_val(&opacities, "opacities", Some(0.0), Some(1.0));
+
+        // Range validation if requested
+        // Scales should be positive and reasonable
+        validate_tensor_val(&scales, "scales", Some(1e-6), Some(100.0));
+
+        // Normalized rotations should have unit magnitude (quaternion)
+        let rot_norms = rotations.powi_scalar(2).sum_dim(1).sqrt();
+        validate_tensor_val(&rot_norms, "rotation_magnitudes", Some(1e-12), Some(1000.0));
+
+        // Additional logical checks
+        assert!(num_splats > 0, "Splats must contain at least one splat");
+
+        let [n_means, dims] = self.means.dims();
+        assert_eq!(dims, 3, "Means must be 3D coordinates");
+        assert_eq!(
+            n_means, num_splats as usize,
+            "Inconsistent number of splats in means"
+        );
+        let [n_rot, rot_dims] = self.rotation.dims();
+        assert_eq!(rot_dims, 4, "Rotations must be quaternions (4D)");
+        assert_eq!(
+            n_rot, num_splats as usize,
+            "Inconsistent number of splats in rotations"
+        );
+        let [n_scales, scale_dims] = self.log_scales.dims();
+        assert_eq!(scale_dims, 3, "Scales must be 3D");
+        assert_eq!(
+            n_scales, num_splats as usize,
+            "Inconsistent number of splats in scales"
+        );
+        let [n_opacity] = self.raw_opacity.dims();
+        assert_eq!(
+            n_opacity, num_splats as usize,
+            "Inconsistent number of splats in opacity"
+        );
+        let [n_sh, _coeffs, sh_dims] = self.sh_coeffs.dims();
+        assert_eq!(sh_dims, 3, "SH coefficients must have 3 color channels");
+        assert_eq!(
+            n_sh, num_splats as usize,
+            "Inconsistent number of splats in SH coeffs"
+        );
+    }
+
     pub async fn estimate_bounds(&self) -> BoundingBox {
         let means = self
             .means
@@ -282,6 +356,41 @@ impl<B: Backend> Splats<B> {
             ),
         }
     }
+
+    pub async fn get_bounds(self, percentile: f32) -> BoundingBox {
+        let means: Vec<f32> = self
+            .means
+            .val()
+            .into_data_async()
+            .await
+            .to_vec()
+            .expect("Failed to get means");
+
+        // Split into x, y, z values
+        let (mut x_vals, mut y_vals, mut z_vals): (Vec<f32>, Vec<f32>, Vec<f32>) = means
+            .chunks_exact(3)
+            .map(|chunk| (chunk[0], chunk[1], chunk[2]))
+            .collect();
+
+        // Filter out NaN and infinite values before sorting
+        x_vals.retain(|x| x.is_finite());
+        y_vals.retain(|y| y.is_finite());
+        z_vals.retain(|z| z.is_finite());
+
+        x_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        y_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // Get upper and lower percentiles.
+        let lower_idx = ((1.0 - percentile) / 2.0 * x_vals.len() as f32) as usize;
+        let upper_idx =
+            (x_vals.len() - 1).min(((1.0 + percentile) / 2.0 * x_vals.len() as f32) as usize);
+
+        BoundingBox::from_min_max(
+            Vec3::new(x_vals[lower_idx], y_vals[lower_idx], z_vals[lower_idx]),
+            Vec3::new(x_vals[upper_idx], y_vals[upper_idx], z_vals[upper_idx]),
+        )
+    }
 }
 
 impl<B: Backend + SplatForward<B>> Splats<B> {
@@ -296,6 +405,9 @@ impl<B: Backend + SplatForward<B>> Splats<B> {
         splat_scale: Option<f32>,
     ) -> (Tensor<B, 3>, RenderAux<B>) {
         let mut scales = self.log_scales.val();
+
+        #[cfg(any(feature = "debug-validation", test))]
+        self.validate_values();
 
         // Add in scaling if needed.
         if let Some(scale) = splat_scale {
@@ -315,7 +427,7 @@ impl<B: Backend + SplatForward<B>> Splats<B> {
         );
         let img = Tensor::from_primitive(TensorPrimitive::Float(img));
         #[cfg(any(feature = "debug-validation", test))]
-        aux.debug_assert_valid();
+        aux.validate_values();
         (img, aux)
     }
 }

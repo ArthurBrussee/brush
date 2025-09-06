@@ -3,11 +3,15 @@
 //! These tests verify that the benchmark data generation and core operations work correctly.
 
 use brush_dataset::scene::SceneBatch;
-use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
+use brush_render::{
+    MainBackend, bounding_box::BoundingBox, camera::Camera, gaussian_splats::Splats,
+    validation::validate_splat_gradients,
+};
+use brush_render_bwd::burn_glue::SplatForwardDiff;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
     backend::{Autodiff, wgpu::WgpuDevice},
-    tensor::{Tensor, TensorData},
+    tensor::{Tensor, TensorData, TensorPrimitive},
 };
 use glam::{Quat, Vec3};
 use rand::{Rng, SeedableRng};
@@ -163,9 +167,10 @@ fn test_training_step() {
     let batch = generate_test_batch(&device, (64, 64));
     let splats = generate_test_splats(&device, 500);
     let config = TrainConfig::default();
-    let mut trainer = SplatTrainer::new(&config, &device);
+    let bounds = BoundingBox::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+    let mut trainer = SplatTrainer::new(&config, &device, bounds);
 
-    let (final_splats, stats) = trainer.step(5.0, 0, &batch, splats);
+    let (final_splats, stats) = trainer.step(0, &batch, splats);
 
     assert!(final_splats.num_splats() > 0);
     let loss = stats.loss.into_scalar();
@@ -193,13 +198,14 @@ fn test_multi_step_training() {
     let device = WgpuDevice::default();
     let batch = generate_test_batch(&device, (64, 64));
     let config = TrainConfig::default();
-    let mut trainer = SplatTrainer::new(&config, &device);
+    let bounds = BoundingBox::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+    let mut trainer = SplatTrainer::new(&config, &device, bounds);
     let mut splats = generate_test_splats(&device, 100);
     let _initial_count = splats.num_splats();
 
     // Run a few training steps
     for step in 0..3 {
-        let (new_splats, stats) = trainer.step(5.0, step, &batch, splats);
+        let (new_splats, stats) = trainer.step(step, &batch, splats);
         splats = new_splats;
 
         let loss = stats.loss.into_scalar();
@@ -208,4 +214,39 @@ fn test_multi_step_training() {
     }
 
     assert!(splats.num_splats() > 0);
+}
+
+#[test]
+fn test_gradient_validation() {
+    let device = WgpuDevice::default();
+    let splats = generate_test_splats(&device, 100);
+
+    // Create a simple loss by rendering and taking the mean
+    let camera = Camera::new(
+        Vec3::new(0.0, 0.0, 3.0),
+        Quat::IDENTITY,
+        45.0,
+        45.0,
+        glam::vec2(0.5, 0.5),
+    );
+    let img_size = glam::uvec2(64, 64);
+
+    let result = <DiffBackend as SplatForwardDiff<DiffBackend>>::render_splats(
+        &camera,
+        img_size,
+        splats.means.val().into_primitive().tensor(),
+        splats.log_scales.val().into_primitive().tensor(),
+        splats.rotation.val().into_primitive().tensor(),
+        splats.sh_coeffs.val().into_primitive().tensor(),
+        splats.raw_opacity.val().into_primitive().tensor(),
+        Vec3::ZERO,
+    );
+
+    let rendered: Tensor<DiffBackend, 3> =
+        Tensor::from_primitive(TensorPrimitive::Float(result.img));
+    let loss = rendered.mean();
+
+    // Compute gradients
+    let grads = loss.backward();
+    validate_splat_gradients(&splats, &grads);
 }
