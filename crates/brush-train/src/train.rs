@@ -39,7 +39,7 @@ use hashbrown::{HashMap, HashSet};
 use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
-const MIN_OPACITY: f32 = 2.0 / 255.0;
+const MIN_OPACITY: f32 = 0.99 / 255.0;
 
 type DiffBackend = Autodiff<MainBackend>;
 type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<DiffBackend>, DiffBackend>;
@@ -288,7 +288,7 @@ impl SplatTrainer {
             let one = Tensor::ones([1], &device);
             // TODO: Maybe the noise curve should be a parameter.
             let noise_weight = (one - splats.opacities().inner())
-                .powf_scalar(80.0)
+                .powi_scalar(100.0)
                 .clamp(0.0, 1.0);
             // Only noise gaussians visible in this step. Otherwise, areas not commonly
             // visible slowly degrade over time.
@@ -303,7 +303,7 @@ impl SplatTrainer {
                 ) * splats.scales().inner(),
             );
             // Only allow noised gaussians to travel at most the entire extent of the current bounds.
-            let max_noise = self.cur_bounds.extent.max_element() * 0.5;
+            let max_noise = self.cur_bounds.extent.max_element();
             let noise_weight = noise_weight
                 * (lr_mean as f32 * mean_noise_weight_scale)
                 * self.cur_bounds.median_size();

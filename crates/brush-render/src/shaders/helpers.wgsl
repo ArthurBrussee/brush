@@ -192,7 +192,7 @@ fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixe
 
 fn inverse(m: mat2x2f) -> mat2x2f {
     let det = determinant(m);
-    if (det < 1e-12f) {
+    if (det <= 0.0f) {
         return mat2x2f(vec2f(0.0), vec2f(0.0));
     }
     let inv_det = 1.0f / det;

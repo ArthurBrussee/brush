@@ -303,10 +303,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let img_size = uniforms.img_size;
     let pixel_center = uniforms.pixel_center;
 
-    if focal.x < 1e-12 || focal.y < 1e-12 {
-        return;
-    }
-
     let mean = helpers::as_vec(means[global_gid]);
     let scale = exp(helpers::as_vec(log_scales[global_gid]));
     let quat_unorm = quats[global_gid];
@@ -319,10 +315,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let v_mean2d = vec2f(grad0.x, grad0.y);
     let v_conics = vec3f(grad0.z, grad0.w, grad1.x);
     let v_color = vec3f(grad1.y, grad1.z, grad1.w);
-
-    if distance(mean, uniforms.camera_position.xyz) < 0.01 {
-        return;
-    }
 
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
 
