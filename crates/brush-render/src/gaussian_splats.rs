@@ -101,8 +101,8 @@ impl<B: Backend> Splats<B> {
             let extents: Vec<_> = tree_pos
                 .iter()
                 .map(|p| {
-                    // Get average of 3 nearest distances.
-                    tree.query().nn(p).skip(1).take(3).map(|x| x.1).sum::<f64>() / 3.0
+                    // Get half of the average of 2 nearest distances.
+                    0.5 * tree.query().nn(p).skip(1).take(2).map(|x| x.1).sum::<f64>() / 2.0
                 })
                 .map(|p| p.max(1e-12))
                 .map(|p| p.ln() as f32)
@@ -372,11 +372,14 @@ impl<B: Backend> Splats<B> {
             .map(|chunk| (chunk[0], chunk[1], chunk[2]))
             .collect();
 
-        // nans are treated as equal. Of course ideally no means are NaN, but, in case
-        // of some bad gradient blowups it's a bit annoying to just hard crash.
-        x_vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        y_vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        // Filter out NaN and infinite values before sorting
+        x_vals.retain(|x| x.is_finite());
+        y_vals.retain(|y| y.is_finite());
+        z_vals.retain(|z| z.is_finite());
+
+        x_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        y_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
         // Get upper and lower percentiles.
         let lower_idx = ((1.0 - percentile) / 2.0 * x_vals.len() as f32) as usize;
