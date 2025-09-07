@@ -121,8 +121,8 @@ alphanumeric-sort = "1.5.3"
 # cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
 
 [patch.crates-io]
-wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }
-naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }
+# wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }
+# naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }
 
 egui = { git = "https://github.com/emilk/egui", rev = "refs/pull/7340/head"  }
 eframe = { git = "https://github.com/emilk/egui", rev = "refs/pull/7340/head" }

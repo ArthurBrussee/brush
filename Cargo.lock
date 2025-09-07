@@ -11703,13 +11703,3 @@ dependencies = [
  "syn 2.0.106",
  "winnow",
 ]
-
-[[patch.unused]]
-name = "naga"
-version = "25.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=25-sg-enable#6bf49852e9e33256aba02aa2bee297264d437717"
-
-[[patch.unused]]
-name = "wgpu"
-version = "25.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=25-sg-enable#6bf49852e9e33256aba02aa2bee297264d437717"

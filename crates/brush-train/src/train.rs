@@ -39,7 +39,7 @@ use hashbrown::{HashMap, HashSet};
 use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
-const MIN_OPACITY: f32 = 2.0 / 255.0;
+const MIN_OPACITY: f32 = 1.0 / 255.0;
 
 type DiffBackend = Autodiff<MainBackend>;
 type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<DiffBackend>, DiffBackend>;
@@ -127,6 +127,7 @@ impl SplatTrainer {
         let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
         // Apply auxiliary losses for the first 90% of training.
         let aux_loss_weight = (0.9 - train_t).clamp(0.0, 1.0);
+        let median_scale = self.cur_bounds.median_size();
 
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
         let gt_rgb = batch.img_tensor.clone().slice(s![.., .., 0..3]);
@@ -179,7 +180,7 @@ impl SplatTrainer {
                 loss
             };
 
-            let scale_loss_weight = self.config.scale_loss_weight * aux_loss_weight;
+            let scale_loss_weight = self.config.scale_loss_weight * aux_loss_weight / median_scale;
             if scale_loss_weight > 0.0 {
                 // Scale loss is the sum of the squared differences between the
                 // predicted scale and the target scale.
@@ -200,7 +201,7 @@ impl SplatTrainer {
         }
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
-            self.sched_mean.step() * self.cur_bounds.median_size() as f64,
+            self.sched_mean.step() * median_scale as f64,
             self.config.lr_rotation,
             // Scale is relative to the scene scale, but the exp() activation function
             // means "offsetting" all values also solves the learning rate scaling.
@@ -304,7 +305,7 @@ impl SplatTrainer {
                 ) * splats.scales().inner(),
             );
             // Only allow noised gaussians to travel at most the entire extent of the current bounds.
-            let max_noise = self.cur_bounds.extent.max_element();
+            let max_noise = median_scale * 2.0;
             let noise_weight = noise_weight
                 * (lr_mean as f32 * mean_noise_weight_scale)
                 * self.cur_bounds.median_size();
@@ -342,7 +343,7 @@ impl SplatTrainer {
         }
 
         // Update current bounds to 90th percentile of splats.
-        self.cur_bounds = splats.clone().get_bounds(0.95).await;
+        self.cur_bounds = splats.clone().get_bounds(0.9).await;
 
         let device = splats.means.device();
         let client = WgpuRuntime::client(&device);
@@ -368,7 +369,7 @@ impl SplatTrainer {
             .log_scales
             .val()
             .inner()
-            .lower_elem(-12.0)
+            .lower_elem(-20.0)
             .any_dim(1)
             .squeeze(1);
         let prune_mask = alpha_mask.bool_or(scale_mask);
