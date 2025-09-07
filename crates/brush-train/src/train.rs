@@ -369,7 +369,7 @@ impl SplatTrainer {
             .log_scales
             .val()
             .inner()
-            .lower_elem(-20.0)
+            .lower_elem(-15.0)
             .any_dim(1)
             .squeeze(1);
         let prune_mask = alpha_mask.bool_or(scale_mask);
