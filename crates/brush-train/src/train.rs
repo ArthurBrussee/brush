@@ -39,7 +39,7 @@ use hashbrown::{HashMap, HashSet};
 use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
-const MIN_OPACITY: f32 = 0.99 / 255.0;
+const MIN_OPACITY: f32 = 2.0 / 255.0;
 
 type DiffBackend = Autodiff<MainBackend>;
 type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<DiffBackend>, DiffBackend>;
@@ -171,7 +171,7 @@ impl SplatTrainer {
 
             // Invisible splats still have a tiny bit of loss. Otherwise,
             // they would never die off.
-            let vis_weight = visible.clone() + 1e-3;
+            let vis_weight = visible.clone() + 1e-2;
 
             let loss = if opac_loss_weight > 0.0 {
                 loss + (splats.opacities() * vis_weight.clone()).sum() * opac_loss_weight
