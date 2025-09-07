@@ -169,11 +169,12 @@ impl SplatTrainer {
 
             let opac_loss_weight = self.config.opac_loss_weight * aux_loss_weight;
 
+            // Invisible splats still have a tiny bit of loss. Otherwise,
+            // they would never die off.
+            let vis_weight = visible.clone() + 1e-3;
+
             let loss = if opac_loss_weight > 0.0 {
-                // Invisible splats still have a tiny bit of loss. Otherwise,
-                // they would never die off.
-                let visible = visible.clone() + 1e-3;
-                loss + (splats.opacities() * visible).sum() * (opac_loss_weight * (1.0 - train_t))
+                loss + (splats.opacities() * vis_weight.clone()).sum() * opac_loss_weight
             } else {
                 loss
             };
@@ -182,7 +183,7 @@ impl SplatTrainer {
             if scale_loss_weight > 0.0 {
                 // Scale loss is the sum of the squared differences between the
                 // predicted scale and the target scale.
-                let scale_loss = splats.scales().sum();
+                let scale_loss = (splats.scales() * vis_weight.unsqueeze_dim(1)).sum();
                 loss + scale_loss * scale_loss_weight
             } else {
                 loss
@@ -307,6 +308,7 @@ impl SplatTrainer {
             let noise_weight = noise_weight
                 * (lr_mean as f32 * mean_noise_weight_scale)
                 * self.cur_bounds.median_size();
+
             splats.means = splats.means.map(|m| {
                 Tensor::from_inner(
                     m.inner() + (samples * noise_weight).clamp(-max_noise, max_noise),
@@ -340,7 +342,7 @@ impl SplatTrainer {
         }
 
         // Update current bounds to 90th percentile of splats.
-        self.cur_bounds = splats.clone().get_bounds(0.9).await;
+        self.cur_bounds = splats.clone().get_bounds(0.95).await;
 
         let device = splats.means.device();
         let client = WgpuRuntime::client(&device);
@@ -362,9 +364,17 @@ impl SplatTrainer {
             .val()
             .inner()
             .lower_elem(inverse_sigmoid(MIN_OPACITY));
+        let scale_mask = splats
+            .log_scales
+            .val()
+            .inner()
+            .lower_elem(-12.0)
+            .any_dim(1)
+            .squeeze(1);
+        let prune_mask = alpha_mask.bool_or(scale_mask);
 
         let (mut splats, refiner, pruned_count) =
-            prune_points(splats, &mut record, refiner, alpha_mask).await;
+            prune_points(splats, &mut record, refiner, prune_mask).await;
         let mut add_indices = HashSet::new();
 
         // Replace dead gaussians if we're still refining.

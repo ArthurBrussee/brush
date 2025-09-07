@@ -12,11 +12,11 @@ pub struct TrainConfig {
     pub max_splats: u32,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "1e-5")]
+    #[arg(long, help_heading = "Training options", default_value = "4e-5")]
     pub lr_mean: f64,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "1e-7")]
+    #[arg(long, help_heading = "Training options", default_value = "4e-7")]
     pub lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
@@ -74,7 +74,7 @@ pub struct TrainConfig {
     pub opac_loss_weight: f32,
 
     /// Weight of the opacity loss.
-    #[arg(long, help_heading = "Training options", default_value = "0.0")]
+    #[arg(long, help_heading = "Training options", default_value = "1e-7")]
     pub scale_loss_weight: f32,
 
     /// Weight of l1 loss on alpha if input view has transparency.

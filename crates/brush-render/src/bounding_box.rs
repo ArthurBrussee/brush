@@ -23,6 +23,6 @@ impl BoundingBox {
     pub fn median_size(&self) -> f32 {
         let mut extents = [self.extent.x, self.extent.y, self.extent.z];
         extents.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        extents[1]
+        extents[1] * 2.0
     }
 }
