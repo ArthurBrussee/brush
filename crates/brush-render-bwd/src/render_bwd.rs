@@ -74,7 +74,7 @@ pub(crate) fn render_backward(
     );
     let v_raw_opac = MainBackendBase::float_zeros([num_points].into(), device);
     let v_grads = MainBackendBase::float_zeros([num_points, 8].into(), device);
-    let v_refine_weight = MainBackendBase::float_zeros([num_points, 2].into(), device);
+    let v_refine_weight = MainBackendBase::float_zeros([num_points].into(), device);
 
     let tile_bounds = uvec2(
         img_size

@@ -16,6 +16,7 @@ image.workspace = true
 glam.workspace = true
 log.workspace = true
 burn.workspace = true
+burn-cubecl.workspace = true
 bytemuck.workspace = true
 rand.workspace = true
 

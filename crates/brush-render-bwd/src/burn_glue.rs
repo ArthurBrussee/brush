@@ -340,7 +340,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             v_quats: client.tensor_uninitialized(vec![num_points, 4], DType::F32),
             v_coeffs: client.tensor_uninitialized(vec![num_points, coeffs, 3], DType::F32),
             v_raw_opac: client.tensor_uninitialized(vec![num_points], DType::F32),
-            v_refine_weight: client.tensor_uninitialized(vec![num_points, 2], DType::F32),
+            v_refine_weight: client.tensor_uninitialized(vec![num_points], DType::F32),
         };
 
         let input_tensors = [

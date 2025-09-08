@@ -53,7 +53,7 @@ pub struct SplatTrainer {
 
     ssim: Option<Ssim<DiffBackend>>,
 
-    cur_bounds: BoundingBox,
+    bounds: BoundingBox,
 
     #[cfg(not(target_family = "wasm"))]
     lpips: Option<lpips::LpipsModel<DiffBackend>>,
@@ -67,8 +67,14 @@ fn create_default_optimizer() -> OptimizerType {
     AdamScaledConfig::new().with_epsilon(1e-15).init()
 }
 
+const BOUND_PERCENTILE: f32 = 0.75;
+
 impl SplatTrainer {
-    pub fn new(config: &TrainConfig, device: &WgpuDevice, init_bounds: BoundingBox) -> Self {
+    pub async fn new<B: Backend>(
+        config: &TrainConfig,
+        device: &WgpuDevice,
+        init_splats: Splats<B>,
+    ) -> Self {
         let decay = (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_steps as f64);
         let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean, decay);
 
@@ -78,6 +84,8 @@ impl SplatTrainer {
         const SSIM_WINDOW_SIZE: usize = 11; // Could be configurable but meh, rather keep consistent.
         let ssim = (config.ssim_weight > 0.0).then(|| Ssim::new(SSIM_WINDOW_SIZE, 3, device));
 
+        let bounds = init_splats.get_bounds(BOUND_PERCENTILE).await;
+
         Self {
             config: config.clone(),
             sched_mean: lr_mean.init().expect("Mean lr schedule must be valid."),
@@ -85,7 +93,7 @@ impl SplatTrainer {
             optim: None,
             refine_record: None,
             ssim,
-            cur_bounds: init_bounds,
+            bounds,
             #[cfg(not(target_family = "wasm"))]
             lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
         }
@@ -127,7 +135,7 @@ impl SplatTrainer {
         let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
         // Apply auxiliary losses for the first 90% of training.
         let aux_loss_weight = (0.9 - train_t).clamp(0.0, 1.0);
-        let median_scale = self.cur_bounds.median_size();
+        let median_scale = self.bounds.median_size();
 
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
         let gt_rgb = batch.img_tensor.clone().slice(s![.., .., 0..3]);
@@ -170,12 +178,11 @@ impl SplatTrainer {
 
             let opac_loss_weight = self.config.opac_loss_weight * aux_loss_weight;
 
-            // Invisible splats still have a tiny bit of loss. Otherwise,
-            // they would never die off.
-            let vis_weight = visible.clone() + 1e-2;
+            // Invisible splats still have a loss. Otherwise, they would never die off.
+            let vis_weight = visible.clone() * (1.0 - 1e-2) + 1e-2;
 
             let loss = if opac_loss_weight > 0.0 {
-                loss + (splats.opacities() * vis_weight.clone()).sum() * opac_loss_weight
+                loss + (splats.raw_opacity.val() * vis_weight.clone()).sum() * opac_loss_weight
             } else {
                 loss
             };
@@ -266,19 +273,12 @@ impl SplatTrainer {
             let refine_weight = refine_weight_holder
                 .grad_remove(&mut grads)
                 .expect("XY gradients need to be calculated.");
-
             let device = splats.device();
             let num_splats = splats.num_splats();
             let record = self
                 .refine_record
                 .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
-
-            record.gather_stats(
-                refine_weight,
-                glam::uvec2(img_w as u32, img_h as u32),
-                aux.global_from_compact_gid.clone(),
-                aux.num_visible().into_primitive(),
-            );
+            record.gather_stats(refine_weight, visible.clone().inner());
         });
 
         let mean_noise_weight_scale = self.config.mean_noise_weight * aux_loss_weight;
@@ -308,7 +308,7 @@ impl SplatTrainer {
             let max_noise = median_scale * 2.0;
             let noise_weight = noise_weight
                 * (lr_mean as f32 * mean_noise_weight_scale)
-                * self.cur_bounds.median_size();
+                * self.bounds.median_size();
 
             splats.means = splats.means.map(|m| {
                 Tensor::from_inner(
@@ -342,9 +342,6 @@ impl SplatTrainer {
             return (splats, None);
         }
 
-        // Update current bounds to 90th percentile of splats.
-        self.cur_bounds = splats.clone().get_bounds(0.9).await;
-
         let device = splats.means.device();
         let client = WgpuRuntime::client(&device);
         client.memory_cleanup();
@@ -372,15 +369,25 @@ impl SplatTrainer {
             .lower_elem(-15.0)
             .any_dim(1)
             .squeeze(1);
-        let prune_mask = alpha_mask.bool_or(scale_mask);
+
+        // Remove splats that are way out of bounds.
+        let center = self.bounds.center;
+        let bound_center =
+            Tensor::<_, 1>::from_floats([center.x, center.y, center.z], &device).reshape([1, 3]);
+        let splat_dists = splats.means.val().inner() - bound_center;
+        let bound_mask = splat_dists
+            .greater_elem(self.bounds.median_size() * 10.0)
+            .any_dim(1)
+            .squeeze(1);
+        let prune_mask = alpha_mask.bool_or(scale_mask).bool_or(bound_mask);
 
         let (mut splats, refiner, pruned_count) =
             prune_points(splats, &mut record, refiner, prune_mask).await;
         let mut add_indices = HashSet::new();
 
-        // Replace dead gaussians if we're still refining.
+        // Replace dead gaussians.
         if pruned_count > 0 {
-            // Sample from random opacities.
+            // Sample weighted by opacity.
             let resampled_weights = splats.opacities().inner();
             let resampled_weights = resampled_weights
                 .into_data_async()
@@ -392,12 +399,14 @@ impl SplatTrainer {
         }
 
         if iter < self.config.growth_stop_iter {
-            let above_threshold = refiner
-                .refine_weight_norm
+            let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
+
+            let threshold_count = above_threshold
                 .clone()
-                .greater_elem(self.config.growth_grad_threshold)
-                .int();
-            let threshold_count = above_threshold.clone().sum().into_scalar_async().await as u32;
+                .int()
+                .sum()
+                .into_scalar_async()
+                .await as u32;
 
             let grow_count =
                 (threshold_count as f32 * self.config.growth_select_fraction).round() as u32;
@@ -423,6 +432,9 @@ impl SplatTrainer {
 
         let refine_count = add_indices.len();
         splats = self.refine_splats(&device, record, splats, add_indices);
+
+        // Update current bounds to 90th percentile of splats.
+        self.bounds = splats.clone().get_bounds(BOUND_PERCENTILE).await;
 
         client.memory_cleanup();
 

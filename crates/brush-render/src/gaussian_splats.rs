@@ -98,13 +98,16 @@ impl<B: Backend> Splats<B> {
             let empty = vec![(); tree_pos.len()];
             let tree = BallTree::new(tree_pos.clone(), empty);
 
+            let bounding_box = bounds_from_pos(0.75, &pos_data);
+            let median_size = bounding_box.median_size() as f64;
+
             let extents: Vec<_> = tree_pos
                 .iter()
                 .map(|p| {
                     // Get half of the average of 2 nearest distances.
                     0.5 * tree.query().nn(p).skip(1).take(2).map(|x| x.1).sum::<f64>() / 2.0
                 })
-                .map(|p| p.max(1e-12))
+                .map(|p| p.clamp(1e-3, median_size * 0.1))
                 .map(|p| p.ln() as f32)
                 .flat_map(|p| [p, p, p])
                 .collect();
@@ -306,31 +309,6 @@ impl<B: Backend> Splats<B> {
         );
     }
 
-    pub async fn estimate_bounds(&self) -> BoundingBox {
-        let means = self
-            .means
-            .val()
-            .into_data_async()
-            .await
-            .into_vec::<f32>()
-            .expect("Failed to convert means");
-
-        let vec3_means: Vec<Vec3> = means
-            .chunks_exact(3)
-            .map(|chunk| Vec3::new(chunk[0], chunk[1], chunk[2]))
-            .collect();
-
-        let mut min = Vec3::splat(f32::MAX);
-        let mut max = Vec3::splat(f32::MIN);
-
-        for pos in &vec3_means {
-            min = min.min(*pos);
-            max = max.max(*pos);
-        }
-
-        BoundingBox::from_min_max(min, max)
-    }
-
     // TODO: This should probably exist in Burn. Maybe make a PR.
     pub fn into_autodiff<BDiff: AutodiffBackend<InnerBackend = B>>(self) -> Splats<BDiff> {
         let (means_id, means, _) = self.means.consume();
@@ -366,31 +344,35 @@ impl<B: Backend> Splats<B> {
             .to_vec()
             .expect("Failed to get means");
 
-        // Split into x, y, z values
-        let (mut x_vals, mut y_vals, mut z_vals): (Vec<f32>, Vec<f32>, Vec<f32>) = means
-            .chunks_exact(3)
-            .map(|chunk| (chunk[0], chunk[1], chunk[2]))
-            .collect();
-
-        // Filter out NaN and infinite values before sorting
-        x_vals.retain(|x| x.is_finite());
-        y_vals.retain(|y| y.is_finite());
-        z_vals.retain(|z| z.is_finite());
-
-        x_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        y_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-        // Get upper and lower percentiles.
-        let lower_idx = ((1.0 - percentile) / 2.0 * x_vals.len() as f32) as usize;
-        let upper_idx =
-            (x_vals.len() - 1).min(((1.0 + percentile) / 2.0 * x_vals.len() as f32) as usize);
-
-        BoundingBox::from_min_max(
-            Vec3::new(x_vals[lower_idx], y_vals[lower_idx], z_vals[lower_idx]),
-            Vec3::new(x_vals[upper_idx], y_vals[upper_idx], z_vals[upper_idx]),
-        )
+        bounds_from_pos(percentile, &means)
     }
+}
+
+fn bounds_from_pos(percentile: f32, means: &[f32]) -> BoundingBox {
+    // Split into x, y, z values
+    let (mut x_vals, mut y_vals, mut z_vals): (Vec<f32>, Vec<f32>, Vec<f32>) = means
+        .chunks_exact(3)
+        .map(|chunk| (chunk[0], chunk[1], chunk[2]))
+        .collect();
+
+    // Filter out NaN and infinite values before sorting
+    x_vals.retain(|x| x.is_finite());
+    y_vals.retain(|y| y.is_finite());
+    z_vals.retain(|z| z.is_finite());
+
+    x_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    y_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    // Get upper and lower percentiles.
+    let lower_idx = ((1.0 - percentile) / 2.0 * x_vals.len() as f32) as usize;
+    let upper_idx =
+        (x_vals.len() - 1).min(((1.0 + percentile) / 2.0 * x_vals.len() as f32) as usize);
+
+    BoundingBox::from_min_max(
+        Vec3::new(x_vals[lower_idx], y_vals[lower_idx], z_vals[lower_idx]),
+        Vec3::new(x_vals[upper_idx], y_vals[upper_idx], z_vals[upper_idx]),
+    )
 }
 
 impl<B: Backend + SplatForward<B>> Splats<B> {

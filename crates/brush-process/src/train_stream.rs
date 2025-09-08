@@ -102,12 +102,11 @@ pub(crate) async fn train_stream(
     let splats = splats.with_sh_degree(process_args.model_config.sh_degree);
     let mut splats = splats.into_autodiff();
 
-    let bounds = splats.clone().get_bounds(1.0).await;
     let mut eval_scene = dataset.eval;
 
     let mut train_duration = Duration::from_secs(0);
     let mut dataloader = SceneLoader::new(&dataset.train, 42, &device);
-    let mut trainer = SplatTrainer::new(&process_args.train_config, &device, bounds);
+    let mut trainer = SplatTrainer::new(&process_args.train_config, &device, splats.clone()).await;
 
     log::info!("Start training loop.");
     for iter in process_args.process_config.start_iter..process_args.train_config.total_steps {

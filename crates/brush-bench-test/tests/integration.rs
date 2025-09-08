@@ -4,8 +4,7 @@
 
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
-    MainBackend, bounding_box::BoundingBox, camera::Camera, gaussian_splats::Splats,
-    validation::validate_splat_gradients,
+    MainBackend, camera::Camera, gaussian_splats::Splats, validation::validate_splat_gradients,
 };
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
@@ -161,15 +160,13 @@ fn test_forward_rendering() {
     assert!(means_data.iter().all(|&x| x.is_finite()));
 }
 
-#[test]
-fn test_training_step() {
+#[tokio::test]
+async fn test_training_step() {
     let device = WgpuDevice::default();
     let batch = generate_test_batch(&device, (64, 64));
     let splats = generate_test_splats(&device, 500);
     let config = TrainConfig::default();
-    let bounds = BoundingBox::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
-    let mut trainer = SplatTrainer::new(&config, &device, bounds);
-
+    let mut trainer = SplatTrainer::new(&config, &device, splats.clone()).await;
     let (final_splats, stats) = trainer.step(0, &batch, splats);
 
     assert!(final_splats.num_splats() > 0);
@@ -193,14 +190,13 @@ fn test_batch_generation() {
     assert!(img_data.iter().all(|&x| (0.0..=1.1).contains(&x)));
 }
 
-#[test]
-fn test_multi_step_training() {
+#[tokio::test]
+async fn test_multi_step_training() {
     let device = WgpuDevice::default();
     let batch = generate_test_batch(&device, (64, 64));
     let config = TrainConfig::default();
-    let bounds = BoundingBox::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
-    let mut trainer = SplatTrainer::new(&config, &device, bounds);
     let mut splats = generate_test_splats(&device, 100);
+    let mut trainer = SplatTrainer::new(&config, &device, splats.clone()).await;
     let _initial_count = splats.num_splats();
 
     // Run a few training steps
