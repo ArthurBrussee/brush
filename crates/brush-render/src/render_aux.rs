@@ -54,12 +54,12 @@ impl<B: Backend> RenderAux<B> {
             Tensor::from_primitive(self.compact_gid_from_isect.clone());
         let num_visible: Tensor<B, 1, Int> = self.num_visible();
 
-        let num_intersections = num_intersects.into_scalar().elem::<i32>();
+        let num_intersections = num_intersects.into_scalar().elem::<i32>() as u32;
         let num_points = compact_gid_from_isect.dims()[0] as u32;
-        let num_visible = num_visible.into_scalar().elem::<i32>();
+        let num_visible = num_visible.into_scalar().elem::<i32>() as u32;
         let img_size = self.img_size;
 
-        let max_intersects = max_intersections(img_size, num_points) as i32;
+        let max_intersects = max_intersections(img_size, num_points);
 
         assert!(
             num_intersections * 2 < max_intersects,
@@ -67,16 +67,16 @@ impl<B: Backend> RenderAux<B> {
         );
 
         assert!(
-            num_intersections >= 0 && num_intersections < INTERSECTS_UPPER_BOUND as i32,
+            num_intersections < INTERSECTS_UPPER_BOUND,
             "Too many intersections, Brush currently can't handle this. {num_intersections} > {INTERSECTS_UPPER_BOUND}"
         );
 
         assert!(
-            num_visible >= 0 && num_visible <= num_points as i32,
+            num_visible <= num_points,
             "Something went wrong when calculating the number of visible gaussians. {num_visible} > {num_points}"
         );
         assert!(
-            num_visible >= 0 && num_visible < GAUSSIANS_UPPER_BOUND as i32,
+            num_visible < GAUSSIANS_UPPER_BOUND,
             "Brush doesn't support this many gaussians currently. {num_visible} > {GAUSSIANS_UPPER_BOUND}"
         );
 
@@ -96,31 +96,33 @@ impl<B: Backend> RenderAux<B> {
 
         let tile_offsets = tile_offsets
             .into_data()
-            .into_vec::<i32>()
+            .into_vec::<u32>()
             .expect("Failed to fetch tile offsets");
         for &offsets in &tile_offsets {
             assert!(
-                offsets >= 0 && offsets <= num_intersections,
+                offsets <= num_intersections,
                 "Tile offsets exceed bounds. Value: {offsets}, num_intersections: {num_intersections}"
             );
         }
 
-        for i in 0..(tile_offsets.len() - 1) / 2 {
-            // Check pairs of start/end points.
-            let start = tile_offsets[i * 2];
-            let end = tile_offsets[i * 2 + 1];
-            assert!(
-                start >= 0 && end >= 0,
-                "Invalid elements in tile offsets. Start {start} ending at {end}"
-            );
-            assert!(
-                end >= start,
-                "Invalid elements in tile offsets. Start {start} ending at {end}"
-            );
-            assert!(
-                end - start <= num_visible,
-                "One tile has more hits than total visible splats. Start {start} ending at {end}"
-            );
+        if num_intersections > 0 {
+            for i in 0..(tile_offsets.len() - 1) / 2 {
+                // Check pairs of start/end points.
+                let start = tile_offsets[i * 2];
+                let end = tile_offsets[i * 2 + 1];
+                assert!(
+                    start < num_intersections && end <= num_intersections,
+                    "Invalid elements in tile offsets. Start {start} ending at {end}"
+                );
+                assert!(
+                    end >= start,
+                    "Invalid elements in tile offsets. Start {start} ending at {end}"
+                );
+                assert!(
+                    end - start <= num_visible,
+                    "One tile has more hits than total visible splats. Start {start} ending at {end}"
+                );
+            }
         }
 
         if num_intersections > 0 {
@@ -132,7 +134,7 @@ impl<B: Backend> RenderAux<B> {
 
             for (i, &compact_gid) in compact_gid_from_isect.iter().enumerate() {
                 assert!(
-                compact_gid < num_visible as u32,
+                compact_gid < num_visible,
                 "Invalid gaussian ID in intersection buffer. {compact_gid} out of {num_visible}. At {i} out of {num_intersections} intersections. \n
 
                 {compact_gid_from_isect:?}
@@ -147,12 +149,12 @@ impl<B: Backend> RenderAux<B> {
             Tensor::from_primitive(self.global_from_compact_gid.clone());
         let global_from_compact_gid = &global_from_compact_gid
             .into_data()
-            .into_vec::<i32>()
+            .into_vec::<u32>()
             .expect("Failed to fetch global_from_compact_gid")[0..num_visible as usize];
 
         for &global_gid in global_from_compact_gid {
             assert!(
-                global_gid >= 0 && global_gid < num_points as i32,
+                global_gid < num_points,
                 "Invalid gaussian ID in global_from_compact_gid buffer. {global_gid} out of {num_points}"
             );
         }
