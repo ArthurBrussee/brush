@@ -12,19 +12,19 @@ pub struct TrainConfig {
     pub max_splats: u32,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "1e-5")]
+    #[arg(long, help_heading = "Training options", default_value = "2e-5")]
     pub lr_mean: f64,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "1e-6")]
+    #[arg(long, help_heading = "Training options", default_value = "2e-7")]
     pub lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
-    #[arg(long, help_heading = "Training options", default_value = "1e5")]
+    #[arg(long, help_heading = "Training options", default_value = "1e4")]
     pub mean_noise_weight: f32,
 
     /// Learning rate for the base SH (RGB) coefficients.
-    #[arg(long, help_heading = "Training options", default_value = "2e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "3e-3")]
     pub lr_coeffs_dc: f64,
 
     /// How much to divide the learning rate by for higher SH orders.
@@ -36,15 +36,15 @@ pub struct TrainConfig {
     pub lr_opac: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "8e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "1e-2")]
     pub lr_scale: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "6e-3")]
     pub lr_scale_end: f64,
 
     /// Learning rate for the rotation parameters.
-    #[arg(long, help_heading = "Training options", default_value = "5e-4")]
+    #[arg(long, help_heading = "Training options", default_value = "2e-3")]
     pub lr_rotation: f64,
 
     /// Frequency of 'refinement' where gaussians are replaced and densified. This should
@@ -58,7 +58,7 @@ pub struct TrainConfig {
 
     /// What fraction of splats that are deemed as needing to grow do actually grow.
     /// Increase this to make splats grow more aggressively.
-    #[arg(long, help_heading = "Refine options", default_value = "0.25")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.3")]
     pub growth_select_fraction: f32,
 
     /// Period after which splat growth stops.
@@ -74,7 +74,7 @@ pub struct TrainConfig {
     pub opac_loss_weight: f32,
 
     /// Weight of the opacity loss.
-    #[arg(long, help_heading = "Training options", default_value = "1e-7")]
+    #[arg(long, help_heading = "Training options", default_value = "1e-8")]
     pub scale_loss_weight: f32,
 
     /// How long to apply aux losses and augementations for (1 being the full training duration).
