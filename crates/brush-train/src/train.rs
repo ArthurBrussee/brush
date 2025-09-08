@@ -39,7 +39,7 @@ use hashbrown::{HashMap, HashSet};
 use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
-const MIN_OPACITY: f32 = 1.0 / 255.0;
+const MIN_OPACITY: f32 = 2.0 / 255.0;
 
 type DiffBackend = Autodiff<MainBackend>;
 type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<DiffBackend>, DiffBackend>;
@@ -133,8 +133,7 @@ impl SplatTrainer {
         });
 
         let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
-        // Apply auxiliary losses for the first 90% of training.
-        let aux_loss_weight = (0.9 - train_t).clamp(0.0, 1.0);
+        let aux_loss_weight = (self.config.aux_loss_time - train_t).clamp(0.0, 1.0);
         let median_scale = self.bounds.median_size();
 
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);

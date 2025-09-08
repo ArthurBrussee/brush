@@ -160,7 +160,6 @@ fn main(
                 // update v_colors for this gaussian
                 let v_rgb_local = select(vec3f(0.0f), vis * v_outs[i].rgb, color.rgb >= vec3f(0.0f));
                 v_rgb_thread += v_rgb_local;
-                v_refine_thread += length(v_rgb_local);
 
                 // add contribution of this gaussian to the pixel
                 pix_outs[i] = vec4f(pix_outs[i].rgb + vis * clamped_rgb, pix_outs[i].a);
@@ -183,6 +182,8 @@ fn main(
                     );
                     v_xy_thread += v_xy_local;
                     v_alpha_thread += alpha * (1.0f - color.a) * v_alpha;
+
+                    v_refine_thread += length(v_xy_local * vec2f(uniforms.img_size));
 
                     let refine_scale = vec2f(uniforms.img_size);
                 }
