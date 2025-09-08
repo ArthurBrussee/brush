@@ -19,8 +19,11 @@ use brush_kernel::create_uniform_buffer;
 use brush_kernel::{CubeCount, calc_cube_count};
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
-use burn::tensor::DType;
-use burn::tensor::ops::{FloatTensorOps, IntTensorOps};
+use burn::tensor::{DType, IntDType};
+use burn::tensor::{
+    FloatDType,
+    ops::{FloatTensorOps, IntTensorOps},
+};
 
 use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
@@ -130,7 +133,8 @@ pub(crate) fn render_forward(
     let client = &means.client.clone();
 
     let (global_from_compact_gid, num_visible) = {
-        let global_from_presort_gid = MainBackendBase::int_zeros([total_splats].into(), device);
+        let global_from_presort_gid =
+            MainBackendBase::int_zeros([total_splats].into(), device, IntDType::U32);
         let depths = create_tensor([total_splats], device, DType::F32);
 
         tracing::trace_span!("ProjectSplats").in_scope(||
@@ -202,7 +206,8 @@ pub(crate) fn render_forward(
     let (tile_offsets, compact_gid_from_isect, num_intersections) = {
         let num_tiles = tile_bounds.x * tile_bounds.y;
 
-        let splat_intersect_counts = MainBackendBase::int_zeros([total_splats + 1].into(), device);
+        let splat_intersect_counts =
+            MainBackendBase::int_zeros([total_splats + 1].into(), device, IntDType::U32);
 
         let num_vis_map_wg = create_dispatch_buffer(
             num_visible,
@@ -299,6 +304,7 @@ pub(crate) fn render_forward(
         let tile_offsets = MainBackendBase::int_zeros(
             [tile_bounds.y as usize, tile_bounds.x as usize, 2].into(),
             device,
+            IntDType::U32,
         );
 
         // SAFETY: Safe kernel.
@@ -340,7 +346,7 @@ pub(crate) fn render_forward(
     ]);
 
     let visible = if bwd_info {
-        let visible = MainBackendBase::float_zeros([total_splats].into(), device);
+        let visible = MainBackendBase::float_zeros([total_splats].into(), device, FloatDType::F32);
 
         // Add the buffer to the bindings
         bindings = bindings.with_buffers(vec![

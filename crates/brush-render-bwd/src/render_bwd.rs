@@ -3,6 +3,7 @@ use brush_kernel::{CubeCount, CubeTensor, calc_cube_count, kernel_source_gen};
 
 use brush_render::MainBackendBase;
 use brush_render::sh::sh_coeffs_for_degree;
+use burn::tensor::FloatDType;
 use burn::tensor::ops::FloatTensorOps;
 use burn::{backend::wgpu::WgpuRuntime, prelude::Backend, tensor::ops::FloatTensor};
 use burn_cubecl::cubecl::AtomicFeature;
@@ -64,17 +65,19 @@ pub(crate) fn render_backward(
 
     // Setup tensors.
     // Nb: these are packed vec3 values, special care is taken in the kernel to respect alignment.
-    let v_means = MainBackendBase::float_zeros([num_points, 3].into(), device);
+    let v_means = MainBackendBase::float_zeros([num_points, 3].into(), device, FloatDType::F32);
 
-    let v_scales = MainBackendBase::float_zeros([num_points, 3].into(), device);
-    let v_quats = MainBackendBase::float_zeros([num_points, 4].into(), device);
+    let v_scales = MainBackendBase::float_zeros([num_points, 3].into(), device, FloatDType::F32);
+    let v_quats = MainBackendBase::float_zeros([num_points, 4].into(), device, FloatDType::F32);
     let v_coeffs = MainBackendBase::float_zeros(
         [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
         device,
+        FloatDType::F32,
     );
-    let v_raw_opac = MainBackendBase::float_zeros([num_points].into(), device);
-    let v_grads = MainBackendBase::float_zeros([num_points, 8].into(), device);
-    let v_refine_weight = MainBackendBase::float_zeros([num_points].into(), device);
+    let v_raw_opac = MainBackendBase::float_zeros([num_points].into(), device, FloatDType::F32);
+    let v_grads = MainBackendBase::float_zeros([num_points, 8].into(), device, FloatDType::F32);
+    let v_refine_weight =
+        MainBackendBase::float_zeros([num_points].into(), device, FloatDType::F32);
 
     let tile_bounds = uvec2(
         img_size
