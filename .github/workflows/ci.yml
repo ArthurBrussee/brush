@@ -113,6 +113,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           lfs: true
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.88.0
@@ -123,10 +124,10 @@ jobs:
           cache-all-crates: true
 
       - name: Run tests
-        run: cargo test --all-features
+        run: cargo test --all --all-features
 
       - name: Run doc-tests
-        run: cargo test --all-features --doc
+        run: cargo test --all --all-features --doc
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
