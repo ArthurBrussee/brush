@@ -33,6 +33,8 @@ jobs:
 
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
 
       - name: check --all-features
         run: cargo check --locked --all-features --all-targets
@@ -68,6 +70,8 @@ jobs:
 
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
 
       - name: Check wasm32
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check -p brush-wasm --target wasm32-unknown-unknown
@@ -98,11 +102,13 @@ jobs:
 
   # ---------------------------------------------------------------------------
 
+  # ---------------------------------------------------------------------------
+
   tests:
     name: Run tests
-    # We run the tests on macOS because it will run with a actual GPU
+    # We run the tests on macOS because it will run with an actual GPU
     runs-on: macos-latest
-
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
@@ -113,6 +119,18 @@ jobs:
 
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
 
       - name: Run tests
-        run: cargo test --all
+        run: cargo test --all-features
+
+      - name: Run doc-tests
+        run: cargo test --all-features --doc
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: "**/tests/snapshots"
