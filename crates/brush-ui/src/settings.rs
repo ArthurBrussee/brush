@@ -65,7 +65,6 @@ impl SettingsPanel {
                     let tc = &mut self.args.train_config;
                     slider(ui, &mut tc.refine_every, 50..=300, "Refinement frequency", false);
                     slider(ui, &mut tc.growth_grad_threshold, 0.0001..=0.001, "Growth threshold", true);
-                    slider(ui, &mut tc.growth_select_fraction, 0.01..=0.2, "Growth selection fraction", false);
                     slider(ui, &mut tc.growth_stop_iter, 5000..=20000, "Growth stop iteration", false);
                 });
 

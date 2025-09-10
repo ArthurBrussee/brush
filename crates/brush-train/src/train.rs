@@ -129,6 +129,13 @@ impl SplatTrainer {
             );
 
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+
+            #[cfg(any(feature = "debug-validation", test))]
+            {
+                splats.validate_values();
+                diff_out.aux.validate_values();
+            }
+
             (img, diff_out.aux, diff_out.refine_weight_holder)
         });
 
@@ -136,10 +143,16 @@ impl SplatTrainer {
         let aux_loss_weight = (self.config.aux_loss_time - train_t).clamp(0.0, 1.0);
         let median_scale = self.bounds.median_size();
 
+        let num_visible = aux.num_visible().inner();
+        let num_intersections = aux.num_intersections().inner();
+
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
         let gt_rgb = batch.img_tensor.clone().slice(s![.., .., 0..3]);
-        let visible: Tensor<_, 1> =
-            Tensor::from_primitive(TensorPrimitive::Float(aux.visible.clone()));
+        let visible: Tensor<_, 1> = Tensor::from_primitive(TensorPrimitive::Float(aux.visible));
+
+        // Invisible splats still have a loss. Otherwise, they would never die off.
+        const MIN_INFLUENCE: f32 = 1e-3;
+        let vis_weight = visible.clone() * (1.0 - MIN_INFLUENCE) + MIN_INFLUENCE;
 
         let loss = trace_span!("Calculate losses").in_scope(|| {
             let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();
@@ -177,9 +190,6 @@ impl SplatTrainer {
 
             let opac_loss_weight = self.config.opac_loss_weight * aux_loss_weight;
 
-            // Invisible splats still have a loss. Otherwise, they would never die off.
-            let vis_weight = visible.clone() * (1.0 - 1e-2) + 1e-2;
-
             let loss = if opac_loss_weight > 0.0 {
                 loss + (splats.raw_opacity.val() * vis_weight.clone()).sum() * opac_loss_weight
             } else {
@@ -190,7 +200,7 @@ impl SplatTrainer {
             if scale_loss_weight > 0.0 {
                 // Scale loss is the sum of the squared differences between the
                 // predicted scale and the target scale.
-                let scale_loss = (splats.scales() * vis_weight.unsqueeze_dim(1)).sum();
+                let scale_loss = (splats.scales() * vis_weight.clone().unsqueeze_dim(1)).sum();
                 loss + scale_loss * scale_loss_weight
             } else {
                 loss
@@ -201,10 +211,21 @@ impl SplatTrainer {
 
         #[cfg(any(feature = "debug-validation", test))]
         {
-            splats.validate_values();
-            aux.validate_values();
             brush_render::validation::validate_splat_gradients(&splats, &grads);
         }
+
+        trace_span!("Housekeeping").in_scope(|| {
+            // Get the xy gradient norm from the dummy tensor.
+            let refine_weight = refine_weight_holder
+                .grad_remove(&mut grads)
+                .expect("refine gradients need to be calculated.");
+            let device = splats.device();
+            let num_splats = splats.num_splats();
+            let record = self
+                .refine_record
+                .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
+            record.gather_stats(refine_weight, visible.inner());
+        });
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
             self.sched_mean.step() * median_scale as f64,
@@ -267,34 +288,19 @@ impl SplatTrainer {
             splats
         });
 
-        trace_span!("Housekeeping").in_scope(|| {
-            // Get the xy gradient norm from the dummy tensor.
-            let refine_weight = refine_weight_holder
-                .grad_remove(&mut grads)
-                .expect("XY gradients need to be calculated.");
-            let device = splats.device();
-            let num_splats = splats.num_splats();
-            let record = self
-                .refine_record
-                .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
-            record.gather_stats(refine_weight, visible.clone().inner());
-        });
-
         let mean_noise_weight_scale = self.config.mean_noise_weight * aux_loss_weight;
         if mean_noise_weight_scale > 0.0 {
             let device = splats.device();
             // Add random noise. Only do this in the growth phase, otherwise
             // let the splats settle in without noise, not much point in exploring regions anymore.
-            // trace_span!("Noise means").in_scope(|| {
-            let one = Tensor::ones([1], &device);
-            // TODO: Maybe the noise curve should be a parameter.
-            let noise_weight = (one - splats.opacities().inner())
-                .powi_scalar(100.0)
-                .clamp(0.0, 1.0);
+            let inv_opac: Tensor<_, 1> = 1.0 - splats.opacities();
+            let noise_weight = inv_opac.inner().powi_scalar(100.0).clamp(0.0, 1.0);
+
             // Only noise gaussians visible in this step. Otherwise, areas not commonly
             // visible slowly degrade over time.
-            let noise_weight = noise_weight * visible.inner();
+            let noise_weight = noise_weight * vis_weight.inner();
             let noise_weight = noise_weight.unsqueeze_dim(1);
+
             let samples = quaternion_vec_multiply(
                 splats.rotations_normed().inner(),
                 Tensor::random(
@@ -319,8 +325,8 @@ impl SplatTrainer {
 
         let stats = TrainStepStats {
             pred_image: pred_image.inner(),
-            num_visible: aux.num_visible().inner(),
-            num_intersections: aux.num_intersections().inner(),
+            num_visible,
+            num_intersections,
             loss: loss.inner(),
             lr_mean,
             lr_rotation,
@@ -365,7 +371,7 @@ impl SplatTrainer {
             .log_scales
             .val()
             .inner()
-            .lower_elem(-15.0)
+            .lower_elem(-12.0)
             .any_dim(1)
             .squeeze(1);
 
@@ -400,15 +406,12 @@ impl SplatTrainer {
         if iter < self.config.growth_stop_iter {
             let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
 
-            let threshold_count = above_threshold
+            let grow_count = above_threshold
                 .clone()
                 .int()
                 .sum()
                 .into_scalar_async()
                 .await as u32;
-
-            let grow_count =
-                (threshold_count as f32 * self.config.growth_select_fraction).round() as u32;
 
             let sample_high_grad = grow_count.saturating_sub(pruned_count);
 

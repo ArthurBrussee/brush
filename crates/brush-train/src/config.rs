@@ -49,17 +49,12 @@ pub struct TrainConfig {
 
     /// Frequency of 'refinement' where gaussians are replaced and densified. This should
     /// roughly be the number of images it takes to properly "cover" your scene.
-    #[arg(long, help_heading = "Refine options", default_value = "150")]
+    #[arg(long, help_heading = "Refine options", default_value = "200")]
     pub refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[arg(long, help_heading = "Refine options", default_value = "0.00009")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.00012")]
     pub growth_grad_threshold: f32,
-
-    /// What fraction of splats that are deemed as needing to grow do actually grow.
-    /// Increase this to make splats grow more aggressively.
-    #[arg(long, help_heading = "Refine options", default_value = "0.3")]
-    pub growth_select_fraction: f32,
 
     /// Period after which splat growth stops.
     #[arg(long, help_heading = "Refine options", default_value = "15000")]
