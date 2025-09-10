@@ -104,6 +104,7 @@ impl Debug for VfsContainer {
         match self {
             Self::Zip { .. } => f.debug_struct("Zip").finish(),
             Self::Manual { .. } => f.debug_struct("Manual").finish(),
+            #[cfg(not(target_family = "wasm"))]
             Self::Directory { .. } => f.debug_struct("Directory").finish(),
         }
     }
