@@ -133,6 +133,9 @@ emath = { git = "https://github.com/emilk/egui", rev = "refs/pull/7340/head" }
 # wgpu.path = "../wgpu/wgpu"
 # naga.path = "../wgpu/naga"
 
+[profile.dev]
+opt-level = 1
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"

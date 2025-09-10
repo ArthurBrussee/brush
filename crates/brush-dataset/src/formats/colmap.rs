@@ -214,6 +214,8 @@ async fn try_load_init(
         })
         .collect();
     let init_splat = Splats::from_raw(positions, None, None, Some(colors), None, device);
+    log::info!("Created init splat from points");
+
     Some(SplatMessage {
         meta: ParseMetadata {
             up_axis: None,

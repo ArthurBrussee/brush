@@ -7,6 +7,7 @@ mod data_source;
 // rfd on wasm, nor is drag-and-dropping folders in egui.
 use std::{
     collections::HashMap,
+    fmt::Debug,
     io::{self, Cursor, Error, Read},
     path::{Path, PathBuf},
     sync::Arc,
@@ -69,7 +70,7 @@ impl PathKey {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ZipData {
     data: Arc<Vec<u8>>,
 }
@@ -98,6 +99,17 @@ enum VfsContainer {
     Directory { base_path: PathBuf },
 }
 
+impl Debug for VfsContainer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Zip { .. } => f.debug_struct("Zip").finish(),
+            Self::Manual { .. } => f.debug_struct("Manual").finish(),
+            Self::Directory { .. } => f.debug_struct("Directory").finish(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct BrushVfs {
     lookup: HashMap<PathKey, PathBuf>,
     container: VfsContainer,
@@ -148,9 +160,7 @@ impl BrushVfs {
         self.lookup.values().cloned()
     }
 
-    pub async fn from_reader(
-        reader: impl AsyncRead + SendNotWasm + Unpin + 'static,
-    ) -> Result<Self, VfsConstructError> {
+    pub async fn from_reader(reader: impl DynRead + 'static) -> Result<Self, VfsConstructError> {
         // Small hack to peek some bytes: Read them
         // and add them at the start again.
         let mut data = BufReader::new(reader);

@@ -44,8 +44,8 @@ pub(crate) async fn train_stream(
     // Now wait for the process args.
     let process_args = process_args.await?;
 
-    log::info!("Create rerun {}", process_args.rerun_config.rerun_enabled);
-    let visualize = VisualizeTools::new(process_args.rerun_config.rerun_enabled);
+    let visualize = tracing::trace_span!("Create rerun")
+        .in_scope(|| VisualizeTools::new(process_args.rerun_config.rerun_enabled));
 
     let process_config = &process_args.process_config;
     log::info!("Using seed {}", process_config.seed);
@@ -53,9 +53,11 @@ pub(crate) async fn train_stream(
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     log::info!("Loading dataset");
-    let (initial_splats, dataset) =
-        load_dataset(vfs.clone(), &process_args.load_config, &device).await?;
+    let (initial_splats, dataset) = load_dataset(vfs.clone(), &process_args.load_config, &device)
+        .instrument(trace_span!("Load dataset"))
+        .await?;
 
+    log::info!("Log scene to rerun");
     warner
         .warn_if_err(
             visualize.log_scene(&dataset.train, process_args.rerun_config.rerun_max_img_size),

@@ -12,6 +12,7 @@ use std::{
     sync::Arc,
 };
 use tokio::io::{AsyncRead, AsyncReadExt};
+use tracing::instrument;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ViewType {
@@ -20,7 +21,7 @@ pub enum ViewType {
     Test,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LoadImage {
     pub vfs: Arc<BrushVfs>,
     pub path: PathBuf,
@@ -111,6 +112,7 @@ impl LoadImage {
         self.dimensions().y
     }
 
+    #[instrument(name = "load_scene_img")]
     pub async fn load(&self) -> image::ImageResult<DynamicImage> {
         let mut img_bytes = vec![];
         self.vfs
