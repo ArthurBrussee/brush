@@ -187,7 +187,7 @@ impl SplatTrainer {
             let opac_loss_weight = self.config.opac_loss_weight * aux_loss_weight;
 
             // Invisible splats still have a loss. Otherwise, they would never die off.
-            let vis_weight = visible.clone() * (1.0 - 1e-2) + 1e-2;
+            let vis_weight = visible.clone() + 1e-3;
 
             let loss = if opac_loss_weight > 0.0 {
                 loss + (splats.raw_opacity.val() * vis_weight.clone()).sum() * opac_loss_weight
@@ -296,7 +296,6 @@ impl SplatTrainer {
         let noise_weight = inv_opac.inner().powi_scalar(100.0).clamp(0.0, 1.0);
         // Only noise gaussians visible in this step. Otherwise, areas not commonly
         // visible slowly degrade over time.
-        let noise_weight = noise_weight * visible.inner();
         let noise_weight = noise_weight.unsqueeze_dim(1);
         let samples = quaternion_vec_multiply(
             splats.rotations_normed().inner(),

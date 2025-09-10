@@ -16,15 +16,15 @@ pub struct TrainConfig {
     pub lr_mean: f64,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "2e-7")]
+    #[arg(long, help_heading = "Training options", default_value = "4e-7")]
     pub lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
-    #[arg(long, help_heading = "Training options", default_value = "1e4")]
+    #[arg(long, help_heading = "Training options", default_value = "1e3")]
     pub mean_noise_weight: f32,
 
     /// Learning rate for the base SH (RGB) coefficients.
-    #[arg(long, help_heading = "Training options", default_value = "3e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "2e-3")]
     pub lr_coeffs_dc: f64,
 
     /// How much to divide the learning rate by for higher SH orders.
@@ -40,11 +40,11 @@ pub struct TrainConfig {
     pub lr_scale: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "6e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "4e-3")]
     pub lr_scale_end: f64,
 
     /// Learning rate for the rotation parameters.
-    #[arg(long, help_heading = "Training options", default_value = "2e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "1e-3")]
     pub lr_rotation: f64,
 
     /// Frequency of 'refinement' where gaussians are replaced and densified. This should
