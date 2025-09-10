@@ -20,7 +20,7 @@ pub struct TrainConfig {
     pub lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
-    #[arg(long, help_heading = "Training options", default_value = "1e4")]
+    #[arg(long, help_heading = "Training options", default_value = "4e4")]
     pub mean_noise_weight: f32,
 
     /// Learning rate for the base SH (RGB) coefficients.
@@ -73,7 +73,7 @@ pub struct TrainConfig {
     pub scale_loss_weight: f32,
 
     /// How long to apply aux losses and augementations for (1 being the full training duration).
-    #[arg(long, help_heading = "Training options", default_value = "0.75")]
+    #[arg(long, help_heading = "Training options", default_value = "0.8")]
     pub aux_loss_time: f32,
 
     /// Weight of l1 loss on alpha if input view has transparency.
