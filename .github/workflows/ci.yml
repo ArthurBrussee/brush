@@ -10,8 +10,8 @@ env:
   RUSTDOCFLAGS: -D warnings
 
 jobs:
-  fmt-crank-check-test:
-    name: Format + check + test
+  fmt-crank-check:
+    name: Format + check
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5

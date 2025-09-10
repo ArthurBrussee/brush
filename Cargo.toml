@@ -135,6 +135,8 @@ emath = { git = "https://github.com/emilk/egui", rev = "refs/pull/7340/head" }
 
 [profile.dev]
 opt-level = 1
+# Reduce debuginfo for faster linking
+debug = 1
 
 # The profile that 'dist' will build with
 [profile.dist]
@@ -324,5 +326,9 @@ single_range_in_vec_init = "allow"
 # checks, see https://github.com/madsmtm/objc2/issues/765#issuecomment-2996136843,
 # and new winit versions are enabling this by default: https://github.com/madsmtm/objc2/issues/765.
 # When that has landed and Bevy has updated to a new winit version this workaround should be removed.
+# Only apply this workaround on macOS to avoid cache invalidation on other platforms
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "*", package = "objc2" }
+
 [profile.dev.package.objc2]
 debug-assertions = false
