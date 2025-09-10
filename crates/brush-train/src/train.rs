@@ -307,8 +307,9 @@ impl SplatTrainer {
         );
         // Only allow noised gaussians to travel at most the entire extent of the current bounds.
         let max_noise = median_scale * 0.25;
-        let noise_weight =
-            noise_weight * (lr_mean as f32 * mean_noise_weight_scale) * self.bounds.median_size();
+        let noise_weight = noise_weight * (lr_mean as f32 * mean_noise_weight_scale);
+
+        println!("median {}", self.bounds.median_size());
 
         splats.means = splats.means.map(|m| {
             Tensor::from_inner(m.inner() + (samples * noise_weight).clamp(-max_noise, max_noise))
