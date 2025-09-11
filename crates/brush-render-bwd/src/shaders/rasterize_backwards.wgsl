@@ -140,7 +140,8 @@ fn main(
             for (var i = 0u; i < PIXELS_PER_THREAD; i++) {
                 if dones[i] { continue; }
 
-                let delta = xy - (vec2f(pix_locs[i]) + 0.5f);
+                let pixel_coord = vec2f(pix_locs[i]) + 0.5f;
+                let delta = xy - pixel_coord;
                 let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
                 let gaussian = exp(-sigma);
                 let alpha = min(0.999f, color.a * gaussian);
@@ -183,7 +184,7 @@ fn main(
                     v_xy_thread += v_xy_local;
                     v_alpha_thread += alpha * (1.0f - color.a) * v_alpha;
 
-                    v_refine_thread += length(v_xy_local * vec2f(uniforms.img_size));
+                    v_refine_thread += abs(v_xy_local.x * f32(uniforms.img_size.x)) + abs(v_xy_local.y * f32(uniforms.img_size.y));
 
                     let refine_scale = vec2f(uniforms.img_size);
                 }
