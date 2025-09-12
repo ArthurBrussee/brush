@@ -6,17 +6,17 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
-jni = "0.21.1"
-lazy_static = "1.5.0"
 thiserror.workspace = true
 log.workspace = true
 futures = "0.3"
 
-
-
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["fs", "sync", "io-util"] }
 rfd = "0.15"
+
+[target.'cfg(target_family = "android")'.dependencies]
+jni = "0.21.1"
+lazy_static = "1.5.0"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 tokio = { workspace = true, features = ["sync", "io-util"] }
