@@ -146,6 +146,8 @@ impl<B: Backend> SceneLoader<B> {
                 {
                     break;
                 }
+
+                tokio_wasm::task::yield_now().await;
             }
         });
 

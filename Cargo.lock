@@ -1100,6 +1100,7 @@ dependencies = [
  "rerun",
  "tokio",
  "tokio-stream",
+ "tokio_with_wasm",
  "tracing",
  "web-time",
 ]
@@ -1170,6 +1171,7 @@ dependencies = [
  "serde-ply",
  "tokio",
  "tokio-stream",
+ "tokio_with_wasm",
  "web-time",
 ]
 
@@ -1261,6 +1263,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tokio_with_wasm",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-streams",
@@ -2132,6 +2135,7 @@ version = "0.2.0"
 dependencies = [
  "glam",
  "tokio",
+ "tokio_with_wasm",
 ]
 
 [[package]]

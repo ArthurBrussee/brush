@@ -30,6 +30,9 @@ tracing.workspace = true
 
 tokio = { workspace = true, features = ["io-util", "rt"] }
 tokio-stream.workspace = true
+tokio_with_wasm.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 rerun.workspace = true

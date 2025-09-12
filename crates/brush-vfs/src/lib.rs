@@ -20,6 +20,7 @@ use tokio::{
     io::{AsyncBufRead, AsyncRead, AsyncReadExt, BufReader},
     sync::Mutex,
 };
+use tokio_with_wasm::alias as tokio_wasm;
 
 use async_zip::base::read::stream::ZipFileReader;
 use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
@@ -193,6 +194,8 @@ impl BrushVfs {
                 } else {
                     zip_reader = entry.skip().await.map_err(io_error)?;
                 }
+
+                tokio_wasm::task::yield_now().await;
             }
 
             let path_bufs = entries.keys().cloned().collect::<Vec<_>>();
@@ -241,6 +244,8 @@ impl BrushVfs {
                                     .to_path_buf();
                                 paths.push(path);
                             }
+
+                            tokio_wasm::task::yield_now().await;
                         }
                     }
                     Ok(paths)

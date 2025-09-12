@@ -5,6 +5,7 @@ use std::io::{self, BufRead, Read};
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncBufRead, AsyncRead};
+use tokio_with_wasm::alias as tokio_wasm;
 
 // TODO: Really these should each hold their respective params but bit of an annoying refactor. We just need
 // basic params.
@@ -206,6 +207,8 @@ async fn read_cameras_text<R: AsyncRead + Unpin>(reader: R) -> io::Result<HashMa
             },
         );
         line.clear();
+
+        tokio_wasm::task::yield_now().await;
     }
 
     Ok(cameras)
@@ -361,9 +364,7 @@ async fn read_images_binary<R: AsyncBufRead + Unpin>(
     Ok(images)
 }
 
-async fn read_points3d_text<R: AsyncRead + Unpin>(
-    mut reader: R,
-) -> io::Result<HashMap<i64, Point3D>> {
+async fn read_points3d_text<R: AsyncRead + Unpin>(reader: R) -> io::Result<HashMap<i64, Point3D>> {
     let mut points3d = HashMap::new();
     let mut buf_reader = tokio::io::BufReader::new(reader);
     let mut line = String::new();
@@ -416,6 +417,8 @@ async fn read_points3d_text<R: AsyncRead + Unpin>(
             },
         );
         line.clear();
+
+        tokio_wasm::task::yield_now().await;
     }
 
     Ok(points3d)

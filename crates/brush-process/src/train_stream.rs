@@ -24,6 +24,7 @@ use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
 use std::{path::Path, sync::Arc};
 use tokio::sync::oneshot::Receiver;
+use tokio_with_wasm::alias as tokio_wasm;
 use tracing::{Instrument, trace_span};
 use web_time::{Duration, Instant};
 
@@ -218,6 +219,8 @@ async fn run_eval(
     log::info!("Running evaluation for iteration {iter}");
 
     for (i, view) in eval_scene.views.iter().enumerate() {
+        tokio_wasm::task::yield_now().await;
+
         let eval_img = view.image.load().await?;
         let sample = eval_stats(
             &splats,

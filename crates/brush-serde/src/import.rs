@@ -14,6 +14,7 @@ use serde_ply::{DeserializeError, PlyChunkedReader, RowVisitor};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio_stream::{Stream, StreamExt};
+use tokio_with_wasm::alias as tokio_wasm;
 
 use crate::ply_gaussian::{PlyGaussian, QuantSh, QuantSplat};
 
@@ -88,6 +89,7 @@ async fn read_chunk<T: AsyncRead + Unpin>(
             break;
         }
         total_read += bytes_read;
+        tokio_wasm::task::yield_now().await;
     }
     if total_read == 0 {
         Err(std::io::Error::new(

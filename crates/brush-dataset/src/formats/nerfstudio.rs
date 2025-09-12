@@ -13,6 +13,7 @@ use burn::backend::wgpu::WgpuDevice;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
+use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(serde::Deserialize, Clone)]
 #[allow(unused)] // not reading camera distortions yet.
@@ -110,6 +111,8 @@ async fn read_transforms_file(
         .take(load_args.max_frames.unwrap_or(usize::MAX))
         .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
     {
+        tokio_wasm::task::yield_now().await;
+
         // NeRF 'transform_matrix' is a camera-to-world transform
         let transform_matrix: Vec<f32> = frame.transform_matrix.iter().flatten().copied().collect();
         let mut transform = glam::Mat4::from_cols_slice(&transform_matrix).transpose();

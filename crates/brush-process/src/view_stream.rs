@@ -8,6 +8,7 @@ use brush_vfs::BrushVfs;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use tokio_stream::StreamExt;
+use tokio_with_wasm::alias as tokio_wasm;
 
 pub(crate) async fn view_stream(
     vfs: Arc<BrushVfs>,
@@ -19,6 +20,8 @@ pub(crate) async fn view_stream(
     let client = WgpuRuntime::client(&device);
 
     for (i, path) in paths.iter().enumerate() {
+        tokio_wasm::task::yield_now().await;
+
         log::info!("Loading single ply file");
 
         emitter

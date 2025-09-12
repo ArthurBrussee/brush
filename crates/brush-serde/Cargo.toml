@@ -17,9 +17,10 @@ serde-ply.workspace = true
 tokio-stream.workspace = true
 async-fn-stream.workspace = true
 web-time.workspace = true
+tokio_with_wasm.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-tokio = { workspace = true, features = ["io-util"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["io-util", "fs", "macros"] }

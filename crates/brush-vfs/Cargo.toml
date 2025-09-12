@@ -17,9 +17,10 @@ tokio-stream.workspace = true
 path-clean = "1.0.1"
 tokio-util = { workspace = true, features = ["compat"] }
 futures-lite = "2.1.0"
+tokio_with_wasm.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "time"] }
 web-sys = { workspace = true, features = [
     "Window",
     "Location",

@@ -16,6 +16,7 @@ use brush_serde::{ParseMetadata, SplatMessage};
 use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
 use std::collections::HashMap;
+use tokio_with_wasm::alias as tokio_wasm;
 
 fn find_mask_and_img(vfs: &BrushVfs, name: &str) -> Option<(PathBuf, Option<PathBuf>)> {
     // Colmap only specifies an image name, not a full path. We brute force
@@ -102,6 +103,7 @@ async fn load_dataset_inner(
         .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
         .enumerate()
     {
+        tokio_wasm::task::yield_now().await;
         let cam_data = cam_model_data
             .get(&img_info.camera_id)
             .ok_or_else(|| {
