@@ -347,25 +347,42 @@ mod tests {
     use std::io::Cursor;
     use tokio::io::AsyncReadExt;
 
-    const TEST_ZIP: &[u8] = &[
-        0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5d,
-        0x41, 0x52, 0x5a, 0x0b, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00,
-        0x74, 0x65, 0x73, 0x74, 0x2e, 0x74, 0x78, 0x74, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x77,
-        0x6f, 0x72, 0x6c, 0x64, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x5d, 0x41, 0x52, 0x5a, 0x0b, 0x00, 0x00, 0x00, 0x0b, 0x00,
-        0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
-        0x01, 0x00, 0x00, 0x00, 0x00, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x74, 0x78, 0x74, 0x50, 0x4b,
-        0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x36, 0x00, 0x00, 0x00, 0x31,
-        0x00, 0x00, 0x00, 0x00, 0x00,
-    ];
+    async fn create_test_zip() -> Vec<u8> {
+        use async_zip::base::write::ZipFileWriter;
+        use async_zip::{Compression, ZipEntryBuilder};
+
+        let mut buffer = Vec::new();
+        let mut writer = ZipFileWriter::new(&mut buffer);
+
+        // Add test.txt
+        let entry = ZipEntryBuilder::new("test.txt".into(), Compression::Stored);
+        writer
+            .write_entry_whole(entry, b"hello world")
+            .await
+            .unwrap();
+
+        // Add data.json
+        let entry = ZipEntryBuilder::new("data.json".into(), Compression::Stored);
+        writer
+            .write_entry_whole(entry, b"{\"key\": \"value\"}")
+            .await
+            .unwrap();
+
+        writer.close().await.unwrap();
+        buffer
+    }
 
     #[tokio::test]
     async fn test_zip_vfs_workflow() {
-        let vfs = BrushVfs::from_reader(Cursor::new(TEST_ZIP)).await.unwrap();
-        assert_eq!(vfs.file_count(), 1);
+        let zip_data = create_test_zip().await;
+        let vfs = BrushVfs::from_reader(Cursor::new(zip_data)).await.unwrap();
+        assert_eq!(vfs.file_count(), 2);
 
         let txt_files: Vec<_> = vfs.files_with_extension("txt").collect();
         assert_eq!(txt_files.len(), 1);
+
+        let json_files: Vec<_> = vfs.files_with_extension("json").collect();
+        assert_eq!(json_files.len(), 1);
 
         let mut content = String::new();
         vfs.reader_at_path(&txt_files[0])
@@ -375,6 +392,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(content, "hello world");
+
+        // Test JSON file
+        let mut content = String::new();
+        vfs.reader_at_path(&json_files[0])
+            .await
+            .unwrap()
+            .read_to_string(&mut content)
+            .await
+            .unwrap();
+        assert_eq!(content, "{\"key\": \"value\"}");
 
         // Test case-insensitive access
         let mut content = String::new();
