@@ -1,11 +1,13 @@
 use bytes::Bytes;
+use futures_channel;
 use futures_util::StreamExt;
 use js_sys::Uint8Array;
-use std::{io, path::PathBuf};
+use std::{collections::HashMap, io, path::PathBuf};
 use tokio::io::AsyncRead;
 use tokio_util::io::StreamReader;
-use wasm_bindgen::{JsCast, prelude::*};
-use wasm_bindgen_futures::JsFuture;
+use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
+
 use wasm_streams::ReadableStream as WasmReadableStream;
 use web_sys::{Blob, Event, HtmlAnchorElement, HtmlInputElement, ReadableStream};
 
@@ -39,24 +41,6 @@ pub async fn save_file(default_name: &str, data: &[u8]) -> Result<(), PickFileEr
     Ok(())
 }
 
-pub async fn pick_directory() -> Result<PathBuf, PickFileError> {
-    let files = pick_files(true).await?;
-
-    if files.length() == 0 {
-        return Err(PickFileError::NoDirectorySelected);
-    }
-
-    let first_file = files.get(0).ok_or(PickFileError::NoDirectorySelected)?;
-    let path_value = js_sys::Reflect::get(&first_file, &"webkitRelativePath".into())
-        .map_err(|_| PickFileError::NoDirectorySelected)?;
-    let path_str = path_value
-        .as_string()
-        .ok_or(PickFileError::NoDirectorySelected)?;
-
-    let path = PathBuf::from(path_str);
-    Ok(path.parent().unwrap_or(&path).to_path_buf())
-}
-
 pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
     let files = pick_files(false).await?;
     let file = files.get(0).ok_or(PickFileError::NoFileSelected)?;
@@ -84,6 +68,45 @@ pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
     Ok(StreamReader::new(byte_stream))
 }
 
+pub async fn pick_directory() -> Result<PathBuf, PickFileError> {
+    let files = pick_files(true).await?;
+
+    if files.length() == 0 {
+        return Err(PickFileError::NoDirectorySelected);
+    }
+
+    let first_file = files.get(0).ok_or(PickFileError::NoDirectorySelected)?;
+    let path_value = js_sys::Reflect::get(&first_file, &"webkitRelativePath".into())
+        .map_err(|_| PickFileError::NoDirectorySelected)?;
+    let path_str = path_value
+        .as_string()
+        .ok_or(PickFileError::NoDirectorySelected)?;
+
+    let path = PathBuf::from(path_str);
+    Ok(path.parent().unwrap_or(&path).to_path_buf())
+}
+
+pub async fn pick_directory_files() -> Result<HashMap<PathBuf, web_sys::File>, PickFileError> {
+    let files = pick_files(true).await?;
+    let mut file_map = HashMap::new();
+
+    for i in 0..files.length() {
+        if let Some(file) = files.get(i) {
+            // Get the relative path
+            let path_value = js_sys::Reflect::get(&file, &"webkitRelativePath".into())
+                .map_err(|_| PickFileError::NoDirectorySelected)?;
+            let path_str = path_value
+                .as_string()
+                .ok_or(PickFileError::NoDirectorySelected)?;
+
+            let path = PathBuf::from(path_str);
+            file_map.insert(path, file);
+        }
+    }
+
+    Ok(file_map)
+}
+
 async fn pick_files(directory: bool) -> Result<web_sys::FileList, PickFileError> {
     let window = web_sys::window().ok_or(PickFileError::NoFileSelected)?;
     let document = window.document().ok_or(PickFileError::NoFileSelected)?;
@@ -95,31 +118,35 @@ async fn pick_files(directory: bool) -> Result<web_sys::FileList, PickFileError>
         .map_err(|_| PickFileError::NoFileSelected)?;
 
     input.set_type("file");
+    input.set_multiple(true);
+
     if directory {
-        let _ = input.set_attribute("webkitdirectory", "");
+        input
+            .set_attribute("webkitdirectory", "")
+            .map_err(|_| PickFileError::NoDirectorySelected)?;
     }
 
-    let promise = js_sys::Promise::new(&mut |resolve, reject| {
-        let closure = Closure::once_into_js(move |event: Event| {
-            if let Some(target) = event.target() {
-                if let Ok(input) = target.dyn_into::<HtmlInputElement>() {
-                    if let Some(files) = input.files() {
-                        let _ = resolve.call1(&JsValue::UNDEFINED, &files);
-                        return;
-                    }
-                }
+    let (sender, receiver) = futures_channel::oneshot::channel();
+    let sender = std::rc::Rc::new(std::cell::RefCell::new(Some(sender)));
+
+    let onchange = {
+        let sender = sender.clone();
+        let input = input.clone();
+        Closure::wrap(Box::new(move |_: Event| {
+            if let Some(sender) = sender.borrow_mut().take() {
+                let files = input.files();
+                let _ = sender.send(files);
             }
-            let _ = reject.call1(&JsValue::UNDEFINED, &JsValue::NULL);
-        });
+        }) as Box<dyn FnMut(_)>)
+    };
 
-        let _ = input.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref());
-        input.click();
-    });
+    input.set_onchange(Some(onchange.as_ref().unchecked_ref()));
+    input.click();
 
-    let result = JsFuture::from(promise)
-        .await
-        .map_err(|_| PickFileError::NoFileSelected)?;
-    result
-        .dyn_into::<web_sys::FileList>()
-        .map_err(|_| PickFileError::NoFileSelected)
+    let files = receiver.await.map_err(|_| PickFileError::NoFileSelected)?;
+    files.ok_or(if directory {
+        PickFileError::NoDirectorySelected
+    } else {
+        PickFileError::NoFileSelected
+    })
 }

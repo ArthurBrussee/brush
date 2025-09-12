@@ -242,7 +242,7 @@ impl AppPane for SettingsPanel {
                     load_option = Some(DataSource::PickFile);
                 }
 
-                let can_pick_dir = !cfg!(target_family = "wasm") && !cfg!(target_os = "android");
+                let can_pick_dir = !cfg!(target_os = "android");
                 if can_pick_dir
                     && ui
                         .add(

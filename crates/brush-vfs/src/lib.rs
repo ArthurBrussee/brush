@@ -13,6 +13,8 @@ use std::{
     sync::Arc,
 };
 
+pub use data_source::{DataSource, DataSourceError};
+
 use path_clean::PathClean;
 use tokio::{
     io::{AsyncBufRead, AsyncRead, AsyncReadExt, BufReader},
@@ -36,7 +38,7 @@ mod wasm_send {
     pub trait SendNotWasm: Send {}
     impl<T: Send> SendNotWasm for T {}
 }
-pub use data_source::DataSource;
+
 pub use wasm_send::*;
 
 pub trait DynRead: AsyncBufRead + SendNotWasm + Unpin {}
@@ -92,8 +94,11 @@ enum VfsContainer {
     Manual {
         readers: HashMap<PathBuf, SharedRead>,
     },
-    #[cfg(not(target_family = "wasm"))]
-    Directory { base_path: PathBuf },
+    Directory {
+        base_path: PathBuf,
+        #[cfg(target_family = "wasm")]
+        files: Option<HashMap<PathBuf, web_sys::File>>,
+    },
 }
 
 impl Debug for VfsContainer {
@@ -101,7 +106,6 @@ impl Debug for VfsContainer {
         match self {
             Self::Zip { .. } => f.debug_struct("Zip").finish(),
             Self::Manual { .. } => f.debug_struct("Manual").finish(),
-            #[cfg(not(target_family = "wasm"))]
             Self::Directory { .. } => f.debug_struct("Directory").finish(),
         }
     }
@@ -247,6 +251,8 @@ impl BrushVfs {
                     lookup: lookup_from_paths(&files),
                     container: VfsContainer::Directory {
                         base_path: dir.to_path_buf(),
+                        #[cfg(target_family = "wasm")]
+                        files: None,
                     },
                 })
             }
@@ -257,6 +263,21 @@ impl BrushVfs {
             let _ = dir;
             panic!("Cannot read paths on wasm");
         }
+    }
+
+    #[cfg(target_family = "wasm")]
+    pub fn from_wasm_files(
+        files: HashMap<PathBuf, web_sys::File>,
+    ) -> Result<Self, VfsConstructError> {
+        let paths: Vec<PathBuf> = files.keys().cloned().collect();
+
+        Ok(Self {
+            lookup: lookup_from_paths(&paths),
+            container: VfsContainer::Directory {
+                base_path: PathBuf::new(), // Empty path for WASM
+                files: Some(files),
+            },
+        })
     }
 
     pub fn files_with_extension<'a>(
@@ -321,13 +342,68 @@ impl BrushVfs {
                     )
                 })
             }
-            #[cfg(not(target_family = "wasm"))]
-            VfsContainer::Directory { base_path: dir } => {
-                // TODO: Use a string -> PathBuf cache.
-                let total_path = dir.join(path);
-                let file = tokio::fs::File::open(total_path).await?;
-                let file = tokio::io::BufReader::new(file);
-                Ok(Box::new(file))
+            VfsContainer::Directory {
+                base_path: _dir,
+                #[cfg(target_family = "wasm")]
+                files,
+            } => {
+                #[cfg(target_family = "wasm")]
+                if let Some(files) = files {
+                    let file = files.get(path).ok_or_else(|| {
+                        Error::new(
+                            io::ErrorKind::NotFound,
+                            format!("File not found: {}", path.display()),
+                        )
+                    })?;
+
+                    // Create a stream reader from the File object
+                    use futures_util::StreamExt;
+                    use tokio_util::bytes::Bytes;
+                    use tokio_util::io::StreamReader;
+                    use wasm_bindgen::JsCast;
+                    use wasm_streams::ReadableStream as WasmReadableStream;
+
+                    let readable_stream: web_sys::ReadableStream = file.stream();
+                    let wasm_stream = WasmReadableStream::from_raw(readable_stream);
+
+                    let byte_stream = wasm_stream.into_stream().map(|result| {
+                        result
+                            .map_err(|e| {
+                                io::Error::new(
+                                    io::ErrorKind::Other,
+                                    format!("Stream error: {:?}", e),
+                                )
+                            })
+                            .and_then(|chunk| {
+                                if let Ok(uint8_array) = chunk.dyn_into::<js_sys::Uint8Array>() {
+                                    let mut data = vec![0; uint8_array.length() as usize];
+                                    uint8_array.copy_to(&mut data);
+                                    Ok(Bytes::from(data))
+                                } else {
+                                    Err(io::Error::new(
+                                        io::ErrorKind::InvalidData,
+                                        "Invalid chunk type",
+                                    ))
+                                }
+                            })
+                    });
+
+                    let stream_reader = StreamReader::new(byte_stream);
+                    Ok(Box::new(tokio::io::BufReader::new(stream_reader)))
+                } else {
+                    Err(Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Cannot read filesystem paths on WASM",
+                    ))
+                }
+
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    let total_path = _dir.join(path);
+                    let file = tokio::fs::File::open(total_path).await?;
+                    let file = tokio::io::BufReader::new(file);
+                    Ok(Box::new(file))
+                }
             }
         }
     }

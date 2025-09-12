@@ -26,6 +26,7 @@ web-sys = { version = "0.3", features = ["File", "FileList", "HtmlInputElement",
 js-sys = "0.3"
 wasm-streams = "0.4"
 futures-util = "0.3"
+futures-channel = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1.0"
 

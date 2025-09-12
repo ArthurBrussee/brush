@@ -52,8 +52,16 @@ impl DataSource {
                 Ok(BrushVfs::from_reader(reader).await?)
             }
             Self::PickDirectory => {
-                let picked = rrfd::pick_directory().await?;
-                Ok(BrushVfs::from_path(&picked).await?)
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    let picked = rrfd::pick_directory().await?;
+                    Ok(BrushVfs::from_path(&picked).await?)
+                }
+                #[cfg(target_family = "wasm")]
+                {
+                    let file_map = rrfd::wasm::pick_directory_files().await?;
+                    Ok(BrushVfs::from_wasm_files(file_map)?)
+                }
             }
             Self::Url(url) => Self::fetch_url(url).await,
             Self::Path(path) => Ok(BrushVfs::from_path(Path::new(&path)).await?),
