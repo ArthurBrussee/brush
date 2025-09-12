@@ -9,7 +9,6 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     io::{self, Cursor, Error},
-    ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -66,6 +65,15 @@ impl PathKey {
             '/'.to_string() + &key
         };
         Self(key)
+    }
+}
+
+// Simple wrapper for Arc<Vec<u8>> that implements AsRef<[u8]> for Cursor
+struct ZipVec(Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for ZipVec {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -297,8 +305,8 @@ impl BrushVfs {
 
         match &self.container {
             VfsContainer::Zip { entries } => {
-                let reader = entries.get(path).expect("Unreachable").deref().clone();
-                Ok(Box::new(Cursor::new(reader)))
+                let data = entries.get(path).expect("Unreachable").clone();
+                Ok(Box::new(Cursor::new(ZipVec(data))))
             }
             VfsContainer::Manual { readers } => {
                 // Readers get taken out of the map as they are not cloneable.
