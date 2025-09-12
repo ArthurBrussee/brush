@@ -47,6 +47,7 @@ impl DataSource {
         match self {
             Self::PickFile => {
                 let reader = rrfd::pick_file().await?;
+                log::info!("Got file reader");
                 Ok(BrushVfs::from_reader(reader).await?)
             }
             Self::PickDirectory => {

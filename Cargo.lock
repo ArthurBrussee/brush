@@ -1221,6 +1221,7 @@ dependencies = [
 name = "brush-vfs"
 version = "0.2.0"
 dependencies = [
+ "log",
  "path-clean",
  "reqwest",
  "rrfd",
@@ -8310,11 +8311,21 @@ dependencies = [
 name = "rrfd"
 version = "0.2.0"
 dependencies = [
+ "bytes",
+ "futures",
+ "futures-util",
  "jni",
+ "js-sys",
  "lazy_static",
+ "log",
  "rfd",
  "thiserror 2.0.16",
  "tokio",
+ "tokio-util",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-streams",
+ "web-sys",
 ]
 
 [[package]]

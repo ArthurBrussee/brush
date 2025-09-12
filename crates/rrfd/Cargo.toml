@@ -9,15 +9,25 @@ license.workspace = true
 jni = "0.21.1"
 lazy_static = "1.5.0"
 thiserror.workspace = true
+log.workspace = true
+futures = "0.3"
 
-[target.'cfg(not(target_os = "android"))'.dependencies]
-rfd = { version = "0.15.0" }
+
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-tokio = { workspace = true, features = ["fs", "sync"] }
+tokio = { workspace = true, features = ["fs", "sync", "io-util"] }
+rfd = "0.15"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "io-util"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["File", "FileList", "HtmlInputElement", "Blob", "ReadableStream", "Window", "Event", "Document", "Element", "EventTarget", "Url", "HtmlAnchorElement"] }
+js-sys = "0.3"
+wasm-streams = "0.4"
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+bytes = "1.0"
 
 [lints]
 workspace = true

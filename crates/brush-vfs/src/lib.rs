@@ -179,8 +179,11 @@ impl BrushVfs {
                 },
             })
         } else if peek.starts_with(b"PK") {
+            log::info!("Reading zip file");
             let mut bytes = vec![];
             reader.read_to_end(&mut bytes).await?;
+            log::info!("Read zip file");
+
             let archive = ZipArchive::new(Cursor::new(ZipData {
                 data: Arc::new(bytes),
             }))?;
