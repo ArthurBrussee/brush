@@ -99,7 +99,7 @@ rerun = { version = "0.24", default-features = false, features = [
 ball-tree = "0.5.1"
 
 web-sys = { version = "0.3.74" }
-zip = { version = "4.2", default-features = false, features = ["deflate"] }
+async_zip = { version = "0.0.18", default-features = false, features = ["full-wasm"] }
 hashbrown = "0.15"
 parking_lot = "0.12"
 alphanumeric-sort = "1.5.3"

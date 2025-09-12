@@ -2,6 +2,7 @@ use crate::{BrushVfs, VfsConstructError};
 use rrfd::PickFileError;
 use serde::Deserialize;
 use std::{path::Path, str::FromStr};
+use tokio::io::BufReader;
 
 #[derive(Clone, Debug, Deserialize)]
 pub enum DataSource {
@@ -46,7 +47,7 @@ impl DataSource {
     pub async fn into_vfs(self) -> Result<BrushVfs, DataSourceError> {
         match self {
             Self::PickFile => {
-                let reader = rrfd::pick_file().await?;
+                let reader = BufReader::new(rrfd::pick_file().await?);
                 log::info!("Got file reader");
                 Ok(BrushVfs::from_reader(reader).await?)
             }
@@ -135,6 +136,7 @@ impl DataSource {
 
             let readable_stream = ReadableStream::from_raw(body);
             let async_read = readable_stream.into_async_read().compat();
+            let async_read = BufReader::new(async_read);
             Ok(BrushVfs::from_reader(async_read).await?)
         }
     }

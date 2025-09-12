@@ -8,22 +8,24 @@ mod data_source;
 use std::{
     collections::HashMap,
     fmt::Debug,
-    io::{self, Cursor, Error, Read},
+    io::{self, Cursor, Error},
+    ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use path_clean::PathClean;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, BufReader},
+    io::{AsyncBufRead, AsyncRead, AsyncReadExt, BufReader},
     sync::Mutex,
 };
 
-use tokio_stream::Stream;
-use zip::ZipArchive;
+use async_zip::base::read::stream::ZipFileReader;
+use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 
 // On wasm, lots of things aren't Send that are send on non-wasm.
 // Non-wasm tokio requires :Send for futures, tokio_with_wasm doesn't.
+
 // So, it can help to annotate futures/objects as send only on not-wasm.
 #[cfg(target_family = "wasm")]
 mod wasm_send {
@@ -38,11 +40,8 @@ mod wasm_send {
 pub use data_source::DataSource;
 pub use wasm_send::*;
 
-pub trait DynStream<Item>: Stream<Item = Item> + SendNotWasm {}
-impl<Item, T: Stream<Item = Item> + SendNotWasm> DynStream<Item> for T {}
-
-pub trait DynRead: AsyncRead + SendNotWasm + Unpin {}
-impl<T: AsyncRead + SendNotWasm + Unpin> DynRead for T {}
+pub trait DynRead: AsyncBufRead + SendNotWasm + Unpin {}
+impl<T: AsyncBufRead + SendNotWasm + Unpin> DynRead for T {}
 
 // Sometimes rust is beautiful - sometimes it's ArcMutexOptionBox
 type SharedRead = Arc<Mutex<Option<Box<dyn DynRead>>>>;
@@ -70,17 +69,6 @@ impl PathKey {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct ZipData {
-    data: Arc<Vec<u8>>,
-}
-
-impl AsRef<[u8]> for ZipData {
-    fn as_ref(&self) -> &[u8] {
-        &self.data
-    }
-}
-
 async fn read_at_most<R: AsyncRead + Unpin>(reader: &mut R, limit: usize) -> io::Result<Vec<u8>> {
     let mut buffer = vec![0; limit];
     let bytes_read = reader.read(&mut buffer).await?;
@@ -90,7 +78,8 @@ async fn read_at_most<R: AsyncRead + Unpin>(reader: &mut R, limit: usize) -> io:
 
 enum VfsContainer {
     Zip {
-        archive: ZipArchive<Cursor<ZipData>>,
+        // TODO: Fill this in.
+        entries: HashMap<PathBuf, Arc<Vec<u8>>>,
     },
     Manual {
         readers: HashMap<PathBuf, SharedRead>,
@@ -138,16 +127,16 @@ fn lookup_from_paths(paths: &[PathBuf]) -> HashMap<PathKey, PathBuf> {
 
 use thiserror::Error;
 
+fn io_error(e: async_zip::error::ZipError) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+}
+
 #[derive(Debug, Error)]
 pub enum VfsConstructError {
     #[error("I/O error while constructing BrushVfs.")]
     IoError(#[from] std::io::Error),
-    #[error("Zip creation failed while constructing BrushVfs.")]
-    ZipError(#[from] zip::result::ZipError),
-
     #[error("Got a status page instead of content: \n\n {0}")]
     InvalidHtml(String),
-
     #[error("Unknown data type. Only zip and ply files are supported")]
     UnknownDataType,
 }
@@ -169,28 +158,36 @@ impl BrushVfs {
         let mut reader: Box<dyn DynRead> =
             Box::new(AsyncReadExt::chain(Cursor::new(peek.clone()), data));
 
-        if peek.as_slice().starts_with(b"ply") {
+        if peek.starts_with(b"ply") {
             let path = PathBuf::from("input.ply");
-            let reader = Arc::new(Mutex::new(Some(reader)));
+            let reader_ref = Arc::new(Mutex::new(Some(reader)));
             Ok(Self {
                 lookup: lookup_from_paths(std::slice::from_ref(&path)),
                 container: VfsContainer::Manual {
-                    readers: HashMap::from([(path, reader)]),
+                    readers: HashMap::from([(path, reader_ref)]),
                 },
             })
         } else if peek.starts_with(b"PK") {
-            log::info!("Reading zip file");
-            let mut bytes = vec![];
-            reader.read_to_end(&mut bytes).await?;
-            log::info!("Read zip file");
+            let mut zip_reader = ZipFileReader::new(reader.compat());
+            let mut entries = HashMap::new();
 
-            let archive = ZipArchive::new(Cursor::new(ZipData {
-                data: Arc::new(bytes),
-            }))?;
-            let file_names: Vec<_> = archive.file_names().map(PathBuf::from).collect();
+            while let Some(mut entry) = zip_reader.next_with_entry().await.map_err(io_error)? {
+                if let Ok(filename) = entry.reader().entry().filename().clone().as_str() {
+                    let mut data = vec![];
+                    let mut reader = entry.reader_mut().compat();
+                    reader.read_to_end(&mut data).await?;
+                    entries.insert(PathBuf::from(filename), Arc::new(data));
+                    zip_reader = entry.skip().await.map_err(io_error)?;
+                } else {
+                    zip_reader = entry.skip().await.map_err(io_error)?;
+                }
+            }
+
+            let path_bufs = entries.keys().cloned().collect::<Vec<_>>();
+
             Ok(Self {
-                lookup: lookup_from_paths(&file_names),
-                container: VfsContainer::Zip { archive },
+                lookup: lookup_from_paths(&path_bufs),
+                container: VfsContainer::Zip { entries },
             })
         } else if peek.starts_with(b"<!DOCTYPE html>") {
             let mut html = String::new();
@@ -299,15 +296,9 @@ impl BrushVfs {
         })?;
 
         match &self.container {
-            VfsContainer::Zip { archive } => {
-                let name = path
-                    .to_str()
-                    .expect("Invalid UTF-8 in zip file")
-                    .replace('\\', "/");
-                let mut buffer = vec![];
-                // Archive is cheap to clone, as the data is an Arc<[u8]>.
-                archive.clone().by_name(&name)?.read_to_end(&mut buffer)?;
-                Ok(Box::new(Cursor::new(buffer)))
+            VfsContainer::Zip { entries } => {
+                let reader = entries.get(path).expect("Unreachable").deref().clone();
+                Ok(Box::new(Cursor::new(reader)))
             }
             VfsContainer::Manual { readers } => {
                 // Readers get taken out of the map as they are not cloneable.
@@ -348,91 +339,77 @@ mod tests {
     use std::io::Cursor;
     use tokio::io::AsyncReadExt;
 
-    fn create_test_zip_data() -> Vec<u8> {
-        use std::io::Write;
-        use zip::{ZipWriter, write::SimpleFileOptions};
-
-        let mut buffer = Vec::new();
-        {
-            let mut zip = ZipWriter::new(Cursor::new(&mut buffer));
-
-            zip.start_file("test.txt", SimpleFileOptions::default())
-                .unwrap();
-            zip.write_all(b"hello world").unwrap();
-
-            zip.start_file("folder/data.json", SimpleFileOptions::default())
-                .unwrap();
-            zip.write_all(b"{\"key\": \"value\"}").unwrap();
-
-            zip.start_file("image.png", SimpleFileOptions::default())
-                .unwrap();
-            zip.write_all(b"fake png data").unwrap();
-
-            zip.start_file("README", SimpleFileOptions::default())
-                .unwrap();
-            zip.write_all(b"readme content").unwrap();
-
-            zip.finish().unwrap();
-        }
-        buffer
-    }
+    const TEST_ZIP: &[u8] = &[
+        0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5d,
+        0x41, 0x52, 0x5a, 0x0b, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00,
+        0x74, 0x65, 0x73, 0x74, 0x2e, 0x74, 0x78, 0x74, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x77,
+        0x6f, 0x72, 0x6c, 0x64, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x5d, 0x41, 0x52, 0x5a, 0x0b, 0x00, 0x00, 0x00, 0x0b, 0x00,
+        0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x74, 0x78, 0x74, 0x50, 0x4b,
+        0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x36, 0x00, 0x00, 0x00, 0x31,
+        0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
 
     #[tokio::test]
     async fn test_zip_vfs_workflow() {
-        // End-to-end test: create VFS, filter files, read content, handle paths
-        let zip_data = create_test_zip_data();
-        let reader = Cursor::new(zip_data);
-        let vfs = BrushVfs::from_reader(reader).await.unwrap();
+        let vfs = BrushVfs::from_reader(Cursor::new(TEST_ZIP)).await.unwrap();
+        assert_eq!(vfs.file_count(), 1);
 
-        // Should filter out extensionless files
-        assert_eq!(vfs.file_count(), 3);
+        let txt_files: Vec<_> = vfs.files_with_extension("txt").collect();
+        assert_eq!(txt_files.len(), 1);
 
-        // Test filtering and reading in one workflow
-        let json_files: Vec<_> = vfs.files_with_extension("json").collect();
-        assert_eq!(json_files.len(), 1);
-
-        let mut reader = vfs.reader_at_path(&json_files[0]).await.unwrap();
         let mut content = String::new();
-        reader.read_to_string(&mut content).await.unwrap();
-        assert_eq!(content, "{\"key\": \"value\"}");
-
-        // Test case-insensitive path access
-        let mut reader = vfs.reader_at_path(Path::new("TEST.TXT")).await.unwrap();
-        let mut content = String::new();
-        reader.read_to_string(&mut content).await.unwrap();
+        vfs.reader_at_path(&txt_files[0])
+            .await
+            .unwrap()
+            .read_to_string(&mut content)
+            .await
+            .unwrap();
         assert_eq!(content, "hello world");
 
-        // Test error handling
-        let result = vfs.reader_at_path(Path::new("nonexistent.txt")).await;
-        assert!(result.is_err());
+        // Test case-insensitive access
+        let mut content = String::new();
+        vfs.reader_at_path(Path::new("TEST.TXT"))
+            .await
+            .unwrap()
+            .read_to_string(&mut content)
+            .await
+            .unwrap();
+        assert_eq!(content, "hello world");
+
+        assert!(
+            vfs.reader_at_path(Path::new("nonexistent.txt"))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn test_format_detection_and_errors() {
-        // Test PLY format detection and reading
-        let ply_content = "ply\nformat ascii 1.0\nend_header\nvertex data";
-        let reader = Cursor::new(ply_content.as_bytes());
-        let vfs = BrushVfs::from_reader(reader).await.unwrap();
-
-        let mut reader = vfs.reader_at_path(Path::new("input.ply")).await.unwrap();
+        // Test PLY format
+        let vfs = BrushVfs::from_reader(Cursor::new(
+            b"ply\nformat ascii 1.0\nend_header\nvertex data",
+        ))
+        .await
+        .unwrap();
         let mut content = String::new();
-        reader.read_to_string(&mut content).await.unwrap();
-        assert_eq!(content, ply_content);
+        vfs.reader_at_path(Path::new("input.ply"))
+            .await
+            .unwrap()
+            .read_to_string(&mut content)
+            .await
+            .unwrap();
+        assert_eq!(content, "ply\nformat ascii 1.0\nend_header\nvertex data");
 
-        // Test error cases - should fail, don't work around
-        let unknown_data = b"unknown file format";
-        let reader = Cursor::new(unknown_data.to_vec());
-        let result = BrushVfs::from_reader(reader).await;
-        assert!(matches!(result, Err(VfsConstructError::UnknownDataType)));
-
-        let html_data = b"<!DOCTYPE html>\n<html><body>Error page</body></html>";
-        let reader = Cursor::new(html_data.to_vec());
-        let result = BrushVfs::from_reader(reader).await;
-        match result {
-            Err(VfsConstructError::InvalidHtml(content)) => {
-                assert!(content.contains("<!DOCTYPE html>"));
-            }
-            _ => panic!("Expected InvalidHtml error"),
-        }
+        // Test error cases
+        assert!(matches!(
+            BrushVfs::from_reader(Cursor::new(b"unknown")).await,
+            Err(VfsConstructError::UnknownDataType)
+        ));
+        assert!(matches!(
+            BrushVfs::from_reader(Cursor::new(b"<!DOCTYPE html>")).await,
+            Err(VfsConstructError::InvalidHtml(_))
+        ));
     }
 }

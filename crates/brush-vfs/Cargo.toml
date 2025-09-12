@@ -9,13 +9,14 @@ license.workspace = true
 rrfd.path = "../rrfd"
 
 thiserror.workspace = true
-zip.workspace = true
+async_zip.workspace = true
 serde.workspace = true
 log.workspace = true
 
 tokio-stream.workspace = true
 path-clean = "1.0.1"
 tokio-util = { workspace = true, features = ["compat"] }
+futures-lite = "2.1.0"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "rt"] }

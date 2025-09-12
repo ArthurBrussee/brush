@@ -4,7 +4,7 @@ use std::time::Duration;
 use async_fn_stream::{TryStreamEmitter, try_fn_stream};
 use brush_render::gaussian_splats::Splats;
 use brush_render::{MainBackend, gaussian_splats::inverse_sigmoid, sh::rgb_to_sh};
-use brush_vfs::{DynStream, SendNotWasm};
+use brush_vfs::SendNotWasm;
 use burn::backend::wgpu::WgpuDevice;
 use burn::tensor::{Tensor, TensorData};
 use glam::{Vec3, Vec4, Vec4Swizzles};
@@ -13,7 +13,7 @@ use serde::de::{DeserializeSeed, Error};
 use serde_ply::{DeserializeError, PlyChunkedReader, RowVisitor};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
-use tokio_stream::StreamExt;
+use tokio_stream::{Stream, StreamExt};
 
 use crate::ply_gaussian::{PlyGaussian, QuantSh, QuantSplat};
 
@@ -118,7 +118,7 @@ pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
     subsample_points: Option<u32>,
     device: WgpuDevice,
     streaming: bool,
-) -> impl DynStream<Result<SplatMessage, DeserializeError>> {
+) -> impl Stream<Item = Result<SplatMessage, DeserializeError>> {
     try_fn_stream(|emitter| async move {
         // TODO: Just make chunk ply take in data and try to get a header? Simpler maybe.
         let mut file = PlyChunkedReader::new();

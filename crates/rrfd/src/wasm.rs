@@ -61,7 +61,6 @@ pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
     let files = pick_files(false).await?;
     let file = files.get(0).ok_or(PickFileError::NoFileSelected)?;
 
-    // Convert File -> ReadableStream -> wasm-streams Stream -> AsyncRead
     let readable_stream: ReadableStream = file.stream();
     let wasm_stream = WasmReadableStream::from_raw(readable_stream);
 
@@ -82,7 +81,6 @@ pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
             })
     });
 
-    // StreamReader handles all the AsyncRead implementation for us!
     Ok(StreamReader::new(byte_stream))
 }
 
