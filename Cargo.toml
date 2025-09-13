@@ -70,7 +70,6 @@ serde-ply = "0.2.1"
 burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',
-    'metal'
 ] }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
 burn-ir = { git = "https://github.com/tracel-ai/burn" }

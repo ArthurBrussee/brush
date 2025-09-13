@@ -28,11 +28,7 @@ pub mod gaussian_splats;
 pub mod render;
 pub mod validation;
 
-#[cfg(target_vendor = "apple")]
-pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u8>;
-#[cfg(not(target_vendor = "apple"))]
 pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u32>;
-
 pub type MainBackend = Fusion<MainBackendBase>;
 
 #[derive(Debug, Clone)]
