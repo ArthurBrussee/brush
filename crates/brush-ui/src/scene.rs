@@ -27,6 +27,7 @@ struct RenderState {
     cam: Camera,
     frame: f32,
     settings: CameraSettings,
+    grid_opacity: f32,
 }
 
 struct ErrorDisplay {
@@ -124,11 +125,7 @@ impl ScenePanel {
         let channel = tokio::sync::mpsc::unbounded_channel();
 
         // Create Widget3D for 3D overlay rendering
-        let widget_3d = Some(Widget3D::new(
-            device.clone(),
-            queue.clone(),
-            renderer.clone(),
-        ));
+        let widget_3d = Some(Widget3D::new(device.clone(), queue.clone()));
 
         Self {
             backbuffer: BurnTexture::new(renderer, device, queue),
@@ -187,12 +184,14 @@ impl ScenePanel {
 
         let focal_y = fov_to_focal(camera.fov_y, size.y) as f32;
         camera.fov_x = focal_to_fov(focal_y as f64, size.x);
+        let grid_opacity = process.get_grid_opacity();
 
         let state = RenderState {
             size,
             cam: camera.clone(),
             frame: self.frame,
             settings: settings.clone(),
+            grid_opacity,
         };
 
         let dirty = self.last_state != Some(state.clone());
@@ -215,6 +214,19 @@ impl ScenePanel {
                     settings.splat_scale,
                 );
                 self.backbuffer.update_texture(img);
+
+                // Render 3D widgets directly onto the splat backbuffer
+                if let Some(widget_3d) = &mut self.widget_3d
+                    && let Some(texture) = self.backbuffer.texture()
+                {
+                    widget_3d.render_to_texture(
+                        &camera,
+                        process.model_local_to_world(),
+                        size,
+                        texture,
+                        grid_opacity,
+                    );
+                }
             }
         }
 
@@ -246,23 +258,6 @@ impl ScenePanel {
                     },
                     Color32::WHITE,
                 );
-            }
-
-            // Render 3D alignment widgets on top
-            if let Some(widget_3d) = &mut self.widget_3d {
-                if let Some(texture_id) =
-                    widget_3d.render(&camera, process.model_local_to_world(), size)
-                {
-                    ui.painter().image(
-                        texture_id,
-                        rect,
-                        Rect {
-                            min: egui::pos2(0.0, 0.0),
-                            max: egui::pos2(1.0, 1.0),
-                        },
-                        Color32::WHITE,
-                    );
-                }
             }
         });
 
@@ -421,6 +416,19 @@ impl ScenePanel {
                         settings.splat_scale = Some(scale);
                         process.set_cam_settings(&settings);
                     }
+
+                    ui.add_space(4.0);
+
+                    // Grid toggle
+                    ui.horizontal(|ui| {
+                        let mut settings = process.get_cam_settings();
+                        if ui
+                            .checkbox(&mut settings.grid_enabled, "Show Grid")
+                            .changed()
+                        {
+                            process.set_cam_settings(&settings);
+                        }
+                    });
 
                     ui.add_space(4.0);
                 });

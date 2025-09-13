@@ -121,6 +121,15 @@ impl UiProcess {
         self.read().controls.settings.clone()
     }
 
+    pub fn get_grid_opacity(&self) -> f32 {
+        let inner = self.read();
+        if inner.controls.settings.grid_enabled {
+            1.0 // Grid fully visible when enabled
+        } else {
+            inner.controls.get_grid_opacity() // Use fade timer when disabled
+        }
+    }
+
     pub fn set_cam_settings(&self, settings: &CameraSettings) {
         let mut inner = self.write();
         inner.controls.settings = settings.clone();

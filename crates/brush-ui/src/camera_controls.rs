@@ -22,8 +22,12 @@ pub struct CameraController {
     pub settings: CameraSettings,
 
     model_transform_velocity: f32,
+    model_transform_pitch_velocity: f32,
     fly_velocity: Vec3,
     orbit_velocity: Vec2,
+
+    // Grid fade tracking
+    grid_fade_timer: f32,
 
     pub model_local_to_world: Affine3A,
 }
@@ -127,8 +131,10 @@ impl CameraController {
             focus_distance: 5.0,
             settings,
             model_transform_velocity: 0.0,
+            model_transform_pitch_velocity: 0.0,
             fly_velocity: Vec3::ZERO,
             orbit_velocity: Vec2::ZERO,
+            grid_fade_timer: 0.0,
             model_local_to_world: Affine3A::IDENTITY,
         }
     }
@@ -299,6 +305,7 @@ impl CameraController {
         let transform_speed = 0.3;
         let ramp_speed = 20.0;
 
+        // Roll with left/right arrows
         if ui.input(|r| r.key_down(egui::Key::ArrowLeft)) {
             self.model_transform_velocity = exp_lerp(
                 self.model_transform_velocity,
@@ -306,6 +313,7 @@ impl CameraController {
                 delta_time,
                 ramp_speed,
             );
+            self.grid_fade_timer = 1.0; // Show grid when rotating
         } else if ui.input(|r| r.key_down(egui::Key::ArrowRight)) {
             self.model_transform_velocity = exp_lerp(
                 self.model_transform_velocity,
@@ -313,23 +321,35 @@ impl CameraController {
                 delta_time,
                 ramp_speed,
             );
+            self.grid_fade_timer = 1.0; // Show grid when rotating
         } else {
             self.model_transform_velocity = 0.0;
         }
 
         let rotation_delta = self.model_transform_velocity * delta_time;
+        let pitch_delta = self.model_transform_pitch_velocity * delta_time;
 
-        // Rotate around camera forward axis (line of sight)
-        let camera_forward = self.rotation * Vec3::Z;
-        // Rotate around focal point
-        let translate_to_origin = Affine3A::from_translation(-self.position);
-        let rotate = Affine3A::from_rotation_translation(
-            Quat::from_axis_angle(camera_forward, rotation_delta),
-            Vec3::ZERO,
-        );
-        let translate_back = Affine3A::from_translation(self.position);
-        let rotation_transform = translate_back * rotate * translate_to_origin;
-        self.model_local_to_world = rotation_transform * self.model_local_to_world;
+        // Apply both roll and pitch rotations
+        if rotation_delta.abs() > 0.001 || pitch_delta.abs() > 0.001 {
+            // Rotate around camera forward axis (roll)
+            let camera_forward = self.rotation * Vec3::Z;
+            let camera_right = self.rotation * Vec3::X;
+
+            // Combine roll and pitch rotations
+            let roll_rotation = Quat::from_axis_angle(camera_forward, rotation_delta);
+            let pitch_rotation = Quat::from_axis_angle(camera_right, pitch_delta);
+            let combined_rotation = roll_rotation * pitch_rotation;
+
+            // Apply rotation around focal point
+            let translate_to_origin = Affine3A::from_translation(-self.position);
+            let rotate = Affine3A::from_rotation_translation(combined_rotation, Vec3::ZERO);
+            let translate_back = Affine3A::from_translation(self.position);
+            let rotation_transform = translate_back * rotate * translate_to_origin;
+            self.model_local_to_world = rotation_transform * self.model_local_to_world;
+        }
+
+        // Fade out grid timer
+        self.grid_fade_timer = (self.grid_fade_timer - delta_time * 2.0).max(0.0);
 
         let delta = self.fly_velocity * delta_time;
         self.position += delta.x * right + delta.y * up + delta.z * forward;
@@ -377,9 +397,15 @@ impl CameraController {
         self.orbit_velocity = Vec2::ZERO;
         self.fly_velocity = Vec3::ZERO;
         self.model_transform_velocity = 0.0;
+        self.model_transform_pitch_velocity = 0.0;
     }
 
     pub fn get_model_transform_velocity(&self) -> f32 {
         self.model_transform_velocity
+    }
+
+    pub fn get_grid_opacity(&self) -> f32 {
+        // Smooth fade curve
+        self.grid_fade_timer.powf(2.0)
     }
 }

@@ -1,4 +1,4 @@
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -12,6 +12,8 @@ struct Vertex {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
     view_proj: [[f32; 4]; 4],
+    grid_opacity: f32,
+    _padding: [f32; 3], // Padding for alignment
 }
 
 impl Vertex {
@@ -20,7 +22,7 @@ impl Vertex {
 
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &Self::ATTRIBS,
         }
@@ -35,8 +37,8 @@ pub struct Widget3D {
     uniform_bind_group: wgpu::BindGroup,
     grid_vertex_buffer: wgpu::Buffer,
     grid_vertex_count: u32,
-    axes_vertex_buffer: wgpu::Buffer,
-    axes_vertex_count: u32,
+    up_axis_vertex_buffer: wgpu::Buffer,
+    up_axis_vertex_count: u32,
 }
 
 impl Widget3D {
@@ -59,7 +61,7 @@ impl Widget3D {
             label: Some("Widget 3D Bind Group Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, // Fragment needs access for grid_opacity
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -98,7 +100,7 @@ impl Widget3D {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -133,10 +135,10 @@ impl Widget3D {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let (axes_vertices, axes_vertex_count) = Self::create_axes_geometry();
-        let axes_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Axes Vertex Buffer"),
-            contents: bytemuck::cast_slice(&axes_vertices),
+        let (up_axis_vertices, up_axis_vertex_count) = Self::create_up_axis_geometry();
+        let up_axis_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Up Axis Vertex Buffer"),
+            contents: bytemuck::cast_slice(&up_axis_vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -148,12 +150,8 @@ impl Widget3D {
             uniform_bind_group,
             grid_vertex_buffer,
             grid_vertex_count,
-            axes_vertex_buffer,
-            axes_vertex_count,
-            output_texture: None,
-            output_view: None,
-            texture_id: None,
-            renderer,
+            up_axis_vertex_buffer,
+            up_axis_vertex_count,
         }
     }
 
@@ -163,26 +161,27 @@ impl Widget3D {
         let step = 1.0;
         let color = [0.3, 0.3, 0.3, 0.8]; // Semi-transparent gray
 
-        // Create grid lines in XY plane (Z=0) for OpenCV coordinates (Y-down, Z-forward)
+        // Create grid lines in XZ plane (Y=0) for OpenCV coordinates
+        // This creates a ground plane since Y is down in OpenCV
         let mut i = -size;
         while i <= size {
-            // Lines parallel to X axis (horizontal lines)
+            // Lines parallel to X axis
             vertices.push(Vertex {
-                position: [-size, i, 0.0],
+                position: [-size, 0.0, i],
                 color,
             });
             vertices.push(Vertex {
-                position: [size, i, 0.0],
+                position: [size, 0.0, i],
                 color,
             });
 
-            // Lines parallel to Y axis (vertical lines)
+            // Lines parallel to Z axis
             vertices.push(Vertex {
-                position: [i, -size, 0.0],
+                position: [i, 0.0, -size],
                 color,
             });
             vertices.push(Vertex {
-                position: [i, size, 0.0],
+                position: [i, 0.0, size],
                 color,
             });
 
@@ -192,49 +191,30 @@ impl Widget3D {
         (vertices.clone(), vertices.len() as u32)
     }
 
-    fn create_axes_geometry() -> (Vec<Vertex>, u32) {
+    fn create_up_axis_geometry() -> (Vec<Vertex>, u32) {
         let mut vertices = Vec::new();
-        let length = 2.0;
+        let length = 1.5;
 
-        // X axis - Red (right)
+        // Single blue line pointing up (negative Y in OpenCV coordinates)
         vertices.push(Vertex {
             position: [0.0, 0.0, 0.0],
-            color: [1.0, 0.0, 0.0, 1.0],
+            color: [0.0, 0.5, 1.0, 1.0], // Light blue
         });
         vertices.push(Vertex {
-            position: [length, 0.0, 0.0],
-            color: [1.0, 0.0, 0.0, 1.0],
+            position: [0.0, -length, 0.0], // Negative Y is up
+            color: [0.0, 0.5, 1.0, 1.0],   // Light blue
         });
 
-        // Y axis - Green (down for OpenCV)
-        vertices.push(Vertex {
-            position: [0.0, 0.0, 0.0],
-            color: [0.0, 1.0, 0.0, 1.0],
-        });
-        vertices.push(Vertex {
-            position: [0.0, length, 0.0], // Positive Y is down in OpenCV
-            color: [0.0, 1.0, 0.0, 1.0],
-        });
-
-        // Z axis - Blue (forward into scene)
-        vertices.push(Vertex {
-            position: [0.0, 0.0, 0.0],
-            color: [0.0, 0.0, 1.0, 1.0],
-        });
-        vertices.push(Vertex {
-            position: [0.0, 0.0, length], // Positive Z is forward in OpenCV
-            color: [0.0, 0.0, 1.0, 1.0],
-        });
-
-        (vertices, 6)
+        (vertices, 2)
     }
 
     pub fn render_to_texture(
-        &mut self,
+        &self,
         camera: &brush_render::camera::Camera,
         model_transform: glam::Affine3A,
         size: glam::UVec2,
         target_texture: &wgpu::Texture,
+        grid_opacity: f32,
     ) {
         let output_view = target_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -255,15 +235,26 @@ impl Widget3D {
         });
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Update uniforms - use same approach as splat rendering
-        let view_matrix = camera.world_to_local(); // Same as splats: camera.world_to_local()
+        // Use perspective_lh since camera uses +Z as forward
+        // But flip Y since camera uses Y-down while perspective_lh uses Y-up
         let aspect = size.x as f32 / size.y as f32;
-        let proj_matrix = Mat4::perspective_rh(camera.fov_y as f32, aspect, 0.1, 1000.0);
-        let view_proj = proj_matrix * Mat4::from(view_matrix);
-        let model_view_proj = view_proj * Mat4::from(model_transform);
+        let proj_matrix = Mat4::perspective_lh(camera.fov_y as f32, aspect, 0.1, 1000.0);
+
+        // Y-flip to convert from Y-up to Y-down
+        let y_flip = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
+
+        // The camera already has model transform baked in
+        // To get world-space view, we need to undo the model transform by applying its inverse
+        let view_matrix = camera.world_to_local();
+        let world_view = Mat4::from(view_matrix) * Mat4::from(model_transform.inverse());
+
+        // Apply Y flip and combine with projection
+        let view_proj = proj_matrix * y_flip * world_view;
 
         let uniforms = Uniforms {
-            view_proj: model_view_proj.to_cols_array_2d(),
+            view_proj: view_proj.to_cols_array_2d(),
+            grid_opacity,
+            _padding: [0.0; 3],
         };
 
         self.queue
@@ -307,9 +298,9 @@ impl Widget3D {
             render_pass.set_vertex_buffer(0, self.grid_vertex_buffer.slice(..));
             render_pass.draw(0..self.grid_vertex_count, 0..1);
 
-            // Draw axes
-            render_pass.set_vertex_buffer(0, self.axes_vertex_buffer.slice(..));
-            render_pass.draw(0..self.axes_vertex_count, 0..1);
+            // Draw up axis
+            render_pass.set_vertex_buffer(0, self.up_axis_vertex_buffer.slice(..));
+            render_pass.draw(0..self.up_axis_vertex_count, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
