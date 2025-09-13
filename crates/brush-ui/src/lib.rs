@@ -11,6 +11,7 @@ mod panels;
 mod scene;
 mod settings;
 mod stats;
+mod widget_3d;
 
 use eframe::egui_wgpu::WgpuConfiguration;
 use std::sync::Arc;

@@ -165,4 +165,14 @@ impl BurnTexture {
     pub fn reset(&mut self) {
         self.state = None;
     }
+
+    /// Get the underlying texture for additional rendering
+    pub fn texture(&self) -> Option<&wgpu::Texture> {
+        self.state.as_ref().map(|s| &s.texture)
+    }
+
+    /// Get device and queue for additional rendering
+    pub fn device_queue(&self) -> (&wgpu::Device, &wgpu::Queue) {
+        (&self.device, &self.queue)
+    }
 }

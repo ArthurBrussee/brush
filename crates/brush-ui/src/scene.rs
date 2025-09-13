@@ -18,7 +18,7 @@ use web_time::Instant;
 
 use crate::{
     UiMode, app::CameraSettings, burn_texture::BurnTexture, draw_checkerboard, panels::AppPane,
-    ui_process::UiProcess,
+    ui_process::UiProcess, widget_3d::Widget3D,
 };
 
 #[derive(Clone, PartialEq)]
@@ -110,6 +110,9 @@ pub struct ScenePanel {
 
     // Keep track of what was last rendered.
     last_state: Option<RenderState>,
+
+    // 3D widgets for visualization
+    widget_3d: Option<Widget3D>,
 }
 
 impl ScenePanel {
@@ -119,6 +122,14 @@ impl ScenePanel {
         renderer: Arc<EguiRwLock<Renderer>>,
     ) -> Self {
         let channel = tokio::sync::mpsc::unbounded_channel();
+
+        // Create Widget3D for 3D overlay rendering
+        let widget_3d = Some(Widget3D::new(
+            device.clone(),
+            queue.clone(),
+            renderer.clone(),
+        ));
+
         Self {
             backbuffer: BurnTexture::new(renderer, device, queue),
             last_draw: None,
@@ -132,6 +143,7 @@ impl ScenePanel {
             frame: 0.0,
             fully_loaded: false,
             export_channel: channel,
+            widget_3d,
         }
     }
 
@@ -234,6 +246,23 @@ impl ScenePanel {
                     },
                     Color32::WHITE,
                 );
+            }
+
+            // Render 3D alignment widgets on top
+            if let Some(widget_3d) = &mut self.widget_3d {
+                if let Some(texture_id) =
+                    widget_3d.render(&camera, process.model_local_to_world(), size)
+                {
+                    ui.painter().image(
+                        texture_id,
+                        rect,
+                        Rect {
+                            min: egui::pos2(0.0, 0.0),
+                            max: egui::pos2(1.0, 1.0),
+                        },
+                        Color32::WHITE,
+                    );
+                }
             }
         });
 

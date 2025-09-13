@@ -1229,6 +1229,7 @@ dependencies = [
  "burn-cubecl",
  "burn-fusion",
  "burn-wgpu",
+ "bytemuck",
  "eframe",
  "egui",
  "egui_tiles",

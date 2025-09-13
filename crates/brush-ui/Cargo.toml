@@ -32,6 +32,7 @@ humantime.workspace = true
 tokio-stream.workspace = true
 parking_lot.workspace = true
 wasm-bindgen.workspace = true
+bytemuck = { version = "1.14", features = ["derive"] }
 
 [lints]
 workspace = true
