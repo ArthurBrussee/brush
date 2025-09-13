@@ -79,7 +79,6 @@ skip = [
     { name = 'objc2-app-kit' },    # eframe & rfd
     { name = 'objc2' },            # eframe & rfd
     { name = 'windows' },          # Wgpu & kiddo
-    { name = 'windows-link' },
 
     { name = 'hashbrown' },
     { name = 'zip' },

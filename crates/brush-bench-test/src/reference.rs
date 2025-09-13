@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
 use brush_render::{
+    MainBackend,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
 };
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 use brush_rerun::burn_to_rerun::{BurnToImage, BurnToRerun};
 use burn::{
-    backend::{Autodiff, Wgpu, wgpu::WgpuDevice},
+    backend::{Autodiff, wgpu::WgpuDevice},
     prelude::Backend,
     tensor::{Float, Int, Tensor, TensorPrimitive},
 };
@@ -16,7 +17,7 @@ use std::{fs::File, io::Read};
 
 use crate::safetensor_utils::{safetensor_to_burn, splats_from_safetensors};
 
-type DiffBack = Autodiff<Wgpu>;
+type DiffBack = Autodiff<MainBackend>;
 
 const USE_RERUN: bool = true;
 

@@ -15,18 +15,16 @@ pub use serde_ply::{DeserializeError, SerializeError};
 
 #[cfg(test)]
 mod test_utils {
+    use brush_render::MainBackend;
     use brush_render::gaussian_splats::Splats;
     use brush_render::sh::sh_coeffs_for_degree;
-    use burn::backend::Wgpu;
     use burn::backend::wgpu::WgpuDevice;
 
-    pub type TestBackend = Wgpu;
-
-    pub fn create_test_splats(sh_degree: u32) -> Splats<TestBackend> {
+    pub fn create_test_splats(sh_degree: u32) -> Splats<MainBackend> {
         create_test_splats_with_count(sh_degree, 1)
     }
 
-    pub fn create_test_splats_with_count(sh_degree: u32, num_splats: usize) -> Splats<TestBackend> {
+    pub fn create_test_splats_with_count(sh_degree: u32, num_splats: usize) -> Splats<MainBackend> {
         let device = WgpuDevice::default();
         let coeffs_per_channel = sh_coeffs_for_degree(sh_degree) as usize;
 
@@ -57,7 +55,7 @@ mod test_utils {
             opacities.push(0.8 - offset * 0.1);
         }
 
-        Splats::<TestBackend>::from_raw(
+        Splats::<MainBackend>::from_raw(
             means,
             Some(rotations),
             Some(log_scales),

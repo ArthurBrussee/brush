@@ -242,11 +242,12 @@ pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, Seri
 mod tests {
     use super::*;
     use crate::import::load_splat_from_ply;
-    use crate::test_utils::{TestBackend, create_test_splats};
+    use crate::test_utils::create_test_splats;
+    use brush_render::MainBackend;
     use burn::backend::wgpu::WgpuDevice;
     use std::io::Cursor;
 
-    async fn assert_coeffs_match(orig: &Splats<TestBackend>, imported: &Splats<TestBackend>) {
+    async fn assert_coeffs_match(orig: &Splats<MainBackend>, imported: &Splats<MainBackend>) {
         let orig_sh: Vec<f32> = orig
             .sh_coeffs
             .val()

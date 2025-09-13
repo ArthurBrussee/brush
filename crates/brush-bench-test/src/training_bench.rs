@@ -286,7 +286,7 @@ mod training {
             let mut splats = gen_splats(&device, splat_count);
             let mut trainer = SplatTrainer::new(&config, &device, splats.clone()).await;
 
-            for step in 0..50 {
+            for step in 0..20 {
                 let batch = &batches[step % batches.len()];
                 let (new_splats, _) = trainer.step(step as u32, batch, splats);
                 splats = new_splats;

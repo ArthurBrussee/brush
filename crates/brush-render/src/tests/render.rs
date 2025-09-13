@@ -1,10 +1,8 @@
-use crate::{SplatForward, camera::Camera};
+use crate::{MainBackend, SplatForward, camera::Camera};
 use assert_approx_eq::assert_approx_eq;
 use burn::tensor::{Tensor, TensorPrimitive};
-use burn_wgpu::{Wgpu, WgpuDevice};
+use burn_wgpu::WgpuDevice;
 use glam::Vec3;
-
-type Back = Wgpu;
 
 #[test]
 fn renders_at_all() {
@@ -21,15 +19,15 @@ fn renders_at_all() {
     let img_size = glam::uvec2(32, 32);
     let device = WgpuDevice::DefaultDevice;
     let num_points = 8;
-    let means = Tensor::<Back, 2>::zeros([num_points, 3], &device);
-    let log_scales = Tensor::<Back, 2>::ones([num_points, 3], &device) * 2.0;
-    let quats: Tensor<Back, 2> =
-        Tensor::<Back, 1>::from_floats(glam::Quat::IDENTITY.to_array(), &device)
+    let means = Tensor::<MainBackend, 2>::zeros([num_points, 3], &device);
+    let log_scales = Tensor::<MainBackend, 2>::ones([num_points, 3], &device) * 2.0;
+    let quats: Tensor<MainBackend, 2> =
+        Tensor::<MainBackend, 1>::from_floats(glam::Quat::IDENTITY.to_array(), &device)
             .unsqueeze_dim(0)
             .repeat_dim(0, num_points);
-    let sh_coeffs = Tensor::<Back, 3>::ones([num_points, 1, 3], &device);
-    let raw_opacity = Tensor::<Back, 1>::zeros([num_points], &device);
-    let (output, aux) = <Back as SplatForward<Back>>::render_splats(
+    let sh_coeffs = Tensor::<MainBackend, 3>::ones([num_points, 1, 3], &device);
+    let raw_opacity = Tensor::<MainBackend, 1>::zeros([num_points], &device);
+    let (output, aux) = <MainBackend as SplatForward<MainBackend>>::render_splats(
         &cam,
         img_size,
         means.into_primitive().tensor(),
@@ -42,7 +40,7 @@ fn renders_at_all() {
     );
     aux.validate_values();
 
-    let output: Tensor<Back, 3> = Tensor::from_primitive(TensorPrimitive::Float(output));
+    let output: Tensor<MainBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(output));
     let rgb = output.clone().slice([0..32, 0..32, 0..3]);
     let alpha = output.slice([0..32, 0..32, 3..4]);
     let rgb_mean = rgb.mean().to_data().as_slice::<f32>().expect("Wrong type")[0];
