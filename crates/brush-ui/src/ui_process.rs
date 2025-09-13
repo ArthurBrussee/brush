@@ -95,7 +95,7 @@ impl UiProcess {
     }
 
     pub fn model_local_to_world(&self) -> glam::Affine3A {
-        self.read().model_local_to_world
+        self.read().controls.model_local_to_world
     }
 
     pub fn current_camera(&self) -> Camera {
@@ -125,8 +125,6 @@ impl UiProcess {
         let mut inner = self.write();
         inner.controls.settings = settings.clone();
         inner.splat_scale = settings.splat_scale;
-        let cam = inner.camera.clone();
-        inner.match_controls_to(&cam);
     }
 
     pub fn set_cam_transform(&self, position: Vec3, rotation: Quat) {
@@ -143,17 +141,29 @@ impl UiProcess {
 
     pub fn focus_view(&self, view: &SceneView) {
         let mut inner = self.write();
-        inner.match_controls_to(&view.camera);
+
         inner.camera = view.camera.clone();
         inner.controls.stop_movement();
-        inner.view_aspect = Some(view.image.width() as f32 / view.image.height() as f32);
+
+        // We want to set the view matrix such that MV == view view matrix.
+        // new_view_mat * model_mat == view_view_mat
+        // new_view_mat = view_view_mat * model_mat.inverse()
+        let new_view_mat =
+            view.camera.world_to_local() * inner.controls.model_local_to_world.inverse();
+
+        let view_local_to_world = new_view_mat.inverse();
+        let (_, rot, translate) = view_local_to_world.to_scale_rotation_translation();
+        inner.controls.position = translate;
+        inner.controls.rotation = rot;
+
         // TODO: Set focus distance based on splat extent.
+        inner.view_aspect = Some(view.image.width() as f32 / view.image.height() as f32);
     }
 
     pub fn set_model_up(&self, up_axis: Vec3) {
         let mut inner = self.write();
-        inner.model_local_to_world = Affine3A::from_rotation_translation(
-            Quat::from_rotation_arc(up_axis.normalize(), Vec3::NEG_Y),
+        inner.controls.model_local_to_world = Affine3A::from_rotation_translation(
+            Quat::from_rotation_arc(Vec3::NEG_Y, up_axis.normalize()),
             Vec3::ZERO,
         );
     }
@@ -283,7 +293,6 @@ struct UiProcessInner {
     view_aspect: Option<f32>,
     splat_scale: Option<f32>,
     controls: CameraController,
-    model_local_to_world: Affine3A,
     running_process: Option<RunningProcess>,
     selected_view: Option<SceneView>,
     cur_device_ctx: Option<DeviceContext>,
@@ -301,7 +310,6 @@ impl UiProcessInner {
         Self {
             camera,
             controls,
-            model_local_to_world: Affine3A::IDENTITY,
             view_aspect: None,
             splat_scale: None,
             is_loading: false,
@@ -317,16 +325,6 @@ impl UiProcessInner {
         if let Some(ctx) = &self.cur_device_ctx {
             ctx.ctx.request_repaint();
         }
-    }
-
-    fn match_controls_to(&mut self, cam: &Camera) {
-        // We want model * controls.transform() == view_cam.transform() ->
-        //  controls.transform = model.inverse() * view_cam.transform.
-        let transform = self.model_local_to_world.inverse() * cam.local_to_world();
-
-        let (_, rot, translate) = transform.to_scale_rotation_translation();
-        self.controls.position = translate;
-        self.controls.rotation = rot;
     }
 
     fn set_camera_transform(&mut self, position: Vec3, rotation: Quat) {

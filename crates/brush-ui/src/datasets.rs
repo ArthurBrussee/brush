@@ -223,9 +223,8 @@ impl AppPane for DatasetPanel {
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         let pick_scene = selected_scene(self.view_type, &self.cur_dataset).clone();
-        let total_transform =
-            process.model_local_to_world() * process.current_camera().local_to_world();
-        let mut nearest_view_ind = pick_scene.get_nearest_view(total_transform);
+        let mv = process.current_camera().world_to_local() * process.model_local_to_world();
+        let mut nearest_view_ind = pick_scene.get_nearest_view(mv.inverse());
 
         if let Some(nearest) = nearest_view_ind.as_mut() {
             // Update image if dirty.

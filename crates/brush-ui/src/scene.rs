@@ -166,8 +166,8 @@ impl ScenePanel {
         // Get camera after modifying the controls.
         let mut camera = process.current_camera();
 
-        let total_transform = process.model_local_to_world() * camera.local_to_world();
-        let (_, rotation, position) = total_transform.to_scale_rotation_translation();
+        let view_eff = (camera.world_to_local() * process.model_local_to_world()).inverse();
+        let (_, rotation, position) = view_eff.to_scale_rotation_translation();
         camera.position = position;
         camera.rotation = rotation;
 
