@@ -111,6 +111,8 @@ jobs:
 
     name: cargo-deny ${{ matrix.target }}
     runs-on: ubuntu-22.04
+    env:
+      RUSTC_WRAPPER: "" # Disable sccache for cargo-deny
     steps:
       - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2

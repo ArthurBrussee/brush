@@ -37,10 +37,7 @@ pub fn smooth_orbit(
     dt: f32,
     distance: f32,
 ) -> (Vec3, Quat) {
-    // Calculate focal point (where we're looking at)
     let focal_point = position + rotation * Vec3::Z * distance;
-
-    // Extract current pitch angle from rotation
     let forward = rotation * Vec3::Z;
     let current_pitch = -forward.y.asin();
 
