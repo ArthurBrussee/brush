@@ -67,8 +67,8 @@ pub struct CameraSettings {
     pub speed_scale: Option<f32>,
     pub splat_scale: Option<f32>,
     pub background: Option<Vec3>,
+    pub grid_enabled: Option<bool>,
     pub clamping: CameraClamping,
-    pub grid_enabled: bool,
 }
 
 pub struct App {

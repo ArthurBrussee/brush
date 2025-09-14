@@ -421,11 +421,9 @@ impl ScenePanel {
 
                     // Grid toggle
                     ui.horizontal(|ui| {
-                        let mut settings = process.get_cam_settings();
-                        if ui
-                            .checkbox(&mut settings.grid_enabled, "Show Grid")
-                            .changed()
-                        {
+                        let mut enabled = process.get_cam_settings().grid_enabled.unwrap_or(false);
+                        if ui.checkbox(&mut enabled, "Show Grid").changed() {
+                            settings.grid_enabled = Some(enabled);
                             process.set_cam_settings(&settings);
                         }
                     });

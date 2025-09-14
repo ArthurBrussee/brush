@@ -123,7 +123,7 @@ impl UiProcess {
 
     pub fn get_grid_opacity(&self) -> f32 {
         let inner = self.read();
-        if inner.controls.settings.grid_enabled {
+        if inner.controls.settings.grid_enabled.is_some_and(|g| g) {
             1.0 // Grid fully visible when enabled
         } else {
             inner.controls.get_grid_opacity() // Use fade timer when disabled

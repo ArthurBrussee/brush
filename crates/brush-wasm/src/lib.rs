@@ -71,6 +71,7 @@ impl CameraSettings {
         min_yaw: Option<f32>,
         max_yaw: Option<f32>,
         splat_scale: Option<f32>,
+        grid_enabled: Option<bool>,
     ) -> Self {
         Self(brush_ui::app::CameraSettings {
             speed_scale,
@@ -85,6 +86,7 @@ impl CameraSettings {
                 max_yaw,
             },
             background: background.map(|v| v.to_glam()),
+            grid_enabled,
         })
     }
 }
