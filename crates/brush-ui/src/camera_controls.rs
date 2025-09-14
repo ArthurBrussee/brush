@@ -20,15 +20,11 @@ pub struct CameraController {
     pub rotation: Quat,
     pub focus_distance: f32,
     pub settings: CameraSettings,
-
     model_transform_velocity: f32,
     model_transform_vertical_velocity: f32,
     fly_velocity: Vec3,
     orbit_velocity: Vec2,
-
-    // Grid fade tracking
     grid_fade_timer: f32,
-
     pub model_local_to_world: Affine3A,
 }
 
