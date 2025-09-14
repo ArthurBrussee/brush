@@ -27,6 +27,8 @@ jobs:
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.6
+        with:
+          version: "v0.8.2"
 
       - name: Install packages (Linux)
         if: runner.os == 'Linux'
@@ -77,6 +79,10 @@ jobs:
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.6
+        with:
+          version: "v0.8.2"
+
+      - run: sudo apt-get update && sudo apt-get install libgtk-3-dev libatk1.0-dev
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -131,6 +137,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.89.0
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+        with:
+          version: "v0.8.2"
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
