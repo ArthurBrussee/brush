@@ -9,6 +9,7 @@ env:
   RUSTFLAGS: -D warnings
   RUSTDOCFLAGS: -D warnings
   CARGO_INCREMENTAL: 0
+  RUSTC_WRAPPER: sccache
 
 jobs:
   fmt-crank-check:
@@ -24,6 +25,9 @@ jobs:
           toolchain: 1.89.0
           components: rustfmt, clippy
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
       - name: Install packages (Linux)
         if: runner.os == 'Linux'
         uses: awalsh128/cache-apt-pkgs-action@v1.5.3
@@ -32,17 +36,14 @@ jobs:
           version: 1.0
           execute_install_scripts: true
 
-      - name: Cache
+      - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-1.89.0-${{ hashFiles('env') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-1.89.0-
-            ${{ runner.os }}-cargo-
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: check --all-features
         run: cargo check --locked --all-features --all-targets
@@ -74,17 +75,17 @@ jobs:
           toolchain: 1.89.0
           targets: wasm32-unknown-unknown
 
-      - name: Cache
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-1.89.0-${{ hashFiles('env') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-1.89.0-
-            ${{ runner.os }}-cargo-
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check wasm32
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check -p brush-wasm --target wasm32-unknown-unknown
@@ -131,17 +132,14 @@ jobs:
         with:
           toolchain: 1.89.0
 
-      - name: Cache
+      - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-1.89.0-${{ hashFiles('env') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-1.89.0-
-            ${{ runner.os }}-cargo-
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
         run: cargo test --all --all-features
