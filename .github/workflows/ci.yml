@@ -128,10 +128,3 @@ jobs:
 
       - name: Run doc-tests
         run: cargo test --all --all-features --doc
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results
-          path: "**/tests/snapshots"
