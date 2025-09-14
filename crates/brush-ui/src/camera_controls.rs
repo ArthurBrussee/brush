@@ -56,7 +56,6 @@ pub fn smooth_orbit(
     let forward_proj = Vec3::new(forward.x, 0.0, forward.z).normalize();
     let current_yaw = (-forward_proj.x).atan2(forward_proj.z);
 
-    // Clamp the new yaw angle
     let new_yaw = smooth_clamp(
         current_yaw - delta_yaw,
         clamping.min_yaw.map(|x| x.to_radians()),
@@ -65,9 +64,7 @@ pub fn smooth_orbit(
         50.0,
     );
 
-    // New delta clamped to not go over min/max yaw
     let delta_yaw = current_yaw - new_yaw;
-    // Create yaw rotation quaternion
     let yaw = Quat::from_axis_angle(Vec3::NEG_Y, -delta_yaw);
     let new_rotation = (yaw * pitch * rotation).normalize();
     let new_position = focal_point - new_rotation * Vec3::Z * distance;
