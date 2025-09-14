@@ -31,10 +31,17 @@ jobs:
           version: 1.0
           execute_install_scripts: true
 
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
+      - name: Cache
+        uses: actions/cache@v4
         with:
-          cache-all-crates: true
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-1.89.0-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-1.89.0-
+            ${{ runner.os }}-cargo-
 
       - name: check --all-features
         run: cargo check --locked --all-features --all-targets
@@ -68,10 +75,17 @@ jobs:
 
       - run: sudo apt-get update && sudo apt-get install libgtk-3-dev libatk1.0-dev
 
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
+      - name: Cache
+        uses: actions/cache@v4
         with:
-          cache-all-crates: true
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-1.89.0-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-1.89.0-
+            ${{ runner.os }}-cargo-
 
       - name: Check wasm32
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check -p brush-wasm --target wasm32-unknown-unknown
@@ -118,10 +132,17 @@ jobs:
         with:
           toolchain: 1.89.0
 
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
+      - name: Cache
+        uses: actions/cache@v4
         with:
-          cache-all-crates: true
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-1.89.0-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-1.89.0-
+            ${{ runner.os }}-cargo-
 
       - name: Run tests
         run: cargo test --all --all-features
