@@ -49,35 +49,13 @@ impl UiProcess {
     }
 }
 
-// Wrap the write guard, so we can redraw the UI after any changes.
-struct UiProcessWriteGuard<'a>(parking_lot::RwLockWriteGuard<'a, UiProcessInner>);
-impl Drop for UiProcessWriteGuard<'_> {
-    fn drop(&mut self) {
-        self.0.repaint();
-    }
-}
-
-impl std::ops::Deref for UiProcessWriteGuard<'_> {
-    type Target = UiProcessInner;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::DerefMut for UiProcessWriteGuard<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 impl UiProcess {
     fn read(&self) -> parking_lot::RwLockReadGuard<'_, UiProcessInner> {
         self.0.read()
     }
 
-    fn write(&self) -> UiProcessWriteGuard<'_> {
-        UiProcessWriteGuard(self.0.write())
+    fn write(&self) -> parking_lot::RwLockWriteGuard<'_, UiProcessInner> {
+        self.0.write()
     }
 }
 
@@ -138,14 +116,17 @@ impl UiProcess {
 
     pub fn set_cam_transform(&self, position: Vec3, rotation: Quat) {
         self.write().set_camera_transform(position, rotation);
+        self.read().repaint();
     }
 
     pub fn set_cam_fov(&self, fov_y: f64) {
         self.write().camera.fov_y = fov_y;
+        self.read().repaint();
     }
 
     pub fn set_cam_focus_distance(&self, distance: f32) {
         self.write().controls.focus_distance = distance;
+        self.read().repaint();
     }
 
     pub fn focus_view(&self, view: &SceneView) {
@@ -167,6 +148,7 @@ impl UiProcess {
 
         // TODO: Set focus distance based on splat extent.
         inner.view_aspect = Some(view.image.width() as f32 / view.image.height() as f32);
+        inner.repaint();
     }
 
     pub fn set_model_up(&self, up_axis: Vec3) {
@@ -175,6 +157,7 @@ impl UiProcess {
             Quat::from_rotation_arc(Vec3::NEG_Y, up_axis.normalize()),
             Vec3::ZERO,
         );
+        inner.repaint();
     }
 
     pub fn connect_device(&self, device: WgpuDevice, ctx: egui::Context) {
@@ -214,10 +197,11 @@ impl UiProcess {
 
                 let is_train_step = matches!(msg, Ok(ProcessMessage::TrainStep { .. }));
 
-                // Stop the process if noone is listening anymore.
+                // // Stop the process if noone is listening anymore.
                 if sender.send(msg).await.is_err() {
                     break;
                 }
+
                 // Check if training is paused. Don't care about other messages as pausing loading
                 // doesn't make much sense.
                 if is_train_step
@@ -229,14 +213,11 @@ impl UiProcess {
                         Some(ControlMessage::Paused(false))
                     ) {}
                 }
-
                 // Give back control to the runtime.
                 // This only really matters in the browser:
                 // on native, receiving also yields. In the browser that doesn't yield
                 // back control fully though whereas yield_now() does.
-                if cfg!(target_family = "wasm") {
-                    tokio_wasm::task::yield_now().await;
-                }
+                tokio_wasm::task::yield_now().await;
             }
         });
 
@@ -258,14 +239,17 @@ impl UiProcess {
         }
     }
 
-    pub fn try_recv_message(&self) -> Option<Result<ProcessMessage>> {
+    pub fn message_queue(&self) -> Vec<Result<ProcessMessage>> {
+        let mut ret = vec![];
         let mut inner = self.write();
         if let Some(process) = inner.running_process.as_mut() {
-            // If none, just return none.
-            let msg = process.messages.try_recv().ok()?;
-
+            while let Ok(msg) = process.messages.try_recv() {
+                ret.push(msg);
+            }
+        }
+        for msg in &ret {
             // Keep track of things the ui process needs.
-            match msg.as_ref() {
+            match msg {
                 Ok(ProcessMessage::Dataset { dataset }) => {
                     inner.selected_view = dataset.train.views.last().cloned();
                 }
@@ -278,12 +262,8 @@ impl UiProcess {
                 }
                 _ => (),
             }
-            drop(inner);
-            // Forward msg.
-            Some(msg)
-        } else {
-            None
         }
+        ret
     }
 
     pub fn ui_mode(&self) -> UiMode {

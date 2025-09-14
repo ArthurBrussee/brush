@@ -134,10 +134,7 @@ impl App {
     fn receive_messages(&mut self) {
         let _span = trace_span!("Receive Messages").entered();
 
-        let mut messages = vec![];
-        while let Some(message) = self.tree_ctx.process.try_recv_message() {
-            messages.push(message);
-        }
+        let messages = self.tree_ctx.process.message_queue();
 
         for message in messages {
             match message {
@@ -188,40 +185,35 @@ impl eframe::App for App {
         // Recursive function to compute visibility bottom-up
         let mut tile_visibility = HashMap::new();
 
-        {
-            let _span = trace_span!("Compute UI visibility").entered();
+        fn compute_visibility(
+            tile_id: TileId,
+            tiles: &Tiles<PaneType>,
+            process: &UiProcess,
+            memo: &mut HashMap<TileId, bool>,
+        ) -> bool {
+            if let Some(&cached) = memo.get(&tile_id) {
+                return cached;
+            }
 
-            fn compute_visibility(
-                tile_id: TileId,
-                tiles: &Tiles<PaneType>,
-                process: &UiProcess,
-                memo: &mut HashMap<TileId, bool>,
-            ) -> bool {
-                if let Some(&cached) = memo.get(&tile_id) {
-                    return cached;
+            let c = tiles.get(tile_id).expect("Must come from valid parent");
+            let visible = match c {
+                Tile::Pane(pane) => pane.is_visible(process),
+                Tile::Container(container) => {
+                    // Container is visible if any child is visible
+                    container
+                        .active_children()
+                        .any(|&child_id| compute_visibility(child_id, tiles, process, memo))
                 }
-
-                let c = tiles.get(tile_id).expect("Must come from valid parent");
-                let visible = match c {
-                    Tile::Pane(pane) => pane.is_visible(process),
-                    Tile::Container(container) => {
-                        // Container is visible if any child is visible
-                        container
-                            .active_children()
-                            .any(|&child_id| compute_visibility(child_id, tiles, process, memo))
-                    }
-                };
-                memo.insert(tile_id, visible);
-                visible
-            }
-
-            // Compute visibility for all tiles
-            for tile_id in self.tree.tiles.tile_ids().collect::<Vec<_>>() {
-                self.tree.set_visible(
-                    tile_id,
-                    compute_visibility(tile_id, &self.tree.tiles, &process, &mut tile_visibility),
-                );
-            }
+            };
+            memo.insert(tile_id, visible);
+            visible
+        }
+        // Compute visibility for all tiles
+        for tile_id in self.tree.tiles.tile_ids().collect::<Vec<_>>() {
+            self.tree.set_visible(
+                tile_id,
+                compute_visibility(tile_id, &self.tree.tiles, &process, &mut tile_visibility),
+            );
         }
 
         egui::CentralPanel::default()
