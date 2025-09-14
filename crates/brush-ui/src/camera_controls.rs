@@ -74,10 +74,8 @@ pub fn smooth_orbit(
 
     // New delta clamped to not go over min/max yaw
     let delta_yaw = current_yaw - new_yaw;
-
     // Create yaw rotation quaternion
     let yaw = Quat::from_axis_angle(Vec3::NEG_Y, -delta_yaw);
-
     let new_rotation = (yaw * pitch * rotation).normalize();
     let new_position = focal_point - new_rotation * Vec3::Z * distance;
 
