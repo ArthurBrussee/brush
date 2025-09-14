@@ -10,6 +10,7 @@ env:
   RUSTDOCFLAGS: -D warnings
   CARGO_INCREMENTAL: 0
   RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: true
 
 jobs:
   fmt-crank-check:
@@ -26,9 +27,9 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.8.2"
+          version: "v0.10.0"
 
       - name: Install packages (Linux)
         if: runner.os == 'Linux'
@@ -37,15 +38,6 @@ jobs:
           packages: libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgtk-3-dev # libgtk-3-dev is used by rfd
           version: 1.0
           execute_install_scripts: true
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: check --all-features
         run: cargo check --locked --all-features --all-targets
@@ -78,20 +70,11 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.8.2"
+          version: "v0.10.0"
 
       - run: sudo apt-get update && sudo apt-get install libgtk-3-dev libatk1.0-dev
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check wasm32
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check -p brush-wasm --target wasm32-unknown-unknown
@@ -113,6 +96,7 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       RUSTC_WRAPPER: "" # Disable sccache for cargo-deny
+      SCCACHE_GHA_ENABLED: false
     steps:
       - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -121,8 +105,6 @@ jobs:
           log-level: error
           command: check
           arguments: --target  ${{ matrix.target }}
-
-  # ---------------------------------------------------------------------------
 
   # ---------------------------------------------------------------------------
 
@@ -141,18 +123,9 @@ jobs:
           toolchain: 1.89.0
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.9
         with:
-          version: "v0.8.2"
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          version: "v0.10.0"
 
       - name: Run tests
         run: cargo test --all --all-features
