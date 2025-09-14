@@ -6,6 +6,7 @@
     "build:wasm-release": "cd ../crates/brush-wasm && wasm-pack build --release --target bundler --out-dir ../../brush_nextjs/pkg",
     "build:wasm-dev": "cd ../crates/brush-wasm && wasm-pack build --dev --target bundler --out-dir ../../brush_nextjs/pkg",
     "dev": "npm run build:wasm-dev && next dev --turbopack --experimental-https",
+    "release": "npm run build:wasm-release && next dev --turbopack --experimental-https",
     "build": "npm run build:wasm-release && next build --turbopack"
   },
   "dependencies": {

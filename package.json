@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "cd brush_nextjs && npm run dev",
+    "release": "cd brush_nextjs && npm run release",
     "build": "cd brush_nextjs && npm run build",
     "build:wasm-dev": "cd brush_nextjs && npm run build:wasm-dev"
   },
