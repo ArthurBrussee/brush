@@ -120,14 +120,20 @@ alphanumeric-sort = "1.5.3"
 # cubecl-core = { path = "../cubecl/crates/cubecl-core" }
 # cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
 
+[patch."https://github.com/tracel-ai/cubecl"]
+cubecl = { git = "https://github.com/ArthurBrussee/cubecl", branch = "sg-size" }
+cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl", branch = "sg-size" }
+cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl", branch = "sg-size" }
+cubecl-core = { git = "https://github.com/ArthurBrussee/cubecl", branch = "sg-size" }
+cubecl-runtime = { git = "https://github.com/ArthurBrussee/cubecl", branch = "sg-size" }
+
 [patch.crates-io]
-# wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }
-# naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "25-sg-enable" }
+wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v26" }
+naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v26" }
 
-egui = { git = "https://github.com/emilk/egui", rev = "refs/pull/7340/head"  }
-eframe = { git = "https://github.com/emilk/egui", rev = "refs/pull/7340/head" }
-emath = { git = "https://github.com/emilk/egui", rev = "refs/pull/7340/head" }
-
+egui = { git = "https://github.com/emilk/egui", rev = "refs/pull/7540/head"  }
+eframe = { git = "https://github.com/emilk/egui", rev = "refs/pull/7540/head" }
+emath = { git = "https://github.com/emilk/egui", rev = "refs/pull/7540/head" }
 
 # Uncomment this to use local wgpu and naga.
 # wgpu.path = "../wgpu/wgpu"

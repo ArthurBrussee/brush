@@ -12,7 +12,10 @@ use burn_cubecl::kernel::into_contiguous;
 use glam::uvec2;
 
 kernel_source_gen!(ProjectBackwards {}, project_backwards);
-kernel_source_gen!(RasterizeBackwards { hard_float }, rasterize_backwards);
+kernel_source_gen!(
+    RasterizeBackwards { hard_float, webgpu },
+    rasterize_backwards
+);
 
 #[derive(Debug, Clone)]
 pub struct SplatGrads<B: Backend> {
@@ -95,12 +98,14 @@ pub(crate) fn render_backward(
                 AtomicFeature::Add,
             ));
 
+    let webgpu = cfg!(target_family = "wasm");
+
     // Use checked execution, as the atomic loops are potentially unbounded.
     tracing::trace_span!("RasterizeBackwards").in_scope(|| {
         // SAFETY: Kernel checked to have no OOB, bounded loops.
         unsafe {
             client.execute_unchecked(
-                RasterizeBackwards::task(hard_floats),
+                RasterizeBackwards::task(hard_floats, webgpu),
                 CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
                 Bindings::new().with_buffers(vec![
                     uniforms_buffer.handle.clone().binding(),

@@ -36,9 +36,6 @@ function Brush() {
   const maxFocusDistance = getFloat(searchParams, 'max_focus_distance');
   const speedScale = getFloat(searchParams, 'speed_scale');
 
-  console.log("focusDistance", focusDistance);
-  console.log("URL", url);
-
   return <BrushViewer
     url={url}
     fullsplat={fullsplat}

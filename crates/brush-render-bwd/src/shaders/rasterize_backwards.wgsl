@@ -58,6 +58,8 @@ const PIXELS_PER_THREAD: u32 = 4u;
 var<workgroup> local_batch: array<helpers::ProjectedSplat, THREAD_COUNT>;
 var<workgroup> load_gid: array<u32, THREAD_COUNT>;
 
+var<workgroup> range_uniform: vec2u;
+
 // kernel function for rasterizing each tile
 // each thread treats a single pixel
 // each thread group uses the same gaussian data in a tile
@@ -101,10 +103,13 @@ fn main(
 
     // have all threads in tile process the same gaussians in batches
     // first collect gaussians between the bin counts.
-    let range = vec2u(
+    range_uniform = vec2u(
         tile_offsets[tile_id * 2],
-        tile_offsets[tile_id * 2 + 1]
+        tile_offsets[tile_id * 2 + 1],
     );
+
+    // Stupid hack as Chrome isn't convinced the range variable is uniform, which it better be.
+    let range = workgroupUniformLoad(&range_uniform);
 
     // each thread loads one gaussian at a time before rasterizing its
     // designated pixels
@@ -194,15 +199,23 @@ fn main(
                 pix_outs[i].a = next_T;
             }
 
+            #ifdef WEBGPU
+                let anyGrad = true;
+                let doAdd = subgroupAny(hasGrad) && subgroup_invocation_id == 0u;
+            #else
+                let anyGrad = subgroupAny(hasGrad);
+                let doAdd = subgroup_invocation_id == 0u;
+            #endif
+
             // Now do subgroup reduction on thread-accumulated gradients (4x fewer atomics!)
-            if subgroupAny(hasGrad) {
+            if anyGrad {
                 let sum_xy = subgroupAdd(v_xy_thread);
                 let sum_conic = subgroupAdd(v_conic_thread);
                 let sum_rgb = subgroupAdd(v_rgb_thread);
                 let sum_alpha = subgroupAdd(v_alpha_thread);
                 let sum_refine = subgroupAdd(v_refine_thread);
 
-                if subgroup_invocation_id == 0u {
+                if doAdd {
                     let global_gid = load_gid[t];
 
                     write_grads_atomic(global_gid * 8 + 0, sum_xy.x);
