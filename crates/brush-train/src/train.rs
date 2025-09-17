@@ -380,6 +380,7 @@ impl SplatTrainer {
             .inner()
             .random_like(Distribution::Uniform(0.0, 1.0))
             .lower_elem(0.01);
+
         let prune_mask = alpha_mask
             .bool_or(scale_small)
             .bool_or(scale_big)
@@ -442,7 +443,7 @@ impl SplatTrainer {
         // Update current bounds based on the splats.
         self.bounds = splats.clone().get_bounds(BOUND_PERCENTILE).await;
 
-        client.memory_cleanup();
+        // client.memory_cleanup();
 
         (
             splats,
