@@ -178,7 +178,7 @@ fn main(
                     conic.y * delta.x + conic.z * delta.y
                 );
 
-                let v_xy_abs = abs(v_xy_local) * vec2f(uniforms.img_size.xy);
+                let v_xy_abs = abs(v_xy_local);
 
                 // Divide as we don't have sum vis == 1, so reweight these gradients comparatively.
                 let final_a = max(rgb_pixel_finals[i].a, 0.001f);
@@ -214,7 +214,8 @@ fn main(
                 let sum_conic = subgroupAdd(v_conic_thread);
                 let sum_rgb = subgroupAdd(v_rgb_thread);
                 let sum_alpha = subgroupAdd(v_alpha_thread);
-                let sum_refine = subgroupAdd(v_refine_thread);
+                let refine_scale = f32(max(uniforms.img_size.x, uniforms.img_size.y));
+                let sum_refine = subgroupAdd(v_refine_thread * refine_scale);
 
                 if doAdd {
                     let global_gid = load_gid[t];

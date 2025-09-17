@@ -53,7 +53,7 @@ pub struct TrainConfig {
     pub refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[arg(long, help_heading = "Refine options", default_value = "0.00012")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0005")]
     pub growth_grad_threshold: f32,
 
     /// What fraction of splats that are deemed as needing to grow do actually grow.
