@@ -358,7 +358,7 @@ impl SplatTrainer {
         let alpha_mask = splats.opacities().inner().lower_elem(MIN_OPACITY);
         let scales = splats.scales().inner();
 
-        let scale_small = scales.clone().lower_elem(1e-9).any_dim(1).squeeze(1);
+        let scale_small = scales.clone().lower_elem(1e-10).any_dim(1).squeeze(1);
         let scale_big = scales
             .greater_elem(max_allowed_bounds)
             .any_dim(1)
@@ -373,13 +373,14 @@ impl SplatTrainer {
             .greater_elem(max_allowed_bounds)
             .any_dim(1)
             .squeeze(1);
-        // Delete 1% of gaussians randomly.
-        let rand_mask = splats
-            .raw_opacity
-            .val()
-            .inner()
-            .random_like(Distribution::Uniform(0.0, 1.0))
-            .lower_elem(0.01);
+
+        // // Delete 1% of gaussians randomly.
+        // let rand_mask = splats
+        //     .raw_opacity
+        //     .val()
+        //     .inner()
+        //     .random_like(Distribution::Uniform(0.0, 1.0))
+        //     .lower_elem(0.01);
 
         let prune_mask = alpha_mask
             .bool_or(scale_small)
@@ -500,12 +501,13 @@ impl SplatTrainer {
             let inv_opac: Tensor<_, 1> = 1.0 - cur_opac;
             let new_opac: Tensor<_, 1> = 1.0 - inv_opac.sqrt();
             let new_raw_opac = inv_sigmoid(new_opac.clamp(MIN_OPACITY, 1.0 - MIN_OPACITY));
-            let new_scales = scale_down_largest_dim(cur_scales.clone(), 0.5);
+            let new_scales = scale_down_largest_dim(cur_scales.clone() * 0.9, 0.5);
             let new_log_scales = new_scales.log();
 
+            // Move in direction of scaling axis.
             let samples = quaternion_vec_multiply(
                 cur_rots.clone(),
-                Tensor::random([refine_count, 3], Distribution::Normal(0.0, 0.5), device)
+                Tensor::random([refine_count, 1], Distribution::Normal(0.0, 1.0), device)
                     * cur_scales,
             );
 
