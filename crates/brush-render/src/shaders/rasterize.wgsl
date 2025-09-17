@@ -90,15 +90,12 @@ fn main(
                     break;
                 }
 
-                let vis = alpha * T;
-
                 #ifdef BWD_INFO
                     // Count visible if contribution is at least somewhat significant.
-                    if vis > 1e-3f {
-                        visible[load_gid[t]] = 1.0;
-                    }
+                    visible[load_gid[t]] = 1.0;
                 #endif
 
+                let vis = alpha * T;
                 pix_out += max(color.rgb, vec3f(0.0)) * vis;
                 T = next_T;
             }

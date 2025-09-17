@@ -178,7 +178,7 @@ fn main(
                     conic.y * delta.x + conic.z * delta.y
                 );
 
-                let v_xy_abs = abs(v_xy_local) * vec2f(uniforms.img_size.xy / 2);
+                let v_xy_abs = abs(v_xy_local) * vec2f(uniforms.img_size.xy);
 
                 // Divide as we don't have sum vis == 1, so reweight these gradients comparatively.
                 let final_a = max(rgb_pixel_finals[i].a, 0.001f);

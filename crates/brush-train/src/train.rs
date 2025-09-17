@@ -63,7 +63,7 @@ fn create_default_optimizer() -> OptimizerType {
     AdamScaledConfig::new().with_epsilon(1e-15).init()
 }
 
-const BOUND_PERCENTILE: f32 = 0.8;
+const BOUND_PERCENTILE: f32 = 0.75;
 
 impl SplatTrainer {
     pub async fn new<B: Backend>(
@@ -147,8 +147,7 @@ impl SplatTrainer {
 
         let visible: Tensor<_, 1> = Tensor::from_primitive(TensorPrimitive::Float(aux.visible));
 
-        // Invisible splats still have a loss. Otherwise, they would never die off.
-        let vis_weight = visible.clone() + 0.1;
+        let vis_weight = visible.clone();
 
         let loss = trace_span!("Calculate losses").in_scope(|| {
             let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();
@@ -291,17 +290,22 @@ impl SplatTrainer {
         // let the splats settle in without noise, not much point in exploring regions anymore.
         // trace_span!("Noise means").in_scope(|| {
         let inv_opac: Tensor<_, 1> = 1.0 - splats.opacities();
-        let noise_weight = inv_opac.inner().powi_scalar(100.0).clamp(0.0, 1.0) * vis_weight.inner();
+        let noise_weight = inv_opac.inner().powi_scalar(150.0).clamp(0.0, 1.0);
         // Only noise gaussians visible in this step. Otherwise, areas not commonly
         // visible slowly degrade over time.
         let noise_weight = noise_weight.unsqueeze_dim(1);
-        let samples = quaternion_vec_multiply(
-            splats.rotations_normed().inner(),
-            Tensor::random(
-                [splats.num_splats() as usize, 3],
-                Distribution::Normal(0.0, 1.0),
-                &device,
-            ) * splats.scales().inner(),
+        // let samples = quaternion_vec_multiply(
+        //     splats.rotations_normed().inner(),
+        //     Tensor::random(
+        //         [splats.num_splats() as usize, 3],
+        //         Distribution::Normal(0.0, 1.0),
+        //         &device,
+        //     ) * splats.scales().inner(),
+        // );
+        let samples = Tensor::random(
+            [splats.num_splats() as usize, 3],
+            Distribution::Normal(0.0, 1.0),
+            &device,
         );
 
         // Only allow noised gaussians to travel at most the entire extent of the current bounds.
@@ -501,7 +505,7 @@ impl SplatTrainer {
             let inv_opac: Tensor<_, 1> = 1.0 - cur_opac;
             let new_opac: Tensor<_, 1> = 1.0 - inv_opac.sqrt();
             let new_raw_opac = inv_sigmoid(new_opac.clamp(MIN_OPACITY, 1.0 - MIN_OPACITY));
-            let new_scales = scale_down_largest_dim(cur_scales.clone() * 0.9, 0.5);
+            let new_scales = scale_down_largest_dim(cur_scales.clone(), 0.5);
             let new_log_scales = new_scales.log();
 
             // Move in direction of scaling axis.
