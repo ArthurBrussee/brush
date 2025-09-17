@@ -90,11 +90,9 @@ fn main(
                     break;
                 }
 
-                if next_T > 1e-2f {
-                    #ifdef BWD_INFO
-                        visible[load_gid[t]] = 1.0;
-                    #endif
-                }
+                #ifdef BWD_INFO
+                    visible[load_gid[t]] = 1.0;
+                #endif
 
                 let vis = alpha * T;
                 pix_out += max(color.rgb, vec3f(0.0)) * vis;

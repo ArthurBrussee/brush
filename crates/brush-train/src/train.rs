@@ -149,6 +149,8 @@ impl SplatTrainer {
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
         let gt_rgb = batch.img_tensor.clone().slice(s![.., .., 0..3]);
 
+        let visible: Tensor<_, 1> = Tensor::from_primitive(TensorPrimitive::Float(aux.visible));
+
         let loss = trace_span!("Calculate losses").in_scope(|| {
             let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();
 
@@ -186,11 +188,11 @@ impl SplatTrainer {
             let opac_loss_weight = self.config.opac_loss_weight * aux_loss_weight;
 
             // Invisible splats still have a loss. Otherwise, they would never die off.
-            // let vis_weight = visible.clone() + 1e-3;
+
+            let vis_weight = visible.clone() + 0.1;
 
             let loss = if opac_loss_weight > 0.0 {
-                loss + (splats.opacities()).sum() * opac_loss_weight
-                // loss + (splats.opacities() * vis_weight.clone()).sum() * opac_loss_weight
+                loss + (splats.opacities() * vis_weight.clone()).sum() * opac_loss_weight
             } else {
                 loss
             };
@@ -199,8 +201,7 @@ impl SplatTrainer {
             if scale_loss_weight > 0.0 {
                 // Scale loss is the sum of the squared differences between the
                 // predicted scale and the target scale.
-                //let scale_loss = (splats.scales() * vis_weight.unsqueeze_dim(1)).sum();
-                let scale_loss = splats.scales().powi_scalar(2.0).sum_dim(1).sqrt().sum();
+                let scale_loss = (splats.scales() * vis_weight.unsqueeze_dim(1)).sum();
                 loss + scale_loss * scale_loss_weight
             } else {
                 loss
@@ -224,9 +225,8 @@ impl SplatTrainer {
             let record = self
                 .refine_record
                 .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
-            let visible: Tensor<Autodiff<MainBackend>, 1> =
-                Tensor::from_primitive(TensorPrimitive::Float(aux.visible));
-            record.gather_stats(refine_weight, visible.inner());
+
+            record.gather_stats(refine_weight, visible.clone().inner());
         });
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
