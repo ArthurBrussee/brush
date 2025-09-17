@@ -384,8 +384,7 @@ impl SplatTrainer {
         let prune_mask = alpha_mask
             .bool_or(scale_small)
             .bool_or(scale_big)
-            .bool_or(bound_mask)
-            .bool_or(rand_mask);
+            .bool_or(bound_mask);
 
         let (mut splats, refiner, pruned_count) =
             prune_points(splats, &mut record, refiner, prune_mask).await;
