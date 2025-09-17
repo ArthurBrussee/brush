@@ -554,8 +554,8 @@ impl SplatTrainer {
 
         // Lower opacity slowly over time.
         splats.raw_opacity = splats.raw_opacity.map(|f| {
-            let new_opac = inv_sigmoid(sigmoid(f.inner()) - 0.005 * (1.0 - train_t));
-            Tensor::from_inner(new_opac).require_grad()
+            let new_opac = sigmoid(f.inner()) - 0.0025 * (1.0 - train_t).clamp(1e-12, 1.0 - 1e-12);
+            Tensor::from_inner(inv_sigmoid(new_opac)).require_grad()
         });
 
         self.optim = Some(create_default_optimizer().load_record(record));

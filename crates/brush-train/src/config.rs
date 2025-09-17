@@ -44,7 +44,7 @@ pub struct TrainConfig {
     pub lr_scale_end: f64,
 
     /// Learning rate for the rotation parameters.
-    #[arg(long, help_heading = "Training options", default_value = "4e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "2e-3")]
     pub lr_rotation: f64,
 
     /// Frequency of 'refinement' where gaussians are replaced and densified. This should
@@ -53,7 +53,7 @@ pub struct TrainConfig {
     pub refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[arg(long, help_heading = "Refine options", default_value = "0.00008")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.00004")]
     pub growth_grad_threshold: f32,
 
     /// What fraction of splats that are deemed as needing to grow do actually grow.

@@ -178,11 +178,12 @@ fn main(
                     conic.y * delta.x + conic.z * delta.y
                 );
 
-                let v_xy_abs = abs(v_xy_local);
-
                 // Divide as we don't have sum vis == 1, so reweight these gradients comparatively.
-                let final_a = max(rgb_pixel_finals[i].a, 0.001f);
-                v_refine_thread += (v_xy_abs.x + v_xy_abs.y) / final_a;
+                let final_a = max(rgb_pixel_finals[i].a, 1e-5f);
+                // let refine_scale = f32(max(uniforms.img_size.x, uniforms.img_size.y));
+
+                let v_xy_abs = abs(v_xy_local) * vec2f(uniforms.img_size.xy) / final_a;
+                v_refine_thread += length(v_xy_abs);
 
                 // Account for alpha being clamped.
                 if (color.a * gaussian <= 0.999f) {
@@ -214,8 +215,7 @@ fn main(
                 let sum_conic = subgroupAdd(v_conic_thread);
                 let sum_rgb = subgroupAdd(v_rgb_thread);
                 let sum_alpha = subgroupAdd(v_alpha_thread);
-                let refine_scale = f32(max(uniforms.img_size.x, uniforms.img_size.y));
-                let sum_refine = subgroupAdd(v_refine_thread) * refine_scale;
+                let sum_refine = subgroupAdd(v_refine_thread);
 
                 if doAdd {
                     let global_gid = load_gid[t];
