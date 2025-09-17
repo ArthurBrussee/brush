@@ -135,8 +135,8 @@ impl SplatTrainer {
             (img, diff_out.aux, diff_out.refine_weight_holder)
         });
 
-        let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
-        let aux_loss_weight = (self.config.aux_loss_time - train_t).clamp(0.0, 1.0);
+        // let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
+        // let aux_loss_weight = (self.config.aux_loss_time - train_t).clamp(0.0, 1.0);
         let median_scale = self.bounds.median_size();
 
         let num_visible = aux.num_visible().inner();
@@ -145,9 +145,9 @@ impl SplatTrainer {
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
         let gt_rgb = batch.img_tensor.clone().slice(s![.., .., 0..3]);
 
-        let visible: Tensor<_, 1> = Tensor::from_primitive(TensorPrimitive::Float(aux.visible));
-
-        let vis_weight = visible.clone();
+        let visible: Tensor<Autodiff<MainBackend>, 1> =
+            Tensor::from_primitive(TensorPrimitive::Float(aux.visible));
+        // let vis_weight = visible.clone();
 
         let loss = trace_span!("Calculate losses").in_scope(|| {
             let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();
@@ -183,23 +183,24 @@ impl SplatTrainer {
                 loss
             };
 
-            let opac_loss_weight = self.config.opac_loss_weight * aux_loss_weight;
+            loss
 
-            let loss = if opac_loss_weight > 0.0 {
-                loss + (splats.opacities() * vis_weight.clone()).sum() * opac_loss_weight
-            } else {
-                loss
-            };
+            // let opac_loss_weight = self.config.opac_loss_weight * aux_loss_weight;
 
-            let scale_loss_weight = self.config.scale_loss_weight * aux_loss_weight / median_scale;
-            if scale_loss_weight > 0.0 {
-                // Scale loss is the sum of the squared differences between the
-                // predicted scale and the target scale.
-                let scale_loss = (splats.scales() * vis_weight.clone().unsqueeze_dim(1)).sum();
-                loss + scale_loss * scale_loss_weight
-            } else {
-                loss
-            }
+            // let loss = if opac_loss_weight > 0.0 {
+            //     loss + (splats.opacities() * vis_weight.clone()).sum() * opac_loss_weight
+            // } else {
+            //     loss
+            // };
+            // let scale_loss_weight = self.config.scale_loss_weight * aux_loss_weight / median_scale;
+            // if scale_loss_weight > 0.0 {
+            //     // Scale loss is the sum of the squared differences between the
+            //     // predicted scale and the target scale.
+            //     let scale_loss = (splats.scales() * vis_weight.clone().unsqueeze_dim(1)).sum();
+            //     loss + scale_loss * scale_loss_weight
+            // } else {
+            //     loss
+            // }
         });
 
         let mut grads = trace_span!("Backward pass").in_scope(|| loss.backward());
@@ -342,8 +343,8 @@ impl SplatTrainer {
         }
 
         let device = splats.means.device();
-        let client = WgpuRuntime::client(&device);
-        client.memory_cleanup();
+        // let client = WgpuRuntime::client(&device);
+        // client.memory_cleanup();
 
         let refiner = self
             .refine_record
@@ -554,6 +555,10 @@ impl SplatTrainer {
                 |x| Tensor::cat(vec![x, Tensor::zeros([refine_count], device)], 0),
             );
         }
+
+        // Lower opacity slowly over time.
+        splats.raw_opacity = splats.raw_opacity.map(|f| inv_sigmoid(sigmoid(f) - 0.0005));
+
         self.optim = Some(create_default_optimizer().load_record(record));
         splats
     }

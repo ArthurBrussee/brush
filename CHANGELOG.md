@@ -14,7 +14,7 @@ The web version also gains a lot of new features, with fullscreen modes, efficie
 
 **Training**
 
-- "MCMC like" training. Higher quality and more robust. Still grows splats automatically like previous methods, while also allowing a maximum nr. of splats cap. For a more detailled write up, see [this PR](https://github.com/ArthurBrussee/brush/pull/121)
+- "MCMC like" training. Higher quality and more robust. Still grows splats automatically like previous methods, while also allowing a maximum nr. of splats cap. For a more detailed write up, see [this PR](https://github.com/ArthurBrussee/brush/pull/121)
 
 - Train on datasets bigger than RAM. Only up to some amount of gigs are cached, other files are loaded by the dataloader while training. [[1]](https://github.com/ArthurBrussee/brush/commit/8f1a09d2e8a1aef8a2fd0fc78e11e05dee234645)
 
@@ -35,6 +35,7 @@ The web version also gains a lot of new features, with fullscreen modes, efficie
 - Lots of other tweaks to the training dynamics, bug fixes, version bumps etc.
 
 **UI**
+
 - The UI has gone through some redesigns to be cleaner and easier to use
 
 - Add a grid widget [[1]](https://github.com/ArthurBrussee/brush/pull/261)
@@ -74,6 +75,7 @@ The web version also gains a lot of new features, with fullscreen modes, efficie
 - Swap out the PLY importer/exporter for my own. Speeds up import about 5x [[1]](https://github.com/ArthurBrussee/serde_ply)
 
 **Web**
+
 - You can now pick directories on the web, not just individual files [[1]](https://github.com/ArthurBrussee/brush/commit/1358d3467be6c5d417b83f0f8eb8b6094f7f45ed)
 
 - More efficient file reading on the web [[1]](https://github.com/ArthurBrussee/brush/commit/1358d3467be6c5d417b83f0f8eb8b6094f7f45ed)
@@ -89,6 +91,7 @@ The web version also gains a lot of new features, with fullscreen modes, efficie
 - Add dwarf debug info for the Web [[1]](https://github.com/ArthurBrussee/brush/commit/506c1f09a46996fb3ba762ee3b7d33174e73c346)
 
 **Other**
+
 - Add number of splats to CLI output [[1]](https://github.com/ArthurBrussee/brush/commit/6e9739c78b739ec5c489697234f4e595c239e2a7)
 - Improve compile times. Clean builds are ~1.5 minutes on my macbook
 - Lots of bug fixes & version bumps
@@ -158,12 +161,13 @@ The next release will focus on going beyond the basics of Gaussian Splatting, an
   - See `--export-path` and `--export-name` for the location of the ply
 - Add an option `--eval-save-to-disk` to save eval images to disk
   - See `–export-path` for
-- Add notes in CLI & UI about running in debug mode (advising to compile with  `--release`).
+- Add notes in CLI & UI about running in debug mode (advising to compile with `--release`).
 - Relax camera constraints, allow further zoom in/out
 - Relax constraints on fields in the UI - now can enter values outside of slider range.
 - Improvements to the UI, less unnecessary padding.
 
 ### Highlighted Fixes
+
 - Dataset and scene view now match exactly 1:1
 - Fix UI sometimes not updating when starting a new training run.
 - Sort eval images to be consistent with the MipNeRF eval images
@@ -178,7 +182,6 @@ The next release will focus on going beyond the basics of Gaussian Splatting, an
 ### Thanks
 
 Thanks to everybody in the Brush discord, in particular @fasteinke for reporting many breakages along the way, @fhahlbohm for contributions and helping me fix my results table, @Simon.Bethke and @Gradeeterna for test data, @felixtaubner for the 4D splat export script.
-
 
 ## 0.0.1
 

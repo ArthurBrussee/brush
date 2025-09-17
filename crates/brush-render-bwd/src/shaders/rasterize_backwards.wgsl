@@ -215,7 +215,7 @@ fn main(
                 let sum_rgb = subgroupAdd(v_rgb_thread);
                 let sum_alpha = subgroupAdd(v_alpha_thread);
                 let refine_scale = f32(max(uniforms.img_size.x, uniforms.img_size.y));
-                let sum_refine = subgroupAdd(v_refine_thread * refine_scale);
+                let sum_refine = subgroupAdd(v_refine_thread) * refine_scale;
 
                 if doAdd {
                     let global_gid = load_gid[t];
