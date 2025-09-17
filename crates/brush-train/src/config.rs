@@ -12,15 +12,15 @@ pub struct TrainConfig {
     pub max_splats: u32,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "3e-5")]
+    #[arg(long, help_heading = "Training options", default_value = "2e-5")]
     pub lr_mean: f64,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "1e-6")]
+    #[arg(long, help_heading = "Training options", default_value = "3e-7")]
     pub lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
-    #[arg(long, help_heading = "Training options", default_value = "500")]
+    #[arg(long, help_heading = "Training options", default_value = "75.0")]
     pub mean_noise_weight: f32,
 
     /// Learning rate for the base SH (RGB) coefficients.
@@ -32,15 +32,15 @@ pub struct TrainConfig {
     pub lr_coeffs_sh_scale: f32,
 
     /// Learning rate for the opacity parameter.
-    #[arg(long, help_heading = "Training options", default_value = "0.025")]
+    #[arg(long, help_heading = "Training options", default_value = "0.012")]
     pub lr_opac: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "4e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
     pub lr_scale: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "4e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
     pub lr_scale_end: f64,
 
     /// Learning rate for the rotation parameters.
@@ -53,12 +53,12 @@ pub struct TrainConfig {
     pub refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[arg(long, help_heading = "Refine options", default_value = "0.0005")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.00008")]
     pub growth_grad_threshold: f32,
 
     /// What fraction of splats that are deemed as needing to grow do actually grow.
     /// Increase this to make splats grow more aggressively.
-    #[arg(long, help_heading = "Refine options", default_value = "0.3")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.1")]
     pub growth_select_fraction: f32,
 
     /// Period after which splat growth stops.
