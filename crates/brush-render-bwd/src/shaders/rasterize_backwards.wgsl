@@ -75,7 +75,7 @@ fn main(
     var v_outs = array<vec4f, PIXELS_PER_THREAD>();
     var pix_outs = array<vec4f, PIXELS_PER_THREAD>();
     var dones = array<bool, PIXELS_PER_THREAD>();
-    var rgb_pixel_finals = array<vec3f, PIXELS_PER_THREAD>();
+    var rgb_pixel_finals = array<vec4f, PIXELS_PER_THREAD>();
 
     for (var i = 0u; i < PIXELS_PER_THREAD; i++) {
         // Process 4 consecutive pixels in the original linear order
@@ -88,7 +88,7 @@ fn main(
             let final_color = output[pix_id];
             let v_out = v_output[pix_id];
             let T_final = 1.0f - final_color.a;
-            rgb_pixel_finals[i] = final_color.rgb - T_final * uniforms.background.rgb;
+            rgb_pixel_finals[i] = vec4f(final_color.rgb - T_final * uniforms.background.rgb, final_color.a);
             v_outs[i] = vec4f(v_out.rgb, (v_out.a - dot(uniforms.background.rgb, v_out.rgb)) * T_final);
             dones[i] = false;
         } else {
@@ -170,30 +170,31 @@ fn main(
                 // add contribution of this gaussian to the pixel
                 pix_outs[i] = vec4f(pix_outs[i].rgb + vis * clamped_rgb, pix_outs[i].a);
 
+                let ra = 1.0f / (1.0f - alpha);
+                let v_alpha = dot(pix_outs[i].a * clamped_rgb + (pix_outs[i].rgb - rgb_pixel_finals[i].rgb) * ra, v_outs[i].rgb) + v_outs[i].a * ra;
+                let v_sigma = -alpha * v_alpha;
+                let v_xy_local = v_sigma * vec2f(
+                    conic.x * delta.x + conic.y * delta.y,
+                    conic.y * delta.x + conic.z * delta.y
+                );
+
+                let v_xy_abs = abs(v_xy_local) * vec2f(uniforms.img_size / 2.0);
+
+                // Divide as we don't have sum vis == 1, so reweight these gradients comparatively.
+                let final_a = max(rgb_pixel_finals[i].a, 0.001f);
+                v_refine_thread += (v_xy_abs.x + v_xy_abs.y) / final_a;
+
                 // Account for alpha being clamped.
                 if (color.a * gaussian <= 0.999f) {
-                    let ra = 1.0f / (1.0f - alpha);
-
-                    let v_alpha = dot(pix_outs[i].a * clamped_rgb + (pix_outs[i].rgb - rgb_pixel_finals[i]) * ra, v_outs[i].rgb) + v_outs[i].a * ra;
-
-                    let v_sigma = -alpha * v_alpha;
                     v_conic_thread += vec3f(
                         0.5f * v_sigma * delta.x * delta.x,
                         v_sigma * delta.x * delta.y,
                         0.5f * v_sigma * delta.y * delta.y
                     );
-                    let v_xy_local = v_sigma * vec2f(
-                        conic.x * delta.x + conic.y * delta.y,
-                        conic.y * delta.x + conic.z * delta.y
-                    );
+
                     v_xy_thread += v_xy_local;
                     v_alpha_thread += alpha * (1.0f - color.a) * v_alpha;
-
-                    v_refine_thread += abs(v_xy_local.x * f32(uniforms.img_size.x)) + abs(v_xy_local.y * f32(uniforms.img_size.y));
-
-                    let refine_scale = vec2f(uniforms.img_size);
                 }
-
 
                 hasGrad = true;
                 pix_outs[i].a = next_T;

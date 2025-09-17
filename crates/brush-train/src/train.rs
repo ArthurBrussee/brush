@@ -39,7 +39,7 @@ use hashbrown::{HashMap, HashSet};
 use std::f64::consts::SQRT_2;
 use tracing::trace_span;
 
-const MIN_OPACITY: f32 = 2.0 / 255.0;
+const MIN_OPACITY: f32 = 1.1 / 255.0;
 
 type DiffBackend = Autodiff<MainBackend>;
 type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<DiffBackend>, DiffBackend>;
@@ -67,7 +67,7 @@ fn create_default_optimizer() -> OptimizerType {
     AdamScaledConfig::new().with_epsilon(1e-15).init()
 }
 
-const BOUND_PERCENTILE: f32 = 0.75;
+const BOUND_PERCENTILE: f32 = 0.8;
 
 impl SplatTrainer {
     pub async fn new<B: Backend>(
@@ -148,7 +148,6 @@ impl SplatTrainer {
 
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
         let gt_rgb = batch.img_tensor.clone().slice(s![.., .., 0..3]);
-        let visible: Tensor<_, 1> = Tensor::from_primitive(TensorPrimitive::Float(aux.visible));
 
         let loss = trace_span!("Calculate losses").in_scope(|| {
             let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();
@@ -187,10 +186,11 @@ impl SplatTrainer {
             let opac_loss_weight = self.config.opac_loss_weight * aux_loss_weight;
 
             // Invisible splats still have a loss. Otherwise, they would never die off.
-            let vis_weight = visible.clone() + 1e-3;
+            // let vis_weight = visible.clone() + 1e-3;
 
             let loss = if opac_loss_weight > 0.0 {
-                loss + (splats.raw_opacity.val() * vis_weight.clone()).sum() * opac_loss_weight
+                loss + (splats.opacities()).sum() * opac_loss_weight
+                // loss + (splats.opacities() * vis_weight.clone()).sum() * opac_loss_weight
             } else {
                 loss
             };
@@ -199,7 +199,8 @@ impl SplatTrainer {
             if scale_loss_weight > 0.0 {
                 // Scale loss is the sum of the squared differences between the
                 // predicted scale and the target scale.
-                let scale_loss = (splats.scales() * vis_weight.unsqueeze_dim(1)).sum();
+                //let scale_loss = (splats.scales() * vis_weight.unsqueeze_dim(1)).sum();
+                let scale_loss = splats.scales().powi_scalar(2.0).sum_dim(1).sqrt().sum();
                 loss + scale_loss * scale_loss_weight
             } else {
                 loss
@@ -223,7 +224,9 @@ impl SplatTrainer {
             let record = self
                 .refine_record
                 .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
-            record.gather_stats(refine_weight, visible.clone().inner());
+            let visible: Tensor<Autodiff<MainBackend>, 1> =
+                Tensor::from_primitive(TensorPrimitive::Float(aux.visible));
+            record.gather_stats(refine_weight, visible.inner());
         });
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
@@ -342,6 +345,11 @@ impl SplatTrainer {
         let client = WgpuRuntime::client(&device);
         client.memory_cleanup();
 
+        let refiner = self
+            .refine_record
+            .take()
+            .expect("Can only refine if refine stats are initialized");
+
         // If not refining, update splat to step with gradients applied.
         // Prune dead splats. This ALWAYS happen even if we're not "refining" anymore.
         let mut record = self
@@ -349,10 +357,7 @@ impl SplatTrainer {
             .take()
             .expect("Can only refine after optimizer is initialized")
             .to_record();
-        let refiner = self
-            .refine_record
-            .take()
-            .expect("Can only refine if refine stats are initialized");
+
         let alpha_mask = splats
             .raw_opacity
             .val()
@@ -384,8 +389,9 @@ impl SplatTrainer {
 
         // Replace dead gaussians.
         if pruned_count > 0 {
-            // Sample weighted by opacity.
-            let resampled_weights = splats.opacities().inner();
+            // Sample weighted by opacity from splat visible during optimization.
+            let splat_mass = splats.scales().sum_dim(1).squeeze(1) * splats.opacities();
+            let resampled_weights = splat_mass.inner() * refiner.vis_mask().float();
             let resampled_weights = resampled_weights
                 .into_data_async()
                 .await
@@ -393,6 +399,8 @@ impl SplatTrainer {
                 .expect("Failed to read weights");
             let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
             add_indices.extend(resampled_inds);
+
+            println!("Pruning {}, adding {}", pruned_count, add_indices.len());
         }
 
         if iter < self.config.growth_stop_iter {

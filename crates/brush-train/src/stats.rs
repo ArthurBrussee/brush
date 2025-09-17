@@ -21,8 +21,9 @@ impl<B: Backend> RefineRecord<B> {
     }
 
     pub(crate) fn above_threshold(&self, threshold: f32) -> Tensor<B, 1, Bool> {
-        let counts = self.weight_counts.clone().clamp_min(1.0);
-        (self.refine_weight_norm.clone() / counts).greater_elem(threshold)
+        (self.refine_weight_norm.clone() / self.weight_counts.clone())
+            .greater_elem(threshold)
+            .bool_and(self.vis_mask())
     }
 }
 
@@ -39,6 +40,10 @@ impl RefineRecord<MainBackend> {
 }
 
 impl<B: Backend> RefineRecord<B> {
+    pub(crate) fn vis_mask(&self) -> Tensor<B, 1, Bool> {
+        self.weight_counts.clone().greater_elem(0.0)
+    }
+
     pub(crate) fn keep(self, indices: Tensor<B, 1, Int>) -> Self {
         Self {
             refine_weight_norm: self.refine_weight_norm.select(0, indices.clone()),

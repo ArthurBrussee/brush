@@ -20,7 +20,7 @@ pub struct TrainConfig {
     pub lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
-    #[arg(long, help_heading = "Training options", default_value = "40")]
+    #[arg(long, help_heading = "Training options", default_value = "50")]
     pub mean_noise_weight: f32,
 
     /// Learning rate for the base SH (RGB) coefficients.
@@ -53,12 +53,12 @@ pub struct TrainConfig {
     pub refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[arg(long, help_heading = "Refine options", default_value = "0.00004")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.000175")]
     pub growth_grad_threshold: f32,
 
     /// What fraction of splats that are deemed as needing to grow do actually grow.
     /// Increase this to make splats grow more aggressively.
-    #[arg(long, help_heading = "Refine options", default_value = "0.1")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.25")]
     pub growth_select_fraction: f32,
 
     /// Period after which splat growth stops.
@@ -74,11 +74,11 @@ pub struct TrainConfig {
     pub opac_loss_weight: f32,
 
     /// Weight of the opacity loss.
-    #[arg(long, help_heading = "Training options", default_value = "1e-8")]
+    #[arg(long, help_heading = "Training options", default_value = "1e-9")]
     pub scale_loss_weight: f32,
 
     /// How long to apply aux losses and augementations for (1 being the full training duration).
-    #[arg(long, help_heading = "Training options", default_value = "0.9")]
+    #[arg(long, help_heading = "Training options", default_value = "0.8")]
     pub aux_loss_time: f32,
 
     /// Weight of l1 loss on alpha if input view has transparency.
