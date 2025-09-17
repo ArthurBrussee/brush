@@ -36,6 +36,7 @@ use hashbrown::{HashMap, HashSet};
 use tracing::trace_span;
 
 const MIN_OPACITY: f32 = 1.1 / 255.0;
+const BOUND_PERCENTILE: f32 = 0.75;
 
 type DiffBackend = Autodiff<MainBackend>;
 type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<DiffBackend>, DiffBackend>;
@@ -62,8 +63,6 @@ fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
 fn create_default_optimizer() -> OptimizerType {
     AdamScaledConfig::new().with_epsilon(1e-15).init()
 }
-
-const BOUND_PERCENTILE: f32 = 0.75;
 
 impl SplatTrainer {
     pub async fn new<B: Backend>(
@@ -343,8 +342,7 @@ impl SplatTrainer {
         }
 
         let device = splats.means.device();
-        // let client = WgpuRuntime::client(&device);
-        // client.memory_cleanup();
+        let client = WgpuRuntime::client(&device);
 
         let refiner = self
             .refine_record
@@ -378,15 +376,6 @@ impl SplatTrainer {
             .greater_elem(max_allowed_bounds)
             .any_dim(1)
             .squeeze(1);
-
-        // // Delete 1% of gaussians randomly.
-        // let rand_mask = splats
-        //     .raw_opacity
-        //     .val()
-        //     .inner()
-        //     .random_like(Distribution::Uniform(0.0, 1.0))
-        //     .lower_elem(0.01);
-
         let prune_mask = alpha_mask
             .bool_or(scale_small)
             .bool_or(scale_big)
@@ -443,12 +432,13 @@ impl SplatTrainer {
         }
 
         let refine_count = split_inds.len();
+
         splats = self.refine_splats(&device, record, splats, split_inds);
 
         // Update current bounds based on the splats.
         self.bounds = splats.clone().get_bounds(BOUND_PERCENTILE).await;
 
-        // client.memory_cleanup();
+        client.memory_cleanup();
 
         (
             splats,
@@ -557,7 +547,10 @@ impl SplatTrainer {
         }
 
         // Lower opacity slowly over time.
-        splats.raw_opacity = splats.raw_opacity.map(|f| inv_sigmoid(sigmoid(f) - 0.0005));
+        splats.raw_opacity = splats.raw_opacity.map(|f| {
+            let new_opac = inv_sigmoid(sigmoid(f.inner()) - 0.005);
+            Tensor::from_inner(new_opac).require_grad()
+        });
 
         self.optim = Some(create_default_optimizer().load_record(record));
         splats
