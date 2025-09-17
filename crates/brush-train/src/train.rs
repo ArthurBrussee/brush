@@ -346,7 +346,7 @@ impl SplatTrainer {
             .take()
             .expect("Can only refine if refine stats are initialized");
 
-        let max_allowed_bounds = self.bounds.extent.max_element() * 5.0;
+        let max_allowed_bounds = self.bounds.extent.max_element() * 20.0;
 
         // If not refining, update splat to step with gradients applied.
         // Prune dead splats. This ALWAYS happen even if we're not "refining" anymore.
