@@ -134,7 +134,7 @@ impl SplatTrainer {
             (img, diff_out.aux, diff_out.refine_weight_holder)
         });
 
-        // let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
+        let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
         // let aux_loss_weight = (self.config.aux_loss_time - train_t).clamp(0.0, 1.0);
         let median_scale = self.bounds.median_size();
 
@@ -185,7 +185,6 @@ impl SplatTrainer {
             loss
 
             // let opac_loss_weight = self.config.opac_loss_weight * aux_loss_weight;
-
             // let loss = if opac_loss_weight > 0.0 {
             //     loss + (splats.opacities() * vis_weight.clone()).sum() * opac_loss_weight
             // } else {
@@ -208,20 +207,6 @@ impl SplatTrainer {
         {
             brush_render::validation::validate_splat_gradients(&splats, &grads);
         }
-
-        trace_span!("Housekeeping").in_scope(|| {
-            // Get the xy gradient norm from the dummy tensor.
-            let refine_weight = refine_weight_holder
-                .grad_remove(&mut grads)
-                .expect("XY gradients need to be calculated.");
-            let device = splats.device();
-            let num_splats = splats.num_splats();
-            let record = self
-                .refine_record
-                .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
-
-            record.gather_stats(refine_weight, visible.clone().inner());
-        });
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
             self.sched_mean.step() * median_scale as f64,
@@ -284,38 +269,56 @@ impl SplatTrainer {
             splats
         });
 
-        let mean_noise_weight_scale = self.config.mean_noise_weight;
-        let device = splats.device();
-        // Add random noise. Only do this in the growth phase, otherwise
-        // let the splats settle in without noise, not much point in exploring regions anymore.
-        // trace_span!("Noise means").in_scope(|| {
-        let inv_opac: Tensor<_, 1> = 1.0 - splats.opacities();
-        let noise_weight = inv_opac.inner().powi_scalar(150.0).clamp(0.0, 1.0);
-        // Only noise gaussians visible in this step. Otherwise, areas not commonly
-        // visible slowly degrade over time.
-        let noise_weight = noise_weight.unsqueeze_dim(1);
-        // let samples = quaternion_vec_multiply(
-        //     splats.rotations_normed().inner(),
-        //     Tensor::random(
-        //         [splats.num_splats() as usize, 3],
-        //         Distribution::Normal(0.0, 1.0),
-        //         &device,
-        //     ) * splats.scales().inner(),
-        // );
-        let samples = Tensor::random(
-            [splats.num_splats() as usize, 3],
-            Distribution::Normal(0.0, 1.0),
-            &device,
-        );
+        if train_t < 0.9 {
+            trace_span!("Housekeeping").in_scope(|| {
+                // Get the xy gradient norm from the dummy tensor.
+                let refine_weight = refine_weight_holder
+                    .grad_remove(&mut grads)
+                    .expect("XY gradients need to be calculated.");
+                let device = splats.device();
+                let num_splats = splats.num_splats();
+                let record = self
+                    .refine_record
+                    .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
 
-        // Only allow noised gaussians to travel at most the entire extent of the current bounds.
-        let max_noise = median_scale;
-        let noise_weight = noise_weight * (lr_mean as f32 * mean_noise_weight_scale);
+                record.gather_stats(refine_weight, visible.clone().inner());
+            });
 
-        splats.means = splats.means.map(|m| {
-            Tensor::from_inner(m.inner() + (samples * noise_weight).clamp(-max_noise, max_noise))
+            let mean_noise_weight_scale = self.config.mean_noise_weight;
+            let device = splats.device();
+            // Add random noise. Only do this in the growth phase, otherwise
+            // let the splats settle in without noise, not much point in exploring regions anymore.
+            // trace_span!("Noise means").in_scope(|| {
+            let inv_opac: Tensor<_, 1> = 1.0 - splats.opacities();
+            let noise_weight = inv_opac.inner().powi_scalar(150.0).clamp(0.0, 1.0);
+            // Only noise gaussians visible in this step. Otherwise, areas not commonly
+            // visible slowly degrade over time.
+            let noise_weight = noise_weight.unsqueeze_dim(1);
+            // let samples = quaternion_vec_multiply(
+            //     splats.rotations_normed().inner(),
+            //     Tensor::random(
+            //         [splats.num_splats() as usize, 3],
+            //         Distribution::Normal(0.0, 1.0),
+            //         &device,
+            //     ) * splats.scales().inner(),
+            // );
+            let samples = Tensor::random(
+                [splats.num_splats() as usize, 3],
+                Distribution::Normal(0.0, 1.0),
+                &device,
+            );
+
+            // Only allow noised gaussians to travel at most the entire extent of the current bounds.
+            let max_noise = median_scale;
+            let noise_weight = noise_weight * (lr_mean as f32 * mean_noise_weight_scale);
+
+            splats.means = splats.means.map(|m| {
+                Tensor::from_inner(
+                    m.inner() + (samples * noise_weight).clamp(-max_noise, max_noise),
+                )
                 .require_grad()
-        });
+            });
+        }
 
         let stats = TrainStepStats {
             pred_image: pred_image.inner(),
@@ -337,7 +340,9 @@ impl SplatTrainer {
         iter: u32,
         splats: Splats<DiffBackend>,
     ) -> (Splats<DiffBackend>, Option<RefineStats>) {
-        if iter == 0 || !iter.is_multiple_of(self.config.refine_every) {
+        let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
+
+        if iter == 0 || !iter.is_multiple_of(self.config.refine_every) || train_t > 0.9 {
             return (splats, None);
         }
 
@@ -433,7 +438,7 @@ impl SplatTrainer {
 
         let refine_count = split_inds.len();
 
-        splats = self.refine_splats(&device, record, splats, split_inds);
+        splats = self.refine_splats(&device, record, splats, split_inds, train_t);
 
         // Update current bounds based on the splats.
         self.bounds = splats.clone().get_bounds(BOUND_PERCENTILE).await;
@@ -455,6 +460,7 @@ impl SplatTrainer {
         mut record: HashMap<ParamId, AdaptorRecord<AdamScaled, DiffBackend>>,
         mut splats: Splats<DiffBackend>,
         split_inds: HashSet<i32>,
+        train_t: f32,
     ) -> Splats<DiffBackend> {
         let refine_count = split_inds.len();
 
@@ -548,7 +554,7 @@ impl SplatTrainer {
 
         // Lower opacity slowly over time.
         splats.raw_opacity = splats.raw_opacity.map(|f| {
-            let new_opac = inv_sigmoid(sigmoid(f.inner()) - 0.005);
+            let new_opac = inv_sigmoid(sigmoid(f.inner()) - 0.005 * (1.0 - train_t));
             Tensor::from_inner(new_opac).require_grad()
         });
 
