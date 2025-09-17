@@ -37,8 +37,10 @@ impl SettingsPanel {
             .resizable(true)
             .collapsible(false)
             .default_pos(ui.ctx().screen_rect().center())
+            .default_size([300.0, 700.0])
             .pivot(Align2::CENTER_CENTER)
             .show(ui.ctx(), |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                 // Training
                 ui.heading("Training");
                 slider(ui, &mut self.args.train_config.total_steps, 1..=50000, " steps", false);
@@ -199,6 +201,7 @@ impl SettingsPanel {
                         .corner_radius(5.0)).clicked() {
                         self.send_args.take().expect("Must be some").send(self.args.clone()).ok();
                     }
+                });
                 });
             });
     }
