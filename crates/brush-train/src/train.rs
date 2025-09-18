@@ -36,7 +36,7 @@ use hashbrown::{HashMap, HashSet};
 use tracing::trace_span;
 
 const MIN_OPACITY: f32 = 1.1 / 255.0;
-const BOUND_PERCENTILE: f32 = 0.75;
+const BOUND_PERCENTILE: f32 = 0.8;
 
 type DiffBackend = Autodiff<MainBackend>;
 type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<DiffBackend>, DiffBackend>;
@@ -354,7 +354,7 @@ impl SplatTrainer {
             .take()
             .expect("Can only refine if refine stats are initialized");
 
-        let max_allowed_bounds = self.bounds.extent.max_element() * 20.0;
+        let max_allowed_bounds = self.bounds.extent.max_element() * 100.0;
 
         // If not refining, update splat to step with gradients applied.
         // Prune dead splats. This ALWAYS happen even if we're not "refining" anymore.
@@ -417,7 +417,8 @@ impl SplatTrainer {
             let grow_count =
                 (threshold_count as f32 * self.config.growth_select_fraction).round() as u32;
 
-            let sample_high_grad = grow_count.saturating_sub(pruned_count);
+            // Assume that for every pruned gaussian we have added two too many gaussians.
+            let sample_high_grad = grow_count.saturating_sub(pruned_count * 2);
 
             // Only grow to the max nr. of splats.
             let cur_splats = splats.num_splats() + split_inds.len() as u32;
@@ -552,10 +553,20 @@ impl SplatTrainer {
             );
         }
 
+        let shrink_strength = 1.0 - train_t;
+
+        let minus_opac = 0.005 * shrink_strength;
+        let scale_scaling = 1.0 - 0.001 * shrink_strength;
+
         // Lower opacity slowly over time.
         splats.raw_opacity = splats.raw_opacity.map(|f| {
-            let new_opac = sigmoid(f.inner()) - 0.0025 * (1.0 - train_t).clamp(1e-12, 1.0 - 1e-12);
-            Tensor::from_inner(inv_sigmoid(new_opac)).require_grad()
+            let new_opac = sigmoid(f.inner()) - minus_opac;
+            Tensor::from_inner(inv_sigmoid(new_opac.clamp(1e-12, 1.0 - 1e-12))).require_grad()
+        });
+
+        splats.log_scales = splats.log_scales.map(|f| {
+            let new_scale = f.inner().exp() * scale_scaling;
+            Tensor::from_inner(new_scale.log()).require_grad()
         });
 
         self.optim = Some(create_default_optimizer().load_record(record));

@@ -16,11 +16,11 @@ pub struct TrainConfig {
     pub lr_mean: f64,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "3e-7")]
+    #[arg(long, help_heading = "Training options", default_value = "2e-7")]
     pub lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
-    #[arg(long, help_heading = "Training options", default_value = "75.0")]
+    #[arg(long, help_heading = "Training options", default_value = "60.0")]
     pub mean_noise_weight: f32,
 
     /// Learning rate for the base SH (RGB) coefficients.
@@ -36,11 +36,11 @@ pub struct TrainConfig {
     pub lr_opac: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "7e-3")]
     pub lr_scale: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "7e-3")]
     pub lr_scale_end: f64,
 
     /// Learning rate for the rotation parameters.
@@ -53,7 +53,7 @@ pub struct TrainConfig {
     pub refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[arg(long, help_heading = "Refine options", default_value = "0.00004")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0008")]
     pub growth_grad_threshold: f32,
 
     /// What fraction of splats that are deemed as needing to grow do actually grow.
@@ -62,11 +62,11 @@ pub struct TrainConfig {
     pub growth_select_fraction: f32,
 
     /// Period after which splat growth stops.
-    #[arg(long, help_heading = "Refine options", default_value = "15000")]
+    #[arg(long, help_heading = "Refine options", default_value = "12500")]
     pub growth_stop_iter: u32,
 
     /// Weight of SSIM loss (compared to l1 loss)
-    #[clap(long, help_heading = "Training options", default_value = "0.2")]
+    #[clap(long, help_heading = "Training options", default_value = "0.15")]
     pub ssim_weight: f32,
 
     /// Weight of the opacity loss.

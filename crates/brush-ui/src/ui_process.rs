@@ -132,6 +132,7 @@ impl UiProcess {
     pub fn focus_view(&self, view: &SceneView) {
         let mut inner = self.write();
 
+        inner.selected_view = Some(view.clone());
         inner.camera = view.camera.clone();
         inner.controls.stop_movement();
 
@@ -146,8 +147,6 @@ impl UiProcess {
         inner.controls.position = translate;
         inner.controls.rotation = rot;
 
-        // TODO: Set focus distance based on splat extent.
-        inner.view_aspect = Some(view.image.width() as f32 / view.image.height() as f32);
         inner.repaint();
     }
 
@@ -279,7 +278,6 @@ struct UiProcessInner {
     is_loading: bool,
     is_training: bool,
     camera: Camera,
-    view_aspect: Option<f32>,
     splat_scale: Option<f32>,
     controls: CameraController,
     running_process: Option<RunningProcess>,
@@ -299,7 +297,6 @@ impl UiProcessInner {
         Self {
             camera,
             controls,
-            view_aspect: None,
             splat_scale: None,
             is_loading: false,
             is_training: false,
