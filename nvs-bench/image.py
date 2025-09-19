@@ -86,4 +86,30 @@ image = (
     # .run_commands("pip install submodules/diff-gaussian-rasterization")
     # .run_commands("pip install -e .")
     # Note: If your run_commands step needs access to a gpu it's actually possible to do that through "run_commands(gpu='L40S', ...)"
+
+    # CURSOR GENERATED INSTRUCTIONS
+    # Install Rust 1.88+ (required for Brush)
+    # .run_commands("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
+    # .run_commands("export PATH=\"$HOME/.cargo/bin:$PATH\" && rustup default stable")
+    # # Install additional Rust tools needed for Brush
+    # .run_commands("export PATH=\"$HOME/.cargo/bin:$PATH\" && cargo install wasm-pack")
+    # .run_commands("export PATH=\"$HOME/.cargo/bin:$PATH\" && cargo install rerun-cli")
+    # # Build Brush from the current workspace
+    # .run_commands("export PATH=\"$HOME/.cargo/bin:$PATH\" && cargo build --release")
+    # # Add Brush binaries to PATH
+    # .env({"PATH": "/root/.cargo/bin:/root/brush/target/release:$PATH"})
+
+    .run_commands("git clone https://github.com/N-Demir/brush .")    
+
+    # Install Rust
+    .apt_install("curl", "build-essential", "pkg-config", "libssl-dev")
+    .run_commands(
+        "curl https://sh.rustup.rs -sSf | sh -s -- -y",
+        'echo "source $HOME/.cargo/env" >> $HOME/.bashrc'
+    )
+    .env({"PATH": "/root/.cargo/bin:${PATH}"})
+    .run_commands("cargo --version")
+
+    # Test command to build Brush
+    .run_commands("cargo run --release")
 )

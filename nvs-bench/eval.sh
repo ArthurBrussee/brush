@@ -17,3 +17,5 @@ output_folder=$2
 #   python render.py --data $data_folder/test --output $output_folder --eval
 # 3) Move the renders into `$output_folder/test_renders`
 #   mv $output_folder/test/ours_30000/renders $output_folder/test_renders
+
+cargo run $data_folder --export-path $output_folder --eval-split-every 8 --eval-save-to-disk
