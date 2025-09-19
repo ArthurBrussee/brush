@@ -28,7 +28,7 @@ modal_volumes: dict[str | PurePosixPath, Volume] = {
 }
 
 image = (
-    Image.from_dockerfile("extras/Dockerfile", add_python="3.11")
+    Image.from_dockerfile("extras/Dockerfile", add_python="3.11") #! For brush, we use a different base image
     .env(
         {
             # Set Torch CUDA Compatbility to be for RTX 4090, T4, L40s, and A100
@@ -86,19 +86,4 @@ image = (
     # # .run_commands("pip install submodules/diff-gaussian-rasterization")
     # # .run_commands("pip install -e .")
     # # Note: If your run_commands step needs access to a gpu it's actually possible to do that through "run_commands(gpu='L40S', ...)"
-
-    # .run_commands("git clone https://github.com/N-Demir/brush .")    
-
-    # # Install Rust
-    # .apt_install("curl", "build-essential", "pkg-config", "libssl-dev")
-    # .run_commands(
-    #     "curl https://sh.rustup.rs -sSf | sh -s -- -y",
-    #     'echo "source $HOME/.cargo/env" >> $HOME/.bashrc'
-    # )
-    # .env({"PATH": "/root/.cargo/bin:${PATH}"})
-    # .run_commands("cargo --version")
-
-    # # Install Brush
-    # .run_commands("apt-get update && apt-get install -y libvulkan1 vulkan-tools libegl1 mesa-vulkan-drivers")
-    # .run_commands("cargo run --release || true") # Need to ignore errors because of  ---  Error: winit EventLoopError: os error at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-0.30.12/src/platform_impl/linux/mod.rs:765: neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set.
 )

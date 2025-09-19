@@ -25,10 +25,10 @@ RUN mkdir /workdir
 COPY --from=builder ./brush/target/release/brush_app /workdir
 WORKDIR /workdir
 
-# # Below command creates home dir for 1000 UID user
-# RUN useradd -m -u 1000 clouduser
-# RUN chown -R 1000:root /workdir && chmod -R 775 /workdir
+# Below command creates home dir for 1000 UID user
+RUN useradd -m -u 1000 clouduser
+RUN chown -R 1000:root /workdir && chmod -R 775 /workdir
 
-# Launch training.
-# USER clouduser
-# ENTRYPOINT ["./brush_app"]
+Launch training.
+USER clouduser
+ENTRYPOINT ["./brush_app"]
