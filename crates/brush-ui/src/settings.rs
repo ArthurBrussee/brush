@@ -72,8 +72,8 @@ impl SettingsPanel {
                 ui.collapsing("Losses", |ui| {
                     let tc = &mut self.args.train_config;
                     slider(ui, &mut tc.ssim_weight, 0.0..=1.0, "ssim weight", false);
-                    slider(ui, &mut tc.opac_decay, 1e-9..=1e-7, "Splat opacity decay", true);
-                    slider(ui, &mut tc.scale_decay, 1e-9..=1e-7, "Splat scale decay", true);
+                    slider(ui, &mut tc.opac_decay, 0.0..=0.01, "Splat opacity decay", true);
+                    slider(ui, &mut tc.scale_decay, 0.0..=0.01, "Splat scale decay", true);
                     slider(ui, &mut tc.match_alpha_weight, 0.01..=1.0, "Alpha match weight", false);
                 });
 
