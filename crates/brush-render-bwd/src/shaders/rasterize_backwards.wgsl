@@ -178,13 +178,6 @@ fn main(
                     conic.y * delta.x + conic.z * delta.y
                 );
 
-                // Divide as we don't have sum vis == 1, so reweight these gradients comparatively.
-                let final_a = max(rgb_pixel_finals[i].a, 1e-5f);
-                // let refine_scale = f32(max(uniforms.img_size.x, uniforms.img_size.y));
-
-                let v_xy_abs = abs(v_xy_local) * vec2f(uniforms.img_size.xy) / final_a;
-                v_refine_thread += length(v_xy_abs);
-
                 // Account for alpha being clamped.
                 if (color.a * gaussian <= 0.999f) {
                     v_conic_thread += vec3f(
@@ -195,6 +188,9 @@ fn main(
 
                     v_xy_thread += v_xy_local;
                     v_alpha_thread += alpha * (1.0f - color.a) * v_alpha;
+                    let final_a = max(rgb_pixel_finals[i].a, 1e-5f);
+                    // Divide as we don't have sum vis == 1, so reweight these gradients comparatively.
+                    v_refine_thread += length(v_xy_local * vec2f(uniforms.img_size.xy)) / final_a;
                 }
 
                 hasGrad = true;

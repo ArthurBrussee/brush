@@ -60,7 +60,7 @@ fn spawn_train_loop(
         let mut iter = 0;
 
         loop {
-            let (new_splats, _) = trainer.step(iter, &batch, splats);
+            let (new_splats, _) = trainer.step(&batch, splats);
             let (new_splats, _) = trainer.refine_if_needed(iter, new_splats).await;
 
             splats = new_splats;

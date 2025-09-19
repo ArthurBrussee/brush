@@ -167,7 +167,7 @@ async fn test_training_step() {
     let splats = generate_test_splats(&device, 500);
     let config = TrainConfig::default();
     let mut trainer = SplatTrainer::new(&config, &device, splats.clone()).await;
-    let (final_splats, stats) = trainer.step(0, &batch, splats);
+    let (final_splats, stats) = trainer.step(&batch, splats);
 
     assert!(final_splats.num_splats() > 0);
     let loss = stats.loss.into_scalar();
@@ -200,8 +200,8 @@ async fn test_multi_step_training() {
     let _initial_count = splats.num_splats();
 
     // Run a few training steps
-    for step in 0..3 {
-        let (new_splats, stats) = trainer.step(step, &batch, splats);
+    for _ in 0..3 {
+        let (new_splats, stats) = trainer.step(&batch, splats);
         splats = new_splats;
 
         let loss = stats.loss.into_scalar();

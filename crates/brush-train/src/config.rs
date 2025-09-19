@@ -20,7 +20,7 @@ pub struct TrainConfig {
     pub lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
-    #[arg(long, help_heading = "Training options", default_value = "60.0")]
+    #[arg(long, help_heading = "Training options", default_value = "50.0")]
     pub mean_noise_weight: f32,
 
     /// Learning rate for the base SH (RGB) coefficients.
@@ -40,7 +40,7 @@ pub struct TrainConfig {
     pub lr_scale: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "7e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
     pub lr_scale_end: f64,
 
     /// Learning rate for the rotation parameters.
@@ -53,29 +53,29 @@ pub struct TrainConfig {
     pub refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[arg(long, help_heading = "Refine options", default_value = "0.0008")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.003")]
     pub growth_grad_threshold: f32,
 
     /// What fraction of splats that are deemed as needing to grow do actually grow.
     /// Increase this to make splats grow more aggressively.
-    #[arg(long, help_heading = "Refine options", default_value = "0.1")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.2")]
     pub growth_select_fraction: f32,
 
     /// Period after which splat growth stops.
-    #[arg(long, help_heading = "Refine options", default_value = "12500")]
+    #[arg(long, help_heading = "Refine options", default_value = "15000")]
     pub growth_stop_iter: u32,
 
     /// Weight of SSIM loss (compared to l1 loss)
-    #[clap(long, help_heading = "Training options", default_value = "0.15")]
+    #[clap(long, help_heading = "Training options", default_value = "0.2")]
     pub ssim_weight: f32,
 
-    /// Weight of the opacity loss.
-    #[arg(long, help_heading = "Training options", default_value = "2e-9")]
-    pub opac_loss_weight: f32,
+    /// Factor of the opacity decay.
+    #[arg(long, help_heading = "Training options", default_value = "0.004")]
+    pub opac_decay: f32,
 
-    /// Weight of the opacity loss.
-    #[arg(long, help_heading = "Training options", default_value = "1e-9")]
-    pub scale_loss_weight: f32,
+    /// Factor of the scaling decay.
+    #[arg(long, help_heading = "Training options", default_value = "0.002")]
+    pub scale_decay: f32,
 
     /// How long to apply aux losses and augementations for (1 being the full training duration).
     #[arg(long, help_heading = "Training options", default_value = "0.9")]
