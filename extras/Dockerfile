@@ -29,6 +29,6 @@ WORKDIR /workdir
 RUN useradd -m -u 1000 clouduser
 RUN chown -R 1000:root /workdir && chmod -R 775 /workdir
 
-Launch training.
+# Launch training.
 USER clouduser
 ENTRYPOINT ["./brush_app"]
