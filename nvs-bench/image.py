@@ -28,7 +28,7 @@ modal_volumes: dict[str | PurePosixPath, Volume] = {
 }
 
 image = (
-    Image.from_registry("pytorch/pytorch:2.4.1-cuda12.1-cudnn9-devel")  # find others at: https://hub.docker.com/
+    Image.from_dockerfile("extras/Dockerfile", add_python="3.11")
     .env(
         {
             # Set Torch CUDA Compatbility to be for RTX 4090, T4, L40s, and A100
@@ -77,39 +77,28 @@ image = (
     .run_commands("pip install gpu_tracker")
     # Set the working dir
     .workdir(f"/root/{method_name}")
-    ######## START OF YOUR CODE ########
-    # Probably easiest to pull the repo from github, but you can also copy files from your local machine with .add_local_dir()
-    # eg: .run_commands("git clone -b nvs-bench https://github.com/N-Demir/gaussian-splatting.git --recursive .")
-    # Install (avoid conda installs because they don't work well in dockerfile situations)
-    # Separating these on separate lines helps if there are errors (previous lines will be cached) especially on the large package installs
-    # eg:
-    # .run_commands("pip install submodules/diff-gaussian-rasterization")
-    # .run_commands("pip install -e .")
-    # Note: If your run_commands step needs access to a gpu it's actually possible to do that through "run_commands(gpu='L40S', ...)"
+    # ######## START OF YOUR CODE ########
+    # # Probably easiest to pull the repo from github, but you can also copy files from your local machine with .add_local_dir()
+    # # eg: .run_commands("git clone -b nvs-bench https://github.com/N-Demir/gaussian-splatting.git --recursive .")
+    # # Install (avoid conda installs because they don't work well in dockerfile situations)
+    # # Separating these on separate lines helps if there are errors (previous lines will be cached) especially on the large package installs
+    # # eg:
+    # # .run_commands("pip install submodules/diff-gaussian-rasterization")
+    # # .run_commands("pip install -e .")
+    # # Note: If your run_commands step needs access to a gpu it's actually possible to do that through "run_commands(gpu='L40S', ...)"
 
-    # CURSOR GENERATED INSTRUCTIONS
-    # Install Rust 1.88+ (required for Brush)
-    # .run_commands("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
-    # .run_commands("export PATH=\"$HOME/.cargo/bin:$PATH\" && rustup default stable")
-    # # Install additional Rust tools needed for Brush
-    # .run_commands("export PATH=\"$HOME/.cargo/bin:$PATH\" && cargo install wasm-pack")
-    # .run_commands("export PATH=\"$HOME/.cargo/bin:$PATH\" && cargo install rerun-cli")
-    # # Build Brush from the current workspace
-    # .run_commands("export PATH=\"$HOME/.cargo/bin:$PATH\" && cargo build --release")
-    # # Add Brush binaries to PATH
-    # .env({"PATH": "/root/.cargo/bin:/root/brush/target/release:$PATH"})
+    # .run_commands("git clone https://github.com/N-Demir/brush .")    
 
-    .run_commands("git clone https://github.com/N-Demir/brush .")    
+    # # Install Rust
+    # .apt_install("curl", "build-essential", "pkg-config", "libssl-dev")
+    # .run_commands(
+    #     "curl https://sh.rustup.rs -sSf | sh -s -- -y",
+    #     'echo "source $HOME/.cargo/env" >> $HOME/.bashrc'
+    # )
+    # .env({"PATH": "/root/.cargo/bin:${PATH}"})
+    # .run_commands("cargo --version")
 
-    # Install Rust
-    .apt_install("curl", "build-essential", "pkg-config", "libssl-dev")
-    .run_commands(
-        "curl https://sh.rustup.rs -sSf | sh -s -- -y",
-        'echo "source $HOME/.cargo/env" >> $HOME/.bashrc'
-    )
-    .env({"PATH": "/root/.cargo/bin:${PATH}"})
-    .run_commands("cargo --version")
-
-    # Test command to build Brush
-    .run_commands("cargo run --release")
+    # # Install Brush
+    # .run_commands("apt-get update && apt-get install -y libvulkan1 vulkan-tools libegl1 mesa-vulkan-drivers")
+    # .run_commands("cargo run --release || true") # Need to ignore errors because of  ---  Error: winit EventLoopError: os error at /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-0.30.12/src/platform_impl/linux/mod.rs:765: neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set.
 )
