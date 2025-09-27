@@ -48,6 +48,12 @@ impl SettingsPanel {
                 ui.label("Max Splats");
                 ui.add(Slider::new(&mut self.args.train_config.max_splats, 1000000..=10000000)
                     .custom_formatter(|n, _| format!("{:.0}k", n as f32 / 1000.0))
+                    .custom_parser(|str| {
+                        str.trim()
+                            .strip_suffix('k')
+                            .and_then(|s| s.parse::<f64>().ok().map(|n| n * 1000.0))
+                            .or_else(|| str.trim().parse::<f64>().ok())
+                    })
                     .clamping(egui::SliderClamping::Never));
 
                 ui.collapsing("Learning rates", |ui| {
