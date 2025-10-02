@@ -51,7 +51,7 @@ clap = { version = "4.5.23", features = ["derive"] }
 
 web-time = "1.1.0"
 humantime = "2.1.0"
-async-fn-stream = "0.2.2"
+async-fn-stream = "0.3"
 miette = { version = "7.4.0", features = ["fancy"] }
 assert_approx_eq = "1.1.0"
 safetensors = "0.6.0"
@@ -91,7 +91,7 @@ eframe = { version = "0.32", default-features = false, features = [
 
 egui_tiles = "0.13.0"
 
-rerun = { version = "0.24", default-features = false, features = [
+rerun = { version = "0.25", default-features = false, features = [
     'sdk',
     'glam',
 ] }
@@ -99,7 +99,7 @@ rerun = { version = "0.24", default-features = false, features = [
 ball-tree = "0.5.1"
 
 web-sys = { version = "0.3.74" }
-async_zip = { version = "0.0.18", default-features = false, features = ["full-wasm"] }
+async_zip = { version = "0.0.18", default-features = false, features = ["tokio", "deflate"] }
 hashbrown = "0.15"
 parking_lot = "0.12"
 alphanumeric-sort = "1.5.3"
@@ -119,21 +119,15 @@ alphanumeric-sort = "1.5.3"
 # cubecl-std = { path = "../cubecl/crates/cubecl-std" }
 # cubecl-core = { path = "../cubecl/crates/cubecl-core" }
 # cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
-
-[patch."https://github.com/tracel-ai/cubecl"]
-cubecl = { git = "https://github.com/ArthurBrussee/cubecl", branch = "sg-size" }
-cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl", branch = "sg-size" }
-cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl", branch = "sg-size" }
-cubecl-core = { git = "https://github.com/ArthurBrussee/cubecl", branch = "sg-size" }
-cubecl-runtime = { git = "https://github.com/ArthurBrussee/cubecl", branch = "sg-size" }
+# cubecl-quant = { path = "../cubecl/crates/cubecl-quant" }
 
 [patch.crates-io]
 wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v26" }
 naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v26" }
 
-egui = { git = "https://github.com/emilk/egui", rev = "refs/pull/7540/head"  }
-eframe = { git = "https://github.com/emilk/egui", rev = "refs/pull/7540/head" }
-emath = { git = "https://github.com/emilk/egui", rev = "refs/pull/7540/head" }
+egui = { git = "https://github.com/emilk/egui", rev = "c97c065a575ec6e657bb42872890a00d0fb391c1"  }
+eframe = { git = "https://github.com/emilk/egui", rev = "c97c065a575ec6e657bb42872890a00d0fb391c1" }
+emath = { git = "https://github.com/emilk/egui", rev = "c97c065a575ec6e657bb42872890a00d0fb391c1" }
 
 # Uncomment this to use local wgpu and naga.
 # wgpu.path = "../wgpu/wgpu"

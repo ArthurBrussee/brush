@@ -160,7 +160,7 @@ pub(crate) fn render_forward(
         let num_vis_field_offset = offset_of!(shaders::helpers::RenderUniforms, num_visible) / 4;
         let num_visible = MainBackendBase::int_slice(
             uniforms_buffer.clone(),
-            &[num_vis_field_offset..num_vis_field_offset + 1],
+            &[(num_vis_field_offset..num_vis_field_offset + 1).into()],
         );
 
         let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort").in_scope(|| {

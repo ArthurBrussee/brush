@@ -329,11 +329,11 @@ impl SplatTrainer {
         let alpha_mask = splats.opacities().inner().lower_elem(MIN_OPACITY);
         let scales = splats.scales().inner();
 
-        let scale_small = scales.clone().lower_elem(1e-10).any_dim(1).squeeze(1);
+        let scale_small = scales.clone().lower_elem(1e-10).any_dim(1).squeeze_dim(1);
         let scale_big = scales
             .greater_elem(max_allowed_bounds)
             .any_dim(1)
-            .squeeze(1);
+            .squeeze_dim(1);
 
         // Remove splats that are way out of bounds.
         let center = self.bounds.center;
@@ -343,7 +343,7 @@ impl SplatTrainer {
         let bound_mask = splat_dists
             .greater_elem(max_allowed_bounds)
             .any_dim(1)
-            .squeeze(1);
+            .squeeze_dim(1);
         let prune_mask = alpha_mask
             .bool_or(scale_small)
             .bool_or(scale_big)
@@ -627,7 +627,7 @@ async fn prune_points(
     let start_splats = splats.num_splats();
     let new_points = valid_inds.dims()[0] as u32;
     if new_points < start_splats {
-        let valid_inds = valid_inds.squeeze(1);
+        let valid_inds = valid_inds.squeeze_dim(1);
         splats = map_splats_and_opt(
             splats,
             record,

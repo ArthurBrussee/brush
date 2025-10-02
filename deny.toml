@@ -40,18 +40,12 @@ skip = [
     { name = 'itertools' },
     { name = 'getrandom' },
     { name = 'syn' },
-    { name = 'gemm-common' },
 
     # Until everyone is on 0.9
     { name = "rand" },
     { name = "rand_core" },
     { name = "rand_chacha" },
 
-    { name = "yoke-derive" },
-    { name = "yoke" },
-    { name = "sysctl" },
-
-    #
     { name = 'thiserror' },
     { name = 'thiserror-impl' },
     { name = 'unicode-width' },
@@ -81,20 +75,9 @@ skip = [
     { name = 'windows' },          # Wgpu & kiddo
 
     { name = 'hashbrown' },
-    { name = 'zip' },
     { name = 'colored' },
     { name = "rustc-hash" },
     { name = "core-graphics-types" },
-
-    { name = "dyn-stack" }, # Burn-import weirdness.
-    { name = "gemm" },      # Burn-import weirdness.
-    { name = "gemm-f16" },  # Burn-import weirdness.
-    { name = "gemm-f32" },  # Burn-import weirdness.
-    { name = "gemm-f64" },  # Burn-import weirdness.
-    { name = "gemm-c32" },  # Burn-import weirdness.
-    { name = "gemm-c64" },  # Burn-import weirdness.
-    { name = "raw-cpuid" }, # Burn-import weirdness.
-    { name = "pulp" },      # Burn-import weirdness.
 
     # Older versions in rerun.
     { name = "toml" },
@@ -102,6 +85,7 @@ skip = [
     { name = "serde_spanned" },
     { name = "socket2" },
     { name = "prettyplease" },
+    { name = "toml_edit" },
 ]
 
 [licenses]

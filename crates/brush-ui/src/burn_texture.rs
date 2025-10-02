@@ -135,9 +135,9 @@ impl BurnTexture {
         // Now copy the buffer to the texture.
         encoder.copy_buffer_to_texture(
             wgpu::TexelCopyBufferInfo {
-                buffer: img_res_handle.resource().buffer(),
+                buffer: &img_res_handle.resource().buffer,
                 layout: TexelCopyBufferLayout {
-                    offset: img_res_handle.resource().offset(),
+                    offset: img_res_handle.resource().offset,
                     bytes_per_row,
                     rows_per_image: None,
                 },
