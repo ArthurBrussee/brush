@@ -60,7 +60,7 @@ impl<B: Backend> Ssim<B> {
         let ssim = ((mu_xy * 2.0 + c1) * (sigma_xy * 2.0 + c2))
             / ((mu_xx + mu_yy + c1) * (sigma_xx + sigma_yy + c2));
 
-        let ssim = ssim.squeeze(0);
+        let ssim = ssim.squeeze_dim(0);
         ssim.permute([1, 2, 0])
     }
 }

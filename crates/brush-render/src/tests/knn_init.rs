@@ -19,7 +19,7 @@ fn test_knn_initialization() {
     let splats = Splats::<TestBackend>::from_raw(positions, None, None, None, None, &device);
 
     let scales = splats.scales();
-    let scale_data = scales.to_data();
+    let scale_data = scales.into_data();
     let scale_values = scale_data.as_slice::<f32>().expect("Wrong type");
 
     // Should have 4 points × 3 dimensions = 12 scale values

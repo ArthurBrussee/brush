@@ -54,7 +54,7 @@ impl<B: Backend> RenderAux<B> {
             Tensor::from_primitive(self.compact_gid_from_isect.clone());
         let num_visible: Tensor<B, 1, Int> = self.num_visible();
 
-        let num_intersections = num_intersects.into_scalar().elem::<i32>() as u32;
+        let num_intersections = num_intersects.into_scalar().elem::<i32>();
         let num_points = compact_gid_from_isect.dims()[0] as u32;
         let num_visible = num_visible.into_scalar().elem::<i32>() as u32;
         let img_size = self.img_size;
@@ -62,12 +62,12 @@ impl<B: Backend> RenderAux<B> {
         let max_intersects = max_intersections(img_size, num_points);
 
         assert!(
-            num_intersections * 2 < max_intersects,
+            num_intersections < (max_intersects as i32) / 2,
             "(Close to) too many intersections, estimated too low of a number. {num_intersections} / {max_intersects}"
         );
 
         assert!(
-            num_intersections < INTERSECTS_UPPER_BOUND,
+            num_intersections < INTERSECTS_UPPER_BOUND as i32,
             "Too many intersections, Brush currently can't handle this. {num_intersections} > {INTERSECTS_UPPER_BOUND}"
         );
 
@@ -100,7 +100,7 @@ impl<B: Backend> RenderAux<B> {
             .expect("Failed to fetch tile offsets");
         for &offsets in &tile_offsets {
             assert!(
-                offsets <= num_intersections,
+                offsets as i32 <= num_intersections,
                 "Tile offsets exceed bounds. Value: {offsets}, num_intersections: {num_intersections}"
             );
         }
@@ -108,8 +108,8 @@ impl<B: Backend> RenderAux<B> {
         if num_intersections > 0 {
             for i in 0..(tile_offsets.len() - 1) / 2 {
                 // Check pairs of start/end points.
-                let start = tile_offsets[i * 2];
-                let end = tile_offsets[i * 2 + 1];
+                let start = tile_offsets[i * 2] as i32;
+                let end = tile_offsets[i * 2 + 1] as i32;
                 assert!(
                     start < num_intersections && end <= num_intersections,
                     "Invalid elements in tile offsets. Start {start} ending at {end}"
@@ -119,7 +119,7 @@ impl<B: Backend> RenderAux<B> {
                     "Invalid elements in tile offsets. Start {start} ending at {end}"
                 );
                 assert!(
-                    end - start <= num_visible,
+                    end - start <= num_visible as i32,
                     "One tile has more hits than total visible splats. Start {start} ending at {end}"
                 );
             }

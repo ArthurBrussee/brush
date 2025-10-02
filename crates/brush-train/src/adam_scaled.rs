@@ -1,8 +1,8 @@
 use burn::{
-    LearningRate,
     config::Config,
     grad_clipping::GradientClippingConfig,
     module::AutodiffModule,
+    optim::LearningRate,
     optim::{
         AdaptiveMomentumState, SimpleOptimizer,
         adaptor::OptimizerAdaptor,

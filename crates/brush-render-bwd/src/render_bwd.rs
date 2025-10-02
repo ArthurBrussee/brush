@@ -6,7 +6,8 @@ use brush_render::sh::sh_coeffs_for_degree;
 use burn::tensor::FloatDType;
 use burn::tensor::ops::FloatTensorOps;
 use burn::{backend::wgpu::WgpuRuntime, prelude::Backend, tensor::ops::FloatTensor};
-use burn_cubecl::cubecl::AtomicFeature;
+use burn_cubecl::cubecl::features::TypeUsage;
+use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType};
 use burn_cubecl::cubecl::server::Bindings;
 use burn_cubecl::kernel::into_contiguous;
 use glam::uvec2;
@@ -91,12 +92,10 @@ pub(crate) fn render_backward(
             .div_ceil(brush_render::shaders::helpers::TILE_WIDTH),
     );
 
-    let hard_floats =
-        client
-            .properties()
-            .feature_enabled(burn_cubecl::cubecl::Feature::AtomicFloat(
-                AtomicFeature::Add,
-            ));
+    let hard_floats = client
+        .properties()
+        .type_usage(StorageType::Atomic(ElemType::Float(FloatKind::F32)))
+        .contains(TypeUsage::AtomicAdd);
 
     let webgpu = cfg!(target_family = "wasm");
 

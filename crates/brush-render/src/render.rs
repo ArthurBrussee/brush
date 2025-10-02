@@ -160,7 +160,7 @@ pub(crate) fn render_forward(
         let num_vis_field_offset = offset_of!(shaders::helpers::RenderUniforms, num_visible) / 4;
         let num_visible = MainBackendBase::int_slice(
             uniforms_buffer.clone(),
-            &[num_vis_field_offset..num_vis_field_offset + 1],
+            &[(num_vis_field_offset..num_vis_field_offset + 1).into()],
         );
 
         let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort").in_scope(|| {
@@ -236,7 +236,9 @@ pub(crate) fn render_forward(
 
         let tile_id_from_isect = create_tensor([max_intersects as usize], device, DType::U32);
         let compact_gid_from_isect = create_tensor([max_intersects as usize], device, DType::U32);
-        let num_intersections = create_tensor([1], device, DType::U32);
+
+        // Zero this out, as the kernel _might_ not run at all if no gaussians are visible.
+        let num_intersections = MainBackendBase::int_zeros([1].into(), device, IntDType::U32);
 
         tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
             // SAFETY: Kernel checked to have no OOB, bounded loops.
