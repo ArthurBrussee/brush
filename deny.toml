@@ -86,6 +86,8 @@ skip = [
     { name = "socket2" },
     { name = "prettyplease" },
     { name = "toml_edit" },
+    { name = "indicatif" },
+    { name = "console" },
 ]
 
 [licenses]
