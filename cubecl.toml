@@ -9,3 +9,6 @@ logger = { log = "info", level = "minimal" }
 [compilation]
 logger = { level = "disabled" }
 cache = "target"
+
+[streaming]
+max_streams = 1
