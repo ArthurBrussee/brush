@@ -27,10 +27,10 @@ impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D, Int> {
     async fn into_rerun_data(self) -> rerun::TensorData {
         rerun::TensorData::new(
             self.dims().map(|x| x as u64).to_vec(),
-            rerun::TensorBuffer::I32(
+            rerun::TensorBuffer::U32(
                 self.into_data_async()
                     .await
-                    .into_vec::<i32>()
+                    .into_vec::<u32>()
                     .expect("Wrong type")
                     .into(),
             ),
