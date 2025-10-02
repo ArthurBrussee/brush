@@ -50,7 +50,7 @@ fn spawn_train_loop(
 
         let mut trainer = SplatTrainer::new(&config, &device, splats.clone()).await;
 
-        // One batch of training data, it's the same every step so can just cosntruct it once.
+        // One batch of training data, it's the same every step so can just construct it once.
         let batch = SceneBatch {
             img_tensor: sample_to_tensor(&image, &device).unsqueeze(),
             alpha_is_mask: false,
