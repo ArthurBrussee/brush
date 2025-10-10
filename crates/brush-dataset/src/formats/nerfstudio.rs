@@ -147,7 +147,7 @@ async fn read_transforms_file(
         let w = frame.w.or(scene.w);
         let h = frame.h.or(scene.h);
         // If we have some missing format, just get it from the image.
-        // This does requrie loading the image which is not great...
+        // This does require loading the image which is not great...
         let (w, h) = match (w, h) {
             (Some(w), Some(h)) => (w as u32, h as u32),
             _ => image.load().await?.dimensions(),
