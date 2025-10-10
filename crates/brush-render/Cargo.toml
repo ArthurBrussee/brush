@@ -29,6 +29,8 @@ log.workspace = true
 naga_oil.workspace = true
 wgpu.workspace = true
 
+rayon.workspace = true
+
 [features]
 debug-validation = []
 

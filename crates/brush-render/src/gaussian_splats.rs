@@ -17,6 +17,7 @@ use burn::{
 };
 use glam::Vec3;
 use rand::Rng;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use tracing::trace_span;
 
 #[derive(Config, Debug)]
@@ -124,11 +125,10 @@ impl<B: Backend> Splats<B> {
 
                 let empty = vec![(); tree_points.len()];
                 let tree = BallTree::new(tree_points.clone(), empty);
-                let mut query = tree.query();
 
                 tree_points
-                    .iter()
-                    .map(|p| {
+                    .par_iter()
+                    .map_with(tree.query(), |query, p| {
                         // Get half of the average of 2 nearest distances.
                         let q = query.nn(p);
                         let dist = 0.5 * q.skip(1).take(2).map(|x| x.1 as f32).sum::<f32>() / 2.0;
@@ -138,7 +138,7 @@ impl<B: Backend> Splats<B> {
                     .collect()
             });
 
-            Tensor::<B, 1>::from_floats(extents.as_slice(), device).reshape([n_splats, 3])
+            Tensor::from_data(TensorData::new(extents, [n_splats, 3]), device)
         };
 
         let _ = trace_span!("Splats init rest").entered();
