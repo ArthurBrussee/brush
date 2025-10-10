@@ -139,8 +139,7 @@ async fn load_dataset_inner(
 
         log::info!("Loaded COLMAP image at path {path:?}");
 
-        let load_img =
-            LoadImage::new(vfs.clone(), &path, mask_path, load_args.max_resolution).await?;
+        let load_img = LoadImage::new(vfs.clone(), &path, mask_path, load_args.max_resolution)?;
 
         let view = SceneView {
             camera,

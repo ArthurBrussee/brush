@@ -10,6 +10,7 @@ use brush_render::camera::{Camera, focal_to_fov};
 use brush_serde::{SplatMessage, load_splat_from_ply};
 use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
+use image::GenericImageView;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
@@ -132,7 +133,7 @@ async fn read_transforms_file(
         }
         let mask_path = find_mask_path(&vfs, &path);
 
-        let image = LoadImage::new(vfs.clone(), &path, mask_path, load_args.max_resolution).await;
+        let image = LoadImage::new(vfs.clone(), &path, mask_path, load_args.max_resolution);
 
         let image = match image {
             Ok(image) => image,
@@ -143,8 +144,14 @@ async fn read_transforms_file(
             Err(e) => Err(e)?,
         };
 
-        let w = frame.w.or(scene.w).unwrap_or(image.width() as f64) as u32;
-        let h = frame.h.or(scene.h).unwrap_or(image.height() as f64) as u32;
+        let w = frame.w.or(scene.w);
+        let h = frame.h.or(scene.h);
+        // If we have some missing format, just get it from the image.
+        // This does requrie loading the image which is not great...
+        let (w, h) = match (w, h) {
+            (Some(w), Some(h)) => (w as u32, h as u32),
+            _ => image.load().await?.dimensions(),
+        };
 
         let fovx = frame
             .camera_angle_x
@@ -173,10 +180,13 @@ async fn read_transforms_file(
             (Some(fovx), Some(fovy)) => (fovx, fovy),
         };
 
-        let cx = frame.cx.or(scene.cx).unwrap_or(w as f64 / 2.0);
-        let cy = frame.cy.or(scene.cy).unwrap_or(h as f64 / 2.0);
+        let cx = frame.cx.or(scene.cx);
+        let cy = frame.cy.or(scene.cy);
 
-        let cuv = glam::vec2((cx / w as f64) as f32, (cy / h as f64) as f32);
+        let cuv = glam::vec2(
+            (cx.map_or(0.5, |v| v / w as f64)) as f32,
+            (cy.map_or(0.5, |v| v / h as f64)) as f32,
+        );
 
         let view = SceneView {
             image,

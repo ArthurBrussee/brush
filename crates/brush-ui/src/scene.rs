@@ -152,9 +152,10 @@ impl ScenePanel {
         interactive: bool,
     ) -> egui::Rect {
         let mut size = ui.available_size();
-        let view = process.selected_view();
-        if let Some(view) = view {
-            let aspect_ratio = view.image.aspect_ratio();
+        let selected = process.selected_view();
+
+        if let Some(tex) = selected.tex.borrow().as_ref() {
+            let aspect_ratio = tex.handle.aspect_ratio();
             if size.x / size.y > aspect_ratio {
                 size.x = size.y * aspect_ratio;
             } else {
@@ -233,11 +234,13 @@ impl ScenePanel {
         ui.scope(|ui| {
             let mut background = false;
 
-            let view = process.selected_view();
-            if let Some(view) = view {
+            let selected = process.selected_view();
+            if let Some(view) = selected.view
+                && let Some(tex) = selected.tex.borrow().as_ref()
+            {
                 // if training views have alpha, show a background checker. Masked images
                 // should still use a black background.
-                if view.image.has_alpha() && !view.image.is_masked() {
+                if tex.has_alpha && !view.image.has_mask() {
                     background = true;
                     draw_checkerboard(ui, rect, Color32::WHITE);
                 }

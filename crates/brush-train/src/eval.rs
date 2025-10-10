@@ -29,7 +29,7 @@ pub fn eval_stats<B: Backend + SplatForward<B>>(
     // Compare MSE in RGB only.
     let res = glam::uvec2(gt_img.width(), gt_img.height());
 
-    let gt_tensor = sample_to_tensor(&view_to_sample_image(gt_img.clone(), alpha_is_mask), device);
+    let gt_tensor = sample_to_tensor(view_to_sample_image(gt_img.clone(), alpha_is_mask), device);
 
     let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
 

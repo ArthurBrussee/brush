@@ -226,7 +226,7 @@ async fn run_eval(
             &splats,
             &view.camera,
             eval_img,
-            view.image.is_masked(),
+            view.image.has_mask(),
             device,
         )
         .context("Failed to run eval for sample.")?;

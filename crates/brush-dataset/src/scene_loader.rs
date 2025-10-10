@@ -108,13 +108,17 @@ impl<B: Backend> SceneLoader<B> {
                                 );
                             // Don't premultiply the image if it's a mask - treat as fully opaque.
                             let sample =
-                                Arc::new(view_to_sample_image(image, view.image.is_masked()));
+                                Arc::new(view_to_sample_image(image, view.image.has_mask()));
                             load_cache.write().await.insert(index, sample.clone());
                             sample
                         };
 
                         let _ = send_img
-                            .send((sample, view.image.is_masked(), view.camera.clone()))
+                            .send((
+                                sample.as_ref().clone(),
+                                view.image.has_mask(),
+                                view.camera.clone(),
+                            ))
                             .await;
                     };
 
@@ -133,7 +137,7 @@ impl<B: Backend> SceneLoader<B> {
             while let Some(rec) = rec_imag.recv().await {
                 let (sample, alpha_is_mask, camera) = rec;
 
-                let img_tensor = sample_to_tensor(&sample, &device);
+                let img_tensor = sample_to_tensor(sample, &device);
 
                 if send_batch
                     .send(SceneBatch {

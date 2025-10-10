@@ -2,6 +2,7 @@ use crate::{Dataset, config::LoadDataseConfig};
 use brush_serde::{DeserializeError, SplatMessage, load_splat_from_ply};
 use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
+use image::ImageError;
 use path_clean::PathClean;
 use std::{
     path::{Path, PathBuf},
@@ -29,6 +30,9 @@ pub enum FormatError {
 
     #[error("Error loading splat data: {0}")]
     PlyError(#[from] DeserializeError),
+
+    #[error("Error loading image in data: {0}")]
+    ImageError(#[from] ImageError),
 }
 
 #[derive(Debug, Error)]
