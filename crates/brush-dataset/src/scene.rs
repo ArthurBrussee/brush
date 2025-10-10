@@ -1,9 +1,6 @@
 use brush_render::{bounding_box::BoundingBox, camera::Camera};
 use brush_vfs::BrushVfs;
-use burn::{
-    prelude::Backend,
-    tensor::{Tensor, TensorData},
-};
+use burn::tensor::TensorData;
 use glam::{Affine3A, Vec3, vec3};
 use image::DynamicImage;
 use std::{
@@ -179,11 +176,11 @@ pub fn view_to_sample_image(image: DynamicImage, alpha_is_mask: bool) -> Dynamic
     }
 }
 
-pub fn sample_to_tensor<B: Backend>(sample: DynamicImage, device: &B::Device) -> Tensor<B, 3> {
+pub fn sample_to_tensor_data(sample: DynamicImage) -> TensorData {
     let _span = tracing::trace_span!("sample_to_tensor").entered();
 
     let (w, h) = (sample.width(), sample.height());
-    let data = tracing::trace_span!("Img to vec").in_scope(|| {
+    tracing::trace_span!("Img to vec").in_scope(|| {
         if sample.color().has_alpha() {
             TensorData::new(
                 sample.into_rgba32f().into_vec(),
@@ -192,20 +189,18 @@ pub fn sample_to_tensor<B: Backend>(sample: DynamicImage, device: &B::Device) ->
         } else {
             TensorData::new(sample.into_rgb32f().into_vec(), [h as usize, w as usize, 3])
         }
-    });
-
-    Tensor::from_data(data, device)
+    })
 }
 
 #[derive(Clone, Debug)]
-pub struct SceneBatch<B: Backend> {
-    pub img_tensor: Tensor<B, 3>,
+pub struct SceneBatch {
+    pub img_tensor: TensorData,
     pub alpha_is_mask: bool,
     pub camera: Camera,
 }
 
-impl<B: Backend> SceneBatch<B> {
+impl SceneBatch {
     pub fn has_alpha(&self) -> bool {
-        self.img_tensor.shape().dims[2] == 4
+        self.img_tensor.shape[2] == 4
     }
 }

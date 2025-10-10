@@ -108,7 +108,7 @@ pub(crate) async fn train_stream(
     let mut eval_scene = dataset.eval;
 
     let mut train_duration = Duration::from_secs(0);
-    let mut dataloader = SceneLoader::new(&dataset.train, 42, &device);
+    let mut dataloader = SceneLoader::new(&dataset.train, 42);
     let mut trainer = SplatTrainer::new(&process_args.train_config, &device, splats.clone()).await;
 
     log::info!("Start training loop.");
@@ -119,8 +119,7 @@ pub(crate) async fn train_stream(
             .next_batch()
             .instrument(trace_span!("Wait for next data batch"))
             .await;
-
-        let (new_splats, stats) = trainer.step(&batch, splats);
+        let (new_splats, stats) = trainer.step(batch, splats);
         splats = new_splats;
         let (new_splats, refine) = trainer
             .refine_if_needed(iter, splats)

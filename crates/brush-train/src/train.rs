@@ -96,14 +96,14 @@ impl SplatTrainer {
 
     pub fn step(
         &mut self,
-        batch: &SceneBatch<DiffBackend>,
+        batch: SceneBatch,
         splats: Splats<DiffBackend>,
     ) -> (Splats<DiffBackend>, TrainStepStats<MainBackend>) {
         let _span = trace_span!("Train step").entered();
 
         let mut splats = splats;
 
-        let [img_h, img_w, _] = batch.img_tensor.dims();
+        let [img_h, img_w, _] = batch.img_tensor.shape.clone().try_into().unwrap();
         let camera = &batch.camera;
 
         let (pred_image, aux, refine_weight_holder) = trace_span!("Forward").in_scope(|| {
@@ -133,12 +133,14 @@ impl SplatTrainer {
             (img, diff_out.aux, diff_out.refine_weight_holder)
         });
 
+        let has_alpha = batch.has_alpha();
+        let device = splats.device();
         let median_scale = self.bounds.median_size();
         let num_visible = aux.num_visible().inner();
         let num_intersections = aux.num_intersections().inner();
-
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
-        let gt_rgb = batch.img_tensor.clone().slice(s![.., .., 0..3]);
+        let gt_tensor = Tensor::from_data(batch.img_tensor, &device);
+        let gt_rgb = gt_tensor.clone().slice(s![.., .., 0..3]);
 
         let visible: Tensor<Autodiff<MainBackend>, 1> =
             Tensor::from_primitive(TensorPrimitive::Float(aux.visible));
@@ -153,8 +155,8 @@ impl SplatTrainer {
                 l1_rgb
             };
 
-            let total_err = if batch.has_alpha() {
-                let alpha_input = batch.img_tensor.clone().slice(s![.., .., 3..4]);
+            let total_err = if has_alpha {
+                let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
 
                 if batch.alpha_is_mask {
                     total_err * alpha_input
@@ -199,7 +201,6 @@ impl SplatTrainer {
 
         let optimizer = self.optim.get_or_insert_with(|| {
             let sh_degree = splats.sh_degree();
-            let device = splats.device();
 
             let coeff_count = sh_coeffs_for_degree(sh_degree) as i32;
             let sh_size = coeff_count;
