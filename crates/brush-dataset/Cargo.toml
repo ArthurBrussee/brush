@@ -27,7 +27,6 @@ tokio_with_wasm.workspace = true
 clap.workspace = true
 path-clean = "1.0.1"
 itertools = "0.14"
-rayon.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 tokio = { workspace = true, features = ["io-util"] }

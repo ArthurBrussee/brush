@@ -20,7 +20,6 @@ use brush_serde::{ParseMetadata, SplatMessage};
 use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
 use itertools::Itertools;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use tokio_with_wasm::alias as tokio_wasm;
 
 fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
@@ -86,7 +85,7 @@ async fn load_dataset_inner(
         log::info!("Loading {} images for colmap dataset", img_info_list.len());
 
         let views: Vec<_> = img_info_list
-            .par_iter()
+            .iter()
             .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
             .take(load_args.max_frames.unwrap_or(usize::MAX))
             .filter_map(|img_info| {
@@ -170,12 +169,12 @@ async fn load_dataset_inner(
         }
 
         let positions: Vec<f32> = points_data
-            .par_iter()
+            .iter()
             .step_by(step)
             .flat_map(|p| p.xyz.to_array())
             .collect();
         let colors: Vec<f32> = points_data
-            .par_iter()
+            .iter()
             .step_by(step)
             .flat_map(|p| {
                 let sh = rgb_to_sh(glam::vec3(
