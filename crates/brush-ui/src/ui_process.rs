@@ -225,6 +225,13 @@ impl UiProcess {
         self.read().selected_view.clone()
     }
 
+    pub fn is_selected_view_loading(&self) -> bool {
+        self.read()
+            .loading_task
+            .as_ref()
+            .is_some_and(|t| !t.is_finished())
+    }
+
     pub fn set_model_up(&self, up_axis: Vec3) {
         let mut inner = self.write();
         inner.controls.model_local_to_world = Affine3A::from_rotation_translation(

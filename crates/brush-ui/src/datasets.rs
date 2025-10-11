@@ -118,11 +118,13 @@ impl AppPane for DatasetPanel {
                         egui::Color32::WHITE,
                     );
 
-                    ui.painter().rect_filled(
-                        rect,
-                        0.0,
-                        Color32::from_rgba_unmultiplied(100, 100, 120, 30),
-                    );
+                    if process.is_selected_view_loading() {
+                        ui.painter().rect_filled(
+                            rect,
+                            0.0,
+                            Color32::from_rgba_unmultiplied(200, 200, 220, 80),
+                        );
+                    }
 
                     ui.allocate_rect(rect, egui::Sense::click());
 
