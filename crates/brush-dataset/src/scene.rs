@@ -3,12 +3,8 @@ use brush_vfs::BrushVfs;
 use burn::tensor::TensorData;
 use glam::{Affine3A, Vec3, vec3};
 use image::DynamicImage;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 use tokio::io::AsyncReadExt;
-use tracing::instrument;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ViewType {
@@ -28,19 +24,18 @@ pub struct LoadImage {
 impl LoadImage {
     pub fn new(
         vfs: Arc<BrushVfs>,
-        path: &Path,
+        path: PathBuf,
         mask_path: Option<PathBuf>,
         max_resolution: u32,
-    ) -> std::io::Result<Self> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             vfs,
-            path: path.to_path_buf(),
+            path,
             mask_path,
             max_resolution,
-        })
+        }
     }
 
-    #[instrument(name = "load_scene_img")]
     pub async fn load(&self) -> image::ImageResult<DynamicImage> {
         let mut img_bytes = vec![];
         self.vfs
