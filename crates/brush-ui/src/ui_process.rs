@@ -379,7 +379,7 @@ struct UiProcessInner {
     splat_scale: Option<f32>,
     controls: CameraController,
     running_process: Option<RunningProcess>,
-    loading_task: Option<tokio::task::JoinHandle<()>>,
+    loading_task: Option<tokio_wasm::task::JoinHandle<()>>,
     selected_view: SelectedView,
     sender: tokio::sync::watch::Sender<Option<TexHandle>>,
     cur_device_ctx: Option<DeviceContext>,
