@@ -1,4 +1,8 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use super::FormatError;
 use crate::{
@@ -15,38 +19,18 @@ use brush_render::{
 use brush_serde::{ParseMetadata, SplatMessage};
 use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
-use std::collections::HashMap;
+use itertools::Itertools;
 use tokio_with_wasm::alias as tokio_wasm;
 
-fn find_mask_and_img(vfs: &BrushVfs, name: &str) -> Option<(PathBuf, Option<PathBuf>)> {
+fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
     // Colmap only specifies an image name, not a full path. We brute force
     // search for the image in the archive.
     //
     // Make sure this path doesn't start with a '/' as the files_ending_in expects
     // things in that format (like a "filename with slashes").
-    let name = name.strip_prefix('/').unwrap_or(name);
-
-    let paths: Vec<_> = vfs.files_ending_in(name).collect();
-
-    let mut path_masks = HashMap::new();
-    let mut masks = vec![];
-
-    // First pass: collect images & masks.
-    for path in paths {
-        let mask = find_mask_path(vfs, &path);
-        path_masks.insert(path.clone(), mask.clone());
-        if let Some(mask_path) = mask {
-            masks.push(mask_path);
-        }
-    }
-
-    // Remove masks from candidates - shouldn't count as an input image.
-    for mask in masks {
-        path_masks.remove(&mask);
-    }
-
-    // Sort and return the first candidate (alphabetically).
-    path_masks.into_iter().min_by_key(|kv| kv.0.clone())
+    vfs.files_ending_in(name)
+        .filter(|p| !p.iter().any(|f| f == "masks")) // Skip anything that is a mask.
+        .min()
 }
 
 pub(crate) async fn load_dataset(
@@ -78,154 +62,155 @@ async fn load_dataset_inner(
 ) -> Result<(Option<SplatMessage>, Dataset), FormatError> {
     let is_binary = cam_path.ends_with("cameras.bin");
 
-    let cam_model_data = {
+    log::info!("Parsing colmap camera info");
+
+    let load_args = load_args.clone();
+    let vfs = vfs.clone();
+
+    let vfs_init = vfs.clone();
+
+    // Spawn three tasks
+    let dataset = tokio_wasm::spawn(async move {
         let mut cam_file = vfs.reader_at_path(&cam_path).await?;
-        colmap_reader::read_cameras(&mut cam_file, is_binary).await?
-    };
+        let cam_model_data = colmap_reader::read_cameras(&mut cam_file, is_binary).await?;
+        let cam_model_data = cam_model_data
+            .into_iter()
+            .map(|cam| (cam.id, cam))
+            .collect::<HashMap<_, _>>();
+        let mut img_file = vfs.reader_at_path(&img_path).await?;
+        let img_infos = colmap_reader::read_images(&mut img_file, is_binary, false).await?;
+        let mut img_info_list = img_infos.into_iter().collect::<Vec<_>>();
+        img_info_list.sort_by(|img_a, img_b| img_a.name.cmp(&img_b.name));
 
-    let img_infos = {
-        let img_file = vfs.reader_at_path(&img_path).await?;
-        let mut buf_reader = tokio::io::BufReader::new(img_file);
-        colmap_reader::read_images(&mut buf_reader, is_binary).await?
-    };
+        log::info!("Loading {} images for colmap dataset", img_info_list.len());
 
-    let mut img_info_list = img_infos.into_iter().collect::<Vec<_>>();
-    img_info_list.sort_by_key(|key_img| key_img.1.name.clone());
+        let views: Vec<_> = img_info_list
+            .iter()
+            .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
+            .take(load_args.max_frames.unwrap_or(usize::MAX))
+            .filter_map(|img_info| {
+                let cam_data = cam_model_data
+                    .get(&img_info.camera_id)
+                    .ok_or_else(|| {
+                        FormatError::InvalidFormat(format!(
+                            "Image '{}' references camera ID {} which doesn't exist in camera data",
+                            img_info.name, img_info.camera_id
+                        ))
+                    })
+                    .unwrap()
+                    .clone();
 
-    log::info!("Loading colmap dataset with {} images", img_info_list.len());
+                // Create a future to handle loading the image.
+                let focal = cam_data.focal();
+                let fovx = camera::focal_to_fov(focal.0, cam_data.width as u32);
+                let fovy = camera::focal_to_fov(focal.1, cam_data.height as u32);
+                let center = cam_data.principal_point();
+                let center_uv = center / glam::vec2(cam_data.width as f32, cam_data.height as f32);
 
-    let mut train_views = vec![];
-    let mut eval_views = vec![];
+                let Some(path) = find_img(&vfs, &img_info.name) else {
+                    log::warn!("Image not found: {}", img_info.name);
+                    return None;
+                };
 
-    for (i, (_img_id, img_info)) in img_info_list
-        .into_iter()
-        .take(load_args.max_frames.unwrap_or(usize::MAX))
-        .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
-        .enumerate()
-    {
-        tokio_wasm::task::yield_now().await;
-        let cam_data = cam_model_data
-            .get(&img_info.camera_id)
-            .ok_or_else(|| {
-                FormatError::InvalidFormat(format!(
-                    "Image '{}' with ID {} references camera ID {} which doesn't exist in camera data",
-                    img_info.name, _img_id, img_info.camera_id
-                ))
-            })?
-            .clone();
-        let vfs = vfs.clone();
+                let mask_path = find_mask_path(&vfs, path);
 
-        // Create a future to handle loading the image.
-        let focal = cam_data.focal();
+                // Convert w2c to c2w.
+                let world_to_cam =
+                    glam::Affine3A::from_rotation_translation(img_info.quat, img_info.tvec);
+                let cam_to_world = world_to_cam.inverse();
+                let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
 
-        let fovx = camera::focal_to_fov(focal.0, cam_data.width as u32);
-        let fovy = camera::focal_to_fov(focal.1, cam_data.height as u32);
+                let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
+                let image = LoadImage::new(
+                    vfs.clone(),
+                    path.to_path_buf(),
+                    mask_path.map(|p| p.to_path_buf()),
+                    load_args.max_resolution,
+                );
 
-        let center = cam_data.principal_point();
-        let center_uv = center / glam::vec2(cam_data.width as f32, cam_data.height as f32);
+                Some(SceneView { camera, image })
+            })
+            .collect();
 
-        // If image isn't found, just ignore it. We can still train on the remaining images.
-        let Some((path, mask_path)) = find_mask_and_img(&vfs, &img_info.name) else {
-            log::warn!("Image not found: {}", img_info.name);
-            continue;
-        };
-
-        // Convert w2c to c2w.
-        let world_to_cam = glam::Affine3A::from_rotation_translation(img_info.quat, img_info.tvec);
-        let cam_to_world = world_to_cam.inverse();
-        let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
-
-        let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
-
-        log::info!("Loaded COLMAP image at path {path:?}");
-
-        let load_img =
-            LoadImage::new(vfs.clone(), &path, mask_path, load_args.max_resolution).await?;
-
-        let view = SceneView {
-            camera,
-            image: load_img,
-        };
-
-        if let Some(eval_period) = load_args.eval_split_every {
-            if i % eval_period == 0 {
-                eval_views.push(view);
+        let (train_views, eval_views) = views.into_iter().enumerate().partition_map(|(i, v)| {
+            if let Some(split) = load_args.eval_split_every
+                && i % split == 0
+            {
+                itertools::Either::Right(v)
             } else {
-                train_views.push(view);
+                itertools::Either::Left(v)
             }
-        } else {
-            train_views.push(view);
-        }
-    }
+        });
 
-    let init = try_load_init(vfs, device, load_args).await;
-    let dataset = Dataset::from_views(train_views, eval_views);
-    Ok((init, dataset))
-}
+        Result::<_, FormatError>::Ok(Dataset::from_views(train_views, eval_views))
+    });
 
-async fn try_load_init(
-    vfs: Arc<BrushVfs>,
-    device: &WgpuDevice,
-    load_args: &LoadDataseConfig,
-) -> Option<SplatMessage> {
-    let points_path = { vfs.files_ending_in("points3d.txt").next() }
-        .or_else(|| vfs.files_ending_in("points3d.bin").next())?;
+    let device = device.clone();
+    let load_args = load_args.clone();
 
-    let is_binary = matches!(
-        points_path.extension().and_then(|p| p.to_str()),
-        Some("bin")
-    );
-
-    // Extract COLMAP sfm points.
-    let points_data = {
+    let init = tokio_wasm::spawn(async move {
+        let points_path = { vfs_init.files_ending_in("points3d.txt").next() }
+            .or_else(|| vfs_init.files_ending_in("points3d.bin").next())?;
+        let is_binary = matches!(
+            points_path.extension().and_then(|p| p.to_str()),
+            Some("bin")
+        );
         // At this point the VFS has said this file exists so just unwrap.
-        let mut points_file = vfs.reader_at_path(&points_path).await.expect("unreachable");
-        colmap_reader::read_points3d(&mut points_file, is_binary).await
-    };
+        let mut points_file = vfs_init
+            .reader_at_path(points_path)
+            .await
+            .expect("unreachable");
 
-    let Ok(points_data) = points_data else {
-        return None;
-    };
+        let step = load_args.subsample_points.unwrap_or(1) as usize;
+        let points_data = colmap_reader::read_points3d(&mut points_file, is_binary, false)
+            .await
+            .ok()?;
 
-    if points_data.is_empty() {
-        return None;
-    }
+        if points_data.is_empty() {
+            return None;
+        }
 
-    // Ignore empty points data.
-    log::info!("Starting from colmap points {}", points_data.len());
+        let positions: Vec<f32> = points_data
+            .iter()
+            .step_by(step)
+            .flat_map(|p| p.xyz.to_array())
+            .collect();
+        let colors: Vec<f32> = points_data
+            .iter()
+            .step_by(step)
+            .flat_map(|p| {
+                let sh = rgb_to_sh(glam::vec3(
+                    p.rgb[0] as f32 / 255.0,
+                    p.rgb[1] as f32 / 255.0,
+                    p.rgb[2] as f32 / 255.0,
+                ));
+                [sh.x, sh.y, sh.z]
+            })
+            .collect();
 
-    // The ply importer handles subsampling normally. Here we just
-    // do it manually.
-    let step = load_args.subsample_points.unwrap_or(1) as usize;
+        log::info!("Starting from colmap points {}", positions.len() / 3);
 
-    let positions: Vec<f32> = points_data
-        .values()
-        .step_by(step)
-        .flat_map(|p| p.xyz.to_array())
-        .collect();
-    let colors: Vec<f32> = points_data
-        .values()
-        .step_by(step)
-        .flat_map(|p| {
-            let sh = rgb_to_sh(glam::vec3(
-                p.rgb[0] as f32 / 255.0,
-                p.rgb[1] as f32 / 255.0,
-                p.rgb[2] as f32 / 255.0,
-            ));
-            [sh.x, sh.y, sh.z]
+        let init_splat = Splats::from_raw(positions, None, None, Some(colors), None, &device);
+        log::info!(
+            "Created init splat from points with {} splats",
+            init_splat.num_splats()
+        );
+
+        Some(SplatMessage {
+            meta: ParseMetadata {
+                up_axis: None,
+                total_splats: init_splat.num_splats(),
+                frame_count: 1,
+                current_frame: 0,
+                progress: 1.0,
+            },
+            splats: init_splat,
         })
-        .collect();
-    let init_splat = Splats::from_raw(positions, None, None, Some(colors), None, device);
-    log::info!("Created init splat from points");
+    });
 
-    Some(SplatMessage {
-        meta: ParseMetadata {
-            up_axis: None,
-            total_splats: init_splat.num_splats(),
-            frame_count: 1,
-            current_frame: 0,
-            progress: 1.0,
-        },
-        splats: init_splat,
-    })
+    // Wait for all tasks and get results
+    let (dataset, init) = tokio::join!(dataset, init);
+    let (dataset, init) = (dataset.expect("Join failed")?, init.expect("Join failed"));
+
+    Ok((init, dataset))
 }

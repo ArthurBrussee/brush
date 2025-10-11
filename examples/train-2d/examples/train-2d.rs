@@ -1,9 +1,7 @@
 #![recursion_limit = "256"]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use std::sync::Arc;
-
-use brush_dataset::scene::{SceneBatch, sample_to_tensor};
+use brush_dataset::scene::{SceneBatch, sample_to_tensor_data};
 use brush_render::{
     MainBackend,
     bounding_box::BoundingBox,
@@ -25,7 +23,7 @@ struct TrainStep {
 }
 
 fn spawn_train_loop(
-    image: Arc<DynamicImage>,
+    image: DynamicImage,
     cam: Camera,
     config: TrainConfig,
     device: WgpuDevice,
@@ -52,7 +50,7 @@ fn spawn_train_loop(
 
         // One batch of training data, it's the same every step so can just construct it once.
         let batch = SceneBatch {
-            img_tensor: sample_to_tensor(&image, &device).unsqueeze(),
+            img_tensor: sample_to_tensor_data(image),
             alpha_is_mask: false,
             camera: cam,
         };
@@ -60,7 +58,7 @@ fn spawn_train_loop(
         let mut iter = 0;
 
         loop {
-            let (new_splats, _) = trainer.step(&batch, splats);
+            let (new_splats, _) = trainer.step(batch.clone(), splats);
             let (new_splats, _) = trainer.refine_if_needed(iter, new_splats).await;
 
             splats = new_splats;
@@ -82,7 +80,7 @@ fn spawn_train_loop(
 }
 
 struct App {
-    image: Arc<image::DynamicImage>,
+    image: image::DynamicImage,
     camera: Camera,
     tex_handle: TextureHandle,
     backbuffer: BurnTexture,
@@ -102,7 +100,7 @@ impl App {
             state.queue.clone(),
         );
 
-        let image = Arc::new(image::open("./crab.jpg").expect("Failed to open image"));
+        let image = image::open("./crab.jpg").expect("Failed to open image");
 
         let fov_x = 0.5 * std::f64::consts::PI;
         let fov_y = focal_to_fov(fov_to_focal(fov_x, image.width()), image.height());

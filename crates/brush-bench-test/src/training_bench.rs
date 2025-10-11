@@ -104,11 +104,7 @@ fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
     .with_sh_degree(0)
 }
 
-fn generate_training_batch(
-    device: &WgpuDevice,
-    resolution: (u32, u32),
-    camera_pos: Vec3,
-) -> SceneBatch<DiffBackend> {
+fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBatch {
     let mut rng = rand::rngs::StdRng::seed_from_u64(SEED + camera_pos.x as u64);
 
     let (width, height) = resolution;
@@ -135,11 +131,7 @@ fn generate_training_batch(
         })
         .collect();
 
-    let img_tensor = Tensor::<DiffBackend, 3>::from_data(
-        TensorData::new(img_data, [height as usize, width as usize, 3]),
-        device,
-    );
-
+    let img_tensor = TensorData::new(img_data, [height as usize, width as usize, 3]);
     let camera = Camera::new(camera_pos, Quat::IDENTITY, 50.0, 50.0, glam::vec2(0.5, 0.5));
 
     SceneBatch {
@@ -279,15 +271,15 @@ mod training {
     fn train_steps(splat_count: usize) {
         burn_cubecl::cubecl::future::block_on(async {
             let device = WgpuDevice::default();
-            let batch1 = generate_training_batch(&device, (1920, 1080), Vec3::new(0.0, 0.0, 5.0));
-            let batch2 = generate_training_batch(&device, (1920, 1080), Vec3::new(2.0, 0.0, 5.0));
+            let batch1 = generate_training_batch((1920, 1080), Vec3::new(0.0, 0.0, 5.0));
+            let batch2 = generate_training_batch((1920, 1080), Vec3::new(2.0, 0.0, 5.0));
             let batches = [batch1, batch2];
             let config = TrainConfig::default();
             let mut splats = gen_splats(&device, splat_count);
             let mut trainer = SplatTrainer::new(&config, &device, splats.clone()).await;
 
             for step in 0..20 {
-                let batch = &batches[step % batches.len()];
+                let batch = batches[step % batches.len()].clone();
                 let (new_splats, _) = trainer.step(batch, splats);
                 splats = new_splats;
             }

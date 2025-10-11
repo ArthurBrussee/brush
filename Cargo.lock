@@ -1039,6 +1039,7 @@ dependencies = [
  "colmap-reader",
  "glam",
  "image",
+ "itertools 0.14.0",
  "log",
  "path-clean",
  "rand 0.9.2",
@@ -1126,6 +1127,7 @@ dependencies = [
  "miette",
  "naga_oil",
  "rand 0.9.2",
+ "rayon",
  "tracing",
  "wgpu",
 ]
@@ -2176,6 +2178,7 @@ name = "colmap-reader"
 version = "0.3.0"
 dependencies = [
  "glam",
+ "log",
  "tokio",
  "tokio_with_wasm",
 ]

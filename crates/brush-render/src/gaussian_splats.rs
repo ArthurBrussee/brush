@@ -17,6 +17,7 @@ use burn::{
 };
 use glam::Vec3;
 use rand::Rng;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use tracing::trace_span;
 
 #[derive(Config, Debug)]
@@ -109,7 +110,7 @@ impl<B: Backend> Splats<B> {
             let _ = trace_span!("Splats scale init").entered();
 
             Tensor::from_data(TensorData::new(log_scales, [n_splats, 3]), device)
-        } else {
+        } else if n_splats >= 3 {
             let bounding_box =
                 trace_span!("Bounds from pose").in_scope(|| bounds_from_pos(0.75, &pos_data));
             let median_size = bounding_box.median_size();
@@ -124,21 +125,24 @@ impl<B: Backend> Splats<B> {
 
                 let empty = vec![(); tree_points.len()];
                 let tree = BallTree::new(tree_points.clone(), empty);
-                let mut query = tree.query();
 
                 tree_points
-                    .iter()
-                    .map(|p| {
+                    .par_iter()
+                    .map_with(tree.query(), |query, p| {
                         // Get half of the average of 2 nearest distances.
-                        let q = query.nn(p);
-                        let dist = 0.5 * q.skip(1).take(2).map(|x| x.1 as f32).sum::<f32>() / 2.0;
+                        let mut q = query.nn(p).skip(1);
+                        let a1 = q.next().unwrap().1 as f32;
+                        let a2 = q.next().unwrap().1 as f32;
+                        let dist = (a1 + a2) / 4.0;
                         dist.clamp(1e-3, median_size * 0.1).ln()
                     })
                     .flat_map(|p| [p, p, p])
                     .collect()
             });
 
-            Tensor::<B, 1>::from_floats(extents.as_slice(), device).reshape([n_splats, 3])
+            Tensor::from_data(TensorData::new(extents, [n_splats, 3]), device)
+        } else {
+            Tensor::ones([n_splats, 3], device)
         };
 
         let _ = trace_span!("Splats init rest").entered();

@@ -1,17 +1,15 @@
 use std::sync::Arc;
 
-use burn::prelude::Backend;
 use image::DynamicImage;
 use rand::{SeedableRng, seq::SliceRandom};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::{RwLock, mpsc};
 use tokio_with_wasm::alias as tokio_wasm;
-use tracing::{Instrument, trace_span};
 
-use crate::scene::{Scene, SceneBatch, sample_to_tensor, view_to_sample_image};
+use crate::scene::{Scene, SceneBatch, sample_to_tensor_data, view_to_sample_image};
 
-pub struct SceneLoader<B: Backend> {
-    receiver: Receiver<SceneBatch<B>>,
+pub struct SceneLoader {
+    receiver: Receiver<SceneBatch>,
 }
 
 struct ImageCache {
@@ -53,12 +51,10 @@ impl ImageCache {
     }
 }
 
-impl<B: Backend> SceneLoader<B> {
-    pub fn new(scene: &Scene, seed: u64, device: &B::Device) -> Self {
-        let num_img_queue = 32;
-
+impl SceneLoader {
+    pub fn new(scene: &Scene, seed: u64) -> Self {
         // The bounded size == number of batches to prefetch.
-        let (send_img, mut rec_imag) = mpsc::channel(num_img_queue);
+        let (send_batch, rec_batch) = mpsc::channel(2);
 
         // On wasm, there is little point to spawning multiple of these. In theory there would be
         // IF file reading truly was async, but since the zip archive is just in memory it isn't really
@@ -69,94 +65,71 @@ impl<B: Backend> SceneLoader<B> {
             std::thread::available_parallelism()
                 .map(|x| x.get())
                 .unwrap_or(8)
-                // Don't need more threads than the image queue can hold, most
-                // threads would just sit around idling!
-                .min(num_img_queue) as u64
         };
         let num_views = scene.views.len();
 
         let load_cache = Arc::new(RwLock::new(ImageCache::new(MAX_CACHE_MB, num_views)));
 
         for i in 0..parallelism {
-            let mut rng = rand::rngs::StdRng::seed_from_u64(seed + i);
-            let send_img = send_img.clone();
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed + i as u64);
             let views = scene.views.clone();
 
             let load_cache = load_cache.clone();
+            let send_batch = send_batch.clone();
 
             tokio_wasm::spawn(async move {
                 let mut shuf_indices = vec![];
 
                 loop {
-                    let load = async {
-                        let index = shuf_indices.pop().unwrap_or_else(|| {
-                            shuf_indices = (0..num_views).collect();
-                            shuf_indices.shuffle(&mut rng);
-                            shuf_indices
-                                .pop()
-                                .expect("Need at least one view in dataset")
-                        });
+                    let index = shuf_indices.pop().unwrap_or_else(|| {
+                        shuf_indices = (0..num_views).collect();
+                        shuf_indices.shuffle(&mut rng);
+                        shuf_indices
+                            .pop()
+                            .expect("Need at least one view in dataset")
+                    });
 
-                        let view = &views[index];
+                    let view = &views[index];
 
-                        let sample = if let Some(image) = load_cache.read().await.try_get(index) {
-                            image
-                        } else {
-                            let image =
-                                view.image.load().await.expect(
-                                    "Scene loader encountered an error while loading an image",
-                                );
-                            // Don't premultiply the image if it's a mask - treat as fully opaque.
-                            let sample =
-                                Arc::new(view_to_sample_image(image, view.image.is_masked()));
-                            load_cache.write().await.insert(index, sample.clone());
-                            sample
-                        };
-
-                        let _ = send_img
-                            .send((sample, view.image.is_masked(), view.camera.clone()))
-                            .await;
+                    let sample = if let Some(image) = load_cache.read().await.try_get(index) {
+                        image
+                    } else {
+                        let image = view
+                            .image
+                            .load()
+                            .await
+                            .expect("Scene loader encountered an error while loading an image");
+                        // Don't premultiply the image if it's a mask - treat as fully opaque.
+                        let sample = Arc::new(view_to_sample_image(image, view.image.has_mask()));
+                        load_cache.write().await.insert(index, sample.clone());
+                        sample
                     };
 
-                    load.instrument(trace_span!("SceneLoader load image")).await;
+                    let img_tensor = sample_to_tensor_data(sample.as_ref().clone());
 
-                    if send_img.is_closed() {
+                    if send_batch
+                        .send(SceneBatch {
+                            img_tensor,
+                            alpha_is_mask: view.image.has_mask(),
+                            camera: view.camera.clone(),
+                        })
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
+
+                    tokio_wasm::task::yield_now().await;
                 }
             });
         }
-        let (send_batch, rec_batch) = mpsc::channel(2);
-
-        let device = device.clone();
-        tokio_wasm::spawn(async move {
-            while let Some(rec) = rec_imag.recv().await {
-                let (sample, alpha_is_mask, camera) = rec;
-
-                let img_tensor = sample_to_tensor(&sample, &device);
-
-                if send_batch
-                    .send(SceneBatch {
-                        img_tensor,
-                        alpha_is_mask,
-                        camera,
-                    })
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-
-                tokio_wasm::task::yield_now().await;
-            }
-        });
 
         Self {
             receiver: rec_batch,
         }
     }
 
-    pub async fn next_batch(&mut self) -> SceneBatch<B> {
+    pub async fn next_batch(&mut self) -> SceneBatch {
         self.receiver
             .recv()
             .await

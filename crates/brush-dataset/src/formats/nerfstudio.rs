@@ -10,6 +10,7 @@ use brush_render::camera::{Camera, focal_to_fov};
 use brush_serde::{SplatMessage, load_splat_from_ply};
 use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
+use image::GenericImageView;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
@@ -108,8 +109,8 @@ async fn read_transforms_file(
     for frame in scene
         .frames
         .iter()
-        .take(load_args.max_frames.unwrap_or(usize::MAX))
         .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
+        .take(load_args.max_frames.unwrap_or(usize::MAX))
     {
         tokio_wasm::task::yield_now().await;
 
@@ -126,25 +127,33 @@ async fn read_transforms_file(
             .expect("Transforms path must be a filename")
             .join(&frame.file_path);
 
+        // Check if path exists.
+        if vfs.reader_at_path(&path).await.is_err() {
+            log::warn!("Image not found: {path:?}");
+            continue;
+        }
+
         // Assume png's by default if no extension is specified.
         if path.extension().is_none() {
             path = path.with_extension("png");
         }
         let mask_path = find_mask_path(&vfs, &path);
 
-        let image = LoadImage::new(vfs.clone(), &path, mask_path, load_args.max_resolution).await;
+        let image = LoadImage::new(
+            vfs.clone(),
+            path,
+            mask_path.map(|p| p.to_path_buf()),
+            load_args.max_resolution,
+        );
 
-        let image = match image {
-            Ok(image) => image,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                log::warn!("Image not found: {path:?}");
-                continue;
-            }
-            Err(e) => Err(e)?,
+        let w = frame.w.or(scene.w);
+        let h = frame.h.or(scene.h);
+        // If we have some missing format, just get it from the image.
+        // This does require loading the image which is not great...
+        let (w, h) = match (w, h) {
+            (Some(w), Some(h)) => (w as u32, h as u32),
+            _ => image.load().await?.dimensions(),
         };
-
-        let w = frame.w.or(scene.w).unwrap_or(image.width() as f64) as u32;
-        let h = frame.h.or(scene.h).unwrap_or(image.height() as f64) as u32;
 
         let fovx = frame
             .camera_angle_x
@@ -173,10 +182,13 @@ async fn read_transforms_file(
             (Some(fovx), Some(fovy)) => (fovx, fovy),
         };
 
-        let cx = frame.cx.or(scene.cx).unwrap_or(w as f64 / 2.0);
-        let cy = frame.cy.or(scene.cy).unwrap_or(h as f64 / 2.0);
+        let cx = frame.cx.or(scene.cx);
+        let cy = frame.cy.or(scene.cy);
 
-        let cuv = glam::vec2((cx / w as f64) as f32, (cy / h as f64) as f32);
+        let cuv = glam::vec2(
+            (cx.map_or(0.5, |v| v / w as f64)) as f32,
+            (cy.map_or(0.5, |v| v / h as f64)) as f32,
+        );
 
         let view = SceneView {
             image,
@@ -197,7 +209,7 @@ pub async fn read_dataset(
     let json_files: Vec<_> = vfs.files_with_extension("json").collect();
 
     let transforms_path = if json_files.len() == 1 {
-        json_files.first().cloned()?
+        json_files.first()?
     } else {
         // If there's multiple options, only pick files which are either exactly
         // transforms.json or end with transforms_train.json (a la transforms_train.json)
@@ -205,7 +217,7 @@ pub async fn read_dataset(
             .next()
             .or_else(|| vfs.files_ending_in("transforms_train.json").next())?
     };
-
+    let transforms_path = transforms_path.to_path_buf();
     Some(read_dataset_inner(vfs, load_args, device, json_files, transforms_path).await)
 }
 

@@ -5,7 +5,7 @@ use brush_process::{config::ProcessArgs, message::ProcessMessage, process::proce
 use brush_render::camera::Camera;
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
-use egui::Response;
+use egui::{Response, TextureHandle, TextureOptions};
 use glam::{Affine3A, Quat, Vec3};
 use parking_lot::RwLock;
 use tokio::sync::{self, oneshot::Receiver};
@@ -59,6 +59,17 @@ impl UiProcess {
     }
 }
 
+pub struct TexHandle {
+    pub handle: TextureHandle,
+    pub has_alpha: bool,
+}
+
+#[derive(Clone)]
+pub struct SelectedView {
+    pub view: Option<SceneView>,
+    pub tex: tokio::sync::watch::Receiver<Option<TexHandle>>,
+}
+
 impl UiProcess {
     pub fn is_loading(&self) -> bool {
         self.read().is_loading
@@ -83,10 +94,6 @@ impl UiProcess {
         cam.position = inner.controls.position;
         cam.rotation = inner.controls.rotation;
         cam
-    }
-
-    pub fn selected_view(&self) -> Option<SceneView> {
-        self.read().selected_view.clone()
     }
 
     pub fn set_train_paused(&self, paused: bool) {
@@ -130,9 +137,10 @@ impl UiProcess {
     }
 
     pub fn focus_view(&self, view: &SceneView) {
-        let mut inner = self.write();
+        self.set_selected_view(view);
 
-        inner.selected_view = Some(view.clone());
+        // Also focus this view.
+        let mut inner = self.write();
         inner.camera = view.camera.clone();
         inner.controls.stop_movement();
 
@@ -146,8 +154,82 @@ impl UiProcess {
         let (_, rot, translate) = view_local_to_world.to_scale_rotation_translation();
         inner.controls.position = translate;
         inner.controls.rotation = rot;
-
         inner.repaint();
+    }
+
+    pub fn set_selected_view(&self, view: &SceneView) {
+        let view_send = view.clone();
+
+        let inner = self.read();
+        let Some(ctx) = inner.cur_device_ctx.clone() else {
+            return;
+        };
+        let sender = inner.sender.clone();
+        drop(inner);
+
+        let mut inner = self.write();
+        if let Some(task) = inner.loading_task.take() {
+            task.abort();
+        }
+
+        inner.loading_task = Some(tokio_with_wasm::alias::spawn(async move {
+            // When selecting images super rapidly, might happen, don't waste resources loading.
+            let image = view_send
+                .image
+                .load()
+                .await
+                .expect("Failed to load dataset image");
+
+            if sender.is_closed() {
+                return;
+            }
+
+            // Yield in case we're cancelled.
+            tokio_wasm::task::yield_now().await;
+
+            let has_alpha = image.color().has_alpha();
+            let img_size = [image.width() as usize, image.height() as usize];
+            let color_img = if has_alpha {
+                let data = image.into_rgba8().into_vec();
+                egui::ColorImage::from_rgba_unmultiplied(img_size, &data)
+            } else {
+                egui::ColorImage::from_rgb(img_size, &image.into_rgb8().into_vec())
+            };
+
+            let image_name = view_send
+                .image
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Unknown");
+
+            let egui_handle =
+                ctx.ctx
+                    .load_texture(image_name, color_img, TextureOptions::default());
+
+            // Yield in case we're cancelled.
+            tokio_wasm::task::yield_now().await;
+
+            // If channel is gone, that's fine.
+            let _ = sender.send(Some(TexHandle {
+                handle: egui_handle,
+                has_alpha,
+            }));
+            // Show updated texture asap.
+            ctx.ctx.request_repaint();
+        }));
+        inner.selected_view.view = Some(view.clone());
+    }
+
+    pub fn selected_view(&self) -> SelectedView {
+        self.read().selected_view.clone()
+    }
+
+    pub fn is_selected_view_loading(&self) -> bool {
+        self.read()
+            .loading_task
+            .as_ref()
+            .is_some_and(|t| !t.is_finished())
     }
 
     pub fn set_model_up(&self, up_axis: Vec3) {
@@ -179,6 +261,9 @@ impl UiProcess {
         let (sender, receiver) = sync::mpsc::channel(1);
         let (train_sender, mut train_receiver) = sync::mpsc::unbounded_channel();
         let (send_dev, rec_rev) = sync::oneshot::channel::<DeviceContext>();
+
+        // Unloaded loaded view.
+        let _ = inner.sender.send(None);
 
         tokio_with_wasm::alias::task::spawn(async move {
             // Wait for device & gui ctx to be available.
@@ -246,11 +331,17 @@ impl UiProcess {
                 ret.push(msg);
             }
         }
+
+        // Can't focus immediately as we already have a lock.
+        let mut focus_view = None;
+
         for msg in &ret {
             // Keep track of things the ui process needs.
             match msg {
                 Ok(ProcessMessage::Dataset { dataset }) => {
-                    inner.selected_view = dataset.train.views.last().cloned();
+                    if let Some(view) = dataset.train.views.last() {
+                        focus_view = Some(view);
+                    }
                 }
                 Ok(ProcessMessage::StartLoading { training }) => {
                     inner.is_training = *training;
@@ -262,6 +353,13 @@ impl UiProcess {
                 _ => (),
             }
         }
+
+        drop(inner);
+
+        if let Some(view) = focus_view {
+            self.set_selected_view(view);
+        }
+
         ret
     }
 
@@ -281,7 +379,9 @@ struct UiProcessInner {
     splat_scale: Option<f32>,
     controls: CameraController,
     running_process: Option<RunningProcess>,
-    selected_view: Option<SceneView>,
+    loading_task: Option<tokio_wasm::task::JoinHandle<()>>,
+    selected_view: SelectedView,
+    sender: tokio::sync::watch::Sender<Option<TexHandle>>,
     cur_device_ctx: Option<DeviceContext>,
     ui_mode: UiMode,
 }
@@ -293,14 +393,17 @@ impl UiProcessInner {
 
         let controls = CameraController::new(position, rotation, CameraSettings::default());
         let camera = Camera::new(Vec3::ZERO, Quat::IDENTITY, 0.8, 0.8, glam::vec2(0.5, 0.5));
+        let (sender, tex) = tokio::sync::watch::channel(None);
 
         Self {
             camera,
             controls,
             splat_scale: None,
+            loading_task: None,
             is_loading: false,
             is_training: false,
-            selected_view: None,
+            sender,
+            selected_view: SelectedView { view: None, tex },
             running_process: None,
             cur_device_ctx: None,
             ui_mode: UiMode::Default,

@@ -83,7 +83,7 @@ fn generate_test_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend
     .with_sh_degree(0)
 }
 
-fn generate_test_batch(device: &WgpuDevice, resolution: (u32, u32)) -> SceneBatch<DiffBackend> {
+fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
     let mut rng = rand::rngs::StdRng::seed_from_u64(TEST_SEED);
     let (width, height) = resolution;
     let pixel_count = (width * height * 3) as usize;
@@ -109,11 +109,7 @@ fn generate_test_batch(device: &WgpuDevice, resolution: (u32, u32)) -> SceneBatc
         })
         .collect();
 
-    let img_tensor = Tensor::<DiffBackend, 3>::from_data(
-        TensorData::new(img_data, [height as usize, width as usize, 3]),
-        device,
-    );
-
+    let img_tensor = TensorData::new(img_data, [height as usize, width as usize, 3]);
     let camera = Camera::new(
         Vec3::new(0.0, 0.0, 3.0),
         Quat::IDENTITY,
@@ -163,11 +159,11 @@ fn test_forward_rendering() {
 #[tokio::test]
 async fn test_training_step() {
     let device = WgpuDevice::default();
-    let batch = generate_test_batch(&device, (64, 64));
+    let batch = generate_test_batch((64, 64));
     let splats = generate_test_splats(&device, 500);
     let config = TrainConfig::default();
     let mut trainer = SplatTrainer::new(&config, &device, splats.clone()).await;
-    let (final_splats, stats) = trainer.step(&batch, splats);
+    let (final_splats, stats) = trainer.step(batch, splats);
 
     assert!(final_splats.num_splats() > 0);
     let loss = stats.loss.into_scalar();
@@ -177,15 +173,11 @@ async fn test_training_step() {
 
 #[test]
 fn test_batch_generation() {
-    let device = WgpuDevice::default();
-    let batch = generate_test_batch(&device, (256, 128));
-
-    let img_dims = batch.img_tensor.dims();
+    let batch = generate_test_batch((256, 128));
+    let img_dims = batch.img_tensor.shape.clone();
     assert_eq!(img_dims, [128, 256, 3]);
-
-    let img_data = batch.img_tensor.into_data().into_vec::<f32>().unwrap();
+    let img_data = batch.img_tensor.into_vec::<f32>().unwrap();
     assert!(img_data.iter().all(|&x| x.is_finite()));
-
     // TODO: Oh no... SH vals can be >1 I guess... ?
     assert!(img_data.iter().all(|&x| (0.0..=1.1).contains(&x)));
 }
@@ -193,7 +185,7 @@ fn test_batch_generation() {
 #[tokio::test]
 async fn test_multi_step_training() {
     let device = WgpuDevice::default();
-    let batch = generate_test_batch(&device, (64, 64));
+    let batch = generate_test_batch((64, 64));
     let config = TrainConfig::default();
     let mut splats = generate_test_splats(&device, 100);
     let mut trainer = SplatTrainer::new(&config, &device, splats.clone()).await;
@@ -201,7 +193,7 @@ async fn test_multi_step_training() {
 
     // Run a few training steps
     for _ in 0..3 {
-        let (new_splats, stats) = trainer.step(&batch, splats);
+        let (new_splats, stats) = trainer.step(batch.clone(), splats);
         splats = new_splats;
 
         let loss = stats.loss.into_scalar();

@@ -60,6 +60,8 @@ wasm-bindgen = "0.2.97"
 wasm-bindgen-futures = "0.4"
 wasm-streams = "0.4"
 
+rayon = "1.11"
+
 naga_oil = { version = "0.19", default-features = false }
 
 # Backends are chosen per platform.

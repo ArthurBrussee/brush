@@ -69,6 +69,16 @@ impl PathKey {
         };
         Self(key)
     }
+
+    fn from_str(path: &str) -> Self {
+        let key = path.to_lowercase().replace('\\', "/");
+        let key = if key.starts_with('/') {
+            key
+        } else {
+            '/'.to_string() + &key
+        };
+        Self(key)
+    }
 }
 
 // Simple wrapper for Arc<Vec<u8>> that implements AsRef<[u8]> for Cursor
@@ -300,23 +310,23 @@ impl BrushVfs {
         })
     }
 
-    pub fn files_ending_in<'a>(&'a self, end_path: &'a str) -> impl Iterator<Item = PathBuf> + 'a {
-        let end_keyed = PathKey::from_path(Path::new(end_path)).0;
+    pub fn files_ending_in<'a>(&'a self, end_path: &str) -> impl Iterator<Item = &'a Path> + 'a {
+        let end_keyed = PathKey::from_str(end_path).0;
 
         self.lookup
             .iter()
             .filter(move |kv| kv.0.0.ends_with(&end_keyed))
-            .map(|kv| kv.1.clone())
+            .map(|kv| kv.1.as_path())
     }
 
-    pub fn files_with_stem<'a>(&'a self, filestem: &'a str) -> impl Iterator<Item = PathBuf> + 'a {
+    pub fn files_with_stem<'a>(&'a self, filestem: &str) -> impl Iterator<Item = &'a Path> + 'a {
         let filestem = filestem.to_lowercase();
         self.lookup.values().filter_map(move |path| {
             let stem = path
                 .file_stem()
                 .and_then(|stem| stem.to_str())?
                 .to_lowercase();
-            (stem == filestem).then(|| path.clone())
+            (stem == filestem).then_some(path.as_path())
         })
     }
 
@@ -405,8 +415,11 @@ impl BrushVfs {
                 #[cfg(not(target_family = "wasm"))]
                 {
                     let total_path = _dir.join(path);
-                    let file = tokio::fs::File::open(total_path).await?;
-                    let file = tokio::io::BufReader::new(file);
+                    // Higher capacity seems to help performance a bit.
+                    let file = tokio::io::BufReader::with_capacity(
+                        5 * 1024 * 1024,
+                        tokio::fs::File::open(total_path).await?,
+                    );
                     Ok(Box::new(file))
                 }
             }

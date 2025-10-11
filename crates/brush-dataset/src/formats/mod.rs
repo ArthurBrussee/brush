@@ -2,11 +2,9 @@ use crate::{Dataset, config::LoadDataseConfig};
 use brush_serde::{DeserializeError, SplatMessage, load_splat_from_ply};
 use brush_vfs::BrushVfs;
 use burn::backend::wgpu::WgpuDevice;
+use image::ImageError;
 use path_clean::PathClean;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 pub mod colmap;
 pub mod nerfstudio;
@@ -29,6 +27,9 @@ pub enum FormatError {
 
     #[error("Error loading splat data: {0}")]
     PlyError(#[from] DeserializeError),
+
+    #[error("Error loading image in data: {0}")]
+    ImageError(#[from] ImageError),
 }
 
 #[derive(Debug, Error)]
@@ -88,7 +89,7 @@ pub async fn load_dataset(
     Ok((init_splat, dataset))
 }
 
-fn find_mask_path(vfs: &BrushVfs, path: &Path) -> Option<PathBuf> {
+fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &Path) -> Option<&'a Path> {
     let parent = path.parent()?.clean();
     let file_stem = path.file_stem()?.to_str()?;
     let masks_dir = parent.parent()?.join("masks").clean();

@@ -9,6 +9,7 @@ license.workspace = true
 glam.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "io-util"] }
 tokio_with_wasm.workspace = true
+log.workspace = true
 
 [lints]
 workspace = true

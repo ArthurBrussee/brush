@@ -39,8 +39,6 @@ pub fn process_stream(
             ply_count
         );
 
-        log::info!("Start of view stream");
-
         if vfs_counts == ply_count {
             drop(process_args);
             view_stream(vfs, device, emitter).await?;

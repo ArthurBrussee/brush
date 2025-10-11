@@ -1,18 +1,10 @@
 use brush_render::{bounding_box::BoundingBox, camera::Camera};
 use brush_vfs::BrushVfs;
-use burn::{
-    prelude::Backend,
-    tensor::{Tensor, TensorData},
-};
+use burn::tensor::TensorData;
 use glam::{Affine3A, Vec3, vec3};
-use image::{ColorType, DynamicImage, ImageDecoder, ImageReader};
-use std::{
-    io::Cursor,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-use tokio::io::{AsyncRead, AsyncReadExt};
-use tracing::instrument;
+use image::DynamicImage;
+use std::{path::PathBuf, sync::Arc};
+use tokio::io::AsyncReadExt;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ViewType {
@@ -26,93 +18,24 @@ pub struct LoadImage {
     pub vfs: Arc<BrushVfs>,
     pub path: PathBuf,
     pub mask_path: Option<PathBuf>,
-    color: image::ColorType,
-    size: glam::UVec2,
     max_resolution: u32,
 }
 
-/// Gets the dimensions of an image from an [`AsyncRead`] source
-pub async fn get_image_data<R>(reader: &mut R) -> std::io::Result<(glam::UVec2, ColorType)>
-where
-    R: AsyncRead + Unpin,
-{
-    // The maximum size before the entire SOF of JPEG is read is 65548 bytes. Read 20kb to start, and grow if needed. More exotic image formats
-    // might need even more data, so loop below will keep reading until we can figure out the dimensions
-    // of the image.
-    let mut temp_buf = vec![0; 16387];
-
-    let mut n = 0;
-    loop {
-        let read = reader.read_exact(&mut temp_buf[n..]).await?;
-
-        if read == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "Reached end of file while trying to decode image format",
-            ));
-        }
-
-        n += read;
-
-        // Try to decode with what we have (nb, no copying happens here).
-        if let Ok(decoder) = ImageReader::new(Cursor::new(&temp_buf[..n]))
-            .with_guessed_format()?
-            .into_decoder()
-        {
-            return Ok((decoder.dimensions().into(), decoder.color_type()));
-        }
-        // Try reading up to double the size.
-        temp_buf.resize(temp_buf.len() * 2, 0);
-    }
-}
-
 impl LoadImage {
-    pub async fn new(
+    pub fn new(
         vfs: Arc<BrushVfs>,
-        path: &Path,
+        path: PathBuf,
         mask_path: Option<PathBuf>,
         max_resolution: u32,
-    ) -> std::io::Result<Self> {
-        let reader = &mut vfs.reader_at_path(path).await?;
-        let data = get_image_data(reader).await?;
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             vfs,
-            path: path.to_path_buf(),
+            path,
             mask_path,
             max_resolution,
-            size: data.0,
-            color: data.1,
-        })
-    }
-
-    pub fn has_alpha(&self) -> bool {
-        self.color.has_alpha() || self.is_masked()
-    }
-
-    pub fn dimensions(&self) -> glam::UVec2 {
-        if self.size.x <= self.max_resolution && self.size.y <= self.max_resolution {
-            self.size
-        } else {
-            // Take from image crate, just to be sure logic here matches exactly.
-            let wratio = f64::from(self.max_resolution) / f64::from(self.size.x);
-            let hratio = f64::from(self.max_resolution) / f64::from(self.size.y);
-            let ratio = f64::min(wratio, hratio);
-            let nw = u64::max((f64::from(self.size.x) * ratio).round() as u64, 1);
-            let nh = u64::max((f64::from(self.size.y) * ratio).round() as u64, 1);
-            glam::uvec2(nw as u32, nh as u32)
         }
     }
 
-    pub fn width(&self) -> u32 {
-        self.dimensions().x
-    }
-
-    pub fn height(&self) -> u32 {
-        self.dimensions().y
-    }
-
-    #[instrument(name = "load_scene_img")]
     pub async fn load(&self) -> image::ImageResult<DynamicImage> {
         let mut img_bytes = vec![];
         self.vfs
@@ -157,13 +80,8 @@ impl LoadImage {
         ))
     }
 
-    pub fn is_masked(&self) -> bool {
+    pub fn has_mask(&self) -> bool {
         self.mask_path.is_some()
-    }
-
-    pub fn aspect_ratio(&self) -> f32 {
-        let dim = self.dimensions();
-        dim.x as f32 / dim.y as f32
     }
 }
 
@@ -253,30 +171,31 @@ pub fn view_to_sample_image(image: DynamicImage, alpha_is_mask: bool) -> Dynamic
     }
 }
 
-pub fn sample_to_tensor<B: Backend>(sample: &DynamicImage, device: &B::Device) -> Tensor<B, 3> {
+pub fn sample_to_tensor_data(sample: DynamicImage) -> TensorData {
     let _span = tracing::trace_span!("sample_to_tensor").entered();
 
     let (w, h) = (sample.width(), sample.height());
-    let data = tracing::trace_span!("Img to vec").in_scope(|| {
+    tracing::trace_span!("Img to vec").in_scope(|| {
         if sample.color().has_alpha() {
-            TensorData::new(sample.to_rgba32f().into_vec(), [h as usize, w as usize, 4])
+            TensorData::new(
+                sample.into_rgba32f().into_vec(),
+                [h as usize, w as usize, 4],
+            )
         } else {
-            TensorData::new(sample.to_rgb32f().into_vec(), [h as usize, w as usize, 3])
+            TensorData::new(sample.into_rgb32f().into_vec(), [h as usize, w as usize, 3])
         }
-    });
-
-    Tensor::from_data(data, device)
+    })
 }
 
 #[derive(Clone, Debug)]
-pub struct SceneBatch<B: Backend> {
-    pub img_tensor: Tensor<B, 3>,
+pub struct SceneBatch {
+    pub img_tensor: TensorData,
     pub alpha_is_mask: bool,
     pub camera: Camera,
 }
 
-impl<B: Backend> SceneBatch<B> {
+impl SceneBatch {
     pub fn has_alpha(&self) -> bool {
-        self.img_tensor.shape().dims[2] == 4
+        self.img_tensor.shape[2] == 4
     }
 }

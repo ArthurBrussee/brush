@@ -1,7 +1,4 @@
-#![allow(unused)]
-
-use std::collections::HashMap;
-use std::io::{self, BufRead, Read};
+use std::io::{self};
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncBufRead, AsyncRead};
@@ -87,18 +84,31 @@ pub struct Camera {
 
 #[derive(Debug)]
 pub struct Image {
+    pub id: i32,
     pub tvec: glam::Vec3,
     pub quat: glam::Quat,
     pub camera_id: i32,
     pub name: String,
+
+    pub points: Option<ImagePointData>,
+}
+
+#[derive(Debug)]
+pub struct ImagePointData {
     pub xys: Vec<glam::Vec2>,
     pub point3d_ids: Vec<i64>,
 }
 
 #[derive(Debug)]
 pub struct Point3D {
+    pub id: i64,
     pub xyz: glam::Vec3,
     pub rgb: [u8; 3],
+    pub aux: Option<Point3DAux>,
+}
+
+#[derive(Debug)]
+pub struct Point3DAux {
     pub error: f64,
     pub image_ids: Vec<i32>,
     pub point2d_idxs: Vec<i32>,
@@ -159,18 +169,17 @@ fn parse<T: std::str::FromStr>(s: &str) -> io::Result<T> {
         .map_err(|_e| io::Error::new(io::ErrorKind::InvalidData, "Parse error"))
 }
 
-async fn read_cameras_text<R: AsyncRead + Unpin>(reader: R) -> io::Result<HashMap<i32, Camera>> {
-    let mut cameras = HashMap::new();
-    let mut buf_reader = tokio::io::BufReader::new(reader);
+async fn read_cameras_text<R: AsyncBufRead + Unpin>(mut reader: R) -> io::Result<Vec<Camera>> {
+    let mut cameras = Vec::new();
     let mut line = String::new();
 
-    while buf_reader.read_line(&mut line).await? > 0 {
+    while reader.read_line(&mut line).await? > 0 {
         if line.starts_with('#') {
             line.clear();
             continue;
         }
 
-        let parts: Vec<&str> = line.split_whitespace().collect();
+        let parts: Vec<&str> = line.split_ascii_whitespace().collect();
         if parts.len() < 4 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -200,16 +209,13 @@ async fn read_cameras_text<R: AsyncRead + Unpin>(reader: R) -> io::Result<HashMa
             ));
         }
 
-        cameras.insert(
+        cameras.push(Camera {
             id,
-            Camera {
-                id,
-                model,
-                width,
-                height,
-                params,
-            },
-        );
+            model,
+            width,
+            height,
+            params,
+        });
         line.clear();
 
         tokio_wasm::task::yield_now().await;
@@ -218,10 +224,8 @@ async fn read_cameras_text<R: AsyncRead + Unpin>(reader: R) -> io::Result<HashMa
     Ok(cameras)
 }
 
-async fn read_cameras_binary<R: AsyncRead + Unpin>(
-    mut reader: R,
-) -> io::Result<HashMap<i32, Camera>> {
-    let mut cameras = HashMap::new();
+async fn read_cameras_binary<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<Vec<Camera>> {
+    let mut cameras = Vec::new();
     let num_cameras = reader.read_u64_le().await?;
 
     for _ in 0..num_cameras {
@@ -239,52 +243,62 @@ async fn read_cameras_binary<R: AsyncRead + Unpin>(
             params.push(reader.read_f64_le().await?);
         }
 
-        cameras.insert(
-            camera_id,
-            Camera {
-                id: camera_id,
-                model,
-                width,
-                height,
-                params,
-            },
-        );
+        cameras.push(Camera {
+            id: camera_id,
+            model,
+            width,
+            height,
+            params,
+        });
     }
 
     Ok(cameras)
 }
 
-async fn read_images_text<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<HashMap<i32, Image>> {
-    let mut images = HashMap::new();
-    let mut buf_reader = tokio::io::BufReader::new(reader);
-    let mut line = String::new();
+async fn read_images_text<R: AsyncBufRead + Unpin>(
+    reader: R,
+    with_points: bool,
+) -> io::Result<Vec<Image>> {
+    let mut images = vec![];
+    let mut lines = reader.lines();
 
-    let mut img_data = true;
-
-    loop {
-        line.clear();
-        if buf_reader.read_line(&mut line).await? == 0 {
-            break;
+    while let Some(line) = lines.next_line().await? {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
         }
 
-        if !line.is_empty() && !line.starts_with('#') {
-            let elems: Vec<&str> = line.split_whitespace().collect();
-            let id: i32 = parse(elems[0])?;
+        let mut elems = line.split_ascii_whitespace();
+        let mut try_next = || {
+            elems.next().ok_or(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Missing element",
+            ))
+        };
 
-            let [w, x, y, z] = [
-                parse(elems[1])?,
-                parse(elems[2])?,
-                parse(elems[3])?,
-                parse(elems[4])?,
-            ];
-            let quat = glam::quat(x, y, z, w);
-            let tvec = glam::vec3(parse(elems[5])?, parse(elems[6])?, parse(elems[7])?);
-            let camera_id: i32 = parse(elems[8])?;
-            let name = elems[9].to_owned();
+        let id: i32 = parse(try_next()?)?;
 
-            line.clear();
-            buf_reader.read_line(&mut line).await?;
-            let elems: Vec<&str> = line.split_whitespace().collect();
+        let [w, x, y, z] = [
+            parse(try_next()?)?,
+            parse(try_next()?)?,
+            parse(try_next()?)?,
+            parse(try_next()?)?,
+        ];
+        let quat = glam::quat(x, y, z, w);
+        let tvec = glam::vec3(
+            parse(try_next()?)?,
+            parse(try_next()?)?,
+            parse(try_next()?)?,
+        );
+        let camera_id: i32 = parse(try_next()?)?;
+        let name = try_next()?.to_owned();
+
+        let next_line = lines
+            .next_line()
+            .await?
+            .ok_or(io::Error::new(io::ErrorKind::InvalidData, "Missing line"))?;
+
+        let point_data = if with_points {
+            let elems: Vec<&str> = next_line.split_whitespace().collect();
             let mut xys = Vec::new();
             let mut point3d_ids = Vec::new();
 
@@ -293,17 +307,22 @@ async fn read_images_text<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<Has
                 point3d_ids.push(parse(chunk[2])?);
             }
 
-            images.insert(
-                id,
-                Image {
-                    quat,
-                    tvec,
-                    camera_id,
-                    name,
-                    xys,
-                    point3d_ids,
-                },
-            );
+            Some(ImagePointData { xys, point3d_ids })
+        } else {
+            None
+        };
+
+        images.push(Image {
+            id,
+            quat,
+            tvec,
+            camera_id,
+            name,
+            points: point_data,
+        });
+
+        if images.len() % 1000 == 0 {
+            log::info!("Read {} image infos", images.len());
         }
     }
 
@@ -312,8 +331,9 @@ async fn read_images_text<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<Has
 
 async fn read_images_binary<R: AsyncBufRead + Unpin>(
     mut reader: R,
-) -> io::Result<HashMap<i32, Image>> {
-    let mut images = HashMap::new();
+    with_points: bool,
+) -> io::Result<Vec<Image>> {
+    let mut images = Vec::new();
     let num_images = reader.read_u64_le().await?;
 
     for _ in 0..num_images {
@@ -341,88 +361,116 @@ async fn read_images_binary<R: AsyncBufRead + Unpin>(
             .to_owned();
 
         let num_points2d = reader.read_u64_le().await?;
-        let mut xys = Vec::with_capacity(num_points2d as usize);
-        let mut point3d_ids = Vec::with_capacity(num_points2d as usize);
 
-        for _ in 0..num_points2d {
-            xys.push(glam::Vec2::new(
-                reader.read_f64_le().await? as f32,
-                reader.read_f64_le().await? as f32,
-            ));
-            point3d_ids.push(reader.read_i64().await?);
-        }
+        let point_data = if with_points {
+            let mut xys = Vec::with_capacity(num_points2d as usize);
+            let mut point3d_ids = Vec::with_capacity(num_points2d as usize);
 
-        images.insert(
-            image_id,
-            Image {
-                quat,
-                tvec,
-                camera_id,
-                name,
-                xys,
-                point3d_ids,
-            },
-        );
+            for _ in 0..num_points2d {
+                xys.push(glam::Vec2::new(
+                    reader.read_f64_le().await? as f32,
+                    reader.read_f64_le().await? as f32,
+                ));
+                point3d_ids.push(reader.read_i64().await?);
+            }
+            Some(ImagePointData { xys, point3d_ids })
+        } else {
+            // Advance reader correct amount.
+            for _ in 0..num_points2d {
+                let (_, _, _) = (
+                    reader.read_f64_le().await?,
+                    reader.read_f64_le().await?,
+                    reader.read_i64().await?,
+                );
+            }
+            None
+        };
+
+        images.push(Image {
+            id: image_id,
+            quat,
+            tvec,
+            camera_id,
+            name,
+            points: point_data,
+        });
     }
 
     Ok(images)
 }
 
-async fn read_points3d_text<R: AsyncRead + Unpin>(reader: R) -> io::Result<HashMap<i64, Point3D>> {
-    let mut points3d = HashMap::new();
-    let mut buf_reader = tokio::io::BufReader::new(reader);
-    let mut line = String::new();
+async fn read_points3d_text<R: AsyncBufRead + Unpin>(
+    reader: R,
+    with_aux: bool,
+) -> io::Result<Vec<Point3D>> {
+    let mut points3d = Vec::new();
+    let mut lines = reader.lines();
 
-    while buf_reader.read_line(&mut line).await? > 0 {
+    while let Some(line) = lines.next_line().await? {
         if line.starts_with('#') {
-            line.clear();
             continue;
         }
 
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 8 {
-            return Err(io::Error::new(
+        let mut parts = line.split_ascii_whitespace();
+
+        let mut try_next = || {
+            parts.next().ok_or(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Invalid point3D data",
-            ));
-        }
+                "Missing element",
+            ))
+        };
 
-        let id: i64 = parse(parts[0])?;
-        let xyz = glam::Vec3::new(parse(parts[1])?, parse(parts[2])?, parse(parts[3])?);
+        let id: i64 = parse(try_next()?)?;
+        let xyz = glam::Vec3::new(
+            parse::<f32>(try_next()?)?,
+            parse::<f32>(try_next()?)?,
+            parse::<f32>(try_next()?)?,
+        );
         let rgb = [
-            parse::<u8>(parts[4])?,
-            parse::<u8>(parts[5])?,
-            parse::<u8>(parts[6])?,
+            parse::<u8>(try_next()?)?,
+            parse::<u8>(try_next()?)?,
+            parse::<u8>(try_next()?)?,
         ];
-        let error: f64 = parse(parts[7])?;
 
-        let mut image_ids = Vec::new();
-        let mut point2d_idxs = Vec::new();
+        let points_aux = if with_aux {
+            let error: f64 = parse(try_next()?)?;
 
-        for chunk in parts[8..].chunks(2) {
-            if chunk.len() < 2 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Invalid point3D track data",
-                ));
+            let mut image_ids = Vec::new();
+            let mut point2d_idxs = Vec::new();
+
+            loop {
+                let (id, idx_2d) = (try_next(), try_next());
+                match (id, idx_2d) {
+                    (Ok(id), Ok(idx_2d)) => {
+                        image_ids.push(parse(id)?);
+                        point2d_idxs.push(parse(idx_2d)?);
+                    }
+                    (Ok(_), Err(b)) => {
+                        Err(b)?;
+                    }
+                    _ => break,
+                }
             }
-            image_ids.push(parse(chunk[0])?);
-            point2d_idxs.push(parse(chunk[1])?);
-        }
 
-        points3d.insert(
-            id,
-            Point3D {
-                xyz,
-                rgb,
+            Some(Point3DAux {
                 error,
                 image_ids,
                 point2d_idxs,
-            },
-        );
-        line.clear();
+            })
+        } else {
+            None
+        };
 
-        tokio_wasm::task::yield_now().await;
+        if id % 100000 == 0 {
+            log::info!("Processed {id} points");
+        }
+
+        points3d.push(Point3D {
+            id,
+            xyz,
+            rgb,
+            aux: points_aux,
+        });
     }
 
     Ok(points3d)
@@ -430,8 +478,9 @@ async fn read_points3d_text<R: AsyncRead + Unpin>(reader: R) -> io::Result<HashM
 
 async fn read_points3d_binary<R: AsyncRead + Unpin>(
     mut reader: R,
-) -> io::Result<HashMap<i64, Point3D>> {
-    let mut points3d = HashMap::new();
+    points_aux: bool,
+) -> io::Result<Vec<Point3D>> {
+    let mut points3d = Vec::new();
     let num_points = reader.read_u64_le().await?;
 
     for _ in 0..num_points {
@@ -446,36 +495,47 @@ async fn read_points3d_binary<R: AsyncRead + Unpin>(
             reader.read_u8().await?,
             reader.read_u8().await?,
         ];
+
         let error = reader.read_f64_le().await?;
-
         let track_length = reader.read_u64_le().await?;
-        let mut image_ids = Vec::with_capacity(track_length as usize);
-        let mut point2d_idxs = Vec::with_capacity(track_length as usize);
 
-        for _ in 0..track_length {
-            image_ids.push(reader.read_i32_le().await?);
-            point2d_idxs.push(reader.read_i32_le().await?);
-        }
+        let points_aux = if points_aux {
+            let mut image_ids = Vec::with_capacity(track_length as usize);
+            let mut point2d_idxs = Vec::with_capacity(track_length as usize);
 
-        points3d.insert(
-            point3d_id,
-            Point3D {
-                xyz,
-                rgb,
+            for _ in 0..track_length {
+                image_ids.push(reader.read_i32_le().await?);
+                point2d_idxs.push(reader.read_i32_le().await?);
+            }
+
+            Some(Point3DAux {
                 error,
                 image_ids,
                 point2d_idxs,
-            },
-        );
+            })
+        } else {
+            for _ in 0..track_length {
+                let _ = reader.read_i32_le().await?;
+                let _ = reader.read_i32_le().await?;
+            }
+            None
+        };
+
+        points3d.push(Point3D {
+            id: point3d_id,
+            xyz,
+            rgb,
+            aux: points_aux,
+        });
     }
 
     Ok(points3d)
 }
 
-pub async fn read_cameras<R: AsyncRead + Unpin>(
-    mut reader: R,
+pub async fn read_cameras<R: AsyncBufRead + Unpin>(
+    reader: R,
     binary: bool,
-) -> io::Result<HashMap<i32, Camera>> {
+) -> io::Result<Vec<Camera>> {
     if binary {
         read_cameras_binary(reader).await
     } else {
@@ -486,22 +546,24 @@ pub async fn read_cameras<R: AsyncRead + Unpin>(
 pub async fn read_images<R: AsyncBufRead + Unpin>(
     reader: R,
     binary: bool,
-) -> io::Result<HashMap<i32, Image>> {
+    with_points: bool,
+) -> io::Result<Vec<Image>> {
     if binary {
-        read_images_binary(reader).await
+        read_images_binary(reader, with_points).await
     } else {
-        read_images_text(reader).await
+        read_images_text(reader, with_points).await
     }
 }
 
-pub async fn read_points3d<R: AsyncRead + Unpin>(
+pub async fn read_points3d<R: AsyncBufRead + Unpin>(
     reader: R,
     binary: bool,
-) -> io::Result<HashMap<i64, Point3D>> {
+    points_aux: bool,
+) -> io::Result<Vec<Point3D>> {
     if binary {
-        read_points3d_binary(reader).await
+        read_points3d_binary(reader, points_aux).await
     } else {
-        read_points3d_text(reader).await
+        read_points3d_text(reader, points_aux).await
     }
 }
 
@@ -570,11 +632,11 @@ mod tests {
         let cameras = read_cameras_text(reader).await.unwrap();
 
         assert_eq!(cameras.len(), 2);
-        let cam1 = &cameras[&1];
+        let cam1 = &cameras[0];
         assert_eq!(cam1.params, vec![500.0, 500.0, 400.0, 300.0]);
         assert_eq!(cam1.focal(), (500.0, 500.0));
 
-        let cam2 = &cameras[&2];
+        let cam2 = &cameras[1];
         assert_eq!(cam2.params.len(), 8);
         assert!(matches!(cam2.model, CameraModel::OpenCV));
 
@@ -599,17 +661,16 @@ mod tests {
                          \n";
 
         let reader = Cursor::new(image_data.as_bytes());
-        let images = read_images_text(reader).await.unwrap();
+        let images = read_images_text(reader, true).await.unwrap();
 
         assert_eq!(images.len(), 2);
-        let img1 = &images[&1];
+        let img1 = &images[0];
         assert_eq!(img1.camera_id, 1);
         assert_eq!(img1.name, "image1.jpg");
-        assert_eq!(img1.xys.len(), 3);
-        assert_eq!(img1.point3d_ids[2], -1); // Invalid point3d id
-
-        let img2 = &images[&2];
-        assert_eq!(img2.xys.len(), 0); // No 2D points
+        assert_eq!(img1.points.as_ref().unwrap().xys.len(), 3);
+        assert_eq!(img1.points.as_ref().unwrap().point3d_ids[2], -1); // Invalid point3d id
+        let img2 = &images[1];
+        assert_eq!(img2.points.as_ref().unwrap().xys.len(), 0); // No 2D points
     }
 
     #[tokio::test]
@@ -619,18 +680,18 @@ mod tests {
                           2 -1.0 0.0 1.0 0 255 0 0.05 3 50 4 75 5 125\n";
 
         let reader = Cursor::new(points_data.as_bytes());
-        let points = read_points3d_text(reader).await.unwrap();
+        let points = read_points3d_text(reader, true).await.unwrap();
 
         assert_eq!(points.len(), 2);
-        let pt1 = &points[&1];
+        let pt1 = &points[0];
         assert_eq!(pt1.xyz, glam::vec3(1.5, 2.5, 3.5));
         assert_eq!(pt1.rgb, [255, 128, 64]);
-        assert_eq!(pt1.image_ids, vec![1, 2]);
+        assert_eq!(pt1.aux.as_ref().unwrap().image_ids, vec![1, 2]);
 
         // Test error case - should fail
         let invalid_data = "1 1.5 2.5 3.5 255 128 64 0.1 1\n"; // Missing POINT2D_IDX
         let reader = Cursor::new(invalid_data.as_bytes());
-        let result = read_points3d_text(reader).await;
+        let result = read_points3d_text(reader, true).await;
         assert!(result.is_err());
     }
 
@@ -647,7 +708,7 @@ mod tests {
             let reader = Cursor::new(data.as_bytes());
             let result = match data_type {
                 "cameras" => read_cameras_text(reader).await.map(|_| ()),
-                "points3d" => read_points3d_text(reader).await.map(|_| ()),
+                "points3d" => read_points3d_text(reader, false).await.map(|_| ()),
                 _ => unreachable!(),
             };
             assert!(result.is_err(), "Expected error for: {data}");
@@ -661,25 +722,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_public_api_integration() {
-        // Test the public API functions work together
         let camera_data = "1 PINHOLE 800 600 500.0 500.0 400.0 300.0\n";
         let reader = Cursor::new(camera_data.as_bytes());
         let cameras = read_cameras(reader, false).await.unwrap();
         assert_eq!(cameras.len(), 1);
-
         let image_data = "1 1.0 0.0 0.0 0.0 0.0 0.0 0.0 1 test.jpg\n\n";
         let reader = BufReader::new(Cursor::new(image_data.as_bytes()));
-        let images = read_images(reader, false).await.unwrap();
+        let images = read_images(reader, false, false).await.unwrap();
         assert_eq!(images.len(), 1);
-
         let points_data = "1 1.0 2.0 3.0 255 0 0 0.1\n";
         let reader = Cursor::new(points_data.as_bytes());
-        let points = read_points3d(reader, false).await.unwrap();
+        let points = read_points3d(reader, false, true).await.unwrap();
         assert_eq!(points.len(), 1);
-
         // Verify data consistency
-        let camera = &cameras[&1];
-        let image = &images[&1];
+        let camera = &cameras[0];
+        let image = &images[0];
         assert_eq!(image.camera_id, camera.id);
     }
 }
