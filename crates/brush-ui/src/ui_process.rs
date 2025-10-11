@@ -167,16 +167,25 @@ impl UiProcess {
         let sender = inner.sender.clone();
         drop(inner);
 
-        tokio_with_wasm::alias::spawn(async move {
+        let mut inner = self.write();
+        if let Some(task) = inner.loading_task.take() {
+            task.abort();
+        }
+
+        inner.loading_task = Some(tokio_with_wasm::alias::spawn(async move {
             // When selecting images super rapidly, might happen, don't waste resources loading.
             let image = view_send
                 .image
                 .load()
                 .await
                 .expect("Failed to load dataset image");
+
             if sender.is_closed() {
                 return;
             }
+
+            // Yield in case we're cancelled.
+            tokio_wasm::task::yield_now().await;
 
             let has_alpha = image.color().has_alpha();
             let img_size = [image.width() as usize, image.height() as usize];
@@ -198,6 +207,9 @@ impl UiProcess {
                 ctx.ctx
                     .load_texture(image_name, color_img, TextureOptions::default());
 
+            // Yield in case we're cancelled.
+            tokio_wasm::task::yield_now().await;
+
             // If channel is gone, that's fine.
             let _ = sender.send(Some(TexHandle {
                 handle: egui_handle,
@@ -205,8 +217,8 @@ impl UiProcess {
             }));
             // Show updated texture asap.
             ctx.ctx.request_repaint();
-        });
-        self.write().selected_view.view = Some(view.clone());
+        }));
+        inner.selected_view.view = Some(view.clone());
     }
 
     pub fn selected_view(&self) -> SelectedView {
@@ -242,6 +254,9 @@ impl UiProcess {
         let (sender, receiver) = sync::mpsc::channel(1);
         let (train_sender, mut train_receiver) = sync::mpsc::unbounded_channel();
         let (send_dev, rec_rev) = sync::oneshot::channel::<DeviceContext>();
+
+        // Unloaded loaded view.
+        let _ = inner.sender.send(None);
 
         tokio_with_wasm::alias::task::spawn(async move {
             // Wait for device & gui ctx to be available.
@@ -357,6 +372,7 @@ struct UiProcessInner {
     splat_scale: Option<f32>,
     controls: CameraController,
     running_process: Option<RunningProcess>,
+    loading_task: Option<tokio::task::JoinHandle<()>>,
     selected_view: SelectedView,
     sender: tokio::sync::watch::Sender<Option<TexHandle>>,
     cur_device_ctx: Option<DeviceContext>,
@@ -376,6 +392,7 @@ impl UiProcessInner {
             camera,
             controls,
             splat_scale: None,
+            loading_task: None,
             is_loading: false,
             is_training: false,
             sender,

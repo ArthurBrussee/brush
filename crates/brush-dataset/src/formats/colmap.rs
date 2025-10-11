@@ -133,7 +133,9 @@ async fn load_dataset_inner(
             .collect();
 
         let (train_views, eval_views) = views.into_iter().enumerate().partition_map(|(i, v)| {
-            if i % load_args.eval_split_every.unwrap_or(usize::MAX) == 0 {
+            if let Some(split) = load_args.eval_split_every
+                && i % split == 0
+            {
                 itertools::Either::Right(v)
             } else {
                 itertools::Either::Left(v)
