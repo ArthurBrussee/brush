@@ -106,6 +106,11 @@ impl SplatTrainer {
         let [img_h, img_w, _] = batch.img_tensor.shape.clone().try_into().unwrap();
         let camera = &batch.camera;
 
+        // Upload tensor early.
+        let device = splats.device();
+        let has_alpha = batch.has_alpha();
+        let gt_tensor = Tensor::from_data(batch.img_tensor, &device);
+
         let (pred_image, aux, refine_weight_holder) = trace_span!("Forward").in_scope(|| {
             // Could generate a random background color, but so far
             // results just seem worse.
@@ -133,13 +138,10 @@ impl SplatTrainer {
             (img, diff_out.aux, diff_out.refine_weight_holder)
         });
 
-        let has_alpha = batch.has_alpha();
-        let device = splats.device();
         let median_scale = self.bounds.median_size();
         let num_visible = aux.num_visible().inner();
         let num_intersections = aux.num_intersections().inner();
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
-        let gt_tensor = Tensor::from_data(batch.img_tensor, &device);
         let gt_rgb = gt_tensor.clone().slice(s![.., .., 0..3]);
 
         let visible: Tensor<Autodiff<MainBackend>, 1> =
