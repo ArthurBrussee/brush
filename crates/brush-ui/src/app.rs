@@ -169,17 +169,6 @@ impl eframe::App for App {
 
         self.receive_messages();
 
-        if ctx.input(|i| i.key_pressed(egui::Key::F)) {
-            let current_mode = self.tree_ctx.process.ui_mode();
-            let new_mode = match current_mode {
-                UiMode::Default => UiMode::FullScreenSplat,
-                UiMode::FullScreenSplat => UiMode::Default,
-                // Don't allow exiting this mode.
-                UiMode::EmbeddedViewer => UiMode::EmbeddedViewer,
-            };
-            self.tree_ctx.process.set_ui_mode(new_mode);
-        }
-
         let process = self.tree_ctx.process.clone();
 
         // Recursive function to compute visibility bottom-up
@@ -222,5 +211,17 @@ impl eframe::App for App {
                 let _span = trace_span!("Render UI").entered();
                 self.tree.ui(&mut self.tree_ctx, ui);
             });
+
+        // Do this after all other UI has had a chance to capture this event.
+        if ctx.input(|i| i.key_pressed(egui::Key::F)) && !ctx.wants_keyboard_input() {
+            let current_mode = self.tree_ctx.process.ui_mode();
+            let new_mode = match current_mode {
+                UiMode::Default => UiMode::FullScreenSplat,
+                UiMode::FullScreenSplat => UiMode::Default,
+                // Don't allow exiting this mode.
+                UiMode::EmbeddedViewer => UiMode::EmbeddedViewer,
+            };
+            self.tree_ctx.process.set_ui_mode(new_mode);
+        }
     }
 }
