@@ -55,6 +55,7 @@ where
     deserializer.deserialize_any(Dequant)
 }
 
+#[brush_serde_macros::generate_sh_fields]
 #[derive(Deserialize)]
 pub struct PlyGaussian {
     pub(crate) x: f32,
@@ -84,96 +85,10 @@ pub struct PlyGaussian {
     pub(crate) f_dc_1: f32,
     #[serde(default)]
     pub(crate) f_dc_2: f32,
+
+    // This marker field will be replaced with 72 f_rest_N fields by the proc macro
     #[serde(default)]
-    pub(crate) f_rest_0: f32,
-    #[serde(default)]
-    pub(crate) f_rest_1: f32,
-    #[serde(default)]
-    pub(crate) f_rest_2: f32,
-    #[serde(default)]
-    pub(crate) f_rest_3: f32,
-    #[serde(default)]
-    pub(crate) f_rest_4: f32,
-    #[serde(default)]
-    pub(crate) f_rest_5: f32,
-    #[serde(default)]
-    pub(crate) f_rest_6: f32,
-    #[serde(default)]
-    pub(crate) f_rest_7: f32,
-    #[serde(default)]
-    pub(crate) f_rest_8: f32,
-    #[serde(default)]
-    pub(crate) f_rest_9: f32,
-    #[serde(default)]
-    pub(crate) f_rest_10: f32,
-    #[serde(default)]
-    pub(crate) f_rest_11: f32,
-    #[serde(default)]
-    pub(crate) f_rest_12: f32,
-    #[serde(default)]
-    pub(crate) f_rest_13: f32,
-    #[serde(default)]
-    pub(crate) f_rest_14: f32,
-    #[serde(default)]
-    pub(crate) f_rest_15: f32,
-    #[serde(default)]
-    pub(crate) f_rest_16: f32,
-    #[serde(default)]
-    pub(crate) f_rest_17: f32,
-    #[serde(default)]
-    pub(crate) f_rest_18: f32,
-    #[serde(default)]
-    pub(crate) f_rest_19: f32,
-    #[serde(default)]
-    pub(crate) f_rest_20: f32,
-    #[serde(default)]
-    pub(crate) f_rest_21: f32,
-    #[serde(default)]
-    pub(crate) f_rest_22: f32,
-    #[serde(default)]
-    pub(crate) f_rest_23: f32,
-    #[serde(default)]
-    pub(crate) f_rest_24: f32,
-    #[serde(default)]
-    pub(crate) f_rest_25: f32,
-    #[serde(default)]
-    pub(crate) f_rest_26: f32,
-    #[serde(default)]
-    pub(crate) f_rest_27: f32,
-    #[serde(default)]
-    pub(crate) f_rest_28: f32,
-    #[serde(default)]
-    pub(crate) f_rest_29: f32,
-    #[serde(default)]
-    pub(crate) f_rest_30: f32,
-    #[serde(default)]
-    pub(crate) f_rest_31: f32,
-    #[serde(default)]
-    pub(crate) f_rest_32: f32,
-    #[serde(default)]
-    pub(crate) f_rest_33: f32,
-    #[serde(default)]
-    pub(crate) f_rest_34: f32,
-    #[serde(default)]
-    pub(crate) f_rest_35: f32,
-    #[serde(default)]
-    pub(crate) f_rest_36: f32,
-    #[serde(default)]
-    pub(crate) f_rest_37: f32,
-    #[serde(default)]
-    pub(crate) f_rest_38: f32,
-    #[serde(default)]
-    pub(crate) f_rest_39: f32,
-    #[serde(default)]
-    pub(crate) f_rest_40: f32,
-    #[serde(default)]
-    pub(crate) f_rest_41: f32,
-    #[serde(default)]
-    pub(crate) f_rest_42: f32,
-    #[serde(default)]
-    pub(crate) f_rest_43: f32,
-    #[serde(default)]
-    pub(crate) f_rest_44: f32,
+    pub(crate) _sh_rest_fields: (),
 
     // Color overrides. Potentially quantized.
     #[serde(default, alias = "r", skip_serializing, deserialize_with = "de_quant")]
@@ -184,63 +99,8 @@ pub struct PlyGaussian {
     pub(crate) blue: Option<f32>,
 }
 
-macro_rules! sh_coeffs_array {
-    ($self:expr) => {
-        [
-            $self.f_rest_0,
-            $self.f_rest_1,
-            $self.f_rest_2,
-            $self.f_rest_3,
-            $self.f_rest_4,
-            $self.f_rest_5,
-            $self.f_rest_6,
-            $self.f_rest_7,
-            $self.f_rest_8,
-            $self.f_rest_9,
-            $self.f_rest_10,
-            $self.f_rest_11,
-            $self.f_rest_12,
-            $self.f_rest_13,
-            $self.f_rest_14,
-            $self.f_rest_15,
-            $self.f_rest_16,
-            $self.f_rest_17,
-            $self.f_rest_18,
-            $self.f_rest_19,
-            $self.f_rest_20,
-            $self.f_rest_21,
-            $self.f_rest_22,
-            $self.f_rest_23,
-            $self.f_rest_24,
-            $self.f_rest_25,
-            $self.f_rest_26,
-            $self.f_rest_27,
-            $self.f_rest_28,
-            $self.f_rest_29,
-            $self.f_rest_30,
-            $self.f_rest_31,
-            $self.f_rest_32,
-            $self.f_rest_33,
-            $self.f_rest_34,
-            $self.f_rest_35,
-            $self.f_rest_36,
-            $self.f_rest_37,
-            $self.f_rest_38,
-            $self.f_rest_39,
-            $self.f_rest_40,
-            $self.f_rest_41,
-            $self.f_rest_42,
-            $self.f_rest_43,
-            $self.f_rest_44,
-        ]
-    };
-}
-
-impl PlyGaussian {
-    pub fn sh_rest_coeffs(&self) -> [f32; 45] {
-        sh_coeffs_array!(self)
-    }
-}
+// Generate the sh_rest_coeffs() method using proc macro
+brush_serde_macros::impl_coeffs!(PlyGaussian);
 
 fn de_quant_sh<'de, D>(deserializer: D) -> Result<f32, D::Error>
 where
@@ -250,102 +110,13 @@ where
     Ok((value - 0.5) * 8.0)
 }
 
+#[brush_serde_macros::generate_sh_fields]
 #[derive(Deserialize)]
 pub struct QuantSh {
+    // This marker field will be replaced with 72 f_rest_N fields by the proc macro
     #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_0: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_1: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_2: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_3: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_4: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_5: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_6: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_7: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_8: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_9: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_10: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_11: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_12: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_13: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_14: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_15: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_16: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_17: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_18: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_19: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_20: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_21: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_22: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_23: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_24: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_25: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_26: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_27: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_28: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_29: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_30: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_31: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_32: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_33: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_34: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_35: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_36: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_37: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_38: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_39: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_40: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_41: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_42: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_43: f32,
-    #[serde(default, deserialize_with = "de_quant_sh")]
-    pub(crate) f_rest_44: f32,
+    pub(crate) _sh_rest_fields: (),
 }
 
-impl QuantSh {
-    pub fn coeffs(&self) -> [f32; 45] {
-        sh_coeffs_array!(self)
-    }
-}
+// Generate the coeffs() method using proc macro
+brush_serde_macros::impl_coeffs!(QuantSh);

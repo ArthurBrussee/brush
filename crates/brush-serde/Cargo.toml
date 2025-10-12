@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
+brush-serde-macros.path = "../brush-serde-macros"
 
 burn.workspace = true
 burn-cubecl.workspace = true

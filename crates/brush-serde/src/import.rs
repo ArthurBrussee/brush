@@ -637,7 +637,11 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
                     sh_coeffs[splat_index * 3 + 1],
                     sh_coeffs[splat_index * 3 + 2],
                 );
-                interleave_coeffs(dc, &quant_sh.coeffs()[..sh_count], &mut total_coeffs);
+                interleave_coeffs(
+                    dc,
+                    &quant_sh.sh_rest_coeffs()[..sh_count],
+                    &mut total_coeffs,
+                );
                 splat_index += 1;
             })
             .deserialize(&mut file)?;

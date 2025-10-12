@@ -1,16 +1,15 @@
-use std::collections::BTreeMap;
 use std::vec;
 
 use brush_render::gaussian_splats::Splats;
 use brush_render::sh::sh_coeffs_for_degree;
 use burn::prelude::Backend;
+use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use serde_ply::{SerializeError, SerializeOptions};
 
 // Dynamic PLY structure that only includes needed SH coefficients
 #[derive(Debug)]
 struct DynamicPlyGaussian {
-    // Core properties
     x: f32,
     y: f32,
     z: f32,
@@ -33,80 +32,34 @@ impl Serialize for DynamicPlyGaussian {
     where
         S: Serializer,
     {
-        // Create a BTreeMap to maintain field order
-        let mut map = BTreeMap::new();
+        // Calculate total number of fields: 11 core + 3 DC + rest_coeffs
+        let field_count = 14 + self.rest_coeffs.len();
+        let mut state = serializer.serialize_struct("DynamicPlyGaussian", field_count)?;
 
-        // Add core properties
-        map.insert("x", self.x);
-        map.insert("y", self.y);
-        map.insert("z", self.z);
-        map.insert("scale_0", self.scale_0);
-        map.insert("scale_1", self.scale_1);
-        map.insert("scale_2", self.scale_2);
-        map.insert("opacity", self.opacity);
-        map.insert("rot_0", self.rot_0);
-        map.insert("rot_1", self.rot_1);
-        map.insert("rot_2", self.rot_2);
-        map.insert("rot_3", self.rot_3);
+        state.serialize_field("x", &self.x)?;
+        state.serialize_field("y", &self.y)?;
+        state.serialize_field("z", &self.z)?;
+        state.serialize_field("scale_0", &self.scale_0)?;
+        state.serialize_field("scale_1", &self.scale_1)?;
+        state.serialize_field("scale_2", &self.scale_2)?;
+        state.serialize_field("opacity", &self.opacity)?;
+        state.serialize_field("rot_0", &self.rot_0)?;
+        state.serialize_field("rot_1", &self.rot_1)?;
+        state.serialize_field("rot_2", &self.rot_2)?;
+        state.serialize_field("rot_3", &self.rot_3)?;
 
-        // Add DC components
-        map.insert("f_dc_0", self.f_dc_0);
-        map.insert("f_dc_1", self.f_dc_1);
-        map.insert("f_dc_2", self.f_dc_2);
+        // Serialize DC components
+        state.serialize_field("f_dc_0", &self.f_dc_0)?;
+        state.serialize_field("f_dc_1", &self.f_dc_1)?;
+        state.serialize_field("f_dc_2", &self.f_dc_2)?;
 
-        let sh_names = [
-            "f_rest_0",
-            "f_rest_1",
-            "f_rest_2",
-            "f_rest_3",
-            "f_rest_4",
-            "f_rest_5",
-            "f_rest_6",
-            "f_rest_7",
-            "f_rest_8",
-            "f_rest_9",
-            "f_rest_10",
-            "f_rest_11",
-            "f_rest_12",
-            "f_rest_13",
-            "f_rest_14",
-            "f_rest_15",
-            "f_rest_16",
-            "f_rest_17",
-            "f_rest_18",
-            "f_rest_19",
-            "f_rest_20",
-            "f_rest_21",
-            "f_rest_22",
-            "f_rest_23",
-            "f_rest_24",
-            "f_rest_25",
-            "f_rest_26",
-            "f_rest_27",
-            "f_rest_28",
-            "f_rest_29",
-            "f_rest_30",
-            "f_rest_31",
-            "f_rest_32",
-            "f_rest_33",
-            "f_rest_34",
-            "f_rest_35",
-            "f_rest_36",
-            "f_rest_37",
-            "f_rest_38",
-            "f_rest_39",
-            "f_rest_40",
-            "f_rest_41",
-            "f_rest_42",
-            "f_rest_43",
-            "f_rest_44",
-            "f_rest_45",
-        ];
-        for (name, val) in sh_names.iter().zip(&self.rest_coeffs) {
-            map.insert(name, *val);
+        // Serialize rest coefficients.
+        const SH_NAMES: [&str; 72] = brush_serde_macros::sh_field_names!();
+        for (name, val) in SH_NAMES.iter().zip(&self.rest_coeffs) {
+            state.serialize_field(name, val)?;
         }
-        // Serialize as a map
-        map.serialize(serializer)
+
+        state.end()
     }
 }
 

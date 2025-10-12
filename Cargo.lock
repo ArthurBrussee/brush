@@ -1165,6 +1165,7 @@ version = "0.3.0"
 dependencies = [
  "async-fn-stream",
  "brush-render",
+ "brush-serde-macros",
  "brush-vfs",
  "burn",
  "burn-cubecl",
@@ -1175,6 +1176,15 @@ dependencies = [
  "tokio-stream",
  "tokio_with_wasm",
  "web-time",
+]
+
+[[package]]
+name = "brush-serde-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
 ]
 
 [[package]]
