@@ -1,7 +1,9 @@
 [package]
 name = "brush-serde-macros"
-version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
 
 [lib]
 proc-macro = true
