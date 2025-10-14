@@ -28,7 +28,7 @@ modal_volumes: dict[str | PurePosixPath, Volume] = {
 }
 
 image = (
-    Image.from_dockerfile("extras/Dockerfile", add_python="3.11") #! For brush, we use a different base image
+    Image.from_dockerfile("nvs-bench/Dockerfile", add_python="3.11") #! For brush, we use a different base image
     .env(
         {
             # Set Torch CUDA Compatbility to be for RTX 4090, T4, L40s, and A100
