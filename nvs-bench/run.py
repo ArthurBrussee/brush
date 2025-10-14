@@ -11,7 +11,7 @@ import modal
 from .image import image, method_name, modal_volumes, nvs_bench_volume
 
 app = modal.App(
-    "nvs-bench",
+    f"nvs-bench-{method_name}",
     image=(
         image  # If using Dockerfile, replace with `modal.Image.from_dockerfile("Dockerfile")`
         # Overwrite build repo (which is only pulled in once for install) with the current local working directory
@@ -44,6 +44,13 @@ def log_time(log_file: str):
         f.write(f"{duration:.2f}\n")
 
 
+@app.function()
+def download_data(data: str):
+    # Download from gcs (noop if already exists)
+    os.system(f"mkdir -p /nvs-bench/data/{data}/")
+    os.system(f"gsutil -m rsync -r -d gs://nvs-bench/data/{data} /nvs-bench/data/{data}")
+
+
 @app.function(
     timeout=3600 * 8,
     gpu="L40S",
@@ -51,10 +58,6 @@ def log_time(log_file: str):
 def eval(data: str):
     data_folder = Path(f"/nvs-bench/data/{data}/")
     output_folder = Path(f"/nvs-bench/methods/{method_name}/{data}/")
-
-    # Download from gcs (noop if already exists)
-    os.system(f"mkdir -p /nvs-bench/data/{data}/")
-    os.system(f"gsutil -m rsync -r -d gs://nvs-bench/data/{data} /nvs-bench/data/{data}")
 
     # Clean output folder
     shutil.rmtree(output_folder, ignore_errors=True)
@@ -92,6 +95,7 @@ def full_eval():
         "zipnerf/nyc",
     ]
 
+    download_data.for_each(BENCHMARK_DATA, ignore_exceptions=True)
     eval.for_each(BENCHMARK_DATA, ignore_exceptions=True)
 
 
@@ -101,6 +105,7 @@ def main(data: str | None = None):
     if data is not None:
         # Assert there's only one / in the data
         assert data.count("/") == 1, "data must be in the format <dataset>/<scene>"
+        download_data.remote(data)
         eval.remote(data)
     else:
         full_eval()
