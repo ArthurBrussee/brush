@@ -319,14 +319,20 @@ impl BrushVfs {
             .map(|kv| kv.1.as_path())
     }
 
-    pub fn files_with_stem<'a>(&'a self, filestem: &str) -> impl Iterator<Item = &'a Path> + 'a {
-        let filestem = filestem.to_lowercase();
+    /// Coming from `some_file.ext`, search for `some_file.*` and `some_file.ext.*`.
+    pub fn files_named_like<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = &'a Path> + 'a {
+        let search_name = path.file_name().expect("File must have a name");
+        let search_stem = path.file_stem().expect("File must have a name");
+
         self.lookup.values().filter_map(move |path| {
-            let stem = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())?
-                .to_lowercase();
-            (stem == filestem).then_some(path.as_path())
+            // For the target, we don't care about its actual extension. Lets see if either the name or stem matches.
+            let stem = path.file_stem()?;
+
+            if search_name.eq_ignore_ascii_case(stem) || search_stem.eq_ignore_ascii_case(stem) {
+                Some(path.as_path())
+            } else {
+                None
+            }
         })
     }
 

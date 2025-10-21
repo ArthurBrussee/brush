@@ -137,14 +137,8 @@ async fn read_transforms_file(
         if path.extension().is_none() {
             path = path.with_extension("png");
         }
-        let mask_path = find_mask_path(&vfs, &path);
-
-        let image = LoadImage::new(
-            vfs.clone(),
-            path,
-            mask_path.map(|p| p.to_path_buf()),
-            load_args.max_resolution,
-        );
+        let mask_path = find_mask_path(&vfs, &path).map(|p| p.to_path_buf());
+        let image = LoadImage::new(vfs.clone(), path, mask_path, load_args.max_resolution);
 
         let w = frame.w.or(scene.w);
         let h = frame.h.or(scene.h);

@@ -88,14 +88,12 @@ pub async fn load_dataset(
     Ok((init_splat, dataset))
 }
 
-fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &Path) -> Option<&'a Path> {
-    let file_stem = path.file_stem()?.to_str()?;
-
-    vfs.files_with_stem(file_stem).find(|candidate| {
+fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
+    vfs.files_named_like(path).find(|candidate| {
         // Find "masks" directory in candidate path
         let masks_idx = candidate
             .components()
-            .position(|c| c.as_os_str().to_str().is_some_and(|s| s == "masks"));
+            .position(|c| c.as_os_str().eq_ignore_ascii_case("masks"));
 
         // Check if the image directory path ends with the directory subpath after "masks/"
         // e.g., masks/foo/bar/bla.png should match images/foo/bar/bla.jpeg
