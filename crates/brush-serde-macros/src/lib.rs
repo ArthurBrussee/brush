@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields};
+use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 /// The maximum number of SH rest coefficients we support (SH degree 4: 72 coefficients)
 const MAX_SH_COEFF_COUNT: usize = 72;

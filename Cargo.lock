@@ -1041,7 +1041,6 @@ dependencies = [
  "image",
  "itertools 0.14.0",
  "log",
- "path-clean",
  "rand 0.9.2",
  "serde",
  "serde_json",
