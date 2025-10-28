@@ -1,4 +1,4 @@
-use burn::tensor::{DType, ops::FloatTensor};
+use burn::tensor::{DType, Shape, ops::FloatTensor};
 use burn_cubecl::{BoolElement, fusion::FusionCubeRuntime};
 use burn_fusion::{
     Fusion, FusionHandle,
@@ -131,10 +131,15 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             if bwd_info { DType::F32 } else { DType::U32 },
         );
 
-        let visible_shape = if bwd_info { vec![num_points] } else { vec![1] };
+        let visible_shape = if bwd_info {
+            vec![num_points]
+        } else {
+            vec![1]
+        };
 
         let aux = RenderAux::<Self> {
-            projected_splats: client.tensor_uninitialized(vec![num_points, proj_size], DType::F32),
+            projected_splats: client
+                .tensor_uninitialized(vec![num_points, proj_size], DType::F32),
             uniforms_buffer: client.tensor_uninitialized(vec![uniforms_size], DType::U32),
             num_intersections: client.tensor_uninitialized(vec![1], DType::U32),
             tile_offsets: client.tensor_uninitialized(
@@ -143,7 +148,8 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             ),
             compact_gid_from_isect: client
                 .tensor_uninitialized(vec![max_intersects as usize], DType::U32),
-            global_from_compact_gid: client.tensor_uninitialized(vec![num_points], DType::U32),
+            global_from_compact_gid: client
+                .tensor_uninitialized(vec![num_points], DType::U32),
             visible: client.tensor_uninitialized(visible_shape, DType::F32),
             img_size,
         };

@@ -16,7 +16,7 @@ use burn::{
     },
     prelude::Backend,
     tensor::{
-        DType, Tensor, TensorPrimitive,
+        DType, Shape, Tensor, TensorPrimitive,
         backend::AutodiffBackend,
         ops::{FloatTensor, IntTensor},
     },
