@@ -10,5 +10,9 @@ logger = { log = "info", level = "minimal" }
 logger = { level = "disabled" }
 cache = "target"
 
+[memory]
+logger = { level = "basic", file = "/tmp/memory.log" }
+persistent_memory = "disabled"
+
 [streaming]
 max_streams = 1

@@ -112,6 +112,7 @@ pub unsafe extern "C" fn train_and_save(
         .expect("Failed to create tokio runtime");
 
     rt.block_on(async {
+        // SAFETY: The caller guarantees that `dataset_path` is a valid pointer to a null-terminated C string.
         let dataset_path_str =
             // SAFETY: Checked if dataset_path is not null, caller guarantees the string is a valid C-string.
             unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
