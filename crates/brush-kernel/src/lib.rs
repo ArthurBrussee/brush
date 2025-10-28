@@ -179,14 +179,14 @@ pub fn create_meta_binding<T: Pod>(val: T) -> MetadataBinding {
 pub fn create_uniform_buffer<R: CubeRuntime, T: Pod>(
     val: T,
     device: &R::Device,
-    client: &ComputeClient<R::Server, R::Channel>,
+    client: &ComputeClient<R::Server>,
 ) -> CubeTensor<R> {
     let binding = create_meta_binding(val);
     CubeTensor::new_contiguous(
         client.clone(),
         device.clone(),
         Shape::new([binding.data.len()]),
-        client.create(bytemuck::cast_slice(&binding.data)),
+        client.create_from_slice(bytemuck::cast_slice(&binding.data)),
         DType::I32,
     )
 }

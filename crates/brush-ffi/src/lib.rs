@@ -24,9 +24,9 @@ impl TryFrom<ProcessMessage> for ProgressMessage {
 
     fn try_from(value: ProcessMessage) -> Result<Self, Self::Error> {
         match value {
-            ProcessMessage::NewSource => Ok(ProgressMessage::NewSource),
-            ProcessMessage::TrainStep { iter, .. } => Ok(ProgressMessage::Training { iter }),
-            ProcessMessage::DoneTraining => Ok(ProgressMessage::DoneTraining),
+            ProcessMessage::NewSource => Ok(Self::NewSource),
+            ProcessMessage::TrainStep { iter, .. } => Ok(Self::Training { iter }),
+            ProcessMessage::DoneTraining => Ok(Self::DoneTraining),
             _ => Err(()),
         }
     }
@@ -49,6 +49,7 @@ impl TrainOptions {
     unsafe fn into_process_args(self) -> ProcessArgs {
         let mut process_args = ProcessArgs::default();
         if !self.output_path.is_null() {
+            // SAFETY: The caller guarantees that `output_path` is a valid pointer to a null-terminated C string.
             process_args.process_config.export_path = unsafe {
                 CStr::from_ptr(self.output_path)
                     .to_string_lossy()
@@ -110,6 +111,7 @@ pub unsafe extern "C" fn train_and_save(
         .expect("Failed to create tokio runtime");
 
     rt.block_on(async {
+        // SAFETY: The caller guarantees that `dataset_path` is a valid pointer to a null-terminated C string.
         let dataset_path_str =
             unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
 
@@ -123,6 +125,7 @@ pub unsafe extern "C" fn train_and_save(
 
         // SAFETY: Option is checked to not be null before the future.
         let train_options = unsafe { *options };
+        // SAFETY: The caller guarantees that `train_options` is a valid pointer to a TrainOptions struct.
         let process_args = unsafe { train_options.into_process_args() };
         let _ = tx.send(process_args.clone());
 
