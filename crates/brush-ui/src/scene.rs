@@ -205,26 +205,30 @@ impl ScenePanel {
         }
 
         if let Some(splats) = splats {
+            let pixel_size = glam::uvec2(
+                (size.x as f32 * ui.ctx().pixels_per_point().round()) as u32,
+                (size.y as f32 * ui.ctx().pixels_per_point().round()) as u32,
+            );
             // If this viewport is re-rendering.
-            if size.x > 8 && size.y > 8 && dirty {
+            if pixel_size.x > 8 && pixel_size.y > 8 && dirty {
                 let _span = trace_span!("Render splats").entered();
                 // Could add an option for background color.
                 let (img, _) = splats.render(
                     &camera,
-                    size,
+                    pixel_size,
                     settings.background.unwrap_or(Vec3::ZERO),
                     settings.splat_scale,
                 );
+
                 self.backbuffer.update_texture(img);
 
-                // Render 3D widgets directly onto the splat backbuffer
                 if let Some(widget_3d) = &mut self.widget_3d
                     && let Some(texture) = self.backbuffer.texture()
                 {
                     widget_3d.render_to_texture(
                         &camera,
                         process.model_local_to_world(),
-                        size,
+                        pixel_size,
                         texture,
                         grid_opacity,
                     );
