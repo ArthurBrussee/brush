@@ -44,7 +44,7 @@ struct RenderUniforms {
     // Position of camera (xyz + pad)
     camera_position: vec4f,
 
-    // Degree of sh coeffecients used.
+    // Degree of sh coefficients used.
     sh_degree: u32,
 
 #ifdef UNIFORM_WRITE
