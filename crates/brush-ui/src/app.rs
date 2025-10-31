@@ -1,6 +1,6 @@
+use crate::UiMode;
 use crate::panels::AppPane;
 use crate::ui_process::UiProcess;
-use crate::UiMode;
 use crate::{
     camera_controls::CameraClamping, datasets::DatasetPanel, scene::ScenePanel,
     settings::SettingsPanel, stats::StatsPanel,
