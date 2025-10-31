@@ -1,3 +1,4 @@
+use brush_dataset::config::AlphaMode;
 use brush_process::message::ProcessMessage;
 use core::f32;
 use egui::{Align2, Area, Frame, Pos2, Ui, epaint::mutex::RwLock as EguiRwLock};
@@ -240,7 +241,7 @@ impl ScenePanel {
             {
                 // if training views have alpha, show a background checker. Masked images
                 // should still use a black background.
-                if tex.has_alpha && !view.image.has_mask() {
+                if tex.has_alpha && view.image.alpha_mode() == AlphaMode::Transparent {
                     background = true;
                     draw_checkerboard(ui, rect, Color32::WHITE);
                 }

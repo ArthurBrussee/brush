@@ -225,7 +225,7 @@ async fn run_eval(
             &splats,
             &view.camera,
             eval_img,
-            view.image.has_mask(),
+            view.image.alpha_mode(),
             device,
         )
         .context("Failed to run eval for sample.")?;
@@ -236,10 +236,7 @@ async fn run_eval(
 
         let export_path = Path::new(&process_config.export_path).to_owned();
         if process_config.eval_save_to_disk {
-            let img_name = Path::new(&view.image.path)
-                .file_stem()
-                .expect("No file name for eval view.")
-                .to_string_lossy();
+            let img_name = view.image.img_name();
             let path = Path::new(&export_path)
                 .join(format!("eval_{iter}"))
                 .join(format!("{img_name}.png"));

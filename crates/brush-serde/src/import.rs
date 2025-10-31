@@ -582,7 +582,7 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
             ]);
             // Compressed ply specifies things in post-activated values. Convert to pre-activated values.
             opacity.push(inverse_sigmoid(splat.rgba.w));
-            // These come in as RGB colors. Convert to base SH coeffecients.
+            // These come in as RGB colors. Convert to base SH coefficients.
             let sh_dc = rgb_to_sh(quant_data.color(splat.rgba.xyz()));
             sh_coeffs.extend([sh_dc.x, sh_dc.y, sh_dc.z]);
         })

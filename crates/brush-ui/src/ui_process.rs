@@ -196,13 +196,7 @@ impl UiProcess {
                 egui::ColorImage::from_rgb(img_size, &image.into_rgb8().into_vec())
             };
 
-            let image_name = view_send
-                .image
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("Unknown");
-
+            let image_name = view_send.image.img_name();
             let egui_handle =
                 ctx.ctx
                     .load_texture(image_name, color_img, TextureOptions::default());

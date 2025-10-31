@@ -2,7 +2,7 @@
 //!
 //! These tests verify that the benchmark data generation and core operations work correctly.
 
-use brush_dataset::scene::SceneBatch;
+use brush_dataset::{config::AlphaMode, scene::SceneBatch};
 use brush_render::{
     MainBackend, camera::Camera, gaussian_splats::Splats, validation::validate_splat_gradients,
 };
@@ -120,7 +120,7 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
 
     SceneBatch {
         img_tensor,
-        alpha_is_mask: false,
+        alpha_mode: AlphaMode::Transparent,
         camera,
     }
 }

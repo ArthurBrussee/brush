@@ -1,6 +1,6 @@
 #![recursion_limit = "256"]
 
-use brush_dataset::scene::SceneBatch;
+use brush_dataset::{config::AlphaMode, scene::SceneBatch};
 use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
@@ -136,7 +136,7 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
 
     SceneBatch {
         img_tensor,
-        alpha_is_mask: false,
+        alpha_mode: AlphaMode::Transparent,
         camera,
     }
 }

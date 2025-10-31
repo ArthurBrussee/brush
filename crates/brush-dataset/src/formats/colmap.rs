@@ -126,6 +126,7 @@ async fn load_dataset_inner(
                     path.to_path_buf(),
                     mask_path.map(|p| p.to_path_buf()),
                     load_args.max_resolution,
+                    load_args.alpha_mode,
                 );
 
                 Some(SceneView { camera, image })
