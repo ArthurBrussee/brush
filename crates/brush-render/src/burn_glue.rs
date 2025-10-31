@@ -2,7 +2,6 @@ use burn::tensor::{DType, Shape, ops::FloatTensor};
 use burn_cubecl::{BoolElement, fusion::FusionCubeRuntime};
 use burn_fusion::{
     Fusion, FusionHandle,
-    client::FusionClient,
     stream::{Operation, OperationStreams},
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
@@ -127,29 +126,29 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
         let channels = if bwd_info { 4 } else { 1 };
 
         let out_img = client.tensor_uninitialized(
-            vec![img_size.y as usize, img_size.x as usize, channels],
+            Shape::new([img_size.y as usize, img_size.x as usize, channels]),
             if bwd_info { DType::F32 } else { DType::U32 },
         );
 
         let visible_shape = if bwd_info {
-            vec![num_points]
+            Shape::new([num_points])
         } else {
-            vec![1]
+            Shape::new([1])
         };
 
         let aux = RenderAux::<Self> {
             projected_splats: client
-                .tensor_uninitialized(vec![num_points, proj_size], DType::F32),
-            uniforms_buffer: client.tensor_uninitialized(vec![uniforms_size], DType::U32),
-            num_intersections: client.tensor_uninitialized(vec![1], DType::U32),
+                .tensor_uninitialized(Shape::new([num_points, proj_size]), DType::F32),
+            uniforms_buffer: client.tensor_uninitialized(Shape::new([uniforms_size]), DType::U32),
+            num_intersections: client.tensor_uninitialized(Shape::new([1]), DType::U32),
             tile_offsets: client.tensor_uninitialized(
-                vec![tile_bounds.y as usize, tile_bounds.x as usize, 2],
+                Shape::new([tile_bounds.y as usize, tile_bounds.x as usize, 2]),
                 DType::U32,
             ),
             compact_gid_from_isect: client
-                .tensor_uninitialized(vec![max_intersects as usize], DType::U32),
+                .tensor_uninitialized(Shape::new([max_intersects as usize]), DType::U32),
             global_from_compact_gid: client
-                .tensor_uninitialized(vec![num_points], DType::U32),
+                .tensor_uninitialized(Shape::new([num_points]), DType::U32),
             visible: client.tensor_uninitialized(visible_shape, DType::F32),
             img_size,
         };

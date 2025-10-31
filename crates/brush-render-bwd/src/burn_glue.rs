@@ -24,7 +24,6 @@ use burn::{
 use burn_cubecl::{BoolElement, fusion::FusionCubeRuntime};
 use burn_fusion::{
     Fusion, FusionHandle,
-    client::FusionClient,
     stream::{Operation, OperationStreams},
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
@@ -335,12 +334,12 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
         let coeffs = sh_coeffs_for_degree(state.sh_degree) as usize;
 
         let grads = SplatGrads::<Self> {
-            v_means: client.tensor_uninitialized(vec![num_points, 3], DType::F32),
-            v_scales: client.tensor_uninitialized(vec![num_points, 3], DType::F32),
-            v_quats: client.tensor_uninitialized(vec![num_points, 4], DType::F32),
-            v_coeffs: client.tensor_uninitialized(vec![num_points, coeffs, 3], DType::F32),
-            v_raw_opac: client.tensor_uninitialized(vec![num_points], DType::F32),
-            v_refine_weight: client.tensor_uninitialized(vec![num_points], DType::F32),
+            v_means: client.tensor_uninitialized(Shape::new([num_points, 3]), DType::F32),
+            v_scales: client.tensor_uninitialized(Shape::new([num_points, 3]), DType::F32),
+            v_quats: client.tensor_uninitialized(Shape::new([num_points, 4]), DType::F32),
+            v_coeffs: client.tensor_uninitialized(Shape::new([num_points, coeffs, 3]), DType::F32),
+            v_raw_opac: client.tensor_uninitialized(Shape::new([num_points]), DType::F32),
+            v_refine_weight: client.tensor_uninitialized(Shape::new([num_points]), DType::F32),
         };
 
         let input_tensors = [
