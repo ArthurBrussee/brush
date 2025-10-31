@@ -89,21 +89,42 @@ pub async fn load_dataset(
 }
 
 fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
-    vfs.files_named_like(path).find(|candidate| {
-        // Find "masks" directory in candidate path
-        let masks_idx = candidate
-            .components()
-            .position(|c| c.as_os_str().eq_ignore_ascii_case("masks"));
+    let search_name = path.file_name().expect("File must have a name");
+    let search_stem = path.file_stem().expect("File must have a name");
+    let mut search_mask = search_stem.to_owned();
+    search_mask.push(".mask");
+    let search_mask = &search_mask;
 
-        // Check if the image directory path ends with the directory subpath after "masks/"
-        // e.g., masks/foo/bar/bla.png should match images/foo/bar/bla.jpeg
-        masks_idx.is_some_and(|idx| {
-            let candidate_components: Vec<_> = candidate.components().collect();
+    vfs.iter_files().find(|candidate| {
+        // For the target, we don't care about its actual extension. Lets see if either the name or stem matches.
+        let Some(stem) = path.file_stem() else {
+            return false;
+        };
 
-            // Get directory components only (excluding filename)
-            let path_dir_components: Vec<_> = path.parent().unwrap().components().collect();
-            let mask_dir_subpath = &candidate_components[idx + 1..candidate_components.len() - 1];
-            path_dir_components.ends_with(mask_dir_subpath)
-        })
+        // We have the name of the file a la img.png, and the stem a la img.
+        // We now want to accept any of img.png.*, img.*, img.mask.*.
+        if stem.eq_ignore_ascii_case(search_name)
+            || stem.eq_ignore_ascii_case(search_stem)
+            || stem.eq_ignore_ascii_case(search_mask)
+        {
+            // Find "masks" directory in candidate path
+            let masks_idx = candidate
+                .components()
+                .position(|c| c.as_os_str().eq_ignore_ascii_case("masks"));
+
+            // Check if the image directory path ends with the directory subpath after "masks/"
+            // e.g., masks/foo/bar/bla.png should match images/foo/bar/bla.jpeg
+            masks_idx.is_some_and(|idx| {
+                let candidate_components: Vec<_> = candidate.components().collect();
+
+                // Get directory components only (excluding filename)
+                let path_dir_components: Vec<_> = path.parent().unwrap().components().collect();
+                let mask_dir_subpath =
+                    &candidate_components[idx + 1..candidate_components.len() - 1];
+                path_dir_components.ends_with(mask_dir_subpath)
+            })
+        } else {
+            false
+        }
     })
 }

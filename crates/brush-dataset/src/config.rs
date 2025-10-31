@@ -1,10 +1,17 @@
-use clap::Args;
+use clap::{Args, ValueEnum};
 
 #[derive(Clone, Debug, Args)]
 pub struct ModelConfig {
     /// SH degree of splats.
     #[arg(long, help_heading = "Model Options", default_value = "3")]
     pub sh_degree: u32,
+}
+
+#[derive(Default, ValueEnum, Clone, Copy, Eq, PartialEq, Debug)]
+pub enum AlphaMode {
+    #[default]
+    Masked,
+    Transparent,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -24,4 +31,7 @@ pub struct LoadDataseConfig {
     /// Load only every nth point from the initial sfm data
     #[arg(long, help_heading = "Dataset Options")]
     pub subsample_points: Option<u32>,
+    /// Whether to interpret an alpha channel (or masks) as transparency or masking.
+    #[arg(long, help_heading = "Dataset Options")]
+    pub alpha_mode: Option<AlphaMode>,
 }

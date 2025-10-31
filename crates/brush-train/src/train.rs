@@ -8,7 +8,7 @@ use crate::{
     stats::RefineRecord,
 };
 
-use brush_dataset::scene::SceneBatch;
+use brush_dataset::{config::AlphaMode, scene::SceneBatch};
 use brush_render::{MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
@@ -160,7 +160,7 @@ impl SplatTrainer {
             let total_err = if has_alpha {
                 let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
 
-                if batch.alpha_is_mask {
+                if batch.alpha_mode == AlphaMode::Masked {
                     total_err * alpha_input
                 } else {
                     let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);

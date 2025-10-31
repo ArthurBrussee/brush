@@ -1,4 +1,5 @@
 use anyhow::Result;
+use brush_dataset::config::AlphaMode;
 use brush_dataset::scene::{sample_to_tensor_data, view_to_sample_image};
 use brush_render::SplatForward;
 use brush_render::camera::Camera;
@@ -23,13 +24,13 @@ pub fn eval_stats<B: Backend + SplatForward<B>>(
     splats: &Splats<B>,
     gt_cam: &Camera,
     gt_img: DynamicImage,
-    alpha_is_mask: bool,
+    alpha_mode: AlphaMode,
     device: &B::Device,
 ) -> Result<EvalSample<B>> {
     // Compare MSE in RGB only.
     let res = glam::uvec2(gt_img.width(), gt_img.height());
 
-    let gt_tensor = sample_to_tensor_data(view_to_sample_image(gt_img.clone(), alpha_is_mask));
+    let gt_tensor = sample_to_tensor_data(view_to_sample_image(gt_img.clone(), alpha_mode));
     let gt_tensor = Tensor::from_data(gt_tensor, device);
     let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
 

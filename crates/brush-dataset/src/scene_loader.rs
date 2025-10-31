@@ -100,7 +100,7 @@ impl SceneLoader {
                             .await
                             .expect("Scene loader encountered an error while loading an image");
                         // Don't premultiply the image if it's a mask - treat as fully opaque.
-                        let sample = Arc::new(view_to_sample_image(image, view.image.has_mask()));
+                        let sample = Arc::new(view_to_sample_image(image, view.image.alpha_mode()));
                         load_cache.write().await.insert(index, sample.clone());
                         sample
                     };
@@ -110,7 +110,7 @@ impl SceneLoader {
                     if send_batch
                         .send(SceneBatch {
                             img_tensor,
-                            alpha_is_mask: view.image.has_mask(),
+                            alpha_mode: view.image.alpha_mode(),
                             camera: view.camera.clone(),
                         })
                         .await

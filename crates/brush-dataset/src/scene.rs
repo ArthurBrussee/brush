@@ -3,8 +3,13 @@ use brush_vfs::BrushVfs;
 use burn::tensor::TensorData;
 use glam::{Affine3A, Vec3, vec3};
 use image::DynamicImage;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::io::AsyncReadExt;
+
+use crate::config::AlphaMode;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ViewType {
@@ -15,10 +20,19 @@ pub enum ViewType {
 
 #[derive(Clone, Debug)]
 pub struct LoadImage {
-    pub vfs: Arc<BrushVfs>,
-    pub path: PathBuf,
-    pub mask_path: Option<PathBuf>,
+    vfs: Arc<BrushVfs>,
+    path: PathBuf,
+    mask_path: Option<PathBuf>,
     max_resolution: u32,
+    alpha_mode: AlphaMode,
+}
+
+impl PartialEq for LoadImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+            && self.mask_path == other.mask_path
+            && self.max_resolution == other.max_resolution
+    }
 }
 
 impl LoadImage {
@@ -27,12 +41,22 @@ impl LoadImage {
         path: PathBuf,
         mask_path: Option<PathBuf>,
         max_resolution: u32,
+        override_alpha_mode: Option<AlphaMode>,
     ) -> Self {
+        let alpha_mode = override_alpha_mode.unwrap_or_else(|| {
+            if mask_path.is_some() {
+                AlphaMode::Masked
+            } else {
+                AlphaMode::Transparent
+            }
+        });
+
         Self {
             vfs,
             path,
             mask_path,
             max_resolution,
+            alpha_mode,
         }
     }
 
@@ -80,8 +104,16 @@ impl LoadImage {
         ))
     }
 
-    pub fn has_mask(&self) -> bool {
-        self.mask_path.is_some()
+    pub fn alpha_mode(&self) -> AlphaMode {
+        self.alpha_mode
+    }
+
+    pub fn img_name(&self) -> String {
+        Path::new(&self.path)
+            .file_stem()
+            .expect("No file name for eval view.")
+            .to_string_lossy()
+            .to_string()
     }
 }
 
@@ -148,8 +180,8 @@ impl Scene {
 // Converts an image to a train sample. The tensor will be a floating point image with a [0, 1] image.
 //
 // This assume the input image has un-premultiplied alpha, whereas the output has pre-multiplied alpha.
-pub fn view_to_sample_image(image: DynamicImage, alpha_is_mask: bool) -> DynamicImage {
-    if image.color().has_alpha() && !alpha_is_mask {
+pub fn view_to_sample_image(image: DynamicImage, alpha_mode: AlphaMode) -> DynamicImage {
+    if image.color().has_alpha() && alpha_mode == AlphaMode::Transparent {
         let mut rgba_bytes = image.to_rgba8();
 
         // Assume image has un-multiplied alpha and convert it to pre-multiplied.
@@ -190,7 +222,7 @@ pub fn sample_to_tensor_data(sample: DynamicImage) -> TensorData {
 #[derive(Clone, Debug)]
 pub struct SceneBatch {
     pub img_tensor: TensorData,
-    pub alpha_is_mask: bool,
+    pub alpha_mode: AlphaMode,
     pub camera: Camera,
 }
 

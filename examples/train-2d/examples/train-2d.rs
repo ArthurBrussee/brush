@@ -1,7 +1,10 @@
 #![recursion_limit = "256"]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use brush_dataset::scene::{SceneBatch, sample_to_tensor_data};
+use brush_dataset::{
+    config::AlphaMode,
+    scene::{SceneBatch, sample_to_tensor_data},
+};
 use brush_render::{
     MainBackend,
     bounding_box::BoundingBox,
@@ -51,7 +54,7 @@ fn spawn_train_loop(
         // One batch of training data, it's the same every step so can just construct it once.
         let batch = SceneBatch {
             img_tensor: sample_to_tensor_data(image),
-            alpha_is_mask: false,
+            alpha_mode: AlphaMode::Transparent,
             camera: cam,
         };
 

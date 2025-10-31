@@ -1,6 +1,7 @@
 use crate::{UiMode, draw_checkerboard, panels::AppPane, ui_process::UiProcess};
 use brush_dataset::{
     Dataset,
+    config::AlphaMode,
     scene::{Scene, ViewType},
 };
 use brush_process::message::ProcessMessage;
@@ -80,7 +81,7 @@ impl AppPane for DatasetPanel {
                 .selected_view()
                 .view
                 .as_ref()
-                .is_none_or(|view| view.image.path != pick_scene.views[*nearest].image.path);
+                .is_none_or(|view| view.image != pick_scene.views[*nearest].image);
 
             if dirty {
                 process.set_selected_view(&pick_scene.views[*nearest]);
@@ -104,7 +105,7 @@ impl AppPane for DatasetPanel {
                     let rect = egui::Rect::from_min_size(min, size);
 
                     if texture_handle.has_alpha {
-                        if selected_view.image.has_mask() {
+                        if selected_view.image.alpha_mode() == AlphaMode::Masked {
                             draw_checkerboard(ui, rect, egui::Color32::DARK_RED);
                         } else {
                             draw_checkerboard(ui, rect, egui::Color32::WHITE);
@@ -226,8 +227,10 @@ impl AppPane for DatasetPanel {
                                         // Image info
 
                                         let mask_info = if texture_handle.has_alpha {
-                                            if !selected_view.image.has_mask() {
-                                                "rgb + alpha transparency"
+                                            if selected_view.image.alpha_mode()
+                                                == AlphaMode::Transparent
+                                            {
+                                                "rgb, alpha transparency"
                                             } else {
                                                 "rgb, masked"
                                             }
