@@ -1,4 +1,5 @@
 use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
+use brush_dataset::config::AlphaMode;
 use brush_process::config::ProcessArgs;
 use brush_vfs::DataSource;
 use egui::{Align2, Slider, Ui};
@@ -99,6 +100,7 @@ impl SettingsPanel {
                 ui.label("Max image resolution");
                 slider(ui, &mut self.args.load_config.max_resolution, 32..=2048, "", false);
 
+
                 let mut limit_frames = self.args.load_config.max_frames.is_some();
                 if ui.checkbox(&mut limit_frames, "Limit max frames").clicked() {
                     self.args.load_config.max_frames = if limit_frames { Some(32) } else { None };
@@ -132,6 +134,24 @@ impl SettingsPanel {
                 if let Some(subsample) = self.args.load_config.subsample_points.as_mut() {
                     ui.add(Slider::new(subsample, 2..=20).clamping(egui::SliderClamping::Never)
                         .prefix("Load every 1/").suffix(" points"));
+                }
+
+                let mut alpha_mode_enabled = self.args.load_config.alpha_mode.is_some();
+                if ui.checkbox(&mut alpha_mode_enabled, "Force alpha mode").clicked() {
+                    self.args.load_config.alpha_mode = if alpha_mode_enabled {
+                        Some(AlphaMode::default())
+                    } else {
+                        None
+                    };
+                }
+
+                if alpha_mode_enabled {
+                    let mut alpha_mode = self.args.load_config.alpha_mode.unwrap_or_default();
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut alpha_mode, AlphaMode::Masked, "Masked");
+                        ui.selectable_value(&mut alpha_mode, AlphaMode::Transparent, "Transparent");
+                    });
+                    self.args.load_config.alpha_mode = Some(alpha_mode);
                 }
 
                 ui.add_space(15.0);
