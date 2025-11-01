@@ -113,7 +113,7 @@ impl<B: Backend> Splats<B> {
         } else if n_splats >= 3 {
             let bounding_box =
                 trace_span!("Bounds from pose").in_scope(|| bounds_from_pos(0.75, &pos_data));
-            let median_size = bounding_box.median_size();
+            let median_size = bounding_box.median_size().max(0.01);
 
             let extents: Vec<_> = trace_span!("Splats KNN scale init").in_scope(|| {
                 let tree_points: Vec<BallPoint> = pos_data
