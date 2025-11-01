@@ -104,13 +104,7 @@ fn smooth_clamp(val: f32, min: Option<f32>, max: Option<f32>, dt: f32, lambda: f
 }
 
 impl CameraController {
-    pub fn new(position: Vec3, rotation: Quat, mut settings: CameraSettings) -> Self {
-        if settings.clamping.min_pitch.is_none() {
-            settings.clamping.min_pitch = Some(-85.0);
-        }
-        if settings.clamping.max_pitch.is_none() {
-            settings.clamping.max_pitch = Some(85.0);
-        }
+    pub fn new(position: Vec3, rotation: Quat, settings: CameraSettings) -> Self {
         Self {
             position,
             rotation,
