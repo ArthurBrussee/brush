@@ -2,7 +2,7 @@ use brush_render::{bounding_box::BoundingBox, camera::Camera};
 use brush_vfs::BrushVfs;
 use burn::tensor::TensorData;
 use glam::{Affine3A, Vec3, vec3};
-use image::DynamicImage;
+use image::{DynamicImage, GenericImageView};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -80,7 +80,17 @@ impl LoadImage {
                 .await?
                 .read_to_end(&mut mask_bytes)
                 .await?;
-            let mask_img = image::load_from_memory(&mask_bytes)?;
+            let mut mask_img = image::load_from_memory(&mask_bytes)?;
+
+            // Resize mask image if needed. This is allowed to squash the mask.
+            if mask_img.dimensions() != masked_img.dimensions() {
+                mask_img = mask_img.resize_exact(
+                    masked_img.width(),
+                    masked_img.height(),
+                    image::imageops::FilterType::Triangle,
+                );
+            }
+
             if mask_img.color().has_alpha() {
                 let mask_img = mask_img.into_rgba8();
                 for (pixel, mask_pixel) in masked_img.pixels_mut().zip(mask_img.pixels()) {
@@ -92,6 +102,7 @@ impl LoadImage {
                     pixel[3] = mask_pixel[0];
                 }
             }
+
             img = masked_img.into();
         }
         if img.width() <= self.max_resolution && img.height() <= self.max_resolution {
