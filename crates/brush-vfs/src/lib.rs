@@ -427,6 +427,30 @@ impl BrushVfs {
             },
         }
     }
+
+    /// Create a test VFS from file paths.
+    /// Creates empty readers for each file path.
+    #[doc(hidden)]
+    pub fn create_test_vfs(paths: Vec<PathBuf>) -> Self {
+        use std::{io::Cursor, sync::Arc};
+        use tokio::sync::Mutex;
+
+        let lookup = lookup_from_paths(&paths);
+
+        // Create empty readers for each path
+        let mut readers = HashMap::new();
+        for path in paths {
+            if path.extension().is_some() {
+                let reader: Box<dyn DynRead> = Box::new(Cursor::new(Vec::<u8>::new()));
+                readers.insert(path, Arc::new(Mutex::new(Some(reader))));
+            }
+        }
+
+        Self {
+            lookup,
+            container: VfsContainer::Manual { readers },
+        }
+    }
 }
 
 #[cfg(test)]
