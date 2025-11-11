@@ -1,17 +1,31 @@
+use std::mem::offset_of;
+
 use super::shaders;
 use crate::{
-    INTERSECTS_UPPER_BOUND, MainBackendBase,
-    camera::Camera,
-    dim_check::DimCheck,
-    kernels::{MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
-    render_aux::RenderAux,
-    sh::sh_degree_from_coeffs,
+    INTERSECTS_UPPER_BOUND, MainBackendBase, camera::Camera, dim_check::DimCheck,
+    render_aux::RenderAux, sh::sh_degree_from_coeffs,
 };
+
+// WGSL kernels (used when cubecl-kernels feature is not enabled)
+#[cfg(not(feature = "cubecl-kernels"))]
+use crate::kernels::{MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize};
+
+// CubeCL versions of kernels when feature is enabled
+#[cfg(feature = "cubecl-kernels")]
+use crate::cubecl::{map_gaussian_to_intersects, project_forward, rasterize};
+
+// These are always available from burn_cubecl
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::frontend::CompilationArg;
 use burn_cubecl::cubecl::prelude::{ABSOLUTE_POS, Tensor};
 use burn_cubecl::cubecl::server::Bindings;
 use burn_cubecl::cubecl::{self, terminate};
+use burn_cubecl::kernel::into_contiguous;
+use burn_wgpu::WgpuRuntime;
+use burn_wgpu::{CubeDim, CubeTensor};
+
+#[cfg(feature = "cubecl-kernels")]
+use burn_cubecl::cubecl::frontend::ScalarArg;
 
 use brush_kernel::create_dispatch_buffer;
 use brush_kernel::create_tensor;
@@ -20,16 +34,15 @@ use brush_kernel::{CubeCount, calc_cube_count};
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::tensor::{DType, IntDType};
+
+#[cfg(feature = "cubecl-kernels")]
+use burn::tensor::TensorData;
 use burn::tensor::{
     FloatDType,
     ops::{FloatTensorOps, IntTensorOps},
 };
 
-use burn_cubecl::kernel::into_contiguous;
-use burn_wgpu::WgpuRuntime;
-use burn_wgpu::{CubeDim, CubeTensor};
 use glam::{Vec3, uvec2};
-use std::mem::offset_of;
 
 pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
     uvec2(
@@ -137,31 +150,99 @@ pub(crate) fn render_forward(
             MainBackendBase::int_zeros([total_splats].into(), device, IntDType::U32);
         let depths = create_tensor([total_splats], device, DType::F32);
 
-        tracing::trace_span!("ProjectSplats").in_scope(||
-            // SAFETY: Kernel checked to have no OOB, bounded loops.
-            unsafe {
-            client.execute_unchecked(
-                ProjectSplats::task(),
-                calc_cube_count([total_splats as u32], ProjectSplats::WORKGROUP_SIZE),
-                Bindings::new().with_buffers(
-                vec![
-                    uniforms_buffer.handle.clone().binding(),
-                    means.handle.clone().binding(),
-                    quats.handle.clone().binding(),
-                    log_scales.handle.clone().binding(),
-                    raw_opacities.handle.clone().binding(),
-                    global_from_presort_gid.handle.clone().binding(),
-                    depths.handle.clone().binding(),
-                ]),
-            );
-        });
+        #[cfg(not(feature = "cubecl-kernels"))]
+        let num_visible = {
+            tracing::trace_span!("ProjectSplats").in_scope(||
+                // SAFETY: Kernel checked to have no OOB, bounded loops.
+                unsafe {
+                client.execute_unchecked(
+                    ProjectSplats::task(),
+                    calc_cube_count([total_splats as u32], ProjectSplats::WORKGROUP_SIZE),
+                    Bindings::new().with_buffers(
+                    vec![
+                        uniforms_buffer.handle.clone().binding(),
+                        means.handle.clone().binding(),
+                        quats.handle.clone().binding(),
+                        log_scales.handle.clone().binding(),
+                        raw_opacities.handle.clone().binding(),
+                        global_from_presort_gid.handle.clone().binding(),
+                        depths.handle.clone().binding(),
+                    ]),
+                );
+            });
 
-        // Get just the number of visible splats from the uniforms buffer.
-        let num_vis_field_offset = offset_of!(shaders::helpers::RenderUniforms, num_visible) / 4;
-        let num_visible = MainBackendBase::int_slice(
-            uniforms_buffer.clone(),
-            &[(num_vis_field_offset..num_vis_field_offset + 1).into()],
-        );
+            // Get just the number of visible splats from the uniforms buffer.
+            let num_vis_field_offset =
+                offset_of!(shaders::helpers::RenderUniforms, num_visible) / 4;
+            MainBackendBase::int_slice(
+                uniforms_buffer.clone(),
+                &[(num_vis_field_offset..num_vis_field_offset + 1).into()],
+            )
+        };
+
+        #[cfg(feature = "cubecl-kernels")]
+        let num_visible = {
+            use burn::tensor::TensorData;
+
+            // Create atomic counter for num_visible
+            let num_visible = MainBackendBase::int_zeros([1].into(), device, IntDType::U32);
+
+            // Extract viewmat as 12-element tensor [r00, r10, r20, t_x, r01, r11, r21, t_y, r02, r12, r22, t_z]
+            let viewmat_cols = glam::Mat4::from(camera.world_to_local()).to_cols_array();
+            let viewmat_data = vec![
+                viewmat_cols[0],
+                viewmat_cols[1],
+                viewmat_cols[2],
+                viewmat_cols[3], // col 0
+                viewmat_cols[4],
+                viewmat_cols[5],
+                viewmat_cols[6],
+                viewmat_cols[7], // col 1
+                viewmat_cols[8],
+                viewmat_cols[9],
+                viewmat_cols[10],
+                viewmat_cols[11], // col 2
+            ];
+            let viewmat_tensor =
+                MainBackendBase::float_from_data(TensorData::new(viewmat_data, [12]), device);
+
+            // Create uniforms tensor with [focal_x, focal_y, pixel_center_x, pixel_center_y, img_size_x, img_size_y]
+            let focal = camera.focal(img_size);
+            let pixel_center = camera.center(img_size);
+            let uniforms_data = vec![
+                focal.x,
+                focal.y,
+                pixel_center.x,
+                pixel_center.y,
+                img_size[0] as f32,
+                img_size[1] as f32,
+            ];
+            let uniforms_tensor =
+                MainBackendBase::float_from_data(TensorData::new(uniforms_data, [6]), device);
+
+            tracing::trace_span!("ProjectForward").in_scope(|| {
+                // SAFETY: Kernel checked to have no OOB, bounded loops.
+                unsafe {
+                    project_forward::project_forward::launch_unchecked::<WgpuRuntime>(
+                        &client,
+                        CubeCount::Static(1, 1, 1),
+                        CubeDim::new((total_splats as u32).div_ceil(256), 1, 1),
+                        means.as_tensor_arg::<f32>(3),
+                        quats.as_tensor_arg::<f32>(4),
+                        log_scales.as_tensor_arg::<f32>(3),
+                        raw_opacities.as_tensor_arg::<f32>(1),
+                        global_from_presort_gid.as_tensor_arg::<u32>(1),
+                        depths.as_tensor_arg::<f32>(1),
+                        num_visible.as_tensor_arg::<u32>(1),
+                        ScalarArg::new(total_splats as u32),
+                        viewmat_tensor.as_tensor_arg::<f32>(1),
+                        uniforms_tensor.as_tensor_arg::<f32>(1),
+                    );
+                }
+            });
+
+            num_visible
+        };
 
         let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort").in_scope(|| {
             // Interpret the depth as a u32. This is fine for a radix sort, as long as the depth > 0.0,
@@ -177,6 +258,7 @@ pub(crate) fn render_forward(
     let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / size_of::<f32>();
     let projected_splats = create_tensor([total_splats, proj_size], device, DType::F32);
 
+    #[cfg(not(feature = "cubecl-kernels"))]
     tracing::trace_span!("ProjectVisible").in_scope(|| {
         // Create a buffer to determine how many threads to dispatch for all visible splats.
         let num_vis_wg = create_dispatch_buffer(
@@ -202,6 +284,65 @@ pub(crate) fn render_forward(
         }
     });
 
+    #[cfg(feature = "cubecl-kernels")]
+    tracing::trace_span!("ProjectVisibleCubeCL").in_scope(|| {
+        // Prepare viewmat buffer (16 floats - all 4 columns of 4x4 matrix)
+        // Note: uniforms.viewmat is column-major from to_cols_array_2d()
+        // Columns 0-2 contain the rotation matrix, column 3 contains translation + padding
+        let viewmat_data: Vec<f32> = uniforms
+            .viewmat
+            .iter()
+            .flat_map(|col| col.iter().copied())
+            .collect();
+        let viewmat_tensor =
+            MainBackendBase::float_from_data(TensorData::new(viewmat_data, [16]), device);
+
+        // Prepare camera position (3 floats)
+        let camera_pos_tensor = MainBackendBase::float_from_data(
+            TensorData::new(uniforms.camera_position[..3].to_vec(), [3]),
+            device,
+        );
+
+        // Prepare uniforms buffer (8 floats: focal_x, focal_y, center_x, center_y, img_w, img_h, num_visible, sh_degree)
+        // For num_visible, we'll pass 0 as placeholder since we use dynamic dispatch
+        let uniforms_data = vec![
+            uniforms.focal[0],
+            uniforms.focal[1],
+            uniforms.pixel_center[0],
+            uniforms.pixel_center[1],
+            uniforms.img_size[0] as f32,
+            uniforms.img_size[1] as f32,
+            0.0, // num_visible placeholder - handled by dynamic dispatch
+            sh_degree as f32,
+        ];
+        let uniforms_tensor =
+            MainBackendBase::float_from_data(TensorData::new(uniforms_data, [8]), device);
+
+        // Use dynamic dispatch based on num_visible (same as WGSL version)
+        let num_vis_wg = create_dispatch_buffer(num_visible.clone(), [256, 1, 1]);
+        let cube_dim = CubeDim::new_1d(256);
+        let cube_count = CubeCount::Dynamic(num_vis_wg.handle.binding());
+
+        // SAFETY: Kernel checked to have no OOB, bounded loops.
+        unsafe {
+            project_visible::project_visible::launch_unchecked::<WgpuRuntime>(
+                &client,
+                cube_count,
+                cube_dim,
+                means.as_tensor_arg::<f32>(1),
+                log_scales.as_tensor_arg::<f32>(1),
+                quats.as_tensor_arg::<f32>(1),
+                sh_coeffs.as_tensor_arg::<f32>(1),
+                raw_opacities.as_tensor_arg::<f32>(1),
+                global_from_compact_gid.as_tensor_arg::<u32>(1),
+                projected_splats.as_tensor_arg::<f32>(1),
+                viewmat_tensor.as_tensor_arg::<f32>(1),
+                camera_pos_tensor.as_tensor_arg::<f32>(1),
+                uniforms_tensor.as_tensor_arg::<f32>(1),
+            );
+        }
+    });
+
     // Each intersection maps to a gaussian.
     let (tile_offsets, compact_gid_from_isect, num_intersections) = {
         let num_tiles = tile_bounds.x * tile_bounds.y;
@@ -209,12 +350,37 @@ pub(crate) fn render_forward(
         let splat_intersect_counts =
             MainBackendBase::int_zeros([total_splats + 1].into(), device, IntDType::U32);
 
+        #[cfg(not(feature = "cubecl-kernels"))]
         let num_vis_map_wg = create_dispatch_buffer(
             num_visible,
             shaders::map_gaussian_to_intersects::WORKGROUP_SIZE,
         );
 
         // First do a prepass to compute the tile counts, then fill in intersection counts.
+        #[cfg(feature = "cubecl-kernels")]
+        tracing::trace_span!("MapGaussiansToIntersectPrepassCubeCL").in_scope(|| {
+            let num_vis_wg = create_dispatch_buffer(num_visible.clone(), [256, 1, 1]);
+            let cube_dim = CubeDim::new_1d(256);
+            let cube_count = CubeCount::Dynamic(num_vis_wg.handle.binding());
+
+            // SAFETY: Kernel checked to have no OOB, bounded loops.
+            unsafe {
+                map_gaussian_to_intersects::map_gaussian_to_intersects_prepass::launch_unchecked::<
+                    WgpuRuntime,
+                >(
+                    &client,
+                    cube_count,
+                    cube_dim,
+                    projected_splats.as_tensor_arg::<f32>(1),
+                    splat_intersect_counts.as_tensor_arg::<u32>(1),
+                    num_visible.as_tensor_arg::<u32>(1),
+                    ScalarArg::new(tile_bounds.x),
+                    ScalarArg::new(tile_bounds.y),
+                );
+            }
+        });
+
+        #[cfg(not(feature = "cubecl-kernels"))]
         tracing::trace_span!("MapGaussiansToIntersectPrepass").in_scope(|| {
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
@@ -240,6 +406,33 @@ pub(crate) fn render_forward(
         // Zero this out, as the kernel _might_ not run at all if no gaussians are visible.
         let num_intersections = MainBackendBase::int_zeros([1].into(), device, IntDType::U32);
 
+        #[cfg(feature = "cubecl-kernels")]
+        tracing::trace_span!("MapGaussiansToIntersectMainCubeCL").in_scope(|| {
+            let num_vis_wg = create_dispatch_buffer(num_visible.clone(), [256, 1, 1]);
+            let cube_dim = CubeDim::new_1d(256);
+            let cube_count = CubeCount::Dynamic(num_vis_wg.handle.binding());
+
+            // SAFETY: Kernel checked to have no OOB, bounded loops.
+            unsafe {
+                map_gaussian_to_intersects::map_gaussian_to_intersects_main::launch_unchecked::<
+                    WgpuRuntime,
+                >(
+                    &client,
+                    cube_count,
+                    cube_dim,
+                    projected_splats.as_tensor_arg::<f32>(1),
+                    cum_tiles_hit.as_tensor_arg::<u32>(1),
+                    tile_id_from_isect.as_tensor_arg::<u32>(1),
+                    compact_gid_from_isect.as_tensor_arg::<u32>(1),
+                    num_intersections.as_tensor_arg::<u32>(1),
+                    num_visible.as_tensor_arg::<u32>(1),
+                    ScalarArg::new(tile_bounds.x),
+                    ScalarArg::new(tile_bounds.y),
+                );
+            }
+        });
+
+        #[cfg(not(feature = "cubecl-kernels"))]
         tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
@@ -326,6 +519,10 @@ pub(crate) fn render_forward(
 
     let _span = tracing::trace_span!("Rasterize").entered();
 
+    #[cfg(feature = "cubecl-kernels")]
+    let out_dim = 4; // CubeCL always outputs 4 floats (RGBA)
+
+    #[cfg(not(feature = "cubecl-kernels"))]
     let out_dim = if bwd_info {
         4
     } else {
@@ -339,6 +536,7 @@ pub(crate) fn render_forward(
         DType::F32,
     );
 
+    #[cfg_attr(feature = "cubecl-kernels", allow(unused_mut, unused_variables))]
     let mut bindings = Bindings::new().with_buffers(vec![
         uniforms_buffer.handle.clone().binding(),
         compact_gid_from_isect.handle.clone().binding(),
@@ -350,11 +548,14 @@ pub(crate) fn render_forward(
     let visible = if bwd_info {
         let visible = MainBackendBase::float_zeros([total_splats].into(), device, FloatDType::F32);
 
-        // Add the buffer to the bindings
-        bindings = bindings.with_buffers(vec![
-            global_from_compact_gid.handle.clone().binding(),
-            visible.handle.clone().binding(),
-        ]);
+        // Add the buffer to the bindings (only used for WGSL path)
+        #[cfg(not(feature = "cubecl-kernels"))]
+        {
+            bindings = bindings.with_buffers(vec![
+                global_from_compact_gid.handle.clone().binding(),
+                visible.handle.clone().binding(),
+            ]);
+        }
 
         visible
     } else {
@@ -363,16 +564,67 @@ pub(crate) fn render_forward(
 
     // Compile the kernel, including/excluding info for backwards pass.
     // see the BWD_INFO define in the rasterize shader.
-    let raster_task = Rasterize::task(bwd_info, cfg!(target_family = "wasm"));
+    #[cfg(not(feature = "cubecl-kernels"))]
+    {
+        let raster_task = Rasterize::task(bwd_info, cfg!(target_family = "wasm"));
 
-    // SAFETY: Kernel checked to have no OOB, bounded loops.
-    unsafe {
-        client.execute_unchecked(
-            raster_task,
-            CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
-            bindings,
-        );
+        // SAFETY: Kernel checked to have no OOB, bounded loops.
+        unsafe {
+            client.execute_unchecked(
+                raster_task,
+                CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
+                bindings,
+            );
+        }
     }
+
+    #[cfg(feature = "cubecl-kernels")]
+    tracing::trace_span!("RasterizeCubeCL").in_scope(|| {
+        let cube_dim = CubeDim::new_1d(256);
+        let num_tiles = tile_bounds.x * tile_bounds.y;
+        let cube_count = CubeCount::Static(num_tiles, 1, 1);
+
+        // Prepare uniforms tensor for kernel
+        let uniforms_data = vec![
+            img_size.x as f32,
+            img_size.y as f32,
+            tile_bounds.x as f32,
+            background.x,
+            background.y,
+            background.z,
+        ];
+        let uniforms_tensor =
+            MainBackendBase::float_from_data(TensorData::new(uniforms_data, [6]), device);
+
+        // Create dummy tensors for unused parameters when bwd_info=false
+        let dummy_gid = if bwd_info {
+            global_from_compact_gid.clone()
+        } else {
+            create_tensor([1], device, DType::U32)
+        };
+        let dummy_visible = if bwd_info {
+            visible.clone()
+        } else {
+            create_tensor([1], device, DType::F32)
+        };
+
+        // SAFETY: Kernel checked to have no OOB, bounded loops.
+        unsafe {
+            rasterize::rasterize::launch_unchecked::<WgpuRuntime>(
+                &client,
+                cube_count,
+                cube_dim,
+                compact_gid_from_isect.as_tensor_arg::<u32>(1),
+                tile_offsets.as_tensor_arg::<u32>(1),
+                projected_splats.as_tensor_arg::<f32>(1),
+                out_img.as_tensor_arg::<f32>(1),
+                dummy_gid.as_tensor_arg::<u32>(1),
+                dummy_visible.as_tensor_arg::<f32>(1),
+                uniforms_tensor.as_tensor_arg::<f32>(1),
+                bwd_info,
+            );
+        }
+    });
 
     // Sanity check the buffers.
     assert!(

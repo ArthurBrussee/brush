@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields};
+use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 /// The maximum number of SH rest coefficients we support (SH degree 4: 72 coefficients)
 const MAX_SH_COEFF_COUNT: usize = 72;
@@ -14,7 +14,7 @@ fn sh_field_idents() -> impl Iterator<Item = proc_macro2::Ident> {
 #[proc_macro]
 pub fn sh_field_names(_input: TokenStream) -> TokenStream {
     let names: Vec<_> = (0..MAX_SH_COEFF_COUNT)
-        .map(|i| format!("f_rest_{}", i))
+        .map(|i| format!("f_rest_{i}"))
         .collect();
     let expanded = quote! {
         [#(#names),*]

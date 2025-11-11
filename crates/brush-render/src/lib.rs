@@ -19,6 +19,9 @@ pub mod shaders;
 
 pub mod sh;
 
+#[cfg(feature = "cubecl-kernels")]
+pub mod cubecl;
+
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests;
 

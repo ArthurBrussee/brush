@@ -1357,6 +1357,7 @@ dependencies = [
  "burn-tch",
  "burn-train",
  "burn-wgpu",
+ "cubecl",
 ]
 
 [[package]]

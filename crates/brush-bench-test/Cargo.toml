@@ -32,5 +32,8 @@ name = "training_bench"
 harness = false
 path = "src/training_bench.rs"
 
+[features]
+cubecl-kernels = ["brush-render/cubecl-kernels"]
+
 [lints]
 workspace = true

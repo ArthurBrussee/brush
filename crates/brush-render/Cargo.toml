@@ -33,6 +33,7 @@ rayon.workspace = true
 
 [features]
 debug-validation = []
+cubecl-kernels = []
 
 [build-dependencies]
 brush-wgsl.path = "../brush-wgsl"
