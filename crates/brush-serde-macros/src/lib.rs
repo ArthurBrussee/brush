@@ -14,7 +14,7 @@ fn sh_field_idents() -> impl Iterator<Item = proc_macro2::Ident> {
 #[proc_macro]
 pub fn sh_field_names(_input: TokenStream) -> TokenStream {
     let names: Vec<_> = (0..MAX_SH_COEFF_COUNT)
-        .map(|i| format!("f_rest_{}", i))
+        .map(|i| format!("f_rest_{i}"))
         .collect();
     let expanded = quote! {
         [#(#names),*]
