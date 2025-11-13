@@ -54,4 +54,5 @@ pub enum ProcessMessage {
     Warning {
         error: anyhow::Error,
     },
+    DoneTraining,
 }

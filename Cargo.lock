@@ -1051,6 +1051,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "brush-ffi"
+version = "0.3.0"
+dependencies = [
+ "brush-process",
+ "brush-vfs",
+ "burn-wgpu",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "brush-kernel"
 version = "0.3.0"
 dependencies = [

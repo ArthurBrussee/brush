@@ -204,6 +204,9 @@ pub async fn process_ui(
                 log::warn!("{error}");
                 sp.println("⚠️: {error}")?;
             }
+            ProcessMessage::DoneTraining => {
+                log::info!("Done training.");
+            }
         }
     }
 

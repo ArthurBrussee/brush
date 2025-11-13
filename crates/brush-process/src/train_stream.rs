@@ -200,6 +200,7 @@ pub(crate) async fn train_stream(
         }
     }
 
+    emitter.emit(ProcessMessage::DoneTraining).await;
     Ok(())
 }
 
