@@ -72,16 +72,16 @@ serde-ply = "0.2.1"
 burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',
-] }
-burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
-burn-ir = { git = "https://github.com/tracel-ai/burn" }
+], rev = "742e5ae1d1725b79cd0c3364b522825868c96150" }
+burn-cubecl = { git = "https://github.com/tracel-ai/burn", rev = "742e5ae1d1725b79cd0c3364b522825868c96150" }
+burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "742e5ae1d1725b79cd0c3364b522825868c96150" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
-] }
-burn-fusion = { git = "https://github.com/tracel-ai/burn" }
+], rev = "742e5ae1d1725b79cd0c3364b522825868c96150" }
+burn-fusion = { git = "https://github.com/tracel-ai/burn", rev = "742e5ae1d1725b79cd0c3364b522825868c96150" }
 burn-import = { git = "https://github.com/tracel-ai/burn", default-features = false, features = [
     "pytorch",
-] }
+], rev = "742e5ae1d1725b79cd0c3364b522825868c96150" }
 
 egui = { version = "0.32"  }
 eframe = { version = "0.32", default-features = false, features = [
