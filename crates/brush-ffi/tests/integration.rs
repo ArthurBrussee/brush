@@ -14,6 +14,7 @@ extern "C" fn test_progress_callback(process_message: ProgressMessage, user_data
     if user_data.is_null() {
         return;
     }
+    // SAFETY: user_data is a pointer to a CallbackState struct
     let state = unsafe { (user_data as *const CallbackState).as_ref().unwrap() };
     state.call_count.fetch_add(1, Ordering::SeqCst);
 
@@ -22,7 +23,7 @@ extern "C" fn test_progress_callback(process_message: ProgressMessage, user_data
             println!("FFI Test: Training starting...");
         }
         ProgressMessage::Training { iter } => {
-            println!("FFI Test: Training iteration: {:.2}%", iter);
+            println!("FFI Test: Training iteration: {iter:.2}%");
         }
         ProgressMessage::DoneTraining => {
             println!("FFI Test: Training finished!");
@@ -64,13 +65,13 @@ fn test_train_and_save_ffi_short() {
         output_path: output_path_cstr.as_ptr(),
     };
 
-    // Act
+    // SAFETY: paths are valid, user_data is valid for lifetime of callback_state
     let status = unsafe {
         train_and_save(
             dataset_path_cstr.as_ptr(),
             &options,
             test_progress_callback,
-            &mut callback_state as *mut _ as *mut c_void,
+            std::ptr::from_mut(&mut callback_state).cast::<c_void>(),
         )
     };
 
@@ -110,13 +111,13 @@ fn test_train_and_save_ffi_invalid_path() {
         output_path: output_path_cstr.as_ptr(),
     };
 
-    // Act
+    // SAFETY: The paths are valid, and the callback state is alive for the duration of the call.
     let status = unsafe {
         train_and_save(
             dataset_path_cstr.as_ptr(),
             &options,
             test_progress_callback,
-            &mut callback_state as *mut _ as *mut c_void,
+            std::ptr::from_mut(&mut callback_state).cast::<c_void>(),
         )
     };
 
@@ -126,7 +127,6 @@ fn test_train_and_save_ffi_invalid_path() {
 
 #[test]
 fn test_train_and_save_ffi_null_options() {
-    // Arrange
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let dataset_path = Path::new(manifest_dir)
         .join("tests")
@@ -140,23 +140,21 @@ fn test_train_and_save_ffi_null_options() {
         finished_called: std::sync::atomic::AtomicBool::new(false),
     };
 
-    // Act
+    // SAFETY: The paths are valid, and the callback state is alive for the duration of the call.
     let status = unsafe {
         train_and_save(
             dataset_path_cstr.as_ptr(),
             std::ptr::null(),
             test_progress_callback,
-            &mut callback_state as *mut _ as *mut c_void,
+            std::ptr::from_mut(&mut callback_state).cast::<c_void>(),
         )
     };
 
-    // Assert
     assert!(matches!(status, TrainExitCode::Error));
 }
 
 #[test]
 fn test_train_and_save_ffi_null_dataset() {
-    // Assemble
     let temp_dir = tempfile::Builder::new()
         .prefix("ffi_test_invalid_")
         .tempdir()
@@ -172,7 +170,7 @@ fn test_train_and_save_ffi_null_dataset() {
         output_path: output_path_cstr.as_ptr(),
     };
 
-    // Act
+    // SAFETY: The paths are valid, and the callback state is null.
     let status_null_dataset = unsafe {
         train_and_save(
             std::ptr::null(),
@@ -182,6 +180,5 @@ fn test_train_and_save_ffi_null_dataset() {
         )
     };
 
-    // Assert
     assert!(matches!(status_null_dataset, TrainExitCode::Error));
 }

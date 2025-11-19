@@ -24,9 +24,9 @@ impl TryFrom<ProcessMessage> for ProgressMessage {
 
     fn try_from(value: ProcessMessage) -> Result<Self, Self::Error> {
         match value {
-            ProcessMessage::NewSource => Ok(ProgressMessage::NewSource),
-            ProcessMessage::TrainStep { iter, .. } => Ok(ProgressMessage::Training { iter }),
-            ProcessMessage::DoneTraining => Ok(ProgressMessage::DoneTraining),
+            ProcessMessage::NewSource => Ok(Self::NewSource),
+            ProcessMessage::TrainStep { iter, .. } => Ok(Self::Training { iter }),
+            ProcessMessage::DoneTraining => Ok(Self::DoneTraining),
             _ => Err(()),
         }
     }
@@ -49,6 +49,7 @@ impl TrainOptions {
     unsafe fn into_process_args(self) -> ProcessArgs {
         let mut process_args = ProcessArgs::default();
         if !self.output_path.is_null() {
+            // SAFETY: Path is not null, caller guarantees the string is a valid C-string.
             process_args.process_config.export_path = unsafe {
                 CStr::from_ptr(self.output_path)
                     .to_string_lossy()
@@ -88,7 +89,8 @@ pub type ProgressCallback =
 ///   memory it points to must be valid for reading for the duration of this call.
 ///
 /// - If `options` is not null, it must point to a valid `TrainOptions` struct. The memory it
-///   points to must be valid for reading for the duration of this call.
+///   points to must be valid for reading for the duration of this call. It's `output_path` must
+///   be a valid, null-terminated C string if not null.
 ///
 /// - The `user_data` pointer is passed to `progress_callback` but is not dereferenced by this
 ///   function. If it is not null, the caller must ensure it points to memory that remains
@@ -111,6 +113,7 @@ pub unsafe extern "C" fn train_and_save(
 
     rt.block_on(async {
         let dataset_path_str =
+            // SAFETY: Checked if dataset_path is not null, caller guarantees the string is a valid C-string.
             unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
 
         let source = DataSource::Path(dataset_path_str);
@@ -123,6 +126,8 @@ pub unsafe extern "C" fn train_and_save(
 
         // SAFETY: Option is checked to not be null before the future.
         let train_options = unsafe { *options };
+
+        // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
         let process_args = unsafe { train_options.into_process_args() };
         let _ = tx.send(process_args.clone());
 
