@@ -112,7 +112,6 @@ impl DataSource {
             let opts = RequestInit::new();
             opts.set_method("GET");
             opts.set_mode(RequestMode::Cors);
-            opts.set_credentials(RequestCredentials::Include);
 
             let request = Request::new_with_str_and_init(&url, &opts).map_err(|e| {
                 DataSourceError::FetchError(format!("Failed to create request: {:?}", e))
