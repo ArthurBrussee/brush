@@ -127,7 +127,8 @@ impl UiProcess {
     }
 
     pub fn set_focal_point(&self, focal_point: Vec3, focus_distance: f32, rotation: Quat) {
-        self.write().set_focal_point(focal_point, focus_distance, rotation);
+        self.write()
+            .set_focal_point(focal_point, focus_distance, rotation);
         self.read().repaint();
     }
 

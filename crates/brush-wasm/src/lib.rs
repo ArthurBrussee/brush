@@ -146,7 +146,8 @@ impl EmbeddedApp {
             rotation_euler.z() as f32,
         );
         let focal_point = focal_point.to_glam();
-        self.context.set_focal_point(focal_point, focus_distance, rotation);
+        self.context
+            .set_focal_point(focal_point, focus_distance, rotation);
     }
 
     #[wasm_bindgen]

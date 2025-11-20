@@ -68,7 +68,7 @@ export default function BrushViewer(props: BrushViewerProps) {
       const focalDistance = props.focusDistance ?? 2.5;
       const cameraRotation = props.cameraRotation ?? new Vector3(0, 0, 0);
       app.set_focal_point(focalPoint, focalDistance, cameraRotation);
-      }
+    }
   }, [app, props.url, props.focalPoint, props.focusDistance, props.cameraRotation]);
 
   return (
