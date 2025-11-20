@@ -2,6 +2,7 @@
 
 import { ReadonlyURLSearchParams, useSearchParams } from 'next/navigation';
 import { Suspense, lazy } from 'react';
+import { Vector3 } from 'three';
 
 const BrushViewer = lazy(() => import('./components/BrushViewer'));
 
@@ -26,6 +27,15 @@ function getFloat(searchParams: ReadonlyURLSearchParams, name: string): number |
   return isNaN(value) ? undefined : value;
 }
 
+function getVector3(searchParams: ReadonlyURLSearchParams, name: string): Vector3 | undefined {
+  const value = searchParams.get(name);
+  if (!value) {
+    return undefined;
+  }
+  const parts = value.split(',').map(s => parseFloat(s.trim()));
+  return parts.length === 3 && parts.every(p => !isNaN(p)) ? new Vector3(parts[0], parts[1], parts[2]) : undefined;
+}
+
 function Brush() {
   const searchParams = useSearchParams();
   const url = searchParams.get('url');
@@ -36,6 +46,9 @@ function Brush() {
   const maxFocusDistance = getFloat(searchParams, 'max_focus_distance');
   const speedScale = getFloat(searchParams, 'speed_scale');
 
+  let focalPoint = getVector3(searchParams, 'focal_point');
+  let cameraRotation = getVector3(searchParams, 'camera_rotation');
+
   return <BrushViewer
     url={url}
     fullsplat={fullsplat}
@@ -43,6 +56,8 @@ function Brush() {
     minFocusDistance={minFocusDistance}
     maxFocusDistance={maxFocusDistance}
     speedScale={speedScale}
+    focalPoint={focalPoint}
+    cameraRotation={cameraRotation}
   />;
 }
 

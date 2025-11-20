@@ -126,13 +126,13 @@ impl UiProcess {
         self.read().repaint();
     }
 
-    pub fn set_cam_fov(&self, fov_y: f64) {
-        self.write().camera.fov_y = fov_y;
+    pub fn set_focal_point(&self, focal_point: Vec3, focus_distance: f32, rotation: Quat) {
+        self.write().set_focal_point(focal_point, focus_distance, rotation);
         self.read().repaint();
     }
 
-    pub fn set_cam_focus_distance(&self, distance: f32) {
-        self.write().controls.focus_distance = distance;
+    pub fn set_cam_fov(&self, fov_y: f64) {
+        self.write().camera.fov_y = fov_y;
         self.read().repaint();
     }
 
@@ -415,5 +415,11 @@ impl UiProcessInner {
         self.controls.rotation = rotation;
         self.camera.position = position;
         self.camera.rotation = rotation;
+    }
+
+    fn set_focal_point(&mut self, focal_point: Vec3, focus_distance: f32, rotation: Quat) {
+        let position = focal_point - rotation * Vec3::Z * focus_distance;
+        self.set_camera_transform(position, rotation);
+        self.controls.focus_distance = focus_distance;
     }
 }

@@ -114,11 +114,6 @@ impl EmbeddedApp {
     }
 
     #[wasm_bindgen]
-    pub fn set_cam_focus_distance(&self, distance: f32) {
-        self.context.set_cam_focus_distance(distance);
-    }
-
-    #[wasm_bindgen]
     pub fn set_cam_fov(&self, fov: f64) {
         self.context.set_cam_fov(fov);
     }
@@ -134,6 +129,24 @@ impl EmbeddedApp {
             rotation_euler.z() as f32,
         );
         self.context.set_cam_transform(position, rotation);
+    }
+
+    #[wasm_bindgen]
+    pub fn set_focal_point(
+        &self,
+        focal_point: ThreeVector3,
+        focus_distance: f32,
+        rotation_euler: ThreeVector3,
+    ) {
+        // 'XYZ' matches the THREE.js default order.
+        let rotation = Quat::from_euler(
+            EulerRot::XYZ,
+            rotation_euler.x() as f32,
+            rotation_euler.y() as f32,
+            rotation_euler.z() as f32,
+        );
+        let focal_point = focal_point.to_glam();
+        self.context.set_focal_point(focal_point, focus_distance, rotation);
     }
 
     #[wasm_bindgen]
