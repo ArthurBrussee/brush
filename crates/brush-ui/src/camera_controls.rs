@@ -108,7 +108,7 @@ impl CameraController {
         Self {
             position,
             rotation,
-            focus_distance: 5.0,
+            focus_distance: 2.5,
             settings,
             model_transform_velocity: 0.0,
             model_transform_vertical_velocity: 0.0,

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { CameraSettings, EmbeddedApp, UiMode } from '../../pkg/brush_app';
+import { Vector3 } from 'three';
 
 interface BrushViewerProps {
   url?: string | null;
@@ -10,6 +11,8 @@ interface BrushViewerProps {
   minFocusDistance?: number;
   maxFocusDistance?: number;
   speedScale?: number;
+  focalPoint?: Vector3;
+  cameraRotation?: Vector3;
 }
 
 export default function BrushViewer(props: BrushViewerProps) {
@@ -60,10 +63,13 @@ export default function BrushViewer(props: BrushViewerProps) {
   }, [app, props.url, props.speedScale, props.minFocusDistance, props.maxFocusDistance]);
 
   useEffect(() => {
-    if (app && props.focusDistance) {
-      app.set_cam_focus_distance(props.focusDistance);
+    if (app) {
+      const focalPoint = props.focalPoint ?? new Vector3(0, 0, 0);
+      const focalDistance = props.focusDistance ?? 2.5;
+      const cameraRotation = props.cameraRotation ?? new Vector3(0, 0, 0);
+      app.set_focal_point(focalPoint, focalDistance, cameraRotation);
     }
-  }, [app, props.url, props.focusDistance]);
+  }, [app, props.url, props.focalPoint, props.focusDistance, props.cameraRotation]);
 
   return (
     <div style={{
