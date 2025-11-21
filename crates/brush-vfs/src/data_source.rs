@@ -105,7 +105,6 @@ impl DataSource {
         {
             use tokio_util::compat::FuturesAsyncReadCompatExt;
             use wasm_streams::ReadableStream;
-            use web_sys::RequestCredentials;
             use web_sys::wasm_bindgen::JsCast;
             use web_sys::{Request, RequestInit, RequestMode, Response};
 
