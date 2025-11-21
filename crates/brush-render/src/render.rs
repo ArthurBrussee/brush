@@ -315,9 +315,9 @@ pub(crate) fn render_forward(
                 client,
                 cube_count,
                 cube_dim,
-                tile_id_from_isect.as_tensor_arg::<u32>(1),
-                tile_offsets.as_tensor_arg::<u32>(1),
-                num_intersections.as_tensor_arg::<u32>(1),
+                tile_id_from_isect.as_tensor_arg(1),
+                tile_offsets.as_tensor_arg(1),
+                num_intersections.as_tensor_arg(1),
             );
         }
 

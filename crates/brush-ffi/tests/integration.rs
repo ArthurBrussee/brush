@@ -36,7 +36,6 @@ extern "C" fn test_progress_callback(process_message: ProgressMessage, user_data
 
 #[test]
 fn test_train_and_save_ffi_short() {
-    // Arrange
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let dataset_path = Path::new(manifest_dir)
         .join("tests")
@@ -75,7 +74,6 @@ fn test_train_and_save_ffi_short() {
         )
     };
 
-    // Assert
     assert!(matches!(status, TrainExitCode::Success));
     assert!(callback_state.call_count.load(Ordering::SeqCst) > 2);
 
@@ -88,7 +86,6 @@ fn test_train_and_save_ffi_short() {
 
 #[test]
 fn test_train_and_save_ffi_invalid_path() {
-    // Arrange
     let invalid_dataset_path = "/path/that/does/not/exist/and/should/fail";
     let temp_dir = tempfile::Builder::new()
         .prefix("ffi_test_invalid_")
@@ -121,7 +118,6 @@ fn test_train_and_save_ffi_invalid_path() {
         )
     };
 
-    // Assert
     assert!(matches!(status, TrainExitCode::Error));
 }
 

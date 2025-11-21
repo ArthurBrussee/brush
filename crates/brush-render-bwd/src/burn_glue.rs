@@ -16,7 +16,7 @@ use burn::{
     },
     prelude::Backend,
     tensor::{
-        DType, Tensor, TensorPrimitive,
+        DType, Shape, Tensor, TensorPrimitive,
         backend::AutodiffBackend,
         ops::{FloatTensor, IntTensor},
     },
@@ -24,10 +24,9 @@ use burn::{
 use burn_cubecl::{BoolElement, fusion::FusionCubeRuntime};
 use burn_fusion::{
     Fusion, FusionHandle,
-    client::FusionClient,
     stream::{Operation, OperationStreams},
 };
-use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
+use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use glam::Vec3;
 
 use crate::render_bwd::{SplatGrads, render_backward};
@@ -281,22 +280,23 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                 &self,
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
             ) {
-                let (
-                    [
-                        v_output,
-                        means,
-                        quats,
-                        log_scales,
-                        raw_opac,
-                        out_img,
-                        projected_splats,
-                        uniforms_buffer,
-                        tile_offsets,
-                        compact_gid_from_isect,
-                        global_from_compact_gid,
-                    ],
-                    [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine],
-                ) = self.desc.as_fixed();
+                let (inputs, outputs) = self.desc.as_fixed();
+
+                let [
+                    v_output,
+                    means,
+                    quats,
+                    log_scales,
+                    raw_opac,
+                    out_img,
+                    projected_splats,
+                    uniforms_buffer,
+                    tile_offsets,
+                    compact_gid_from_isect,
+                    global_from_compact_gid,
+                ] = inputs;
+
+                let [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine] = outputs;
 
                 let inner_state = GaussianBackwardState {
                     means: h.get_float_tensor::<MainBackendBase>(means),
@@ -334,14 +334,36 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
         let num_points = state.means.shape[0];
         let coeffs = sh_coeffs_for_degree(state.sh_degree) as usize;
 
-        let grads = SplatGrads::<Self> {
-            v_means: client.tensor_uninitialized(vec![num_points, 3], DType::F32),
-            v_scales: client.tensor_uninitialized(vec![num_points, 3], DType::F32),
-            v_quats: client.tensor_uninitialized(vec![num_points, 4], DType::F32),
-            v_coeffs: client.tensor_uninitialized(vec![num_points, coeffs, 3], DType::F32),
-            v_raw_opac: client.tensor_uninitialized(vec![num_points], DType::F32),
-            v_refine_weight: client.tensor_uninitialized(vec![num_points], DType::F32),
-        };
+        let v_means = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([num_points, 3]),
+            DType::F32,
+        );
+        let v_scales = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([num_points, 3]),
+            DType::F32,
+        );
+        let v_quats = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([num_points, 4]),
+            DType::F32,
+        );
+        let v_coeffs = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([num_points, coeffs, 3]),
+            DType::F32,
+        );
+        let v_raw_opac = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([num_points]),
+            DType::F32,
+        );
+        let v_refine_weight = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([num_points]),
+            DType::F32,
+        );
 
         let input_tensors = [
             v_output,
@@ -357,35 +379,48 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             state.global_from_compact_gid,
         ];
 
-        let output_tensors = [
-            &grads.v_means,
-            &grads.v_quats,
-            &grads.v_scales,
-            &grads.v_coeffs,
-            &grads.v_raw_opac,
-            &grads.v_refine_weight,
-        ];
-
-        let mut stream = OperationStreams::default();
-        for inp in &input_tensors {
-            stream.tensor(inp);
-        }
-
+        let stream = OperationStreams::with_inputs(&input_tensors);
         let desc = CustomOpIr::new(
             "render_splat_bwd",
             &input_tensors.map(|t| t.into_ir()),
-            &output_tensors.map(|t| t.to_ir_out()),
+            &[
+                v_means,
+                v_quats,
+                v_scales,
+                v_coeffs,
+                v_raw_opac,
+                v_refine_weight,
+            ],
         );
 
-        client.register(
-            stream,
-            OperationIr::Custom(desc.clone()),
-            CustomOp {
-                // state,
-                desc,
-                sh_degree: state.sh_degree,
-            },
-        );
-        grads
+        let outputs = client
+            .register(
+                stream,
+                OperationIr::Custom(desc.clone()),
+                CustomOp {
+                    // state,
+                    desc,
+                    sh_degree: state.sh_degree,
+                },
+            )
+            .outputs();
+
+        let [
+            v_means,
+            v_quats,
+            v_scales,
+            v_coeffs,
+            v_raw_opac,
+            v_refine_weight,
+        ] = outputs;
+
+        SplatGrads {
+            v_means,
+            v_scales,
+            v_quats,
+            v_coeffs,
+            v_raw_opac,
+            v_refine_weight,
+        }
     }
 }

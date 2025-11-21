@@ -1,11 +1,10 @@
-use burn::tensor::{DType, ops::FloatTensor};
+use burn::tensor::{DType, Shape, ops::FloatTensor};
 use burn_cubecl::{BoolElement, fusion::FusionCubeRuntime};
 use burn_fusion::{
     Fusion, FusionHandle,
-    client::FusionClient,
     stream::{Operation, OperationStreams},
 };
-use burn_ir::{CustomOpIr, HandleContainer, OperationIr};
+use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use burn_wgpu::WgpuRuntime;
 use glam::Vec3;
 
@@ -66,13 +65,15 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
 
                 let [means, log_scales, quats, sh_coeffs, opacity] = inputs;
                 let [
+                    // Img
+                    out_img,
+                    // Aux
                     projected_splats,
                     uniforms_buffer,
                     num_intersections,
                     tile_offsets,
                     compact_gid_from_isect,
                     global_from_compact_gid,
-                    out_img,
                     visible,
                 ] = outputs;
 
@@ -126,47 +127,62 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
         // render RGBA f32 values.
         let channels = if bwd_info { 4 } else { 1 };
 
-        let out_img = client.tensor_uninitialized(
-            vec![img_size.y as usize, img_size.x as usize, channels],
+        let out_img = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([img_size.y as usize, img_size.x as usize, channels]),
             if bwd_info { DType::F32 } else { DType::U32 },
         );
 
-        let visible_shape = if bwd_info { vec![num_points] } else { vec![1] };
-
-        let aux = RenderAux::<Self> {
-            projected_splats: client.tensor_uninitialized(vec![num_points, proj_size], DType::F32),
-            uniforms_buffer: client.tensor_uninitialized(vec![uniforms_size], DType::U32),
-            num_intersections: client.tensor_uninitialized(vec![1], DType::U32),
-            tile_offsets: client.tensor_uninitialized(
-                vec![tile_bounds.y as usize, tile_bounds.x as usize, 2],
-                DType::U32,
-            ),
-            compact_gid_from_isect: client
-                .tensor_uninitialized(vec![max_intersects as usize], DType::U32),
-            global_from_compact_gid: client.tensor_uninitialized(vec![num_points], DType::U32),
-            visible: client.tensor_uninitialized(visible_shape, DType::F32),
-            img_size,
+        let visible_shape = if bwd_info {
+            Shape::new([num_points])
+        } else {
+            Shape::new([1])
         };
 
-        let mut stream = OperationStreams::default();
+        let projected_splats = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([num_points, proj_size]),
+            DType::F32,
+        );
+        let uniforms_buffer = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([uniforms_size]),
+            DType::U32,
+        );
+        let num_intersections =
+            TensorIr::uninit(client.create_empty_handle(), Shape::new([1]), DType::U32);
+        let tile_offsets = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([tile_bounds.y as usize, tile_bounds.x as usize, 2]),
+            DType::U32,
+        );
+        let compact_gid_from_isect = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([max_intersects as usize]),
+            DType::U32,
+        );
+        let global_from_compact_gid = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([num_points]),
+            DType::U32,
+        );
+        let visible = TensorIr::uninit(client.create_empty_handle(), visible_shape, DType::F32);
+
         let input_tensors = [means, log_scales, quats, sh_coeffs, opacity];
-        let output_tensors = [
-            &aux.projected_splats,
-            &aux.uniforms_buffer,
-            &aux.num_intersections,
-            &aux.tile_offsets,
-            &aux.compact_gid_from_isect,
-            &aux.global_from_compact_gid,
-            &out_img,
-            &aux.visible,
-        ];
-        for inp in &input_tensors {
-            stream.tensor(inp);
-        }
+        let stream = OperationStreams::with_inputs(&input_tensors);
         let desc = CustomOpIr::new(
             "render_splats",
             &input_tensors.map(|t| t.into_ir()),
-            &output_tensors.map(|t| t.to_ir_out()),
+            &[
+                out_img,
+                projected_splats,
+                uniforms_buffer,
+                num_intersections,
+                tile_offsets,
+                compact_gid_from_isect,
+                global_from_compact_gid,
+                visible,
+            ],
         );
         let op = CustomOp {
             cam: cam.clone(),
@@ -175,7 +191,36 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             background,
             desc: desc.clone(),
         };
-        client.register(stream, OperationIr::Custom(desc), op);
-        (out_img, aux)
+
+        let outputs = client
+            .register(stream, OperationIr::Custom(desc), op)
+            .outputs();
+
+        let [
+            // Img
+            out_img,
+            // Aux
+            projected_splats,
+            uniforms_buffer,
+            num_intersections,
+            tile_offsets,
+            compact_gid_from_isect,
+            global_from_compact_gid,
+            visible,
+        ] = outputs;
+
+        (
+            out_img,
+            RenderAux::<Self> {
+                projected_splats,
+                uniforms_buffer,
+                num_intersections,
+                tile_offsets,
+                compact_gid_from_isect,
+                global_from_compact_gid,
+                visible,
+                img_size,
+            },
+        )
     }
 }

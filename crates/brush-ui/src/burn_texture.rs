@@ -3,7 +3,6 @@ use std::sync::Arc;
 use brush_render::{MainBackend, MainBackendBase};
 use burn::tensor::{Tensor, TensorPrimitive};
 use burn_cubecl::cubecl::Runtime;
-use burn_fusion::client::FusionClient;
 use burn_wgpu::WgpuRuntime;
 use eframe::egui_wgpu::Renderer;
 use egui::TextureId;
