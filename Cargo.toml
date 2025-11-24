@@ -72,16 +72,16 @@ serde-ply = "0.2.1"
 burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
     'autodiff',
-], branch = "fix/autodiff/unused-roots" }
-burn-cubecl = { git = "https://github.com/tracel-ai/burn", branch = "fix/autodiff/unused-roots" }
-burn-ir = { git = "https://github.com/tracel-ai/burn", branch = "fix/autodiff/unused-roots" }
+] }
+burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
+burn-ir = { git = "https://github.com/tracel-ai/burn" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
-], branch = "fix/autodiff/unused-roots" }
-burn-fusion = { git = "https://github.com/tracel-ai/burn", branch = "fix/autodiff/unused-roots" }
+] }
+burn-fusion = { git = "https://github.com/tracel-ai/burn" }
 burn-import = { git = "https://github.com/tracel-ai/burn", default-features = false, features = [
     "pytorch",
-], branch = "fix/autodiff/unused-roots" }
+] }
 
 egui = { version = "0.32"  }
 eframe = { version = "0.32", default-features = false, features = [
