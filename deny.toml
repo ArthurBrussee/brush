@@ -41,16 +41,9 @@ skip = [
     { name = 'getrandom' },
     { name = 'syn' },
 
-    # Until everyone is on 0.9
-    { name = "rand" },
-    { name = "rand_core" },
-    { name = "rand_chacha" },
-
     { name = 'thiserror' },
     { name = 'thiserror-impl' },
     { name = 'unicode-width' },
-
-    { name = 'cargo_metadata' }, # Duplicate from ply_rs + rerun
 
     # Other
     { name = "core-foundation" },     # Egui has two?
@@ -75,18 +68,22 @@ skip = [
     { name = 'windows' },          # Wgpu & kiddo
 
     { name = 'hashbrown' },
-    { name = 'colored' },
     { name = "rustc-hash" },
     { name = "core-graphics-types" },
 
+    { name = "smithay-client-toolkit" },
+    { name = "foldhash" },
+
+    { name = "emath" },
+    { name = "calloop-wayland-source" },
+    { name = "calloop" },
+
+    { name = "zune-jpeg" },
+    { name = "zune-core" },
+    { name = "webpki-roots" },
+
     # Older versions in rerun.
-    { name = "toml" },
-    { name = "toml_datetime" },
-    { name = "serde_spanned" },
-    { name = "socket2" },
     { name = "prettyplease" },
-    { name = "toml_edit" },
-    { name = "indicatif" },
     { name = "console" },
 ]
 

@@ -54,9 +54,9 @@ humantime = "2.1.0"
 async-fn-stream = "0.3"
 miette = { version = "7.4.0", features = ["fancy"] }
 assert_approx_eq = "1.1.0"
-safetensors = "0.6.0"
+safetensors = "0.7"
 log = "0.4.22"
-wasm-bindgen = "0.2.97"
+wasm-bindgen = "0.2.100"
 wasm-bindgen-futures = "0.4"
 wasm-streams = "0.4"
 
@@ -93,7 +93,7 @@ eframe = { version = "0.32", default-features = false, features = [
 
 egui_tiles = "0.13.0"
 
-rerun = { version = "0.25", default-features = false, features = [
+rerun = { version = "0.27", default-features = false, features = [
     'sdk',
     'glam',
 ] }
