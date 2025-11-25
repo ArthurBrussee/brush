@@ -155,14 +155,23 @@ impl ScenePanel {
         let mut size = ui.available_size();
         let selected = process.selected_view();
 
+        let mut black_bars: Vec<Rect> = Vec::new();
+
         if let Some(tex) = selected.tex.borrow().as_ref() {
             let aspect_ratio = tex.handle.aspect_ratio();
             if size.x / size.y > aspect_ratio {
-                size.x = size.y * aspect_ratio;
-            } else {
-                size.y = size.x / aspect_ratio;
+                let img_pixels = size.y * aspect_ratio;
+                let bar_pixels = (size.x - img_pixels) / 2.0;
+                black_bars.push(Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(bar_pixels, size.y)));
+                black_bars.push(Rect::from_min_max(Pos2::new(bar_pixels + img_pixels, 0.0), Pos2::new(bar_pixels, size.y)));
+            } else {                
+                let img_pixels = size.x / aspect_ratio;
+                let bar_pixels = (size.y - img_pixels) / 2.0;
+                black_bars.push(Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(size.x, bar_pixels)));
+                black_bars.push(Rect::from_min_max(Pos2::new(0.0, bar_pixels + img_pixels), Pos2::new(size.x, bar_pixels)));
             }
         }
+        
         let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
 
         let (rect, response) = ui.allocate_exact_size(
@@ -266,6 +275,12 @@ impl ScenePanel {
                     },
                     Color32::WHITE,
                 );
+            }
+                
+            let color = Color32::from_rgba_unmultiplied(0, 0, 0, 127);
+
+            for bar in black_bars {
+                ui.painter().rect_filled(bar, 0.0, color);
             }
         });
 
