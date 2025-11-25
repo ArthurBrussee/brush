@@ -4,6 +4,7 @@ use brush_dataset::scene::SceneView;
 use brush_process::{config::ProcessArgs, message::ProcessMessage, process::process_stream};
 use brush_render::camera::Camera;
 use brush_vfs::DataSource;
+use burn_cubecl::cubecl::config::{GlobalConfig, streaming::StreamingConfig};
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle, TextureOptions};
 use glam::{Affine3A, Quat, Vec3};
@@ -45,6 +46,15 @@ impl Default for UiProcess {
 
 impl UiProcess {
     pub fn new() -> Self {
+        // Set the global config once on startup.
+        GlobalConfig::set(GlobalConfig {
+            streaming: StreamingConfig {
+                max_streams: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
         Self(RwLock::new(UiProcessInner::new()))
     }
 }
