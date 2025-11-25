@@ -17,8 +17,6 @@ pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _: *mut c_void) -> jint {
 
 #[unsafe(no_mangle)]
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
-    let context = Arc::new(UiProcess::new());
-
     let wgpu_options = brush_ui::create_egui_options();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -26,9 +24,12 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         .unwrap();
 
     runtime.block_on(async {
+        let context = Arc::new(UiProcess::new());
+
         android_logger::init_once(
             android_logger::Config::default().with_max_level(log::LevelFilter::Info),
         );
+
         eframe::run_native(
             "Brush",
             eframe::NativeOptions {
