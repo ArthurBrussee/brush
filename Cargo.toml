@@ -17,6 +17,7 @@ image = { version = "0.25", default-features = false, features = [
     'png',
     'webp',
     "jpeg",
+    'exr'
 ] }
 
 serde = { version = "1.0.215", default-features = false, features = [
