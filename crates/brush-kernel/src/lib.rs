@@ -5,12 +5,10 @@ mod shaders;
 
 use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::tensor::{DType, Shape};
-use burn_cubecl::cubecl::Runtime;
+pub use burn_cubecl::cubecl::prelude::CompiledKernel;
 pub use burn_cubecl::cubecl::prelude::ExecutionMode;
-pub use burn_cubecl::cubecl::{
-    CubeCount, CubeDim, client::ComputeClient, compute::CompiledKernel, compute::CubeTask,
-    server::ComputeServer,
-};
+pub use burn_cubecl::cubecl::{CubeCount, CubeDim, client::ComputeClient, server::ComputeServer};
+pub use burn_cubecl::cubecl::{CubeTask, Runtime};
 pub use burn_cubecl::cubecl::{
     prelude::KernelId,
     server::{Bindings, MetadataBinding},
@@ -179,7 +177,7 @@ pub fn create_meta_binding<T: Pod>(val: T) -> MetadataBinding {
 pub fn create_uniform_buffer<R: CubeRuntime, T: Pod>(
     val: T,
     device: &R::Device,
-    client: &ComputeClient<R::Server>,
+    client: &ComputeClient<R>,
 ) -> CubeTensor<R> {
     let binding = create_meta_binding(val);
     CubeTensor::new_contiguous(
