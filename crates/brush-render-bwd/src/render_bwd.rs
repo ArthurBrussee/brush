@@ -103,29 +103,31 @@ pub(crate) fn render_backward(
     tracing::trace_span!("RasterizeBackwards").in_scope(|| {
         // SAFETY: Kernel checked to have no OOB, bounded loops.
         unsafe {
-            client.execute_unchecked(
-                RasterizeBackwards::task(hard_floats, webgpu),
-                CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
-                Bindings::new().with_buffers(vec![
-                    uniforms_buffer.handle.clone().binding(),
-                    compact_gid_from_isect.handle.binding(),
-                    global_from_compact_gid.handle.clone().binding(),
-                    tile_offsets.handle.binding(),
-                    projected_splats.handle.binding(),
-                    out_img.handle.binding(),
-                    v_output.handle.binding(),
-                    v_grads.handle.clone().binding(),
-                    v_raw_opac.handle.clone().binding(),
-                    v_refine_weight.handle.clone().binding(),
-                ]),
-            );
+            client
+                .launch_unchecked(
+                    RasterizeBackwards::task(hard_floats, webgpu),
+                    CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
+                    Bindings::new().with_buffers(vec![
+                        uniforms_buffer.handle.clone().binding(),
+                        compact_gid_from_isect.handle.binding(),
+                        global_from_compact_gid.handle.clone().binding(),
+                        tile_offsets.handle.binding(),
+                        projected_splats.handle.binding(),
+                        out_img.handle.binding(),
+                        v_output.handle.binding(),
+                        v_grads.handle.clone().binding(),
+                        v_raw_opac.handle.clone().binding(),
+                        v_refine_weight.handle.clone().binding(),
+                    ]),
+                )
+                .expect("Failed to bwd-diff splats");
         }
     });
 
     tracing::trace_span!("ProjectBackwards").in_scope(||
         // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
         unsafe {
-        client.execute_unchecked(
+        client.launch_unchecked(
             ProjectBackwards::task(),
             calc_cube_count([num_points as u32], ProjectBackwards::WORKGROUP_SIZE),
             Bindings::new().with_buffers(
@@ -141,7 +143,7 @@ pub(crate) fn render_backward(
                 v_quats.handle.clone().binding(),
                 v_coeffs.handle.clone().binding()
             ]),
-        );
+        ).expect("Failed to bwd-diff splats");
     });
 
     assert!(v_means.is_contiguous(), "Grads must be contiguous");

@@ -442,7 +442,7 @@ async fn parse_delta_ply<T: AsyncRead + Unpin>(
             // The encoding is just literal delta encoding in floats - nothing fancy
             // like actually considering the quaternion transform.
             let rotations = Tensor::from_data(TensorData::new(rotations, [n_splats, 4]), &device)
-                + splats.rotation.val();
+                + splats.rotations.val();
             let log_scales = Tensor::from_data(TensorData::new(scales, [n_splats, 3]), &device)
                 + splats.log_scales.val();
 
@@ -461,7 +461,7 @@ async fn parse_delta_ply<T: AsyncRead + Unpin>(
                         rotations,
                         log_scales,
                         splats.sh_coeffs.val(),
-                        splats.raw_opacity.val(),
+                        splats.raw_opacities.val(),
                     ),
                 })
                 .await;

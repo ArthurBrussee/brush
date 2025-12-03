@@ -164,7 +164,7 @@ mod forward_rendering {
             for _ in 0..ITERS_PER_SYNC {
                 let _ = splats.render(&camera, glam::uvec2(1920, 1080), Vec3::ZERO, None);
             }
-            MainBackend::sync(&device);
+            MainBackend::sync(&device).expect("Failed to sync");
         });
     }
 
@@ -184,7 +184,7 @@ mod forward_rendering {
             for _ in 0..ITERS_PER_SYNC {
                 let _ = splats.render(&camera, glam::uvec2(width, height), Vec3::ZERO, None);
             }
-            MainBackend::sync(&device);
+            MainBackend::sync(&device).expect("Failed to sync");
         });
     }
 }
@@ -215,16 +215,16 @@ mod backward_rendering {
                     glam::uvec2(1920, 1080),
                     splats.means.val().into_primitive().tensor(),
                     splats.log_scales.val().into_primitive().tensor(),
-                    splats.rotation.val().into_primitive().tensor(),
+                    splats.rotations.val().into_primitive().tensor(),
                     splats.sh_coeffs.val().into_primitive().tensor(),
-                    splats.raw_opacity.val().into_primitive().tensor(),
+                    splats.raw_opacities.val().into_primitive().tensor(),
                     Vec3::ZERO,
                 );
                 let img: Tensor<DiffBackend, 3> =
                     Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
                 let _ = img.mean().backward();
             }
-            MainBackend::sync(&device);
+            MainBackend::sync(&device).expect("Failed to sync");
         });
     }
 
@@ -246,16 +246,16 @@ mod backward_rendering {
                     glam::uvec2(width, height),
                     splats.means.val().into_primitive().tensor(),
                     splats.log_scales.val().into_primitive().tensor(),
-                    splats.rotation.val().into_primitive().tensor(),
+                    splats.rotations.val().into_primitive().tensor(),
                     splats.sh_coeffs.val().into_primitive().tensor(),
-                    splats.raw_opacity.val().into_primitive().tensor(),
+                    splats.raw_opacities.val().into_primitive().tensor(),
                     Vec3::ZERO,
                 );
                 let img: Tensor<DiffBackend, 3> =
                     Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
                 let _ = img.mean().backward();
             }
-            MainBackend::sync(&device);
+            MainBackend::sync(&device).expect("Failed to sync");
         });
     }
 }
@@ -283,7 +283,7 @@ mod training {
                 let (new_splats, _) = trainer.step(batch, splats);
                 splats = new_splats;
             }
-            MainBackend::sync(&device);
+            MainBackend::sync(&device).expect("Failed to sync");
         });
     }
 }

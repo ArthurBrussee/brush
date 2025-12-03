@@ -140,7 +140,7 @@ pub(crate) fn render_forward(
         tracing::trace_span!("ProjectSplats").in_scope(||
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
-            client.execute_unchecked(
+            client.launch_unchecked(
                 ProjectSplats::task(),
                 calc_cube_count([total_splats as u32], ProjectSplats::WORKGROUP_SIZE),
                 Bindings::new().with_buffers(
@@ -153,7 +153,7 @@ pub(crate) fn render_forward(
                     global_from_presort_gid.handle.clone().binding(),
                     depths.handle.clone().binding(),
                 ]),
-            );
+            ).expect("Failed to render splats");
         });
 
         // Get just the number of visible splats from the uniforms buffer.
@@ -185,20 +185,22 @@ pub(crate) fn render_forward(
         );
         // SAFETY: Kernel checked to have no OOB, bounded loops.
         unsafe {
-            client.execute_unchecked(
-                ProjectVisible::task(),
-                CubeCount::Dynamic(num_vis_wg.handle.binding()),
-                Bindings::new().with_buffers(vec![
-                    uniforms_buffer.clone().handle.binding(),
-                    means.handle.binding(),
-                    log_scales.handle.binding(),
-                    quats.handle.binding(),
-                    sh_coeffs.handle.binding(),
-                    raw_opacities.handle.binding(),
-                    global_from_compact_gid.handle.clone().binding(),
-                    projected_splats.handle.clone().binding(),
-                ]),
-            );
+            client
+                .launch_unchecked(
+                    ProjectVisible::task(),
+                    CubeCount::Dynamic(num_vis_wg.handle.binding()),
+                    Bindings::new().with_buffers(vec![
+                        uniforms_buffer.clone().handle.binding(),
+                        means.handle.binding(),
+                        log_scales.handle.binding(),
+                        quats.handle.binding(),
+                        sh_coeffs.handle.binding(),
+                        raw_opacities.handle.binding(),
+                        global_from_compact_gid.handle.clone().binding(),
+                        projected_splats.handle.clone().binding(),
+                    ]),
+                )
+                .expect("Failed to render splats");
         }
     });
 
@@ -218,15 +220,17 @@ pub(crate) fn render_forward(
         tracing::trace_span!("MapGaussiansToIntersectPrepass").in_scope(|| {
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
-                client.execute_unchecked(
-                    MapGaussiansToIntersect::task(true),
-                    CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
-                    Bindings::new().with_buffers(vec![
-                        uniforms_buffer.handle.clone().binding(),
-                        projected_splats.handle.clone().binding(),
-                        splat_intersect_counts.handle.clone().binding(),
-                    ]),
-                );
+                client
+                    .launch_unchecked(
+                        MapGaussiansToIntersect::task(true),
+                        CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
+                        Bindings::new().with_buffers(vec![
+                            uniforms_buffer.handle.clone().binding(),
+                            projected_splats.handle.clone().binding(),
+                            splat_intersect_counts.handle.clone().binding(),
+                        ]),
+                    )
+                    .expect("Failed to render splats");
             }
         });
 
@@ -243,18 +247,20 @@ pub(crate) fn render_forward(
         tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
-                client.execute_unchecked(
-                    MapGaussiansToIntersect::task(false),
-                    CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
-                    Bindings::new().with_buffers(vec![
-                        uniforms_buffer.handle.clone().binding(),
-                        projected_splats.handle.clone().binding(),
-                        cum_tiles_hit.handle.binding(),
-                        tile_id_from_isect.handle.clone().binding(),
-                        compact_gid_from_isect.handle.clone().binding(),
-                        num_intersections.handle.clone().binding(),
-                    ]),
-                );
+                client
+                    .launch_unchecked(
+                        MapGaussiansToIntersect::task(false),
+                        CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
+                        Bindings::new().with_buffers(vec![
+                            uniforms_buffer.handle.clone().binding(),
+                            projected_splats.handle.clone().binding(),
+                            cum_tiles_hit.handle.binding(),
+                            tile_id_from_isect.handle.clone().binding(),
+                            compact_gid_from_isect.handle.clone().binding(),
+                            num_intersections.handle.clone().binding(),
+                        ]),
+                    )
+                    .expect("Failed to render splats");
             }
         });
 
@@ -318,7 +324,8 @@ pub(crate) fn render_forward(
                 tile_id_from_isect.as_tensor_arg(1),
                 tile_offsets.as_tensor_arg(1),
                 num_intersections.as_tensor_arg(1),
-            );
+            )
+            .expect("Failed to render splats");
         }
 
         (tile_offsets, compact_gid_from_isect, num_intersections)
@@ -367,11 +374,13 @@ pub(crate) fn render_forward(
 
     // SAFETY: Kernel checked to have no OOB, bounded loops.
     unsafe {
-        client.execute_unchecked(
-            raster_task,
-            CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
-            bindings,
-        );
+        client
+            .launch_unchecked(
+                raster_task,
+                CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
+                bindings,
+            )
+            .expect("Failed to render splats");
     }
 
     // Sanity check the buffers.

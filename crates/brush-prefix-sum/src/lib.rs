@@ -26,14 +26,16 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
 
     // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
-        client.execute_unchecked(
-            PrefixSumScan::task(),
-            calc_cube_count([num as u32], PrefixSumScan::WORKGROUP_SIZE),
-            Bindings::new().with_buffers(vec![
-                input.handle.binding(),
-                outputs.handle.clone().binding(),
-            ]),
-        );
+        client
+            .launch_unchecked(
+                PrefixSumScan::task(),
+                calc_cube_count([num as u32], PrefixSumScan::WORKGROUP_SIZE),
+                Bindings::new().with_buffers(vec![
+                    input.handle.binding(),
+                    outputs.handle.clone().binding(),
+                ]),
+            )
+            .expect("Failed to run prefix sums");
     }
 
     if num <= threads_per_group {
@@ -51,27 +53,31 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
 
     // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
-        client.execute_unchecked(
-            PrefixSumScanSums::task(),
-            calc_cube_count([work_size[0] as u32], PrefixSumScanSums::WORKGROUP_SIZE),
-            Bindings::new().with_buffers(vec![
-                outputs.handle.clone().binding(),
-                group_buffer[0].handle.clone().binding(),
-            ]),
-        );
+        client
+            .launch_unchecked(
+                PrefixSumScanSums::task(),
+                calc_cube_count([work_size[0] as u32], PrefixSumScanSums::WORKGROUP_SIZE),
+                Bindings::new().with_buffers(vec![
+                    outputs.handle.clone().binding(),
+                    group_buffer[0].handle.clone().binding(),
+                ]),
+            )
+            .expect("Failed to run prefix sums");
     }
 
     for l in 0..(group_buffer.len() - 1) {
         // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
         unsafe {
-            client.execute_unchecked(
-                PrefixSumScanSums::task(),
-                calc_cube_count([work_size[l + 1] as u32], PrefixSumScanSums::WORKGROUP_SIZE),
-                Bindings::new().with_buffers(vec![
-                    group_buffer[l].handle.clone().binding(),
-                    group_buffer[l + 1].handle.clone().binding(),
-                ]),
-            );
+            client
+                .launch_unchecked(
+                    PrefixSumScanSums::task(),
+                    calc_cube_count([work_size[l + 1] as u32], PrefixSumScanSums::WORKGROUP_SIZE),
+                    Bindings::new().with_buffers(vec![
+                        group_buffer[l].handle.clone().binding(),
+                        group_buffer[l + 1].handle.clone().binding(),
+                    ]),
+                )
+                .expect("Failed to run prefix sums");
         }
     }
 
@@ -80,30 +86,34 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
 
         // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
         unsafe {
-            client.execute_unchecked(
-                PrefixSumAddScannedSums::task(),
-                calc_cube_count([work_sz as u32], PrefixSumAddScannedSums::WORKGROUP_SIZE),
-                Bindings::new().with_buffers(vec![
-                    group_buffer[l].handle.clone().binding(),
-                    group_buffer[l - 1].handle.clone().binding(),
-                ]),
-            );
+            client
+                .launch_unchecked(
+                    PrefixSumAddScannedSums::task(),
+                    calc_cube_count([work_sz as u32], PrefixSumAddScannedSums::WORKGROUP_SIZE),
+                    Bindings::new().with_buffers(vec![
+                        group_buffer[l].handle.clone().binding(),
+                        group_buffer[l - 1].handle.clone().binding(),
+                    ]),
+                )
+                .expect("Failed to run prefix sums");
         }
     }
 
     // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
-        client.execute_unchecked(
-            PrefixSumAddScannedSums::task(),
-            calc_cube_count(
-                [(work_size[0] * threads_per_group) as u32],
-                PrefixSumAddScannedSums::WORKGROUP_SIZE,
-            ),
-            Bindings::new().with_buffers(vec![
-                group_buffer[0].handle.clone().binding(),
-                outputs.handle.clone().binding(),
-            ]),
-        );
+        client
+            .launch_unchecked(
+                PrefixSumAddScannedSums::task(),
+                calc_cube_count(
+                    [(work_size[0] * threads_per_group) as u32],
+                    PrefixSumAddScannedSums::WORKGROUP_SIZE,
+                ),
+                Bindings::new().with_buffers(vec![
+                    group_buffer[0].handle.clone().binding(),
+                    outputs.handle.clone().binding(),
+                ]),
+            )
+            .expect("Failed to run prefix sums");
     }
 
     outputs

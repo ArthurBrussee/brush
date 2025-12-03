@@ -81,69 +81,79 @@ pub fn radix_argsort(
         let count_buf = create_tensor([(max_needed_wgs as usize) * 16], device, DType::I32);
 
         // use safe distpatch as dynamic work count isn't verified.
-        client.execute(
-            SortCount::task(),
-            CubeCount::Dynamic(num_wgs.clone().handle.binding()),
-            Bindings::new().with_buffers(vec![
-                uniforms_buffer.handle.clone().binding(),
-                n_sort.handle.clone().binding(),
-                cur_keys.handle.clone().binding(),
-                count_buf.handle.clone().binding(),
-            ]),
-        );
+        client
+            .launch(
+                SortCount::task(),
+                CubeCount::Dynamic(num_wgs.clone().handle.binding()),
+                Bindings::new().with_buffers(vec![
+                    uniforms_buffer.handle.clone().binding(),
+                    n_sort.handle.clone().binding(),
+                    cur_keys.handle.clone().binding(),
+                    count_buf.handle.clone().binding(),
+                ]),
+            )
+            .expect("Failed to run sorting");
 
         {
             let reduced_buf = create_tensor([BLOCK_SIZE as usize], device, DType::I32);
 
-            client.execute(
-                SortReduce::task(),
-                CubeCount::Dynamic(num_reduce_wgs.handle.clone().binding()),
-                Bindings::new().with_buffers(vec![
-                    n_sort.handle.clone().binding(),
-                    count_buf.handle.clone().binding(),
-                    reduced_buf.handle.clone().binding(),
-                ]),
-            );
+            client
+                .launch(
+                    SortReduce::task(),
+                    CubeCount::Dynamic(num_reduce_wgs.handle.clone().binding()),
+                    Bindings::new().with_buffers(vec![
+                        n_sort.handle.clone().binding(),
+                        count_buf.handle.clone().binding(),
+                        reduced_buf.handle.clone().binding(),
+                    ]),
+                )
+                .expect("Failed to run sorting");
 
             // SAFETY: No OOB or loops in kernel.
             unsafe {
-                client.execute_unchecked(
-                    SortScan::task(),
-                    CubeCount::Static(1, 1, 1),
+                client
+                    .launch_unchecked(
+                        SortScan::task(),
+                        CubeCount::Static(1, 1, 1),
+                        Bindings::new().with_buffers(vec![
+                            n_sort.handle.clone().binding(),
+                            reduced_buf.handle.clone().binding(),
+                        ]),
+                    )
+                    .expect("Failed to run sorting");
+            }
+
+            client
+                .launch(
+                    SortScanAdd::task(),
+                    CubeCount::Dynamic(num_reduce_wgs.handle.clone().binding()),
                     Bindings::new().with_buffers(vec![
                         n_sort.handle.clone().binding(),
                         reduced_buf.handle.clone().binding(),
+                        count_buf.handle.clone().binding(),
                     ]),
-                );
-            }
-
-            client.execute(
-                SortScanAdd::task(),
-                CubeCount::Dynamic(num_reduce_wgs.handle.clone().binding()),
-                Bindings::new().with_buffers(vec![
-                    n_sort.handle.clone().binding(),
-                    reduced_buf.handle.clone().binding(),
-                    count_buf.handle.clone().binding(),
-                ]),
-            );
+                )
+                .expect("Failed to run sorting");
         }
 
         let output_keys = create_tensor([max_n as usize], device, cur_keys.dtype());
         let output_values = create_tensor([max_n as usize], device, cur_vals.dtype());
 
-        client.execute(
-            SortScatter::task(),
-            CubeCount::Dynamic(num_wgs.handle.clone().binding()),
-            Bindings::new().with_buffers(vec![
-                uniforms_buffer.handle.clone().binding(),
-                n_sort.handle.clone().binding(),
-                cur_keys.handle.clone().binding(),
-                cur_vals.handle.clone().binding(),
-                count_buf.handle.clone().binding(),
-                output_keys.handle.clone().binding(),
-                output_values.handle.clone().binding(),
-            ]),
-        );
+        client
+            .launch(
+                SortScatter::task(),
+                CubeCount::Dynamic(num_wgs.handle.clone().binding()),
+                Bindings::new().with_buffers(vec![
+                    uniforms_buffer.handle.clone().binding(),
+                    n_sort.handle.clone().binding(),
+                    cur_keys.handle.clone().binding(),
+                    cur_vals.handle.clone().binding(),
+                    count_buf.handle.clone().binding(),
+                    output_keys.handle.clone().binding(),
+                    output_values.handle.clone().binding(),
+                ]),
+            )
+            .expect("Failed to run sorting");
 
         cur_keys = output_keys;
         cur_vals = output_values;

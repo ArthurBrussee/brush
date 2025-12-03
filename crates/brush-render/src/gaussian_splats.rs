@@ -29,10 +29,10 @@ pub struct RandomSplatsConfig {
 #[derive(Module, Debug)]
 pub struct Splats<B: Backend> {
     pub means: Param<Tensor<B, 2>>,
-    pub rotation: Param<Tensor<B, 2>>,
+    pub rotations: Param<Tensor<B, 2>>,
     pub log_scales: Param<Tensor<B, 2>>,
     pub sh_coeffs: Param<Tensor<B, 3>>,
-    pub raw_opacity: Param<Tensor<B, 1>>,
+    pub raw_opacities: Param<Tensor<B, 1>>,
 }
 
 fn norm_vec<B: Backend>(vec: Tensor<B, 2>) -> Tensor<B, 2> {
@@ -229,14 +229,14 @@ impl<B: Backend> Splats<B> {
         Self {
             means: Param::initialized(ParamId::new(), means.detach().require_grad()),
             sh_coeffs: Param::initialized(ParamId::new(), sh_coeffs.detach().require_grad()),
-            rotation: Param::initialized(ParamId::new(), rotation.detach().require_grad()),
-            raw_opacity: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
+            rotations: Param::initialized(ParamId::new(), rotation.detach().require_grad()),
+            raw_opacities: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
             log_scales: Param::initialized(ParamId::new(), log_scales.detach().require_grad()),
         }
     }
 
     pub fn opacities(&self) -> Tensor<B, 1> {
-        sigmoid(self.raw_opacity.val())
+        sigmoid(self.raw_opacities.val())
     }
 
     pub fn scales(&self) -> Tensor<B, 2> {
@@ -248,11 +248,11 @@ impl<B: Backend> Splats<B> {
     }
 
     pub fn rotations_normed(&self) -> Tensor<B, 2> {
-        norm_vec(self.rotation.val())
+        norm_vec(self.rotations.val())
     }
 
     pub fn with_normed_rotations(mut self) -> Self {
-        self.rotation = self.rotation.map(|r| norm_vec(r));
+        self.rotations = self.rotations.map(|r| norm_vec(r));
         self
     }
 
@@ -272,7 +272,7 @@ impl<B: Backend> Splats<B> {
         validate_tensor_val(&self.means.val(), "means", None, None);
 
         // Validate raw rotations and normalized rotations
-        validate_tensor_val(&self.rotation.val(), "raw_rotations", None, None);
+        validate_tensor_val(&self.rotations.val(), "raw_rotations", None, None);
         let rotations = self.rotations_normed();
         validate_tensor_val(&rotations, "normalized_rotations", None, None);
 
@@ -292,7 +292,7 @@ impl<B: Backend> Splats<B> {
 
         // Validate pre-activation opacity (raw_opacity) and post-activation opacity
         validate_tensor_val(
-            &self.raw_opacity.val(),
+            &self.raw_opacities.val(),
             "raw_opacity",
             Some(-20.0),
             Some(20.0),
@@ -317,7 +317,7 @@ impl<B: Backend> Splats<B> {
             n_means, num_splats as usize,
             "Inconsistent number of splats in means"
         );
-        let [n_rot, rot_dims] = self.rotation.dims();
+        let [n_rot, rot_dims] = self.rotations.dims();
         assert_eq!(rot_dims, 4, "Rotations must be quaternions (4D)");
         assert_eq!(
             n_rot, num_splats as usize,
@@ -329,7 +329,7 @@ impl<B: Backend> Splats<B> {
             n_scales, num_splats as usize,
             "Inconsistent number of splats in scales"
         );
-        let [n_opacity] = self.raw_opacity.dims();
+        let [n_opacity] = self.raw_opacities.dims();
         assert_eq!(
             n_opacity, num_splats as usize,
             "Inconsistent number of splats in opacity"
@@ -345,14 +345,14 @@ impl<B: Backend> Splats<B> {
     // TODO: This should probably exist in Burn. Maybe make a PR.
     pub fn into_autodiff<BDiff: AutodiffBackend<InnerBackend = B>>(self) -> Splats<BDiff> {
         let (means_id, means, _) = self.means.consume();
-        let (rotation_id, rotation, _) = self.rotation.consume();
+        let (rotation_id, rotation, _) = self.rotations.consume();
         let (log_scales_id, log_scales, _) = self.log_scales.consume();
         let (sh_coeffs_id, sh_coeffs, _) = self.sh_coeffs.consume();
-        let (raw_opacity_id, raw_opacity, _) = self.raw_opacity.consume();
+        let (raw_opacity_id, raw_opacity, _) = self.raw_opacities.consume();
 
         Splats::<BDiff> {
             means: Param::initialized(means_id, Tensor::from_inner(means).require_grad()),
-            rotation: Param::initialized(rotation_id, Tensor::from_inner(rotation).require_grad()),
+            rotations: Param::initialized(rotation_id, Tensor::from_inner(rotation).require_grad()),
             log_scales: Param::initialized(
                 log_scales_id,
                 Tensor::from_inner(log_scales).require_grad(),
@@ -361,7 +361,7 @@ impl<B: Backend> Splats<B> {
                 sh_coeffs_id,
                 Tensor::from_inner(sh_coeffs).require_grad(),
             ),
-            raw_opacity: Param::initialized(
+            raw_opacities: Param::initialized(
                 raw_opacity_id,
                 Tensor::from_inner(raw_opacity).require_grad(),
             ),
@@ -374,6 +374,7 @@ impl<B: Backend> Splats<B> {
             .val()
             .into_data_async()
             .await
+            .expect("Failed to fetch splat data")
             .to_vec()
             .expect("Failed to get means");
 
@@ -434,9 +435,9 @@ impl<B: Backend + SplatForward<B>> Splats<B> {
             img_size,
             self.means.val().into_primitive().tensor(),
             scales.into_primitive().tensor(),
-            self.rotation.val().into_primitive().tensor(),
+            self.rotations.val().into_primitive().tensor(),
             self.sh_coeffs.val().into_primitive().tensor(),
-            self.raw_opacity.val().into_primitive().tensor(),
+            self.raw_opacities.val().into_primitive().tensor(),
             background,
             false,
         );
