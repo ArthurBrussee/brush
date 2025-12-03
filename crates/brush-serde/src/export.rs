@@ -76,7 +76,7 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
         .register(splats.log_scales.val())
         .register(splats.rotations.val())
         .register(splats.raw_opacities.val())
-        .register(splats.sh_coeffs.val())
+        .register(splats.sh_coeffs.val().permute([0, 2, 1])) // Permute to inria format ([n, channel, coeffs]).)
         .execute_async()
         .await
         .expect("Failed to fetch splat data")
