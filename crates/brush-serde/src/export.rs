@@ -3,6 +3,7 @@ use std::vec;
 use brush_render::gaussian_splats::Splats;
 use brush_render::sh::sh_coeffs_for_degree;
 use burn::prelude::Backend;
+use burn::tensor::Transaction;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use serde_ply::{SerializeError, SerializeOptions};
@@ -70,42 +71,20 @@ struct DynamicPly {
 pub use burn_cubecl::{CubeRuntime, cubecl::Compiler, tensor::CubeTensor};
 
 async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
-    let means = splats
-        .means
-        .val()
-        .into_data_async()
+    let [means, log_scales, rotations, raw_opacities, sh_coeffs] = Transaction::default()
+        .register(splats.means.val())
+        .register(splats.log_scales.val())
+        .register(splats.rotations.val())
+        .register(splats.raw_opacities.val())
+        .register(splats.sh_coeffs.val().permute([0, 2, 1])) // Permute to inria format ([n, channel, coeffs]).)
+        .execute_async()
         .await
-        .into_vec()
-        .expect("Unreachable");
-    let log_scales = splats
-        .log_scales
-        .val()
-        .into_data_async()
-        .await
-        .into_vec()
-        .expect("Unreachable");
-    let rotations = splats
-        .rotation
-        .val()
-        .into_data_async()
-        .await
-        .into_vec()
-        .expect("Unreachable");
-    let opacities = splats
-        .raw_opacity
-        .val()
-        .into_data_async()
-        .await
-        .into_vec()
-        .expect("Unreachable");
-    let sh_coeffs = splats
-        .sh_coeffs
-        .val()
-        .permute([0, 2, 1]) // Permute to inria format ([n, channel, coeffs]).
-        .into_data_async()
-        .await
-        .into_vec()
-        .expect("Unreachable");
+        .expect("Failed to fetch splat data")
+        .into_iter()
+        .map(|x| x.into_vec().unwrap())
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
 
     let sh_coeffs_num = splats.sh_coeffs.dims()[1];
     let sh_degree = splats.sh_degree();
@@ -137,7 +116,6 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
                 &splat_sh[sh_coeffs_num..sh_coeffs_num * 2],
                 &splat_sh[sh_coeffs_num * 2..sh_coeffs_num * 3],
             ];
-
             let sh_red_rest = if sh_red.len() > 1 && rest_coeffs_per_channel > 0 {
                 &sh_red[1..=rest_coeffs_per_channel]
             } else {
@@ -155,7 +133,6 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
             };
 
             let rest_coeffs = [sh_red_rest, sh_green_rest, sh_blue_rest].concat();
-
             DynamicPlyGaussian {
                 x: means[i * 3],
                 y: means[i * 3 + 1],
@@ -167,7 +144,7 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
                 rot_1: rotations[i * 4 + 1],
                 rot_2: rotations[i * 4 + 2],
                 rot_3: rotations[i * 4 + 3],
-                opacity: opacities[i],
+                opacity: raw_opacities[i],
                 f_dc_0: sh_red[0],
                 f_dc_1: sh_green[0],
                 f_dc_2: sh_blue[0],
@@ -206,6 +183,7 @@ mod tests {
             .val()
             .into_data_async()
             .await
+            .unwrap()
             .into_vec()
             .expect("Failed to convert SH coefficients to vector");
         let import_sh: Vec<f32> = imported
@@ -213,6 +191,7 @@ mod tests {
             .val()
             .into_data_async()
             .await
+            .unwrap()
             .into_vec()
             .expect("Failed to convert SH coefficients to vector");
 

@@ -82,6 +82,8 @@ skip = [
     { name = "zune-core" },
     { name = "webpki-roots" },
 
+    { name = "convert_case" },
+
     # Older versions in rerun.
     { name = "prettyplease" },
     { name = "console" },

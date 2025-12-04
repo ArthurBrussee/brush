@@ -232,8 +232,8 @@ async fn run_eval(
         .context("Failed to run eval for sample.")?;
 
         count += 1;
-        psnr += sample.psnr.clone().into_scalar_async().await;
-        ssim += sample.ssim.clone().into_scalar_async().await;
+        psnr += sample.psnr.clone().into_scalar_async().await?;
+        ssim += sample.ssim.clone().into_scalar_async().await?;
 
         let export_path = Path::new(&process_config.export_path).to_owned();
         if process_config.eval_save_to_disk {

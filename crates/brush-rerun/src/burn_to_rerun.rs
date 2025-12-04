@@ -15,6 +15,7 @@ impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D> {
             rerun::TensorBuffer::F32(
                 self.into_data_async()
                     .await
+                    .expect("Failed to fetch data")
                     .into_vec::<f32>()
                     .expect("Wrong type")
                     .into(),
@@ -30,6 +31,7 @@ impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D, Int> {
             rerun::TensorBuffer::U32(
                 self.into_data_async()
                     .await
+                    .expect("Failed to fetch data")
                     .into_vec::<u32>()
                     .expect("Wrong type")
                     .into(),
@@ -45,6 +47,7 @@ impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D, Bool> {
             rerun::TensorBuffer::U8(
                 self.into_data_async()
                     .await
+                    .expect("Failed to fetch data")
                     .convert::<u8>()
                     .into_vec()
                     .expect("Wrong type")
@@ -77,7 +80,11 @@ impl<B: Backend> BurnToImage for Tensor<B, 3> {
             ColorModel::RGBA
         };
         rerun::Image::from_color_model_and_bytes(
-            self.into_data_async().await.as_bytes().to_vec(),
+            self.into_data_async()
+                .await
+                .expect("Failed to fetch data")
+                .as_bytes()
+                .to_vec(),
             [w as u32, h as u32],
             color_model,
             ChannelDatatype::F32,
@@ -95,7 +102,11 @@ impl<B: Backend> BurnToImage for Tensor<B, 3, Int> {
             ColorModel::RGBA
         };
         rerun::Image::from_color_model_and_bytes(
-            self.into_data_async().await.as_bytes().to_vec(),
+            self.into_data_async()
+                .await
+                .expect("Failed to fetch data")
+                .as_bytes()
+                .to_vec(),
             [w as u32, h as u32],
             color_model,
             ChannelDatatype::U8,

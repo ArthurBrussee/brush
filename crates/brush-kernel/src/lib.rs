@@ -5,12 +5,11 @@ mod shaders;
 
 use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::tensor::{DType, Shape};
-use burn_cubecl::cubecl::Runtime;
+pub use burn_cubecl::cubecl::CompilationError;
+pub use burn_cubecl::cubecl::prelude::CompiledKernel;
 pub use burn_cubecl::cubecl::prelude::ExecutionMode;
-pub use burn_cubecl::cubecl::{
-    CubeCount, CubeDim, client::ComputeClient, compute::CompiledKernel, compute::CubeTask,
-    server::ComputeServer,
-};
+pub use burn_cubecl::cubecl::{CubeCount, CubeDim, client::ComputeClient, server::ComputeServer};
+pub use burn_cubecl::cubecl::{CubeTask, Runtime};
 pub use burn_cubecl::cubecl::{
     prelude::KernelId,
     server::{Bindings, MetadataBinding},
@@ -33,13 +32,13 @@ pub fn module_to_compiled<C: Compiler>(
     debug_name: &'static str,
     module: &naga::Module,
     workgroup_size: [u32; 3],
-) -> CompiledKernel<C> {
+) -> Result<CompiledKernel<C>, CompilationError> {
     let info = naga::valid::Validator::new(
         naga::valid::ValidationFlags::empty(),
         naga::valid::Capabilities::all(),
     )
     .validate(module)
-    .expect("Failed to compile kernel");
+    .expect("Failed to compile"); // Ideally this would err but seems hard but with current CubeCL.
 
     let shader_string =
         naga::back::wgsl::write_string(module, &info, naga::back::wgsl::WriterFlags::empty())
@@ -60,14 +59,14 @@ pub fn module_to_compiled<C: Compiler>(
         shader_string
     };
 
-    CompiledKernel {
+    Ok(CompiledKernel {
         entrypoint_name: "main".to_owned(),
         debug_name: Some(debug_name),
         source: shader_string,
         repr: None,
         cube_dim: CubeDim::new(workgroup_size[0], workgroup_size[1], workgroup_size[2]),
         debug_info: None,
-    }
+    })
 }
 
 pub fn calc_kernel_id<T: 'static>(values: &[bool]) -> KernelId {
@@ -121,7 +120,7 @@ macro_rules! kernel_source_gen {
                 _compiler: &mut C,
                 _compilation_options: &C::CompilationOptions,
                 _mode: brush_kernel::ExecutionMode
-            ) -> brush_kernel::CompiledKernel<C> {
+            ) -> Result<brush_kernel::CompiledKernel<C>, brush_kernel::CompilationError> {
                 let module = self.source();
                 brush_kernel::module_to_compiled(stringify!($struct_name), &module, Self::WORKGROUP_SIZE)
             }
@@ -179,7 +178,7 @@ pub fn create_meta_binding<T: Pod>(val: T) -> MetadataBinding {
 pub fn create_uniform_buffer<R: CubeRuntime, T: Pod>(
     val: T,
     device: &R::Device,
-    client: &ComputeClient<R::Server>,
+    client: &ComputeClient<R>,
 ) -> CubeTensor<R> {
     let binding = create_meta_binding(val);
     CubeTensor::new_contiguous(
@@ -202,7 +201,7 @@ impl<C: Compiler> CubeTask<C> for CreateDispatchBuffer {
         _compiler: &mut C,
         _compilation_options: &C::CompilationOptions,
         _mode: ExecutionMode,
-    ) -> CompiledKernel<C> {
+    ) -> Result<CompiledKernel<C>, CompilationError> {
         module_to_compiled(
             "CreateDispatchBuffer",
             &wg::create_shader_source(Default::default()),
@@ -236,16 +235,18 @@ pub fn create_dispatch_buffer(
 
     // SAFETY: wgsl FFI, kernel checked to have no OOB, bounded loops.
     unsafe {
-        client.execute_unchecked(
-            Box::new(CreateDispatchBuffer {}),
-            CubeCount::Static(1, 1, 1),
-            Bindings::new()
-                .with_buffers(vec![
-                    thread_nums.handle.binding(),
-                    ret.handle.clone().binding(),
-                ])
-                .with_metadata(data),
-        );
+        client
+            .launch_unchecked(
+                Box::new(CreateDispatchBuffer {}),
+                CubeCount::Static(1, 1, 1),
+                Bindings::new()
+                    .with_buffers(vec![
+                        thread_nums.handle.binding(),
+                        ret.handle.clone().binding(),
+                    ])
+                    .with_metadata(data),
+            )
+            .expect("Failed to execute");
     }
 
     ret

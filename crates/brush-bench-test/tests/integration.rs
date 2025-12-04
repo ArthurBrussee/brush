@@ -224,9 +224,9 @@ fn test_gradient_validation() {
         img_size,
         splats.means.val().into_primitive().tensor(),
         splats.log_scales.val().into_primitive().tensor(),
-        splats.rotation.val().into_primitive().tensor(),
+        splats.rotations.val().into_primitive().tensor(),
         splats.sh_coeffs.val().into_primitive().tensor(),
-        splats.raw_opacity.val().into_primitive().tensor(),
+        splats.raw_opacities.val().into_primitive().tensor(),
         Vec3::ZERO,
     );
 

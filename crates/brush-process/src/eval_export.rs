@@ -16,9 +16,8 @@ pub async fn eval_save_to_disk<B: Backend>(sample: &EvalSample<B>, path: &Path) 
             .rendered
             .clone()
             .into_data_async()
-            .await
-            .into_vec::<f32>()
-            .expect("Wrong type");
+            .await?
+            .into_vec::<f32>()?;
         let img: image::DynamicImage = Rgb32FImage::from_raw(w as u32, h as u32, data)
             .expect("Failed to create image from tensor")
             .into();

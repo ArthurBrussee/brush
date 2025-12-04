@@ -25,8 +25,8 @@ use burn::{
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
     prelude::Backend,
     tensor::{
-        Bool, Distribution, Tensor, TensorData, TensorPrimitive, activation::sigmoid,
-        backend::AutodiffBackend, s,
+        Bool, Distribution, IndexingUpdateOp, Tensor, TensorData, TensorPrimitive,
+        activation::sigmoid, backend::AutodiffBackend, s,
     },
 };
 
@@ -121,9 +121,9 @@ impl SplatTrainer {
                 glam::uvec2(img_w as u32, img_h as u32),
                 splats.means.val().into_primitive().tensor(),
                 splats.log_scales.val().into_primitive().tensor(),
-                splats.rotation.val().into_primitive().tensor(),
+                splats.rotations.val().into_primitive().tensor(),
                 splats.sh_coeffs.val().into_primitive().tensor(),
-                splats.raw_opacity.val().into_primitive().tensor(),
+                splats.raw_opacities.val().into_primitive().tensor(),
                 background,
             );
 
@@ -230,7 +230,7 @@ impl SplatTrainer {
             });
             splats = trace_span!("Rotation step").in_scope(|| {
                 let grad_rot =
-                    GradientsParams::from_params(&mut grads, &splats, &[splats.rotation.id]);
+                    GradientsParams::from_params(&mut grads, &splats, &[splats.rotations.id]);
                 optimizer.step(lr_rotation, splats, grad_rot)
             });
             splats = trace_span!("Scale step").in_scope(|| {
@@ -245,7 +245,7 @@ impl SplatTrainer {
             });
             splats = trace_span!("Opacity step").in_scope(|| {
                 let grad_opac =
-                    GradientsParams::from_params(&mut grads, &splats, &[splats.raw_opacity.id]);
+                    GradientsParams::from_params(&mut grads, &splats, &[splats.raw_opacities.id]);
                 optimizer.step(lr_opac, splats, grad_opac)
             });
             splats
@@ -363,6 +363,7 @@ impl SplatTrainer {
             let resampled_weights = resampled_weights
                 .into_data_async()
                 .await
+                .expect("Failed to get weights")
                 .into_vec::<f32>()
                 .expect("Failed to read weights");
             let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
@@ -377,7 +378,8 @@ impl SplatTrainer {
                 .int()
                 .sum()
                 .into_scalar_async()
-                .await as u32;
+                .await
+                .expect("Failed to get threshold") as u32;
 
             let grow_count =
                 (threshold_count as f32 * self.config.growth_select_fraction).round() as u32;
@@ -394,6 +396,7 @@ impl SplatTrainer {
                 let weights = weights
                     .into_data_async()
                     .await
+                    .expect("Failed to get weights")
                     .into_vec::<f32>()
                     .expect("Failed to read weights");
                 let growth_inds = multinomial_sample(&weights, grow_count);
@@ -451,7 +454,7 @@ impl SplatTrainer {
                 .inner()
                 .select(0, refine_inds.clone());
             let cur_raw_opac = splats
-                .raw_opacity
+                .raw_opacities
                 .val()
                 .inner()
                 .select(0, refine_inds.clone());
@@ -483,19 +486,26 @@ impl SplatTrainer {
             let refine_inds_3 = refine_inds.clone().unsqueeze_dim(1).repeat_dim(1, 3);
 
             splats.means = splats.means.map(|m| {
-                let new_means = m
-                    .inner()
-                    .scatter(0, refine_inds_3.clone(), -samples.clone());
+                let new_means = m.inner().scatter(
+                    0,
+                    refine_inds_3.clone(),
+                    -samples.clone(),
+                    IndexingUpdateOp::Add,
+                );
                 Tensor::from_inner(new_means).require_grad()
             });
             splats.log_scales = splats.log_scales.map(|s| {
                 let difference = new_log_scales.clone() - cur_log_scale.clone();
-                let new_scales = s.inner().scatter(0, refine_inds_3.clone(), difference);
+                let new_scales =
+                    s.inner()
+                        .scatter(0, refine_inds_3.clone(), difference, IndexingUpdateOp::Add);
                 Tensor::from_inner(new_scales).require_grad()
             });
-            splats.raw_opacity = splats.raw_opacity.map(|m| {
+            splats.raw_opacities = splats.raw_opacities.map(|m| {
                 let difference = new_raw_opac.clone() - cur_raw_opac.clone();
-                let new_opacities = m.inner().scatter(0, refine_inds.clone(), difference);
+                let new_opacities =
+                    m.inner()
+                        .scatter(0, refine_inds.clone(), difference, IndexingUpdateOp::Add);
                 Tensor::from_inner(new_opacities).require_grad()
             });
 
@@ -522,7 +532,7 @@ impl SplatTrainer {
         let scale_scaling = 1.0 - self.config.scale_decay * t_shrink_strength;
 
         // Lower opacity slowly over time.
-        splats.raw_opacity = splats.raw_opacity.map(|f| {
+        splats.raw_opacities = splats.raw_opacities.map(|f| {
             let new_opac = sigmoid(f.inner()) - minus_opac;
             Tensor::from_inner(inv_sigmoid(new_opac.clamp(1e-12, 1.0 - 1e-12))).require_grad()
         });
@@ -557,10 +567,10 @@ fn map_splats_and_opt(
         .map(|x| Tensor::from_inner(map_mean(x.inner())).require_grad());
     map_opt(splats.means.id, record, &map_opt_mean);
 
-    splats.rotation = splats
-        .rotation
+    splats.rotations = splats
+        .rotations
         .map(|x| Tensor::from_inner(map_rotation(x.inner())).require_grad());
-    map_opt(splats.rotation.id, record, &map_opt_rotation);
+    map_opt(splats.rotations.id, record, &map_opt_rotation);
 
     splats.log_scales = splats
         .log_scales
@@ -572,10 +582,10 @@ fn map_splats_and_opt(
         .map(|x| Tensor::from_inner(map_coeffs(x.inner())).require_grad());
     map_opt(splats.sh_coeffs.id, record, &map_opt_coeffs);
 
-    splats.raw_opacity = splats
-        .raw_opacity
+    splats.raw_opacities = splats
+        .raw_opacities
         .map(|x| Tensor::from_inner(map_opac(x.inner())).require_grad());
-    map_opt(splats.raw_opacity.id, record, &map_opt_opac);
+    map_opt(splats.raw_opacities.id, record, &map_opt_opac);
 
     splats
 }

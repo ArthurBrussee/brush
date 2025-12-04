@@ -129,9 +129,9 @@ async fn test_reference() -> Result<()> {
             glam::uvec2(w as u32, h as u32),
             splats.means.val().into_primitive().tensor(),
             splats.log_scales.val().into_primitive().tensor(),
-            splats.rotation.val().into_primitive().tensor(),
+            splats.rotations.val().into_primitive().tensor(),
             splats.sh_coeffs.val().into_primitive().tensor(),
-            splats.raw_opacity.val().into_primitive().tensor(),
+            splats.raw_opacities.val().into_primitive().tensor(),
             Vec3::ZERO,
         );
 
@@ -158,7 +158,7 @@ async fn test_reference() -> Result<()> {
         aux.validate_values();
 
         let num_visible: Tensor<DiffBack, 1, Int> = aux.num_visible();
-        let num_visible = num_visible.into_scalar_async().await as usize;
+        let num_visible = num_visible.into_scalar_async().await.unwrap() as usize;
         let global_from_compact_gid: Tensor<DiffBack, 1, Int> =
             Tensor::from_primitive(aux.global_from_compact_gid.clone());
         let gs_ids = global_from_compact_gid.clone().slice([0..num_visible]);
@@ -193,7 +193,7 @@ async fn test_reference() -> Result<()> {
         let v_means = splats.means.grad(&grads).context("means grad")?;
         compare("v_means", v_means, v_means_ref, 1e-5, 1e-7);
 
-        let v_quats = splats.rotation.grad(&grads).context("quats grad")?;
+        let v_quats = splats.rotations.grad(&grads).context("quats grad")?;
         let v_quats_ref =
             safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_quats")?, &device).inner();
         compare("v_quats", v_quats, v_quats_ref, 1e-5, 1e-7);
@@ -205,7 +205,10 @@ async fn test_reference() -> Result<()> {
 
         let v_opacities_ref =
             safetensor_to_burn::<DiffBack, 1>(&tensors.tensor("v_opacities")?, &device).inner();
-        let v_opacities = splats.raw_opacity.grad(&grads).context("opacities grad")?;
+        let v_opacities = splats
+            .raw_opacities
+            .grad(&grads)
+            .context("opacities grad")?;
         compare("v_opacities", v_opacities, v_opacities_ref, 1e-5, 1e-7);
     }
     Ok(())

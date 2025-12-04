@@ -53,9 +53,8 @@ mod visualize_tools_impl {
                     .means
                     .val()
                     .into_data_async()
-                    .await
-                    .into_vec::<f32>()
-                    .expect("Wrong type");
+                    .await?
+                    .into_vec::<f32>()?;
                 let means = means.chunks(3).map(|c| glam::vec3(c[0], c[1], c[2]));
 
                 let base_rgb = splats
@@ -67,11 +66,7 @@ mod visualize_tools_impl {
 
                 let transparency = splats.opacities();
 
-                let colors = base_rgb
-                    .into_data_async()
-                    .await
-                    .into_vec::<f32>()
-                    .expect("Wrong type");
+                let colors = base_rgb.into_data_async().await?.into_vec::<f32>()?;
                 let colors = colors.chunks(3).map(|c| {
                     rerun::Color::from_rgb(
                         (c[0] * 255.0) as u8,
@@ -84,17 +79,15 @@ mod visualize_tools_impl {
                 let radii = (splats.log_scales.val().exp() * transparency.unsqueeze_dim(1) * 2.0
                     + 0.004)
                     .into_data_async()
-                    .await
-                    .into_vec()
-                    .expect("Wrong type");
+                    .await?
+                    .into_vec()?;
 
                 let rotations = splats
-                    .rotation
+                    .rotations
                     .val()
                     .into_data_async()
-                    .await
-                    .into_vec::<f32>()
-                    .expect("Wrong type");
+                    .await?
+                    .into_vec::<f32>()?;
                 let rotations = rotations
                     .chunks(4)
                     .map(|q| glam::Quat::from_array([q[1], q[2], q[3], q[0]]));
@@ -188,7 +181,7 @@ mod visualize_tools_impl {
 
                 self.rec.set_time_sequence("iterations", iter);
 
-                let eval_render = tensor_into_image(eval.rendered.clone().into_data_async().await);
+                let eval_render = tensor_into_image(eval.rendered.clone().into_data_async().await?);
                 let rendered = eval_render.into_rgb8();
 
                 let [w, h] = [rendered.width(), rendered.height()];
@@ -209,13 +202,13 @@ mod visualize_tools_impl {
                 self.rec.log(
                     format!("psnr/eval_{index}"),
                     &rerun::Scalars::new(vec![
-                        eval.psnr.clone().into_scalar_async().await.elem::<f32>() as f64,
+                        eval.psnr.clone().into_scalar_async().await?.elem::<f32>() as f64,
                     ]),
                 )?;
                 self.rec.log(
                     format!("ssim/eval_{index}"),
                     &rerun::Scalars::new(vec![
-                        eval.ssim.clone().into_scalar_async().await.elem::<f32>() as f64,
+                        eval.ssim.clone().into_scalar_async().await?.elem::<f32>() as f64,
                     ]),
                 )?;
             }
@@ -259,14 +252,14 @@ mod visualize_tools_impl {
                         stats
                             .num_intersections
                             .into_scalar_async()
-                            .await
+                            .await?
                             .elem::<f64>(),
                     ]),
                 )?;
                 self.rec.log(
                     "splats/splats_visible",
                     &rerun::Scalars::new(vec![
-                        stats.num_visible.into_scalar_async().await.elem::<f64>(),
+                        stats.num_visible.into_scalar_async().await?.elem::<f64>(),
                     ]),
                 )?;
 
@@ -276,7 +269,7 @@ mod visualize_tools_impl {
                 self.rec.log(
                     "losses/main",
                     &rerun::Scalars::new(vec![
-                        stats.loss.clone().into_scalar_async().await.elem::<f64>(),
+                        stats.loss.clone().into_scalar_async().await?.elem::<f64>(),
                     ]),
                 )?;
             }
