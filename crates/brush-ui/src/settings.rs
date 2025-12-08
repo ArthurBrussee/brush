@@ -60,8 +60,8 @@ impl SettingsPanel {
                 ui.collapsing("Learning rates", |ui| {
                     let tc = &mut self.args.train_config;
                     slider(ui, &mut tc.lr_mean, 1e-7..=1e-4, "Mean learning rate start", true);
-                    slider(ui, &mut tc.lr_mean, 1e-7..=1e-4, "Mean learning rate end", true);
-                    slider(ui, &mut tc.mean_noise_weight, 1e3..=1e5, "Mean noise weight", true);
+                    slider(ui, &mut tc.lr_mean_end, 1e-7..=1e-4, "Mean learning rate end", true);
+                    slider(ui, &mut tc.mean_noise_weight, 0.0..=200.0, "Mean noise weight", true);
                     slider(ui, &mut tc.lr_coeffs_dc, 1e-4..=1e-2, "SH coefficients", true);
                     slider(ui, &mut tc.lr_coeffs_sh_scale, 1.0..=50.0, "SH division for higher orders", false);
                     slider(ui, &mut tc.lr_opac, 1e-3..=1e-1, "opacity", true);
