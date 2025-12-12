@@ -62,16 +62,11 @@ pub async fn load_dataset(
 
     // If there's an initial ply file, override the init stream with that.
     let ply_paths: Vec<_> = vfs.files_with_extension("ply").collect();
-
-    let main_ply_path = if ply_paths.len() == 1 {
-        Some(ply_paths.first().expect("unreachable"))
-    } else {
-        ply_paths.iter().find(|p| {
-            p.file_name()
-                .and_then(|p| p.to_str())
-                .is_some_and(|p| p == "init.ply")
-        })
-    };
+    let main_ply_path = ply_paths.iter().find(|p| {
+        p.file_name()
+            .and_then(|p| p.to_str())
+            .is_some_and(|p| p == "init.ply")
+    });
 
     let init_splat = if let Some(main_path) = main_ply_path {
         log::info!("Using ply {main_path:?} as initial point cloud.");

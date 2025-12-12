@@ -419,6 +419,7 @@ impl BrushVfs {
             }
         }
     }
+
     pub fn empty() -> Self {
         Self {
             lookup: HashMap::new(),
@@ -449,6 +450,14 @@ impl BrushVfs {
         Self {
             lookup,
             container: VfsContainer::Manual { readers },
+        }
+    }
+
+    pub fn base_path(&self) -> Option<PathBuf> {
+        match &self.container {
+            VfsContainer::Manual { .. } => None,
+            VfsContainer::Zip { .. } => None,
+            VfsContainer::Directory { base_path } => Some(base_path.clone()),
         }
     }
 }
