@@ -16,10 +16,9 @@ log.workspace = true
 tokio-stream.workspace = true
 path-clean = "1.0.1"
 tokio-util = { workspace = true, features = ["compat"] }
-tokio_with_wasm.workspace = true
+tokio_with_wasm = { workspace = true, features = ["rt"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-tokio = { workspace = true, features = ["io-util", "macros", "rt", "time"] }
 web-sys = { workspace = true, features = [
     "Window",
     "Location",
@@ -31,6 +30,9 @@ web-sys = { workspace = true, features = [
     "File",
     "ReadableStream",
 ] }
+
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "time"] }
+
 wasm-bindgen-futures.workspace = true
 wasm-streams.workspace = true
 wasm-bindgen = "0.2"

@@ -8436,6 +8436,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
 ]

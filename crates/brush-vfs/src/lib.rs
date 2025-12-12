@@ -1,10 +1,5 @@
 mod data_source;
 
-// This class helps working with an archive as a somewhat more regular filesystem.
-//
-// [1] really we want to just read directories.
-// The reason is that picking directories isn't supported on
-// rfd on wasm, nor is drag-and-dropping folders in egui.
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -13,80 +8,57 @@ use std::{
     sync::Arc,
 };
 
-pub use data_source::{DataSource, DataSourceError};
-
+use async_zip::base::read::stream::ZipFileReader;
 use path_clean::PathClean;
+use thiserror::Error;
 use tokio::{
     io::{AsyncBufRead, AsyncRead, AsyncReadExt, BufReader},
     sync::Mutex,
 };
+use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use tokio_with_wasm::alias as tokio_wasm;
 
-use async_zip::base::read::stream::ZipFileReader;
-use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
+pub use data_source::{DataSource, DataSourceError};
 
-// On wasm, lots of things aren't Send that are send on non-wasm.
-// Non-wasm tokio requires :Send for futures, tokio_with_wasm doesn't.
-
-// So, it can help to annotate futures/objects as send only on not-wasm.
+// WASM doesn't require Send, but native tokio does.
 #[cfg(target_family = "wasm")]
-mod wasm_send {
-    pub trait SendNotWasm {}
-    impl<T> SendNotWasm for T {}
-}
+pub trait SendNotWasm {}
+#[cfg(target_family = "wasm")]
+impl<T> SendNotWasm for T {}
 #[cfg(not(target_family = "wasm"))]
-mod wasm_send {
-    pub trait SendNotWasm: Send {}
-    impl<T: Send> SendNotWasm for T {}
-}
-
-pub use wasm_send::*;
+pub trait SendNotWasm: Send {}
+#[cfg(not(target_family = "wasm"))]
+impl<T: Send> SendNotWasm for T {}
 
 pub trait DynRead: AsyncBufRead + SendNotWasm + Unpin {}
 impl<T: AsyncBufRead + SendNotWasm + Unpin> DynRead for T {}
 
-// Sometimes rust is beautiful - sometimes it's ArcMutexOptionBox
-type SharedRead = Arc<Mutex<Option<Box<dyn DynRead>>>>;
+type StreamingReader = Arc<Mutex<Option<Box<dyn DynRead>>>>;
 
-// New type to keep track that this string-y path might not correspond to
-// a physical file path.
-//
+/// Wrapper so Cursor can use Arc<Vec<u8>> without cloning.
+struct ArcVec(Arc<Vec<u8>>);
+impl AsRef<[u8]> for ArcVec {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// Normalized path key for case-insensitive lookups.
 #[derive(Debug, Eq, PartialEq, Hash)]
 struct PathKey(String);
 
 impl PathKey {
-    fn from_path(path: &Path) -> Self {
-        let key = path
-            .clean()
-            .to_str()
-            .expect("Path is not valid ascii")
-            .to_lowercase()
-            .replace('\\', "/");
-        let key = if key.starts_with('/') {
-            key
-        } else {
-            '/'.to_string() + &key
-        };
-        Self(key)
-    }
-
     fn from_str(path: &str) -> Self {
         let key = path.to_lowercase().replace('\\', "/");
-        let key = if key.starts_with('/') {
+        Self(if key.starts_with('/') {
             key
         } else {
-            '/'.to_string() + &key
-        };
-        Self(key)
+            format!("/{key}")
+        })
     }
-}
 
-// Simple wrapper for Arc<Vec<u8>> that implements AsRef<[u8]> for Cursor
-struct ZipVec(Arc<Vec<u8>>);
-
-impl AsRef<[u8]> for ZipVec {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
+    fn from_path(path: &Path) -> Self {
+        Self::from_str(path.clean().to_str().expect("Invalid path"))
     }
 }
 
@@ -98,25 +70,28 @@ async fn read_at_most<R: AsyncRead + Unpin>(reader: &mut R, limit: usize) -> io:
 }
 
 enum VfsContainer {
-    Zip {
-        // TODO: Fill this in.
+    /// Raw data stored in memory (from zip files)
+    InMemory {
         entries: HashMap<PathBuf, Arc<Vec<u8>>>,
     },
-    Manual {
-        readers: HashMap<PathBuf, SharedRead>,
-    },
+    /// A single file being streamed (e.g., PLY from HTTP).
+    /// The reader can only be consumed once.
+    Streaming { reader: StreamingReader },
+    /// Native directory - reads from disk on demand
+    #[cfg(not(target_family = "wasm"))]
+    Directory { base_path: PathBuf },
+    /// WASM directory - uses File System Access API to read files on demand
+    #[cfg(target_family = "wasm")]
     Directory {
-        base_path: PathBuf,
-        #[cfg(target_family = "wasm")]
-        files: Option<HashMap<PathBuf, web_sys::File>>,
+        dir_handle: rrfd::wasm::DirectoryHandle,
     },
 }
 
 impl Debug for VfsContainer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Zip { .. } => f.debug_struct("Zip").finish(),
-            Self::Manual { .. } => f.debug_struct("Manual").finish(),
+            Self::InMemory { .. } => f.debug_struct("InMemory").finish(),
+            Self::Streaming { .. } => f.debug_struct("Streaming").finish(),
             Self::Directory { .. } => f.debug_struct("Directory").finish(),
         }
     }
@@ -129,29 +104,17 @@ pub struct BrushVfs {
 }
 
 fn lookup_from_paths(paths: &[PathBuf]) -> HashMap<PathKey, PathBuf> {
-    let mut result = HashMap::new();
-    for path in paths {
-        let path = path.clean();
-
-        // Only consider files with extensions for now. Zip files report directories as paths with no extension (not ending in '/')
-        // so can't really differentiate extensionless files from directories. We don't need any files without extensions
-        // so just skip them.
-        if path.extension().is_some() && !path.components().any(|c| c.as_os_str() == "__MACOSX") {
-            let key = PathKey::from_path(&path);
-            assert!(
-                result.insert(key, path.clone()).is_none(),
-                "Duplicate path found: {}. Paths must be unique (case non-sensitive)",
-                path.display()
-            );
-        }
-    }
-    result
+    paths
+        .iter()
+        .map(|p| p.clean())
+        // Skip directories and __MACOSX metadata
+        .filter(|p| p.extension().is_some() && !p.components().any(|c| c.as_os_str() == "__MACOSX"))
+        .map(|p| (PathKey::from_path(&p), p))
+        .collect()
 }
 
-use thiserror::Error;
-
-fn io_error(e: async_zip::error::ZipError) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+fn zip_error(e: async_zip::error::ZipError) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, e)
 }
 
 #[derive(Debug, Error)]
@@ -182,27 +145,28 @@ impl BrushVfs {
             Box::new(AsyncReadExt::chain(Cursor::new(peek.clone()), data));
 
         if peek.starts_with(b"ply") {
+            // For single PLY files, keep the reader for streaming
             let path = PathBuf::from("input.ply");
-            let reader_ref = Arc::new(Mutex::new(Some(reader)));
+
             Ok(Self {
                 lookup: lookup_from_paths(std::slice::from_ref(&path)),
-                container: VfsContainer::Manual {
-                    readers: HashMap::from([(path, reader_ref)]),
+                container: VfsContainer::Streaming {
+                    reader: Arc::new(Mutex::new(Some(reader))),
                 },
             })
         } else if peek.starts_with(b"PK") {
             let mut zip_reader = ZipFileReader::new(reader.compat());
             let mut entries = HashMap::new();
 
-            while let Some(mut entry) = zip_reader.next_with_entry().await.map_err(io_error)? {
+            while let Some(mut entry) = zip_reader.next_with_entry().await.map_err(zip_error)? {
                 if let Ok(filename) = entry.reader().entry().filename().clone().as_str() {
                     let mut data = vec![];
                     let mut reader = entry.reader_mut().compat();
                     reader.read_to_end(&mut data).await?;
                     entries.insert(PathBuf::from(filename), Arc::new(data));
-                    zip_reader = entry.skip().await.map_err(io_error)?;
+                    zip_reader = entry.skip().await.map_err(zip_error)?;
                 } else {
-                    zip_reader = entry.skip().await.map_err(io_error)?;
+                    zip_reader = entry.skip().await.map_err(zip_error)?;
                 }
 
                 tokio_wasm::task::yield_now().await;
@@ -212,7 +176,7 @@ impl BrushVfs {
 
             Ok(Self {
                 lookup: lookup_from_paths(&path_bufs),
-                container: VfsContainer::Zip { entries },
+                container: VfsContainer::InMemory { entries },
             })
         } else if peek.starts_with(b"<!DOCTYPE html>") {
             let mut html = String::new();
@@ -223,75 +187,68 @@ impl BrushVfs {
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub async fn from_path(dir: &Path) -> Result<Self, VfsConstructError> {
-        #[cfg(not(target_family = "wasm"))]
-        {
-            if dir.is_file() {
-                // Construct a reader. This is needed for zip files, as
-                // it's not really just a single path.
-                let file = tokio::fs::File::open(dir).await?;
-                let reader = BufReader::new(file);
-                Self::from_reader(reader).await
-            } else {
-                // Make a VFS with all files contained in the directory.
-                async fn walk_dir(dir: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
-                    let dir = PathBuf::from(dir.as_ref());
+        if dir.is_file() {
+            // Construct a reader. This is needed for zip files, as
+            // it's not really just a single path.
+            let file = tokio::fs::File::open(dir).await?;
+            let reader = BufReader::new(file);
+            Self::from_reader(reader).await
+        } else {
+            // Make a VFS with all files contained in the directory.
+            async fn walk_dir(dir: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
+                let dir = PathBuf::from(dir.as_ref());
 
-                    let mut paths = Vec::new();
-                    let mut stack = vec![dir.clone()];
+                let mut paths = Vec::new();
+                let mut stack = vec![dir.clone()];
 
-                    while let Some(path) = stack.pop() {
-                        let mut read_dir = tokio::fs::read_dir(&path).await?;
+                while let Some(path) = stack.pop() {
+                    let mut read_dir = tokio::fs::read_dir(&path).await?;
 
-                        while let Some(entry) = read_dir.next_entry().await? {
-                            let path = entry.path();
-                            if path.is_dir() {
-                                stack.push(path.clone());
-                            } else {
-                                let path = path
-                                    .strip_prefix(dir.clone())
-                                    .map_err(|_e| io::ErrorKind::InvalidInput)?
-                                    .to_path_buf();
-                                paths.push(path);
-                            }
-
-                            tokio_wasm::task::yield_now().await;
+                    while let Some(entry) = read_dir.next_entry().await? {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            stack.push(path.clone());
+                        } else {
+                            let path = path
+                                .strip_prefix(dir.clone())
+                                .map_err(|_e| io::ErrorKind::InvalidInput)?
+                                .to_path_buf();
+                            paths.push(path);
                         }
+
+                        tokio_wasm::task::yield_now().await;
                     }
-                    Ok(paths)
                 }
-
-                let files = walk_dir(dir).await?;
-                Ok(Self {
-                    lookup: lookup_from_paths(&files),
-                    container: VfsContainer::Directory {
-                        base_path: dir.to_path_buf(),
-                        #[cfg(target_family = "wasm")]
-                        files: None,
-                    },
-                })
+                Ok(paths)
             }
-        }
 
-        #[cfg(target_family = "wasm")]
-        {
-            let _ = dir;
-            panic!("Cannot read paths on wasm");
+            let files = walk_dir(dir).await?;
+            Ok(Self {
+                lookup: lookup_from_paths(&files),
+                container: VfsContainer::Directory {
+                    base_path: dir.to_path_buf(),
+                },
+            })
         }
     }
 
     #[cfg(target_family = "wasm")]
-    pub fn from_wasm_files(
-        files: HashMap<PathBuf, web_sys::File>,
+    pub async fn from_directory_handle(
+        dir_handle: rrfd::wasm::DirectoryHandle,
     ) -> Result<Self, VfsConstructError> {
-        let paths: Vec<PathBuf> = files.keys().cloned().collect();
+        // List all files in the directory
+        let paths = dir_handle.list_files().await.map_err(|_| {
+            VfsConstructError::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                "Failed to list directory contents",
+            ))
+        })?;
 
         Ok(Self {
             lookup: lookup_from_paths(&paths),
-            container: VfsContainer::Directory {
-                base_path: PathBuf::new(), // Empty path for WASM
-                files: Some(files),
-            },
+            container: VfsContainer::Directory { dir_handle },
         })
     }
 
@@ -334,88 +291,59 @@ impl BrushVfs {
         })?;
 
         match &self.container {
-            VfsContainer::Zip { entries } => {
+            VfsContainer::InMemory { entries } => {
                 let data = entries.get(path).expect("Unreachable").clone();
-                Ok(Box::new(Cursor::new(ZipVec(data))))
+                Ok(Box::new(Cursor::new(ArcVec(data))))
             }
-            VfsContainer::Manual { readers } => {
-                // Readers get taken out of the map as they are not cloneable.
-                // This means that unlike other methods this path can only be loaded
-                // once.
-                let reader_mut = readers.get(path).expect("Unreachable");
-                let reader = reader_mut.lock().await.take();
-                reader.ok_or_else(|| {
+            VfsContainer::Streaming { reader } => {
+                // Streaming reader can only be consumed once
+                let reader = reader
+                    .lock()
+                    .await
+                    .take()
+                    .ok_or_else(|| Error::other("Streaming file has already been read"))?;
+                Ok(reader)
+            }
+            #[cfg(not(target_family = "wasm"))]
+            VfsContainer::Directory { base_path } => {
+                let total_path = base_path.join(path);
+                // Higher capacity buffer helps performance
+                let file = tokio::io::BufReader::with_capacity(
+                    5 * 1024 * 1024,
+                    tokio::fs::File::open(total_path).await?,
+                );
+                Ok(Box::new(file))
+            }
+            #[cfg(target_family = "wasm")]
+            VfsContainer::Directory { dir_handle } => {
+                use futures_util::StreamExt;
+                use tokio_util::io::StreamReader;
+                use wasm_bindgen::JsCast;
+
+                let file = dir_handle.get_file(path).await.map_err(|_| {
                     Error::new(
                         io::ErrorKind::NotFound,
                         format!("File not found: {}", path.display()),
                     )
-                })
-            }
-            VfsContainer::Directory {
-                base_path: _dir,
-                #[cfg(target_family = "wasm")]
-                files,
-            } => {
-                #[cfg(target_family = "wasm")]
-                if let Some(files) = files {
-                    let file = files.get(path).ok_or_else(|| {
-                        Error::new(
-                            io::ErrorKind::NotFound,
-                            format!("File not found: {}", path.display()),
-                        )
-                    })?;
+                })?;
 
-                    // Create a stream reader from the File object
-                    use futures_util::StreamExt;
-                    use tokio_util::bytes::Bytes;
-                    use tokio_util::io::StreamReader;
-                    use wasm_bindgen::JsCast;
-                    use wasm_streams::ReadableStream as WasmReadableStream;
-
-                    let readable_stream: web_sys::ReadableStream = file.stream();
-                    let wasm_stream = WasmReadableStream::from_raw(readable_stream);
-
-                    let byte_stream = wasm_stream.into_stream().map(|result| {
+                let stream = wasm_streams::ReadableStream::from_raw(file.stream())
+                    .into_stream()
+                    .map(|result| {
                         result
-                            .map_err(|e| {
-                                io::Error::new(
-                                    io::ErrorKind::Other,
-                                    format!("Stream error: {:?}", e),
-                                )
-                            })
+                            .map_err(|e| Error::new(io::ErrorKind::Other, format!("{e:?}")))
                             .and_then(|chunk| {
-                                if let Ok(uint8_array) = chunk.dyn_into::<js_sys::Uint8Array>() {
-                                    let mut data = vec![0; uint8_array.length() as usize];
-                                    uint8_array.copy_to(&mut data);
-                                    Ok(Bytes::from(data))
-                                } else {
-                                    Err(io::Error::new(
-                                        io::ErrorKind::InvalidData,
-                                        "Invalid chunk type",
-                                    ))
-                                }
+                                let array =
+                                    chunk.dyn_into::<js_sys::Uint8Array>().map_err(|_| {
+                                        Error::new(io::ErrorKind::InvalidData, "Invalid chunk")
+                                    })?;
+                                let mut data = vec![0u8; array.length() as usize];
+                                array.copy_to(&mut data);
+                                Ok(tokio_util::bytes::Bytes::from(data))
                             })
                     });
 
-                    let stream_reader = StreamReader::new(byte_stream);
-                    Ok(Box::new(tokio::io::BufReader::new(stream_reader)))
-                } else {
-                    Err(Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "Cannot read filesystem paths on WASM",
-                    ))
-                }
-
-                #[cfg(not(target_family = "wasm"))]
-                {
-                    let total_path = _dir.join(path);
-                    // Higher capacity seems to help performance a bit.
-                    let file = tokio::io::BufReader::with_capacity(
-                        5 * 1024 * 1024,
-                        tokio::fs::File::open(total_path).await?,
-                    );
-                    Ok(Box::new(file))
-                }
+                Ok(Box::new(BufReader::new(StreamReader::new(stream))))
             }
         }
     }
@@ -423,41 +351,37 @@ impl BrushVfs {
     pub fn empty() -> Self {
         Self {
             lookup: HashMap::new(),
-            container: VfsContainer::Manual {
-                readers: HashMap::new(),
+            container: VfsContainer::InMemory {
+                entries: HashMap::new(),
             },
         }
     }
 
-    /// Create a test VFS from file paths.
-    /// Creates empty readers for each file path.
+    /// Create a test VFS from file paths with empty content.
     #[doc(hidden)]
     pub fn create_test_vfs(paths: Vec<PathBuf>) -> Self {
-        use std::{io::Cursor, sync::Arc};
-        use tokio::sync::Mutex;
-
         let lookup = lookup_from_paths(&paths);
 
-        // Create empty readers for each path
-        let mut readers = HashMap::new();
-        for path in paths {
-            if path.extension().is_some() {
-                let reader: Box<dyn DynRead> = Box::new(Cursor::new(Vec::<u8>::new()));
-                readers.insert(path, Arc::new(Mutex::new(Some(reader))));
-            }
-        }
+        let entries = paths
+            .into_iter()
+            .filter(|p| p.extension().is_some())
+            .map(|p| (p, Arc::new(Vec::new())))
+            .collect();
 
         Self {
             lookup,
-            container: VfsContainer::Manual { readers },
+            container: VfsContainer::InMemory { entries },
         }
     }
 
     pub fn base_path(&self) -> Option<PathBuf> {
         match &self.container {
-            VfsContainer::Manual { .. } => None,
-            VfsContainer::Zip { .. } => None,
+            VfsContainer::InMemory { .. } => None,
+            VfsContainer::Streaming { .. } => None,
+            #[cfg(not(target_family = "wasm"))]
             VfsContainer::Directory { base_path } => Some(base_path.clone()),
+            #[cfg(target_family = "wasm")]
+            VfsContainer::Directory { .. } => None,
         }
     }
 }

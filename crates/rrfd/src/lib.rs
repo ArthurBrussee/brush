@@ -4,6 +4,7 @@ pub mod android;
 #[cfg(target_family = "wasm")]
 pub mod wasm;
 
+#[cfg(not(target_family = "wasm"))]
 use std::path::PathBuf;
 use tokio::io::AsyncRead;
 
@@ -44,8 +45,9 @@ pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub async fn pick_directory() -> Result<PathBuf, PickFileError> {
-    #[cfg(all(not(target_os = "android"), not(target_family = "wasm")))]
+    #[cfg(not(target_os = "android"))]
     {
         let dir = rfd::AsyncFileDialog::new()
             .pick_folder()
@@ -53,11 +55,6 @@ pub async fn pick_directory() -> Result<PathBuf, PickFileError> {
             .ok_or(PickFileError::NoDirectorySelected)?;
 
         Ok(dir.path().to_path_buf())
-    }
-
-    #[cfg(target_family = "wasm")]
-    {
-        wasm::pick_directory().await
     }
 
     #[cfg(target_os = "android")]
