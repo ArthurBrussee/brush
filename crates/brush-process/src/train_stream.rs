@@ -22,7 +22,10 @@ use burn::{backend::Autodiff, module::AutodiffModule, prelude::Backend};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::oneshot::Receiver;
 use tokio_with_wasm::alias as tokio_wasm;
 use tracing::{Instrument, trace_span};
@@ -111,6 +114,17 @@ pub(crate) async fn train_stream(
     let mut dataloader = SceneLoader::new(&dataset.train, 42);
     let mut trainer = SplatTrainer::new(&process_args.train_config, &device, splats.clone()).await;
 
+    let export_path = if let Some(base_path) = vfs.base_path() {
+        base_path.join("exports")
+    } else {
+        // Defaults to CWD.
+        PathBuf::from("./")
+    };
+
+    let export_path = export_path.join(&process_args.process_config.export_path);
+    // Normalize path components
+    let export_path: PathBuf = export_path.components().collect();
+
     log::info!("Start training loop.");
     for iter in process_args.process_config.start_iter..process_args.train_config.total_steps {
         let step_time = Instant::now();
@@ -139,23 +153,36 @@ pub(crate) async fn train_stream(
         if (iter % process_config.eval_every == 0 || is_last_step)
             && let Some(eval_scene) = eval_scene.as_mut()
         {
+            let save_path = process_args
+                .process_config
+                .eval_save_to_disk
+                .then(|| export_path.clone());
+
             let res = run_eval(
                 &device,
                 &emitter,
                 &visualize,
-                process_config,
                 splats.valid(),
                 iter,
                 eval_scene,
+                save_path,
             )
             .await;
+
             warner
                 .warn_if_err(res.context(format!("Failed evaluation at iteration {iter}")))
                 .await;
         }
 
         if iter % process_config.export_every == 0 || is_last_step {
-            let res = export_checkpoint(&process_args, process_config, splats.valid(), iter).await;
+            let res = export_checkpoint(
+                &process_args,
+                process_config,
+                splats.valid(),
+                &export_path,
+                iter,
+            )
+            .await;
             warner
                 .warn_if_err(res.context(format!("Export at iteration {iter} failed")))
                 .await;
@@ -208,10 +235,10 @@ async fn run_eval(
     device: &WgpuDevice,
     emitter: &TryStreamEmitter<ProcessMessage, anyhow::Error>,
     visualize: &VisualizeTools,
-    process_config: &ProcessConfig,
     splats: Splats<MainBackend>,
     iter: u32,
     eval_scene: &Scene,
+    save_path: Option<PathBuf>,
 ) -> Result<(), anyhow::Error> {
     let mut psnr = 0.0;
     let mut ssim = 0.0;
@@ -235,10 +262,9 @@ async fn run_eval(
         psnr += sample.psnr.clone().into_scalar_async().await?;
         ssim += sample.ssim.clone().into_scalar_async().await?;
 
-        let export_path = Path::new(&process_config.export_path).to_owned();
-        if process_config.eval_save_to_disk {
+        if let Some(path) = &save_path {
             let img_name = view.image.img_name();
-            let path = Path::new(&export_path)
+            let path = path
                 .join(format!("eval_{iter}"))
                 .join(format!("{img_name}.png"));
             eval_save_to_disk(&sample, &path).await?;
@@ -264,31 +290,34 @@ async fn export_checkpoint(
     process_args: &ProcessArgs,
     process_config: &ProcessConfig,
     splats: Splats<MainBackend>,
+    export_path: &Path,
     iter: u32,
 ) -> Result<(), anyhow::Error> {
     // TODO: Want to support this on WASM somehow. Maybe have user pick a file once,
     // and write to it repeatedly?
     #[cfg(not(target_family = "wasm"))]
     {
-        use tokio::fs;
+        tokio::fs::create_dir_all(&export_path)
+            .await
+            .with_context(|| format!("Creating export directory {}", export_path.display()))?;
+
         let total_steps = process_args.train_config.total_steps;
         let digits = ((total_steps as f64).log10().floor() as usize) + 1;
+
         let export_name = process_config
             .export_name
             .replace("{iter}", &format!("{iter:0digits$}"));
-        let export_path = Path::new(&process_config.export_path).to_owned();
-        fs::create_dir_all(&export_path)
-            .await
-            .context("Creating export directory")?;
+
         let splat_data = brush_serde::splat_to_ply(splats)
             .await
             .context("Serializing splat data")?;
-        fs::write(export_path.join(&export_name), splat_data)
+        tokio::fs::write(export_path.join(&export_name), splat_data)
             .await
             .context(format!("Failed to export ply {export_path:?}"))?;
     }
     #[cfg(target_family = "wasm")]
     {
+        let _ = export_path;
         let _ = process_args;
         let _ = process_config;
         let _ = splats;

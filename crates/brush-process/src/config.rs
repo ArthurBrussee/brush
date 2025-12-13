@@ -22,10 +22,11 @@ pub struct ProcessConfig {
     /// Export every this many steps.
     #[arg(long, help_heading = "Process options", default_value = "5000")]
     pub export_every: u32,
-    /// Location to put exported files. By default uses the cwd.
+    /// Location to put exported files. By default uses the data directory if available,
+    /// or the CWD otherwise.
     ///
-    /// This path can be set to be relative to the CWD.
-    #[arg(long, help_heading = "Process options", default_value = ".")]
+    /// This path can be set as a relative path.
+    #[arg(long, help_heading = "Process options", default_value = "./")]
     pub export_path: String,
     /// Filename of exported ply file
     #[arg(

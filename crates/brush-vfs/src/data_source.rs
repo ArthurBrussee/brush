@@ -1,7 +1,9 @@
 use crate::{BrushVfs, VfsConstructError};
 use rrfd::PickFileError;
 use serde::Deserialize;
-use std::{path::Path, str::FromStr};
+#[cfg(not(target_family = "wasm"))]
+use std::path::Path;
+use std::str::FromStr;
 use tokio::io::BufReader;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -59,12 +61,17 @@ impl DataSource {
                 }
                 #[cfg(target_family = "wasm")]
                 {
-                    let file_map = rrfd::wasm::pick_directory_files().await?;
-                    Ok(BrushVfs::from_wasm_files(file_map)?)
+                    let dir_handle = rrfd::wasm::pick_directory_handle().await?;
+                    Ok(BrushVfs::from_directory_handle(dir_handle).await?)
                 }
             }
             Self::Url(url) => Self::fetch_url(url).await,
+            #[cfg(not(target_family = "wasm"))]
             Self::Path(path) => Ok(BrushVfs::from_path(Path::new(&path)).await?),
+            #[cfg(target_family = "wasm")]
+            Self::Path(_) => {
+                panic!("Cannot load from filesystem path on WASM");
+            }
         }
     }
 
