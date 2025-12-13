@@ -317,6 +317,7 @@ async fn export_checkpoint(
     }
     #[cfg(target_family = "wasm")]
     {
+        let _ = export_path;
         let _ = process_args;
         let _ = process_config;
         let _ = splats;

@@ -2,6 +2,7 @@
   "name": "brush-nextjs-demo",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "build:wasm-release": "cd ../crates/brush-wasm && wasm-pack build --release --target bundler --out-dir ../../brush_nextjs/pkg",
     "build:wasm-dev": "cd ../crates/brush-wasm && wasm-pack build --dev --target bundler --out-dir ../../brush_nextjs/pkg",
