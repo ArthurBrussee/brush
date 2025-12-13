@@ -61,18 +61,18 @@ pub async fn load_dataset(
     let (data_splat_init, dataset) = dataset?;
 
     // If there's an initial ply file, override the init stream with that.
-    let ply_paths: Vec<_> = vfs.files_with_extension("ply").collect();
-    let main_ply_path = ply_paths.iter().find(|p| {
-        p.file_name()
-            .and_then(|p| p.to_str())
-            .is_some_and(|p| p == "init.ply")
-    });
+    let mut ply_paths: Vec<_> = vfs.files_with_extension("ply").collect();
+    ply_paths.sort();
 
-    let init_splat = if let Some(main_path) = main_ply_path {
-        log::info!("Using ply {main_path:?} as initial point cloud.");
+    let main_ply = ply_paths
+        .iter()
+        .find(|p| p.file_name().is_some_and(|n| n == "init.ply"))
+        .or_else(|| ply_paths.last());
 
+    let init_splat = if let Some(main_ply) = main_ply {
+        log::info!("Using ply {main_ply:?} as initial point cloud.");
         let reader = vfs
-            .reader_at_path(main_path)
+            .reader_at_path(main_ply)
             .await
             .map_err(DeserializeError)?;
         Some(load_splat_from_ply(reader, load_args.subsample_points, device.clone()).await?)
