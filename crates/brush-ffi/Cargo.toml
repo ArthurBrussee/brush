@@ -11,10 +11,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 brush-vfs.path = "../brush-vfs"
-brush-process.path = "../brush-process"
+brush-process = { path = "../brush-process" }
 
 burn-wgpu.workspace = true
-tokio = { workspace = true }
+tokio.workspace = true
 tokio-stream.workspace = true
 
 [lints]

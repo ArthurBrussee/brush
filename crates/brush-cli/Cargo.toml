@@ -6,16 +6,18 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
-indicatif.workspace = true
-clap.workspace = true
 brush-process.path = "../brush-process"
 brush-vfs.path = "../brush-vfs"
 
+indicatif.workspace = true
+clap.workspace = true
+burn-wgpu.workspace = true
 tracing.workspace = true
 tokio-stream.workspace = true
 humantime.workspace = true
 log.workspace = true
 anyhow.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

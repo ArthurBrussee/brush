@@ -1,12 +1,9 @@
 #![recursion_limit = "256"]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use brush_dataset::{
-    config::AlphaMode,
-    scene::{SceneBatch, sample_to_tensor_data},
-};
+use brush_dataset::scene::{SceneBatch, sample_to_tensor_data};
 use brush_render::{
-    MainBackend,
+    AlphaMode, MainBackend,
     bounding_box::BoundingBox,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::{RandomSplatsConfig, Splats},

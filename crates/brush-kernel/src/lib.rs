@@ -11,7 +11,10 @@ pub use burn_cubecl::cubecl::{
 };
 pub use burn_cubecl::{CubeRuntime, tensor::CubeTensor};
 
-use bytemuck::Pod;
+use bytemuck::NoUninit;
+
+// Re-export bytemuck for use by brush-wgsl generated code
+pub use bytemuck;
 
 // Internal kernel for creating dispatch buffers
 #[wgsl_kernel(source = "src/shaders/wg.wgsl")]
@@ -55,7 +58,7 @@ pub fn create_tensor<const D: usize>(
     CubeTensor::new_contiguous(client, device.clone(), shape, buffer, dtype)
 }
 
-pub fn create_meta_binding<T: Pod>(val: T) -> MetadataBinding {
+pub fn create_meta_binding<T: NoUninit>(val: T) -> MetadataBinding {
     // Copy data to u32. If length of T is not % 4, this will correctly
     // pad with zeros.
     let data = bytemuck::pod_collect_to_vec(&[val]);
@@ -66,7 +69,7 @@ pub fn create_meta_binding<T: Pod>(val: T) -> MetadataBinding {
 }
 
 /// Create a buffer to use as a shader uniform, from a structure.
-pub fn create_uniform_buffer<R: CubeRuntime, T: Pod>(
+pub fn create_uniform_buffer<R: CubeRuntime, T: NoUninit>(
     val: T,
     device: &R::Device,
     client: &ComputeClient<R>,

@@ -4,8 +4,14 @@ use brush_dataset::{
     config::AlphaMode,
     scene::{Scene, ViewType},
 };
-use brush_process::message::ProcessMessage;
+use brush_process::message::{ProcessMessage, TrainMessage};
 use egui::{Color32, Frame, Slider, collapsing_header::CollapsingState, pos2};
+
+#[derive(Clone)]
+pub struct SelectedView {
+    pub view: Option<SceneView>,
+    pub tex: tokio::sync::watch::Receiver<Option<TexHandle>>,
+}
 
 fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
     match t {
@@ -23,14 +29,83 @@ fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
 pub struct DatasetPanel {
     view_type: ViewType,
     cur_dataset: Dataset,
+    selected_view: SelectedView,
+    sender: tokio::sync::watch::Sender<Option<TexHandle>>,
+    loading_task: Option<tokio_wasm::task::JoinHandle<()>>,
 }
 
 impl DatasetPanel {
     pub(crate) fn new() -> Self {
+        let (sender, tex) = tokio::sync::watch::channel(None);
+
         Self {
             view_type: ViewType::Train,
             cur_dataset: Dataset::empty(),
+            loading_task: None,
+            selected_view: SelectedView { view: None, tex },
         }
+    }
+
+    pub fn set_selected_view(&self, view: &SceneView) {
+        let view_send = view.clone();
+
+        let inner = self.read();
+        let Some(ctx) = inner.cur_device_ctx.clone() else {
+            return;
+        };
+        let sender = inner.sender.clone();
+        drop(inner);
+
+        let mut inner = self.write();
+        if let Some(task) = inner.loading_task.take() {
+            task.abort();
+        }
+
+        inner.loading_task = Some(tokio_with_wasm::alias::spawn(async move {
+            // When selecting images super rapidly, might happen, don't waste resources loading.
+            let image = view_send
+                .image
+                .load()
+                .await
+                .expect("Failed to load dataset image");
+
+            if sender.is_closed() {
+                return;
+            }
+
+            // Yield in case we're cancelled.
+            tokio_wasm::task::yield_now().await;
+
+            let has_alpha = image.color().has_alpha();
+            let img_size = [image.width() as usize, image.height() as usize];
+            let color_img = if has_alpha {
+                let data = image.into_rgba8().into_vec();
+                egui::ColorImage::from_rgba_unmultiplied(img_size, &data)
+            } else {
+                egui::ColorImage::from_rgb(img_size, &image.into_rgb8().into_vec())
+            };
+
+            let image_name = view_send.image.img_name();
+            let egui_handle =
+                ctx.ctx
+                    .load_texture(image_name, color_img, TextureOptions::default());
+
+            // Yield in case we're cancelled.
+            tokio_wasm::task::yield_now().await;
+
+            // If channel is gone, that's fine.
+            let _ = sender.send(Some(TexHandle {
+                handle: egui_handle,
+                has_alpha,
+            }));
+            // Show updated texture asap.
+            ctx.ctx.request_repaint();
+        }));
+        inner.selected_view.view = Some(view.clone());
+    }
+
+    pub fn is_selected_view_loading(&self) -> bool {
+        self.loading_task.as_ref().is_some_and(|t| !t.is_finished())
     }
 }
 
@@ -48,7 +123,7 @@ impl AppPane for DatasetPanel {
             ProcessMessage::NewSource => {
                 *self = Self::new();
             }
-            ProcessMessage::Dataset { dataset } => {
+            ProcessMessage::TrainMessage(TrainMessage::Dataset { dataset }) => {
                 if let Some(view) = dataset.train.views.first() {
                     process.focus_view(view);
                 }

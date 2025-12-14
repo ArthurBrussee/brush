@@ -8,8 +8,8 @@ use crate::{
     stats::RefineRecord,
 };
 
-use brush_dataset::{config::AlphaMode, scene::SceneBatch};
-use brush_render::{MainBackend, gaussian_splats::Splats};
+use brush_dataset::scene::SceneBatch;
+use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 use burn::{

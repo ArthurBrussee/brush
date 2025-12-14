@@ -1,11 +1,12 @@
 #![recursion_limit = "256"]
 
-use brush_process::{config::ProcessArgs, message::ProcessMessage};
+use brush_process::{config::TrainStreamConfig, message::ProcessMessage, process::create_process};
 use brush_vfs::DataSource;
+use burn_wgpu::WgpuDevice;
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
-use tokio_stream::{Stream, StreamExt};
+use tokio_stream::StreamExt;
 use tracing::trace_span;
 
 #[derive(Parser)]
@@ -29,7 +30,7 @@ pub struct Cli {
     pub with_viewer: bool,
 
     #[clap(flatten)]
-    pub process: ProcessArgs,
+    pub train_stream: TrainStreamConfig,
 }
 
 impl Cli {
@@ -44,15 +45,22 @@ impl Cli {
     }
 }
 
-pub async fn process_ui(
-    stream: impl Stream<Item = anyhow::Result<ProcessMessage>>,
-    process_args: ProcessArgs,
+pub async fn run_cli_ui(
+    source: DataSource,
+    train_stream_config: TrainStreamConfig,
+    device: WgpuDevice,
 ) -> Result<(), anyhow::Error> {
     // TODO: Find a way to make logging and indicatif to play nicely with eachother.
     // let mut stream = std::pin::pin!(stream);
     // while let Some(msg) = stream.next().await {
     //     let _ = msg?;
     // }
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<TrainStreamConfig>();
+    let _ = tx.send(train_stream_config.clone());
+
+    let stream = create_process(source, rx, device);
+    let mut stream = std::pin::pin!(stream);
 
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
@@ -94,7 +102,12 @@ pub async fn process_ui(
             .tick_strings(&["✅", "✅"]),
     );
 
-    let train_progress = ProgressBar::new(process_args.train_config.total_steps as u64)
+    #[cfg(feature = "training")]
+    let total_steps = train_stream_config.train_config.total_steps;
+    #[cfg(not(feature = "training"))]
+    let total_steps = 1;
+
+    let train_progress = ProgressBar::new(total_steps as u64)
         .with_style(
             ProgressStyle::with_template(
                 "[{elapsed}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} ({per_sec}, {eta} remaining)",
@@ -110,10 +123,13 @@ pub async fn process_ui(
     let stats_spinner = sp.add(stats_spinner);
 
     main_spinner.enable_steady_tick(Duration::from_millis(120));
+
+    #[cfg(feature = "training")]
     eval_spinner.set_message(format!(
         "evaluating every {} steps",
-        process_args.process_config.eval_every,
+        train_stream_config.process_config.eval_every,
     ));
+
     stats_spinner.set_message("Starting up");
     log::info!("Starting up");
 
@@ -124,7 +140,6 @@ pub async fn process_ui(
 
     let mut duration = Duration::from_secs(0);
 
-    let mut stream = std::pin::pin!(stream);
     while let Some(msg) = stream.next().await {
         let _span = trace_span!("CLI UI").entered();
 
@@ -149,63 +164,65 @@ pub async fn process_ui(
                 }
                 main_spinner.set_message("Loading data...");
             }
-            ProcessMessage::ViewSplats { .. } => {
-                // I guess we're already showing a warning.
-            }
-            ProcessMessage::Dataset { dataset } => {
-                let train_views = dataset.train.views.len();
-                let eval_views = dataset.eval.as_ref().map_or(0, |v| v.views.len());
-                log::info!("Loaded dataset with {train_views} training, {eval_views} eval views",);
-                main_spinner.set_message(format!(
-                    "Loading dataset with {train_views} training, {eval_views} eval views",
-                ));
-                if let Some(val) = dataset.eval.as_ref() {
+            ProcessMessage::ViewSplats { .. } => {}
+            #[cfg(feature = "training")]
+            ProcessMessage::TrainMessage(train) => match train {
+                TrainMessage::Dataset { dataset } => {
+                    let train_views = dataset.train.views.len();
+                    let eval_views = dataset.eval.as_ref().map_or(0, |v| v.views.len());
+                    log::info!(
+                        "Loaded dataset with {train_views} training, {eval_views} eval views",
+                    );
+                    main_spinner.set_message(format!(
+                        "Loading dataset with {train_views} training, {eval_views} eval views",
+                    ));
+                    if let Some(val) = dataset.eval.as_ref() {
+                        eval_spinner.set_message(format!(
+                            "evaluating {} views every {} steps",
+                            val.views.len(),
+                            train_stream_config.process_config.eval_every,
+                        ));
+                    }
+                }
+                TrainMessage::TrainStep {
+                    iter,
+                    total_elapsed,
+                    ..
+                } => {
+                    main_spinner.set_message("Training");
+                    train_progress.set_position(iter as u64);
+                    duration = total_elapsed;
+                }
+                TrainMessage::RefineStep {
+                    cur_splat_count,
+                    iter,
+                    ..
+                } => {
+                    stats_spinner.set_message(format!("Current splat count {cur_splat_count}"));
+                    log::info!("Refine iter {iter}, {cur_splat_count} splats.");
+                }
+                TrainMessage::EvalResult {
+                    iter,
+                    avg_psnr,
+                    avg_ssim,
+                } => {
+                    log::info!("Eval iter {iter}: PSNR {avg_psnr}, ssim {avg_ssim}");
+
                     eval_spinner.set_message(format!(
-                        "evaluating {} views every {} steps",
-                        val.views.len(),
-                        process_args.process_config.eval_every,
+                        "Eval iter {iter}: PSNR {avg_psnr}, ssim {avg_ssim}"
                     ));
                 }
-            }
+                TrainMessage::DoneTraining => {}
+            },
             ProcessMessage::DoneLoading => {
                 log::info!("Completed loading.");
                 main_spinner.set_message("Completed loading");
                 stats_spinner.set_message("Completed loading");
             }
-            ProcessMessage::TrainStep {
-                iter,
-                total_elapsed,
-                ..
-            } => {
-                main_spinner.set_message("Training");
-                train_progress.set_position(iter as u64);
-                duration = total_elapsed;
-            }
-            ProcessMessage::RefineStep {
-                cur_splat_count,
-                iter,
-                ..
-            } => {
-                stats_spinner.set_message(format!("Current splat count {cur_splat_count}"));
-                log::info!("Refine iter {iter}, {cur_splat_count} splats.");
-            }
-            ProcessMessage::EvalResult {
-                iter,
-                avg_psnr,
-                avg_ssim,
-            } => {
-                log::info!("Eval iter {iter}: PSNR {avg_psnr}, ssim {avg_ssim}");
 
-                eval_spinner.set_message(format!(
-                    "Eval iter {iter}: PSNR {avg_psnr}, ssim {avg_ssim}"
-                ));
-            }
             ProcessMessage::Warning { error } => {
                 log::warn!("{error}");
                 sp.println("⚠️: {error}")?;
-            }
-            ProcessMessage::DoneTraining => {
-                log::info!("Done training.");
             }
         }
     }

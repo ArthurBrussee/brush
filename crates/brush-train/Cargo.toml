@@ -20,6 +20,7 @@ log.workspace = true
 serde.workspace = true
 hashbrown.workspace = true
 
+tokio = { workspace = true, features = ["io-util", "rt"] }
 burn.workspace = true
 burn-cubecl.workspace = true
 

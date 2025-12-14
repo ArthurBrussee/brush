@@ -14,13 +14,10 @@ burn = { workspace = true, features = [
     'wgpu',
     'autodiff',
 ] }
-burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
 
-wgpu.workspace = true
-bytemuck.workspace = true
 glam.workspace = true
 tracing.workspace = true
 

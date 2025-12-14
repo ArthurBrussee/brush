@@ -1,5 +1,3 @@
-use brush_dataset::config::{LoadDataseConfig, ModelConfig};
-use brush_train::config::TrainConfig;
 use clap::{Args, Parser};
 
 #[derive(Clone, Args)]
@@ -7,18 +5,15 @@ pub struct ProcessConfig {
     /// Random seed.
     #[arg(long, help_heading = "Process options", default_value = "42")]
     pub seed: u64,
-
     /// Iteration to resume from
     #[arg(long, help_heading = "Process options", default_value = "0")]
     pub start_iter: u32,
-
     /// Eval every this many steps.
     #[arg(long, help_heading = "Process options", default_value = "1000")]
     pub eval_every: u32,
     /// Save the rendered eval images to disk. Uses export-path for the file location.
     #[arg(long, help_heading = "Process options", default_value = "false")]
     pub eval_save_to_disk: bool,
-
     /// Export every this many steps.
     #[arg(long, help_heading = "Process options", default_value = "5000")]
     pub export_every: u32,
@@ -38,37 +33,27 @@ pub struct ProcessConfig {
 }
 
 #[derive(Parser, Clone)]
-pub struct ProcessArgs {
+#[cfg(feature = "training")]
+pub struct TrainStreamConfig {
     #[clap(flatten)]
-    pub train_config: TrainConfig,
+    pub train_config: brush_train::config::TrainConfig,
     #[clap(flatten)]
-    pub model_config: ModelConfig,
+    pub model_config: brush_dataset::config::ModelConfig,
     #[clap(flatten)]
-    pub load_config: LoadDataseConfig,
+    pub load_config: brush_dataset::config::LoadDataseConfig,
     #[clap(flatten)]
     pub process_config: ProcessConfig,
     #[clap(flatten)]
-    pub rerun_config: RerunConfig,
+    pub rerun_config: brush_rerun::RerunConfig,
 }
 
-impl Default for ProcessArgs {
+#[cfg(feature = "training")]
+impl Default for TrainStreamConfig {
     fn default() -> Self {
         Self::parse_from([""])
     }
 }
 
-#[derive(Clone, Args)]
-pub struct RerunConfig {
-    /// Whether to enable rerun.io logging for this run.
-    #[arg(long, help_heading = "Rerun options", default_value = "false")]
-    pub rerun_enabled: bool,
-    /// How often to log basic training statistics.
-    #[arg(long, help_heading = "Rerun options", default_value = "50")]
-    pub rerun_log_train_stats_every: u32,
-    /// How often to log out the full splat point cloud to rerun (warning: heavy).
-    #[arg(long, help_heading = "Rerun options")]
-    pub rerun_log_splats_every: Option<u32>,
-    /// The maximum size of images from the dataset logged to rerun.
-    #[arg(long, help_heading = "Rerun options", default_value = "512")]
-    pub rerun_max_img_size: u32,
-}
+#[cfg(not(feature = "training"))]
+#[derive(Parser, Default, Clone)]
+pub struct TrainStreamConfig {}

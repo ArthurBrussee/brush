@@ -13,15 +13,14 @@ brush-kernel.path = "../brush-kernel"
 brush-sort.path = "../brush-sort"
 brush-wgsl.path = "../brush-wgsl"
 
+
 burn.workspace = true
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
-
-bytemuck.workspace = true
 glam.workspace = true
-
+clap.workspace = true
 tracing.workspace = true
 rand.workspace = true
 ball-tree.workspace = true

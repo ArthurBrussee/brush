@@ -2,7 +2,7 @@
 
 use crate::three::ThreeVector3;
 use anyhow::Context;
-use brush_process::config::ProcessArgs;
+use brush_process::config::TrainStreamConfig;
 use brush_ui::UiMode;
 use brush_ui::app::App;
 use brush_ui::ui_process::UiProcess;
@@ -101,8 +101,7 @@ impl EmbeddedApp {
     #[wasm_bindgen]
     pub fn load_url(&self, url: &str) {
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let _ = sender.send(ProcessArgs::default());
-
+        let _ = sender.send(TrainStreamConfig::default());
         self.context
             .start_new_process(DataSource::Url(url.to_owned()), receiver);
     }

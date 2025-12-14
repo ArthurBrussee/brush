@@ -7,6 +7,7 @@ use burn_fusion::Fusion;
 use burn_wgpu::graphics::{AutoGraphicsApi, GraphicsApi};
 use burn_wgpu::{RuntimeOptions, WgpuDevice, WgpuRuntime};
 use camera::Camera;
+use clap::ValueEnum;
 use glam::Vec3;
 use render_aux::RenderAux;
 use wgpu::{Adapter, Device, Queue};
@@ -87,4 +88,11 @@ pub async fn burn_init_setup() -> WgpuDevice {
     burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
         .await;
     WgpuDevice::DefaultDevice
+}
+
+#[derive(Default, ValueEnum, Clone, Copy, Eq, PartialEq, Debug)]
+pub enum AlphaMode {
+    #[default]
+    Masked,
+    Transparent,
 }

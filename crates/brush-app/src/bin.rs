@@ -1,6 +1,5 @@
 #![recursion_limit = "256"]
 
-use brush_process::process::process_stream;
 use brush_ui::app::App;
 
 use brush_cli::Cli;
@@ -53,7 +52,7 @@ fn main() -> Result<(), anyhow::Error> {
                 .init();
 
             let (sender, args_receiver) = tokio::sync::oneshot::channel();
-            let _ = sender.send(args.process.clone());
+            let _ = sender.send(args.train_stream.clone());
 
             if args.with_viewer {
                 let icon = eframe::icon_data::from_png_bytes(
@@ -91,8 +90,7 @@ fn main() -> Result<(), anyhow::Error> {
                     panic!("Validation of args failed?");
                 };
                 let device = brush_render::burn_init_setup().await;
-                let stream = process_stream(source, args_receiver, device);
-                brush_cli::process_ui(stream, args.process).await?;
+                brush_cli::run_cli_ui(source, args.train_stream, device).await?;
             }
 
             anyhow::Result::<(), anyhow::Error>::Ok(())

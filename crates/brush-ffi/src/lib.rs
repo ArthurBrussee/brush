@@ -1,4 +1,8 @@
-use brush_process::{config::ProcessArgs, message::ProcessMessage, process::process_stream};
+#[cfg(feature = "training")]
+use brush_process::message::TrainMessage;
+
+use brush_process::config::TrainStreamConfig;
+use brush_process::{message::ProcessMessage, process::create_process};
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use std::convert::TryFrom;
@@ -25,8 +29,12 @@ impl TryFrom<ProcessMessage> for ProgressMessage {
     fn try_from(value: ProcessMessage) -> Result<Self, Self::Error> {
         match value {
             ProcessMessage::NewSource => Ok(Self::NewSource),
-            ProcessMessage::TrainStep { iter, .. } => Ok(Self::Training { iter }),
-            ProcessMessage::DoneTraining => Ok(Self::DoneTraining),
+            #[cfg(feature = "training")]
+            ProcessMessage::TrainMessage(TrainMessage::TrainStep { iter, .. }) => {
+                Ok(Self::Training { iter })
+            }
+            #[cfg(feature = "training")]
+            ProcessMessage::TrainMessage(TrainMessage::DoneTraining) => Ok(Self::DoneTraining),
             _ => Err(()),
         }
     }
@@ -46,21 +54,27 @@ impl TrainOptions {
     /// # Safety
     ///
     /// If `output_path` is not null, it must be a valid pointer to a null-terminated C string.
-    unsafe fn into_process_args(self) -> ProcessArgs {
-        let mut process_args = ProcessArgs::default();
-        if !self.output_path.is_null() {
-            // SAFETY: Path is not null, caller guarantees the string is a valid C-string.
-            process_args.process_config.export_path = unsafe {
-                CStr::from_ptr(self.output_path)
-                    .to_string_lossy()
-                    .into_owned()
-            };
+    unsafe fn into_train_stream_config(self) -> TrainStreamConfig {
+        let process_args = TrainStreamConfig::default();
+
+        #[cfg(feature = "training")]
+        {
+            let mut process_args = process_args;
+            if !self.output_path.is_null() {
+                // SAFETY: Path is not null, caller guarantees the string is a valid C-string.
+                process_args.process_config.export_path = unsafe {
+                    CStr::from_ptr(self.output_path)
+                        .to_string_lossy()
+                        .into_owned()
+                };
+            }
+            process_args.train_config.total_steps = self.total_steps;
+            process_args.train_config.refine_every = self.refine_every;
+            process_args.load_config.max_resolution = self.max_resolution;
+            process_args.process_config.export_every = self.export_every;
+            process_args.process_config.eval_save_to_disk = true;
         }
-        process_args.train_config.total_steps = self.total_steps;
-        process_args.train_config.refine_every = self.refine_every;
-        process_args.load_config.max_resolution = self.max_resolution;
-        process_args.process_config.export_every = self.export_every;
-        process_args.process_config.eval_save_to_disk = true;
+
         process_args
     }
 }
@@ -119,19 +133,16 @@ pub unsafe extern "C" fn train_and_save(
         let source = DataSource::Path(dataset_path_str);
 
         let device = WgpuDevice::default();
-        let (tx, rx) = oneshot::channel::<ProcessArgs>();
-
-        let stream = process_stream(source, rx, device);
-        let mut stream = std::pin::pin!(stream);
 
         // SAFETY: Option is checked to not be null before the future.
         let train_options = unsafe { *options };
-
         // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
-        let process_args = unsafe { train_options.into_process_args() };
+        let process_args = unsafe { train_options.into_train_stream_config() };
+        let (tx, rx) = oneshot::channel::<TrainStreamConfig>();
         let _ = tx.send(process_args.clone());
+        let mut stream = std::pin::pin!(create_process(source, rx, device));
 
-        while let Some(message_result) = stream.as_mut().next().await {
+        while let Some(message_result) = stream.next().await {
             match message_result {
                 Ok(message) => {
                     if let Ok(progress_message) = message.try_into() {

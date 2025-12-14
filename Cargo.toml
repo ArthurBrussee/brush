@@ -53,7 +53,6 @@ clap = { version = "4.5.23", features = ["derive"] }
 web-time = "1.1.0"
 humantime = "2.1.0"
 async-fn-stream = "0.3"
-miette = { version = "7.4.0", features = ["fancy"] }
 assert_approx_eq = "1.1.0"
 safetensors = "0.7"
 log = "0.4.22"

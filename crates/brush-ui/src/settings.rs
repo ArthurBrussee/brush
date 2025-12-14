@@ -1,28 +1,55 @@
 use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
-use brush_dataset::config::AlphaMode;
-use brush_process::config::ProcessArgs;
+use brush_process::config::TrainStreamConfig;
 use brush_vfs::DataSource;
-use egui::{Align2, Slider, Ui};
+use egui::Align2;
 use tokio::sync::oneshot::Sender;
 
 pub struct SettingsPanel {
-    args: ProcessArgs,
     url: String,
-    send_args: Option<Sender<ProcessArgs>>,
+    send_args: Option<Sender<TrainStreamConfig>>,
     show_url_dialog: bool,
+    #[cfg(feature = "training")]
+    args: TrainStreamConfig,
 }
 
 impl SettingsPanel {
     pub(crate) fn new() -> Self {
         Self {
-            args: ProcessArgs::default(),
             url: "splat.com/example.ply".to_owned(),
             send_args: None,
             show_url_dialog: false,
+
+            #[cfg(feature = "training")]
+            args: TrainStreamConfig::default(),
         }
     }
 
+    #[cfg(feature = "training")]
     fn ui_window(&mut self, ui: &egui::Ui) {
+        fn slider<T>(
+            ui: &mut Ui,
+            value: &mut T,
+            range: std::ops::RangeInclusive<T>,
+            text: &str,
+            logarithmic: bool,
+        ) where
+            T: egui::emath::Numeric,
+        {
+            let mut s = Slider::new(value, range).clamping(egui::SliderClamping::Never);
+            if logarithmic {
+                s = s.logarithmic(true);
+            }
+            if !text.is_empty() {
+                s = s.text(text);
+            }
+            ui.add(s);
+        }
+
+        fn text_input(ui: &mut Ui, label: &str, text: &mut String) {
+            let label = ui.label(label);
+            ui.text_edit_singleline(text).labelled_by(label.id);
+        }
+
         // Check if the receiver is closed and set send_args to None if it is
         if let Some(sender) = &self.send_args
             && sender.is_closed()
@@ -353,34 +380,9 @@ impl AppPane for SettingsPanel {
 
         // Draw settings window if we're loading something (if loading a ply
         // this wont' do anything, only if process args are needed).
+        #[cfg(feature = "training")]
         if process.is_loading() {
             self.ui_window(ui);
         }
     }
-}
-
-// Helper functions to reduce repetition
-fn slider<T>(
-    ui: &mut Ui,
-    value: &mut T,
-    range: std::ops::RangeInclusive<T>,
-    text: &str,
-    logarithmic: bool,
-) where
-    T: egui::emath::Numeric,
-{
-    let mut s = Slider::new(value, range).clamping(egui::SliderClamping::Never);
-    if logarithmic {
-        s = s.logarithmic(true);
-    }
-    if !text.is_empty() {
-        s = s.text(text);
-    }
-    ui.add(s);
-}
-
-#[allow(unused)]
-fn text_input(ui: &mut Ui, label: &str, text: &mut String) {
-    let label = ui.label(label);
-    ui.text_edit_singleline(text).labelled_by(label.id);
 }

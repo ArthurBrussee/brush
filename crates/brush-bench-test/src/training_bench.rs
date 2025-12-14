@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 
-use brush_dataset::{config::AlphaMode, scene::SceneBatch};
-use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
+use brush_dataset::scene::SceneBatch;
+use brush_render::{AlphaMode, MainBackend, camera::Camera, gaussian_splats::Splats};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{

@@ -6,36 +6,37 @@ version.workspace = true
 readme.workspace = true
 license.workspace = true
 
+[features]
+debug-validation = ["brush-train/debug-validation"]
+training = ["dep:brush-train", "dep:brush-dataset"]
+
 [dependencies]
 brush-render.path = "../brush-render"
-brush-train.path = "../brush-train"
-brush-dataset.path = "../brush-dataset"
 brush-vfs.path = "../brush-vfs"
+brush-rerun.path = "../brush-rerun"
 brush-serde.path = "../brush-serde"
 
+burn.workspace = true
+burn-cubecl.workspace = true
 burn-wgpu.workspace = true
 
 alphanumeric-sort.workspace = true
 anyhow.workspace = true
 async-fn-stream.workspace = true
-burn.workspace = true
-burn-cubecl.workspace = true
+
 clap.workspace = true
 rand.workspace = true
 log.workspace = true
 glam.workspace = true
 web-time.workspace = true
-image.workspace = true
 tracing.workspace = true
 
 tokio = { workspace = true, features = ["io-util", "rt"] }
 tokio-stream.workspace = true
 tokio_with_wasm.workspace = true
 
-[target.'cfg(target_family = "wasm")'.dependencies]
-
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-rerun.workspace = true
+brush-train = { path = "../brush-train", optional = true }
+brush-dataset = { path = "../brush-dataset", optional = true }
 
 [lints]
 workspace = true

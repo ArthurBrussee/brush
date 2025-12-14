@@ -6,12 +6,14 @@ pub mod camera_controls;
 
 pub mod ui_process;
 
-mod datasets;
 mod panels;
 mod scene;
 mod settings;
 mod stats;
 mod widget_3d;
+
+#[cfg(feature = "training")]
+mod datasets;
 
 use eframe::egui_wgpu::WgpuConfiguration;
 use std::sync::Arc;

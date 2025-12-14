@@ -1,6 +1,7 @@
 use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
-use brush_dataset::Dataset;
 use brush_process::message::ProcessMessage;
+#[cfg(feature = "training")]
+use brush_process::message::TrainMessage;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use web_time::Duration;
@@ -14,7 +15,7 @@ pub struct StatsPanel {
     cur_sh_degree: u32,
     num_splats: u32,
     frames: u32,
-    cur_dataset: Dataset,
+    train_eval_views: (u32, u32),
     adapter_info: AdapterInfo,
 }
 
@@ -28,7 +29,7 @@ impl StatsPanel {
             num_splats: 0,
             frames: 0,
             cur_sh_degree: 0,
-            cur_dataset: Dataset::empty(),
+            train_eval_views: (0, 0),
             adapter_info,
         }
     }
@@ -79,36 +80,42 @@ impl AppPane for StatsPanel {
                 self.frames = *frame;
                 self.cur_sh_degree = splats.sh_degree();
             }
-            ProcessMessage::TrainStep {
-                splats,
-                stats: _,
-                iter,
-                total_elapsed,
-            } => {
-                self.cur_sh_degree = splats.sh_degree();
-                self.num_splats = splats.num_splats();
-                let current_iter_per_s = (iter - self.last_train_step.1) as f32
-                    / total_elapsed
-                        .checked_sub(self.last_train_step.0)
-                        .unwrap()
-                        .as_secs_f32();
-                self.train_iter_per_s = if *iter < 16 {
-                    current_iter_per_s
-                } else {
-                    0.95 * self.train_iter_per_s + 0.05 * current_iter_per_s
-                };
-                self.last_train_step = (*total_elapsed, *iter);
-            }
-            ProcessMessage::Dataset { dataset } => {
-                self.cur_dataset = dataset.clone();
-            }
-            ProcessMessage::EvalResult {
-                iter: _,
-                avg_psnr,
-                avg_ssim,
-            } => {
-                self.last_eval = Some(format!("{avg_psnr:.2} PSNR, {avg_ssim:.3} SSIM"));
-            }
+            #[cfg(feature = "training")]
+            ProcessMessage::TrainMessage(train) => match train {
+                TrainMessage::TrainStep {
+                    splats,
+                    iter,
+                    total_elapsed,
+                } => {
+                    self.cur_sh_degree = splats.sh_degree();
+                    self.num_splats = splats.num_splats();
+                    let current_iter_per_s = (iter - self.last_train_step.1) as f32
+                        / total_elapsed
+                            .checked_sub(self.last_train_step.0)
+                            .unwrap()
+                            .as_secs_f32();
+                    self.train_iter_per_s = if *iter < 16 {
+                        current_iter_per_s
+                    } else {
+                        0.95 * self.train_iter_per_s + 0.05 * current_iter_per_s
+                    };
+                    self.last_train_step = (*total_elapsed, *iter);
+                }
+                TrainMessage::Dataset { dataset } => {
+                    self.train_eval_views = (
+                        dataset.train.views.len(),
+                        dataset.eval.as_ref().map_or(0, |eval| eval.views.len()),
+                    );
+                }
+                TrainMessage::EvalResult {
+                    iter: _,
+                    avg_psnr,
+                    avg_ssim,
+                } => {
+                    self.last_eval = Some(format!("{avg_psnr:.2} PSNR, {avg_ssim:.3} SSIM"));
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -180,18 +187,12 @@ impl AppPane for StatsPanel {
                         ));
                         ui.end_row();
 
-                        ui.label("Dataset train size");
-                        ui.label(format!("{}", self.cur_dataset.train.views.len()));
+                        ui.label("Dataset views");
+                        ui.label(format!("{}", self.train_eval_views.0));
                         ui.end_row();
 
-                        ui.label("Dataset eval");
-                        ui.label(format!(
-                            "{}",
-                            self.cur_dataset
-                                .eval
-                                .as_ref()
-                                .map_or(0, |eval| eval.views.len())
-                        ));
+                        ui.label("Dataset eval views");
+                        ui.label(format!("{}", self.train_eval_views.1));
                         ui.end_row();
                     });
             }

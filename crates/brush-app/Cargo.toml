@@ -20,9 +20,6 @@ path = "src/bin.rs"
 # Brush deps.
 brush-ui.path = "../brush-ui"
 brush-render.path = "../brush-render"
-# Only needed for the validation feature atm.
-brush-train.path = "../brush-train"
-brush-process.path = "../brush-process"
 
 egui.workspace = true
 eframe.workspace = true
@@ -68,11 +65,11 @@ tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 winapi.workspace = true
 
 [package.metadata.cargo-shear]
-ignored = ["wgpu", "brush-train"] # Need manual backend selection.
+ignored = ["wgpu"] # Need manual backend selection.
 
 [lints]
 workspace = true
 
 [features]
 tracy = ["dep:tracing-subscriber", "dep:tracing-tracy"]
-debug-validation = ["brush-render/debug-validation", "brush-train/debug-validation"]
+debug-validation = ["brush-render/debug-validation", "brush-ui/debug-validation"]

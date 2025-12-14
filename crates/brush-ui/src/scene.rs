@@ -1,4 +1,6 @@
-use brush_dataset::config::AlphaMode;
+#[cfg(feature = "training")]
+use brush_process::message::TrainMessage;
+
 use brush_process::message::ProcessMessage;
 use core::f32;
 use egui::{Align2, Area, Frame, Pos2, Ui, epaint::mutex::RwLock as EguiRwLock};
@@ -152,17 +154,17 @@ impl ScenePanel {
         splats: Option<Splats<MainBackend>>,
         interactive: bool,
     ) -> egui::Rect {
-        let mut size = ui.available_size();
-        let selected = process.selected_view();
+        let size = ui.available_size();
+        // let selected = process.selected_view();
 
-        if let Some(tex) = selected.tex.borrow().as_ref() {
-            let aspect_ratio = tex.handle.aspect_ratio();
-            if size.x / size.y > aspect_ratio {
-                size.x = size.y * aspect_ratio;
-            } else {
-                size.y = size.x / aspect_ratio;
-            }
-        }
+        // if let Some(tex) = selected.tex.borrow().as_ref() {
+        //     let aspect_ratio = tex.handle.aspect_ratio();
+        //     if size.x / size.y > aspect_ratio {
+        //         size.x = size.y * aspect_ratio;
+        //     } else {
+        //         size.y = size.x / aspect_ratio;
+        //     }
+        // }
         let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
 
         let (rect, response) = ui.allocate_exact_size(
@@ -239,17 +241,18 @@ impl ScenePanel {
         ui.scope(|ui| {
             let mut background = false;
 
-            let selected = process.selected_view();
-            if let Some(view) = selected.view
-                && let Some(tex) = selected.tex.borrow().as_ref()
-            {
-                // if training views have alpha, show a background checker. Masked images
-                // should still use a black background.
-                if tex.has_alpha && view.image.alpha_mode() == AlphaMode::Transparent {
-                    background = true;
-                    draw_checkerboard(ui, rect, Color32::WHITE);
-                }
-            }
+            // TODO: restore this.
+            // let selected = process.selected_view();
+            // if let Some(view) = selected.view
+            //     && let Some(tex) = selected.tex.borrow().as_ref()
+            // {
+            //     // if training views have alpha, show a background checker. Masked images
+            //     // should still use a black background.
+            //     if tex.has_alpha && view.image.alpha_mode() == AlphaMode::Transparent {
+            //         background = true;
+            //         draw_checkerboard(ui, rect, Color32::WHITE);
+            //     }
+            // }
 
             // If a scene is opaque, it assumes a black background.
             if !background {
@@ -596,7 +599,8 @@ impl AppPane for ScenePanel {
                     self.last_state = None;
                 }
             }
-            ProcessMessage::TrainStep { splats, .. } => {
+            #[cfg(feature = "training")]
+            ProcessMessage::TrainMessage(TrainMessage::TrainStep { splats, .. }) => {
                 let splats = *splats.clone();
                 self.view_splats = vec![splats];
                 // Mark redraw as dirty if we're live updating.
