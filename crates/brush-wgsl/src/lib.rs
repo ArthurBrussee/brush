@@ -500,9 +500,9 @@ fn generate_code(
                     let source = if ["subgroupAdd", "subgroupAny", "subgroupMax", "subgroupBroadcast", "subgroupShuffle"]
                         .iter().any(|s| source.contains(s))
                     {
-                        &*Box::leak(format!("enable subgroups;\n{}", source).into_boxed_str())
+                        format!("enable subgroups;\n{}", source)
                     } else {
-                        source
+                        source.to_string()
                     };
 
                     Ok(burn_cubecl::cubecl::prelude::CompiledKernel {
@@ -569,11 +569,12 @@ pub fn wgsl_kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
     let source = match std::fs::read_to_string(&source_path) {
         Ok(s) => s,
         Err(e) => {
-            return error(&format!(
-                "Failed to read '{}': {}",
-                source_path.display(),
-                e
-            ));
+            return {
+                let msg: &str = &format!("Failed to read '{}': {}", source_path.display(), e);
+                syn::Error::new(proc_macro2::Span::call_site(), msg)
+                    .to_compile_error()
+                    .into()
+            };
         }
     };
 
@@ -607,7 +608,14 @@ pub fn wgsl_kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
         let full_path = Path::new(&manifest_dir).join(inc_path);
         let source = match std::fs::read_to_string(&full_path) {
             Ok(s) => s,
-            Err(e) => return error(&format!("Failed to read '{}': {}", full_path.display(), e)),
+            Err(e) => {
+                return {
+                    let msg: &str = &format!("Failed to read '{}': {}", full_path.display(), e);
+                    syn::Error::new(proc_macro2::Span::call_site(), msg)
+                        .to_compile_error()
+                        .into()
+                };
+            }
         };
         includes.push(IncludeInfo {
             source,
@@ -628,10 +636,4 @@ pub fn wgsl_kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
         &include_paths,
     )
     .into()
-}
-
-fn error(msg: &str) -> TokenStream {
-    syn::Error::new(proc_macro2::Span::call_site(), msg)
-        .to_compile_error()
-        .into()
 }

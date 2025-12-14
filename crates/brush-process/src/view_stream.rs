@@ -8,7 +8,6 @@ use brush_vfs::BrushVfs;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use tokio_stream::StreamExt;
-use tokio_with_wasm::alias as tokio_wasm;
 
 pub(crate) async fn view_stream(
     vfs: Arc<BrushVfs>,
@@ -20,23 +19,19 @@ pub(crate) async fn view_stream(
     let client = WgpuRuntime::client(&device);
 
     for (i, path) in paths.iter().enumerate() {
-        tokio_wasm::task::yield_now().await;
-
         log::info!("Loading single ply file");
 
         emitter
             .emit(ProcessMessage::StartLoading { training: false })
             .await;
 
-        let sub_sample = None; // Subsampling a trained ply doesn't really make sense.
-        let splat_stream = brush_serde::stream_splat_from_ply(
+        let mut splat_stream = pin!(brush_serde::stream_splat_from_ply(
             vfs.reader_at_path(path).await?,
-            sub_sample,
+            None,
             device.clone(),
             true,
-        );
+        ));
 
-        let mut splat_stream = pin!(splat_stream);
         while let Some(message) = splat_stream.next().await {
             let message = message?;
 
@@ -65,9 +60,6 @@ pub(crate) async fn view_stream(
     }
 
     emitter.emit(ProcessMessage::DoneLoading).await;
-
-    // Clear out memory after loading is fully done.
-    client.memory_cleanup();
 
     Ok(())
 }
