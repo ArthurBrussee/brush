@@ -360,7 +360,7 @@ impl ScenePanel {
                             let sender = self.export_channel.0.clone();
                             let ctx = ui.ctx().clone();
                             tokio_with_wasm::alias::task::spawn(async move {
-                                if let Err(e) = export(_splats).await {
+                                if let Err(e) = export(splats).await {
                                     let _ = sender.send(e.context("Failed to export splat"));
                                     ctx.request_repaint();
                                 }

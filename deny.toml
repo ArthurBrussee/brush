@@ -43,7 +43,6 @@ skip = [
 
     { name = 'thiserror' },
     { name = 'thiserror-impl' },
-    { name = 'unicode-width' },
 
     # Other
     { name = "core-foundation" },     # Egui has two?
@@ -61,10 +60,10 @@ skip = [
     { name = 'rustix' },        # Winit & clap
     { name = 'linux-raw-sys' }, # Winit & clap
 
-    { name = 'objc2-foundation' }, # eframe & rfd
     { name = 'block2' },           # eframe & rfd
-    { name = 'objc2-app-kit' },    # eframe & rfd
     { name = 'objc2' },            # eframe & rfd
+    { name = 'objc2-app-kit' },    # eframe & rfd
+    { name = 'objc2-foundation' }, # eframe & rfd
     { name = 'windows' },          # Wgpu & kiddo
 
     { name = 'hashbrown' },

@@ -1,10 +1,11 @@
 #![cfg(feature = "training")]
 
-use crate::{ProgressMessage, TrainExitCode, TrainOptions, train_and_save};
 use std::ffi::{CString, c_void};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use main::ffi::{ProgressMessage, TrainExitCode, TrainOptions, train_and_save};
 
 #[repr(C)]
 struct CallbackState {

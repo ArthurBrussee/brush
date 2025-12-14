@@ -1,11 +1,17 @@
-use crate::{UiMode, draw_checkerboard, panels::AppPane, ui_process::UiProcess};
+use crate::{
+    UiMode, draw_checkerboard,
+    panels::AppPane,
+    ui_process::{TexHandle, UiProcess},
+};
 use brush_dataset::{
     Dataset,
-    config::AlphaMode,
-    scene::{Scene, ViewType},
+    scene::{Scene, SceneView, ViewType},
 };
 use brush_process::message::{ProcessMessage, TrainMessage};
-use egui::{Color32, Frame, Slider, collapsing_header::CollapsingState, pos2};
+use brush_render::AlphaMode;
+use egui::{Color32, Frame, Slider, TextureOptions, collapsing_header::CollapsingState, pos2};
+
+use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(Clone)]
 pub struct SelectedView {
@@ -42,26 +48,22 @@ impl DatasetPanel {
             view_type: ViewType::Train,
             cur_dataset: Dataset::empty(),
             loading_task: None,
+            sender,
             selected_view: SelectedView { view: None, tex },
         }
     }
 
-    pub fn set_selected_view(&self, view: &SceneView) {
+    pub fn set_selected_view(&mut self, view: &SceneView, ctx: &egui::Context) {
         let view_send = view.clone();
 
-        let inner = self.read();
-        let Some(ctx) = inner.cur_device_ctx.clone() else {
-            return;
-        };
-        let sender = inner.sender.clone();
-        drop(inner);
-
-        let mut inner = self.write();
-        if let Some(task) = inner.loading_task.take() {
+        if let Some(task) = self.loading_task.take() {
             task.abort();
         }
 
-        inner.loading_task = Some(tokio_with_wasm::alias::spawn(async move {
+        let sender = self.sender.clone();
+        let ctx = ctx.clone();
+
+        self.loading_task = Some(tokio_with_wasm::alias::spawn(async move {
             // When selecting images super rapidly, might happen, don't waste resources loading.
             let image = view_send
                 .image
@@ -86,9 +88,7 @@ impl DatasetPanel {
             };
 
             let image_name = view_send.image.img_name();
-            let egui_handle =
-                ctx.ctx
-                    .load_texture(image_name, color_img, TextureOptions::default());
+            let egui_handle = ctx.load_texture(image_name, color_img, TextureOptions::default());
 
             // Yield in case we're cancelled.
             tokio_wasm::task::yield_now().await;
@@ -99,9 +99,9 @@ impl DatasetPanel {
                 has_alpha,
             }));
             // Show updated texture asap.
-            ctx.ctx.request_repaint();
+            ctx.request_repaint();
         }));
-        inner.selected_view.view = Some(view.clone());
+        self.selected_view.view = Some(view.clone());
     }
 
     pub fn is_selected_view_loading(&self) -> bool {
@@ -125,7 +125,7 @@ impl AppPane for DatasetPanel {
             }
             ProcessMessage::TrainMessage(TrainMessage::Dataset { dataset }) => {
                 if let Some(view) = dataset.train.views.first() {
-                    process.focus_view(view);
+                    process.focus_view(&view.camera);
                 }
                 self.cur_dataset = dataset.clone();
             }
@@ -137,7 +137,7 @@ impl AppPane for DatasetPanel {
                     process.set_model_up(*up_axis);
 
                     if let Some(view) = self.cur_dataset.train.views.first() {
-                        process.focus_view(view);
+                        process.focus_view(&view.camera);
                     }
                 }
             }
@@ -152,20 +152,18 @@ impl AppPane for DatasetPanel {
 
         if let Some(nearest) = nearest_view_ind.as_mut() {
             // Update image if dirty.
-            let dirty = process
-                .selected_view()
+            let dirty = self
+                .selected_view
                 .view
                 .as_ref()
                 .is_none_or(|view| view.image != pick_scene.views[*nearest].image);
 
             if dirty {
-                process.set_selected_view(&pick_scene.views[*nearest]);
+                self.set_selected_view(&pick_scene.views[*nearest], ui.ctx());
             }
 
-            let selected = process.selected_view();
-
-            if let Some(selected_view) = &selected.view {
-                let last_handle = selected.tex.borrow();
+            if let Some(selected_view) = &self.selected_view.view {
+                let last_handle = self.selected_view.tex.borrow();
 
                 if let Some(texture_handle) = last_handle.as_ref() {
                     let mut size = ui.available_size();
@@ -194,7 +192,7 @@ impl AppPane for DatasetPanel {
                         egui::Color32::WHITE,
                     );
 
-                    if process.is_selected_view_loading() {
+                    if self.is_selected_view_loading() {
                         ui.painter().rect_filled(
                             rect,
                             0.0,
@@ -270,7 +268,8 @@ impl AppPane for DatasetPanel {
                                             }
 
                                             if interacted {
-                                                process.focus_view(&pick_scene.views[*nearest]);
+                                                process
+                                                    .focus_view(&pick_scene.views[*nearest].camera);
                                             }
                                         });
 
@@ -290,7 +289,7 @@ impl AppPane for DatasetPanel {
                                                         self.view_type = t;
                                                         *nearest = 0;
                                                         process.focus_view(
-                                                            &pick_scene.views[*nearest],
+                                                            &pick_scene.views[*nearest].camera,
                                                         );
                                                     };
                                                 }

@@ -9,14 +9,18 @@ use wgpu::AdapterInfo;
 
 pub struct StatsPanel {
     device: WgpuDevice,
-    last_train_step: (Duration, u32),
+
     train_iter_per_s: f32,
     last_eval: Option<String>,
     cur_sh_degree: u32,
     num_splats: u32,
     frames: u32,
-    train_eval_views: (u32, u32),
     adapter_info: AdapterInfo,
+
+    #[allow(unused)]
+    last_train_step: (Duration, u32),
+    #[allow(unused)]
+    train_eval_views: (u32, u32),
 }
 
 impl StatsPanel {
@@ -103,8 +107,11 @@ impl AppPane for StatsPanel {
                 }
                 TrainMessage::Dataset { dataset } => {
                     self.train_eval_views = (
-                        dataset.train.views.len(),
-                        dataset.eval.as_ref().map_or(0, |eval| eval.views.len()),
+                        dataset.train.views.len() as u32,
+                        dataset
+                            .eval
+                            .as_ref()
+                            .map_or(0, |eval| eval.views.len() as u32),
                     );
                 }
                 TrainMessage::EvalResult {
@@ -122,6 +129,8 @@ impl AppPane for StatsPanel {
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         ui.vertical(|ui| {
+            let _ = process;
+
             // Model Stats
             ui.heading("Model Stats");
             ui.separator();
@@ -149,6 +158,7 @@ impl AppPane for StatsPanel {
                     }
                 });
 
+            #[cfg(feature = "training")]
             if process.is_training() {
                 ui.add_space(10.0);
                 ui.heading("Training Stats");

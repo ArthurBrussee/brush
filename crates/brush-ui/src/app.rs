@@ -1,4 +1,6 @@
 use crate::UiMode;
+#[cfg(feature = "training")]
+use crate::datasets::DatasetPanel;
 use crate::panels::AppPane;
 use crate::settings::SettingsPanel;
 use crate::ui_process::UiProcess;

@@ -7,7 +7,7 @@ use burn_cubecl::cubecl::config::{GlobalConfig, streaming::StreamingConfig};
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
 use glam::{Affine3A, Quat, Vec3};
-use parking_lot::RwLock;
+use std::sync::RwLock;
 use tokio::sync::{self, oneshot::Receiver};
 use tokio_stream::StreamExt;
 use tokio_with_wasm::alias as tokio_wasm;
@@ -59,12 +59,12 @@ impl UiProcess {
 }
 
 impl UiProcess {
-    fn read(&self) -> parking_lot::RwLockReadGuard<'_, UiProcessInner> {
-        self.0.read()
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, UiProcessInner> {
+        self.0.read().expect("RwLock poisoned")
     }
 
-    fn write(&self) -> parking_lot::RwLockWriteGuard<'_, UiProcessInner> {
-        self.0.write()
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, UiProcessInner> {
+        self.0.write().expect("RwLock poisoned")
     }
 }
 

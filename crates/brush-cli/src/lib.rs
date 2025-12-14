@@ -1,6 +1,10 @@
 #![recursion_limit = "256"]
 
-use brush_process::{config::TrainStreamConfig, message::ProcessMessage, process::create_process};
+use brush_process::message::ProcessMessage;
+#[cfg(feature = "training")]
+use brush_process::message::TrainMessage;
+
+use brush_process::{config::TrainStreamConfig, process::create_process};
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
@@ -96,6 +100,8 @@ pub async fn run_cli_ui(
             .tick_strings(&["ℹ️", "ℹ️"]),
     );
 
+    let sp = indicatif::MultiProgress::new();
+
     #[cfg(feature = "training")]
     let train_progress = {
         let bar = ProgressBar::new(train_stream_config.train_config.total_steps as u64)
@@ -106,10 +112,9 @@ pub async fn run_cli_ui(
             .expect("Invalid indicatif config").progress_chars("◍○○"),
         )
         .with_message("Steps");
-        sp.add(bar);
+        sp.add(bar)
     };
 
-    let sp = indicatif::MultiProgress::new();
     let main_spinner = sp.add(main_spinner);
     main_spinner.enable_steady_tick(Duration::from_millis(120));
 
@@ -137,7 +142,8 @@ pub async fn run_cli_ui(
             sp.println("ℹ️  running in debug mode, compile with --release for best performance");
     }
 
-    let duration = Duration::from_secs(0);
+    #[allow(unused_mut)]
+    let mut duration = Duration::from_secs(0);
 
     while let Some(msg) = stream.next().await {
         let _span = trace_span!("CLI UI").entered();

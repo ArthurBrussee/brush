@@ -1,7 +1,10 @@
 use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
 use brush_process::config::TrainStreamConfig;
+use brush_render::AlphaMode;
 use brush_vfs::DataSource;
 use egui::Align2;
+use egui::Slider;
+use egui::Ui;
 use tokio::sync::oneshot::Sender;
 
 pub struct SettingsPanel {
@@ -166,6 +169,7 @@ impl SettingsPanel {
                 let mut alpha_mode_enabled = self.args.load_config.alpha_mode.is_some();
                 if ui.checkbox(&mut alpha_mode_enabled, "Force alpha mode").clicked() {
                     self.args.load_config.alpha_mode = if alpha_mode_enabled {
+
                         Some(AlphaMode::default())
                     } else {
                         None

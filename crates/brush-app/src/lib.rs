@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 
 #[cfg(feature = "training")]
-mod ffi;
+pub mod ffi;
 
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]

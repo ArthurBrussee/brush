@@ -8,12 +8,11 @@ license.workspace = true
 
 [features]
 debug-validation = ["brush-train/debug-validation"]
-training = ["dep:brush-train", "dep:brush-dataset", "brush-serde/export"]
+training = ["dep:brush-train", "dep:brush-dataset", "dep:brush-rerun", "brush-serde/export"]
 
 [dependencies]
 brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
-brush-rerun.path = "../brush-rerun"
 brush-serde.path = "../brush-serde"
 
 burn.workspace = true
@@ -37,6 +36,7 @@ tokio_with_wasm.workspace = true
 
 brush-train = { path = "../brush-train", optional = true }
 brush-dataset = { path = "../brush-dataset", optional = true }
+brush-rerun = { path = "../brush-rerun", optional = true }
 
 [lints]
 workspace = true
