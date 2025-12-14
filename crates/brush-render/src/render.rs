@@ -41,7 +41,7 @@ pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
 // Instead, can just estimate a max number of intersects. All the kernels only handle the actual
 // number of intersects, and spin up empty threads for the rest atm. In the future, could use indirect
 // dispatch to avoid this.
-// Estimating the max number of intersects can be a bad hack though... The worst case sceneario is so massive
+// Estimating the max number of intersects can be a bad hack though... The worst case scenario is so massive
 // that it's easy to run out of memory... How do we actually properly deal with this :/
 pub fn max_intersections(img_size: glam::UVec2, num_splats: u32) -> u32 {
     // Divide screen into tiles.
@@ -98,7 +98,7 @@ pub(crate) fn render_forward(
     // then we sparsely store some results, then sort gaussian based on depths, etc.
     // Overall this means there's lots of indices flying all over the place, and it's hard to keep track
     // what is indexing what. So, for some sanity, try to match a few "gaussian ids" (gid) variable names.
-    // - Global Gaussin ID - global_gid
+    // - Global Gaussian ID - global_gid
     // - Compacted Gaussian ID - compact_gid
     // - Per tile intersection depth sorted ID - tiled_gid
     // - Sorted by tile per tile intersection depth sorted ID - sorted_tiled_gid
