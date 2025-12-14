@@ -1,5 +1,5 @@
-use super::shaders::{project_backwards, rasterize_backwards};
-use brush_kernel::{CubeCount, CubeTensor, calc_cube_count, kernel_source_gen};
+use brush_kernel::{CubeCount, CubeTensor, calc_cube_count};
+use brush_wgsl::wgsl_kernel;
 
 use brush_render::MainBackendBase;
 use brush_render::sh::sh_coeffs_for_degree;
@@ -12,11 +12,21 @@ use burn_cubecl::cubecl::server::Bindings;
 use burn_cubecl::kernel::into_contiguous;
 use glam::uvec2;
 
-kernel_source_gen!(ProjectBackwards {}, project_backwards);
-kernel_source_gen!(
-    RasterizeBackwards { hard_float, webgpu },
-    rasterize_backwards
-);
+// Kernel definitions using proc macro
+#[wgsl_kernel(
+    source = "src/shaders/project_backwards.wgsl",
+    includes = ["../brush-render/src/shaders/helpers.wgsl"],
+)]
+pub struct ProjectBackwards;
+
+#[wgsl_kernel(
+    source = "src/shaders/rasterize_backwards.wgsl",
+    includes = ["../brush-render/src/shaders/helpers.wgsl"],
+)]
+pub struct RasterizeBackwards {
+    pub hard_float: bool,
+    pub webgpu: bool,
+}
 
 #[derive(Debug, Clone)]
 pub struct SplatGrads<B: Backend> {

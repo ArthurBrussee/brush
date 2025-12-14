@@ -11,7 +11,7 @@ mod visualize_tools_impl {
 
     use brush_dataset::scene::Scene;
     use brush_render::gaussian_splats::Splats;
-    use brush_render::shaders::project_visible::SH_C0;
+    use brush_render::shaders::SH_C0;
     use brush_train::eval::EvalSample;
     use brush_train::msg::{RefineStats, TrainStepStats};
     use burn::prelude::Backend;

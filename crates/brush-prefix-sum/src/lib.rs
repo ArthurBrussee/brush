@@ -1,25 +1,25 @@
-mod shaders;
-
 use brush_kernel::calc_cube_count;
 use brush_kernel::create_tensor;
-use brush_kernel::kernel_source_gen;
+use brush_wgsl::wgsl_kernel;
 use burn::tensor::DType;
 use burn_cubecl::cubecl::server::Bindings;
-use burn_wgpu::WgpuRuntime;
-use shaders::prefix_sum_add_scanned_sums;
-use shaders::prefix_sum_scan;
-use shaders::prefix_sum_scan_sums;
-
-kernel_source_gen!(PrefixSumScan {}, prefix_sum_scan);
-kernel_source_gen!(PrefixSumScanSums {}, prefix_sum_scan_sums);
-kernel_source_gen!(PrefixSumAddScannedSums {}, prefix_sum_add_scanned_sums);
-
 use burn_wgpu::CubeTensor;
+use burn_wgpu::WgpuRuntime;
+
+// Kernel definitions using proc macro
+#[wgsl_kernel(source = "src/shaders/prefix_sum_scan.wgsl")]
+pub struct PrefixSumScan;
+
+#[wgsl_kernel(source = "src/shaders/prefix_sum_scan_sums.wgsl")]
+pub struct PrefixSumScanSums;
+
+#[wgsl_kernel(source = "src/shaders/prefix_sum_add_scanned_sums.wgsl")]
+pub struct PrefixSumAddScannedSums;
 
 pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     assert!(input.is_contiguous(), "Please ensure input is contiguous");
 
-    let threads_per_group = shaders::prefix_sum_helpers::THREADS_PER_GROUP as usize;
+    let threads_per_group = PrefixSumScan::THREADS_PER_GROUP as usize;
     let num = input.shape.dims[0];
     let client = &input.client;
     let outputs = create_tensor(input.shape.dims::<1>(), &input.device, DType::I32);

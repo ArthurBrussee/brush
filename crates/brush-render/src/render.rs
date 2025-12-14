@@ -1,11 +1,10 @@
-use super::shaders;
 use crate::{
     INTERSECTS_UPPER_BOUND, MainBackendBase,
     camera::Camera,
     dim_check::DimCheck,
-    kernels::{MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
     render_aux::RenderAux,
     sh::sh_degree_from_coeffs,
+    shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::frontend::CompilationArg;
@@ -179,10 +178,8 @@ pub(crate) fn render_forward(
 
     tracing::trace_span!("ProjectVisible").in_scope(|| {
         // Create a buffer to determine how many threads to dispatch for all visible splats.
-        let num_vis_wg = create_dispatch_buffer(
-            num_visible.clone(),
-            shaders::project_visible::WORKGROUP_SIZE,
-        );
+        let num_vis_wg =
+            create_dispatch_buffer(num_visible.clone(), ProjectVisible::WORKGROUP_SIZE);
         // SAFETY: Kernel checked to have no OOB, bounded loops.
         unsafe {
             client
@@ -211,10 +208,8 @@ pub(crate) fn render_forward(
         let splat_intersect_counts =
             MainBackendBase::int_zeros([total_splats + 1].into(), device, IntDType::U32);
 
-        let num_vis_map_wg = create_dispatch_buffer(
-            num_visible,
-            shaders::map_gaussian_to_intersects::WORKGROUP_SIZE,
-        );
+        let num_vis_map_wg =
+            create_dispatch_buffer(num_visible, MapGaussiansToIntersect::WORKGROUP_SIZE);
 
         // First do a prepass to compute the tile counts, then fill in intersection counts.
         tracing::trace_span!("MapGaussiansToIntersectPrepass").in_scope(|| {

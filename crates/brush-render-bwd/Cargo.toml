@@ -6,23 +6,23 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
-brush-render.path = "../brush-render"
 brush-kernel.path = "../brush-kernel"
+brush-render.path = "../brush-render"
+brush-wgsl.path = "../brush-wgsl"
 
-burn.workspace = true
+burn = { workspace = true, features = [
+    'wgpu',
+    'autodiff',
+] }
+burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
 
-naga_oil.workspace = true
 wgpu.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
 tracing.workspace = true
-
-[build-dependencies]
-brush-wgsl.path = "../brush-wgsl"
-miette.workspace = true
 
 [lints]
 workspace = true
