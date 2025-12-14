@@ -9,7 +9,6 @@ use brush_render::camera::fov_to_focal;
 use brush_render::camera::{Camera, focal_to_fov};
 use brush_serde::{SplatMessage, load_splat_from_ply};
 use brush_vfs::BrushVfs;
-use burn::backend::wgpu::WgpuDevice;
 use image::GenericImageView;
 use std::path::Path;
 use std::sync::Arc;
@@ -202,7 +201,6 @@ async fn read_transforms_file(
 pub async fn read_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-    device: &WgpuDevice,
 ) -> Option<Result<(Option<SplatMessage>, Dataset), FormatError>> {
     log::info!("Loading nerfstudio dataset");
 
@@ -218,13 +216,12 @@ pub async fn read_dataset(
             .or_else(|| vfs.files_ending_in("transforms_train.json").next())?
     };
     let transforms_path = transforms_path.to_path_buf();
-    Some(read_dataset_inner(vfs, load_args, device, json_files, transforms_path).await)
+    Some(read_dataset_inner(vfs, load_args, json_files, transforms_path).await)
 }
 
 async fn read_dataset_inner(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-    device: &WgpuDevice,
     json_files: Vec<std::path::PathBuf>,
     transforms_path: std::path::PathBuf,
 ) -> Result<(Option<SplatMessage>, Dataset), FormatError> {
@@ -285,7 +282,6 @@ async fn read_dataset_inner(
 
     let dataset = Dataset::from_views(train_views, eval_views);
 
-    let device = device.clone();
     let load_args = load_args.clone();
 
     let mut init_splat = None;
@@ -299,9 +295,7 @@ async fn read_dataset_inner(
         let ply_data = vfs.reader_at_path(&init_path).await;
 
         if let Ok(ply_data) = ply_data {
-            init_splat = Some(
-                load_splat_from_ply(ply_data, load_args.subsample_points, device.clone()).await?,
-            );
+            init_splat = Some(load_splat_from_ply(ply_data, load_args.subsample_points).await?);
         }
     }
 

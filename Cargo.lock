@@ -1014,8 +1014,11 @@ dependencies = [
  "android_logger",
  "anyhow",
  "brush-cli",
+ "brush-process",
  "brush-render",
  "brush-ui",
+ "brush-vfs",
+ "burn-wgpu",
  "clap",
  "eframe",
  "egui",
@@ -1023,11 +1026,12 @@ dependencies = [
  "jni",
  "log",
  "rrfd",
+ "tempfile",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
- "wgpu",
  "winapi",
  "winit",
 ]
@@ -1076,6 +1080,7 @@ dependencies = [
 name = "brush-dataset"
 version = "0.3.0"
 dependencies = [
+ "ball-tree",
  "brush-render",
  "brush-serde",
  "brush-vfs",
@@ -1087,24 +1092,13 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "rand 0.9.2",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
  "tokio",
  "tokio_with_wasm",
  "tracing",
-]
-
-[[package]]
-name = "brush-ffi"
-version = "0.3.0"
-dependencies = [
- "brush-process",
- "brush-vfs",
- "burn-wgpu",
- "tempfile",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
@@ -1160,7 +1154,6 @@ name = "brush-render"
 version = "0.3.0"
 dependencies = [
  "assert_approx_eq",
- "ball-tree",
  "brush-kernel",
  "brush-prefix-sum",
  "brush-sort",
@@ -1173,8 +1166,6 @@ dependencies = [
  "clap",
  "glam",
  "log",
- "rand 0.9.2",
- "rayon",
  "tracing",
  "wgpu",
 ]

@@ -73,15 +73,8 @@ fn generate_test_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend
 
     let opacities: Vec<f32> = (0..count).map(|_| rng.random_range(0.6..1.0)).collect();
 
-    Splats::<DiffBackend>::from_raw(
-        means,
-        Some(rotations),
-        Some(log_scales),
-        Some(sh_coeffs),
-        Some(opacities),
-        device,
-    )
-    .with_sh_degree(0)
+    Splats::<DiffBackend>::from_raw(means, rotations, log_scales, sh_coeffs, opacities, device)
+        .with_sh_degree(0)
 }
 
 fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {

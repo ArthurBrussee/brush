@@ -4,15 +4,14 @@ use crate::{
 };
 use anyhow::Context;
 use async_fn_stream::TryStreamEmitter;
-use brush_dataset::{load_dataset, scene::Scene, scene_loader::SceneLoader};
-use brush_render::{
-    MainBackend,
-    gaussian_splats::{RandomSplatsConfig, Splats},
-};
+use brush_dataset::{load_dataset, scene::Scene, scene_loader::SceneLoader, splat_data_to_splats};
+use brush_render::{MainBackend, gaussian_splats::Splats};
 use brush_rerun::{RerunConfig, visualize_tools::VisualizeTools};
 use brush_train::{
+    RandomSplatsConfig, create_random_splats,
     eval::eval_stats,
     msg::{RefineStats, TrainStepStats},
+    splats_into_autodiff,
     train::SplatTrainer,
 };
 use brush_vfs::BrushVfs;
@@ -53,10 +52,9 @@ pub(crate) async fn train_stream(
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     log::info!("Loading dataset");
-    let (initial_splats, dataset) =
-        load_dataset(vfs.clone(), &train_stream_args.load_config, &device)
-            .instrument(trace_span!("Load dataset"))
-            .await?;
+    let (initial_splats, dataset) = load_dataset(vfs.clone(), &train_stream_args.load_config)
+        .instrument(trace_span!("Load dataset"))
+        .await?;
 
     log::info!("Log scene to rerun");
     if let Err(error) = visualize.log_scene(
@@ -83,16 +81,22 @@ pub(crate) async fn train_stream(
     let estimated_up = dataset.estimate_up();
     log::info!("Loading initial splats if any.");
 
-    if let Some(init) = &initial_splats {
+    // Convert SplatData to Splats using KNN initialization
+    let initial_splats = initial_splats.map(|msg| {
+        let splats = splat_data_to_splats(msg.data, &device);
+        (msg.meta, splats)
+    });
+
+    if let Some((meta, splats)) = &initial_splats {
         emitter
             .emit(ProcessMessage::ViewSplats {
                 // If the metadata has an up axis prefer that, otherwise estimate
                 // the up direction.
-                up_axis: init.meta.up_axis.or(Some(estimated_up)),
-                splats: Box::new(init.splats.clone()),
+                up_axis: meta.up_axis.or(Some(estimated_up)),
+                splats: Box::new(splats.clone()),
                 frame: 0,
                 total_frames: 0,
-                progress: init.meta.progress,
+                progress: meta.progress,
             })
             .await;
     }
@@ -100,22 +104,22 @@ pub(crate) async fn train_stream(
     emitter.emit(ProcessMessage::DoneLoading).await;
 
     // Start with memory cleared out.
-    let client = WgpuRuntime::client(device);
+    let client = WgpuRuntime::client(&device);
     client.memory_cleanup();
 
-    let splats = if let Some(init_msg) = initial_splats {
-        init_msg.splats
+    let splats = if let Some((_, splats)) = initial_splats {
+        splats
     } else {
         log::info!("Starting with random splat config.");
         // Create a bounding box the size of all the cameras plus a bit.
         let mut bounds = dataset.train.bounds();
         bounds.extent *= 1.25;
         let config = RandomSplatsConfig::new();
-        Splats::from_random_config(&config, bounds, &mut rng, &device)
+        create_random_splats(&config, bounds, &mut rng, &device)
     };
 
     let splats = splats.with_sh_degree(train_stream_args.model_config.sh_degree);
-    let mut splats = splats.into_autodiff();
+    let mut splats = splats_into_autodiff(splats);
 
     let mut eval_scene = dataset.eval;
 

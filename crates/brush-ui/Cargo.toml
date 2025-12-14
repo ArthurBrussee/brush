@@ -6,7 +6,7 @@ readme.workspace = true
 license.workspace = true
 
 [features]
-training = ["brush-process/training", "dep:brush-dataset"]
+training = ["brush-process/training", "dep:brush-dataset", "brush-serde/export"]
 debug-validation = ["brush-process/debug-validation"]
 
 [dependencies]

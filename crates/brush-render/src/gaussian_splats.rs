@@ -1,30 +1,16 @@
 use crate::{
     SplatForward,
-    bounding_box::BoundingBox,
     camera::Camera,
     render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
-    validation::validate_tensor_val,
 };
-use ball_tree::BallTree;
 use burn::{
-    config::Config,
     module::{Module, Param, ParamId},
     prelude::Backend,
-    tensor::{
-        Tensor, TensorData, TensorPrimitive, activation::sigmoid, backend::AutodiffBackend, s,
-    },
+    tensor::{Tensor, TensorData, TensorPrimitive, activation::sigmoid, s},
 };
 use glam::Vec3;
-use rand::Rng;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use tracing::trace_span;
-
-#[derive(Config, Debug)]
-pub struct RandomSplatsConfig {
-    #[config(default = 10000)]
-    init_count: usize,
-}
 
 #[derive(Module, Debug)]
 pub struct Splats<B: Backend> {
@@ -45,142 +31,29 @@ pub fn inverse_sigmoid(x: f32) -> f32 {
     (x / (1.0 - x)).ln()
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
-struct BallPoint(glam::Vec3A);
-
-impl ball_tree::Point for BallPoint {
-    fn distance(&self, other: &Self) -> f64 {
-        self.0.distance(other.0) as f64
-    }
-
-    fn move_towards(&self, other: &Self, d: f64) -> Self {
-        Self(self.0.lerp(other.0, d as f32 / self.0.distance(other.0)))
-    }
-
-    fn midpoint(a: &Self, b: &Self) -> Self {
-        Self((a.0 + b.0) / 2.0)
-    }
-}
-
 impl<B: Backend> Splats<B> {
-    pub fn from_random_config(
-        config: &RandomSplatsConfig,
-        bounds: BoundingBox,
-        rng: &mut impl Rng,
-        device: &B::Device,
-    ) -> Self {
-        let num_points = config.init_count;
-
-        let min = bounds.min();
-        let max = bounds.max();
-
-        let mut positions: Vec<f32> = Vec::with_capacity(num_points * 3);
-        for _ in 0..num_points {
-            let x = rng.random_range(min.x..max.x);
-            let y = rng.random_range(min.y..max.y);
-            let z = rng.random_range(min.z..max.z);
-            positions.extend([x, y, z]);
-        }
-
-        let mut colors: Vec<f32> = Vec::with_capacity(num_points);
-        for _ in 0..num_points {
-            let r = rng.random_range(0.0..1.0);
-            let g = rng.random_range(0.0..1.0);
-            let b = rng.random_range(0.0..1.0);
-            colors.push(r);
-            colors.push(g);
-            colors.push(b);
-        }
-        Self::from_raw(positions, None, None, Some(colors), None, device)
-    }
-
     pub fn from_raw(
         pos_data: Vec<f32>,
-        rot_data: Option<Vec<f32>>,
-        scale_data: Option<Vec<f32>>,
-        coeffs_data: Option<Vec<f32>>,
-        opac_data: Option<Vec<f32>>,
+        rot_data: Vec<f32>,
+        scale_data: Vec<f32>,
+        coeffs_data: Vec<f32>,
+        opac_data: Vec<f32>,
         device: &B::Device,
     ) -> Self {
         let _ = trace_span!("Splats::from_raw").entered();
 
         let n_splats = pos_data.len() / 3;
-
-        let log_scales = if let Some(log_scales) = scale_data {
-            let _ = trace_span!("Splats scale init").entered();
-
-            Tensor::from_data(TensorData::new(log_scales, [n_splats, 3]), device)
-        } else if n_splats >= 3 {
-            let bounding_box =
-                trace_span!("Bounds from pose").in_scope(|| bounds_from_pos(0.75, &pos_data));
-            let median_size = bounding_box.median_size().max(0.01);
-
-            let extents: Vec<_> = trace_span!("Splats KNN scale init").in_scope(|| {
-                let tree_points: Vec<BallPoint> = pos_data
-                    .as_chunks::<3>()
-                    .0
-                    .iter()
-                    .map(|v| BallPoint(glam::Vec3A::new(v[0], v[1], v[2])))
-                    .collect();
-
-                let empty = vec![(); tree_points.len()];
-                let tree = BallTree::new(tree_points.clone(), empty);
-
-                tree_points
-                    .par_iter()
-                    .map_with(tree.query(), |query, p| {
-                        // Get half of the average of 2 nearest distances.
-                        let mut q = query.nn(p).skip(1);
-                        let a1 = q.next().unwrap().1 as f32;
-                        let a2 = q.next().unwrap().1 as f32;
-                        let dist = (a1 + a2) / 4.0;
-                        dist.clamp(1e-3, median_size * 0.1).ln()
-                    })
-                    .flat_map(|p| [p, p, p])
-                    .collect()
-            });
-
-            Tensor::from_data(TensorData::new(extents, [n_splats, 3]), device)
-        } else {
-            Tensor::ones([n_splats, 3], device)
-        };
-
-        let _ = trace_span!("Splats init rest").entered();
-
+        let log_scales = Tensor::from_data(TensorData::new(scale_data, [n_splats, 3]), device);
         let means_tensor = Tensor::from_data(TensorData::new(pos_data, [n_splats, 3]), device);
+        let rotations = Tensor::from_data(TensorData::new(rot_data, [n_splats, 4]), device);
+        let n_coeffs = coeffs_data.len() / n_splats;
+        let sh_coeffs = Tensor::from_data(
+            TensorData::new(coeffs_data, [n_splats, n_coeffs / 3, 3]),
+            device,
+        );
 
-        let rotations = if let Some(rotations) = rot_data {
-            Tensor::from_data(TensorData::new(rotations, [n_splats, 4]), device)
-        } else {
-            norm_vec(Tensor::random(
-                [n_splats, 4],
-                burn::tensor::Distribution::Normal(0.0, 1.0),
-                device,
-            ))
-        };
-
-        let sh_coeffs = if let Some(sh_coeffs) = coeffs_data {
-            let n_coeffs = sh_coeffs.len() / n_splats;
-            Tensor::from_data(
-                TensorData::new(sh_coeffs, [n_splats, n_coeffs / 3, 3]),
-                device,
-            )
-        } else {
-            Tensor::ones([n_splats, 1, 3], device) * 0.5
-        };
-
-        let raw_opacities = if let Some(raw_opacities) = opac_data {
-            Tensor::from_data(TensorData::new(raw_opacities, [n_splats]), device).require_grad()
-        } else {
-            Tensor::random(
-                [n_splats],
-                burn::tensor::Distribution::Uniform(
-                    inverse_sigmoid(0.1) as f64,
-                    inverse_sigmoid(0.25) as f64,
-                ),
-                device,
-            )
-        };
+        let raw_opacities =
+            Tensor::from_data(TensorData::new(opac_data, [n_splats]), device).require_grad();
 
         Self::from_tensor_data(
             means_tensor,
@@ -194,7 +67,6 @@ impl<B: Backend> Splats<B> {
     /// Set the SH degree of this splat to be equal to `sh_degree`
     pub fn with_sh_degree(mut self, sh_degree: u32) -> Self {
         let n_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
-
         let [n, cur_coeffs, _] = self.sh_coeffs.dims();
 
         self.sh_coeffs = self.sh_coeffs.map(|coeffs| {
@@ -265,7 +137,10 @@ impl<B: Backend> Splats<B> {
         self.means.device()
     }
 
+    #[cfg(any(feature = "debug-validation", test))]
     pub fn validate_values(&self) {
+        use crate::validation::validate_tensor_val;
+
         let num_splats = self.num_splats();
 
         // Validate means (positions)
@@ -341,72 +216,6 @@ impl<B: Backend> Splats<B> {
             "Inconsistent number of splats in SH coeffs"
         );
     }
-
-    // TODO: This should probably exist in Burn. Maybe make a PR.
-    pub fn into_autodiff<BDiff: AutodiffBackend<InnerBackend = B>>(self) -> Splats<BDiff> {
-        let (means_id, means, _) = self.means.consume();
-        let (rotation_id, rotation, _) = self.rotations.consume();
-        let (log_scales_id, log_scales, _) = self.log_scales.consume();
-        let (sh_coeffs_id, sh_coeffs, _) = self.sh_coeffs.consume();
-        let (raw_opacity_id, raw_opacity, _) = self.raw_opacities.consume();
-
-        Splats::<BDiff> {
-            means: Param::initialized(means_id, Tensor::from_inner(means).require_grad()),
-            rotations: Param::initialized(rotation_id, Tensor::from_inner(rotation).require_grad()),
-            log_scales: Param::initialized(
-                log_scales_id,
-                Tensor::from_inner(log_scales).require_grad(),
-            ),
-            sh_coeffs: Param::initialized(
-                sh_coeffs_id,
-                Tensor::from_inner(sh_coeffs).require_grad(),
-            ),
-            raw_opacities: Param::initialized(
-                raw_opacity_id,
-                Tensor::from_inner(raw_opacity).require_grad(),
-            ),
-        }
-    }
-
-    pub async fn get_bounds(self, percentile: f32) -> BoundingBox {
-        let means: Vec<f32> = self
-            .means
-            .val()
-            .into_data_async()
-            .await
-            .expect("Failed to fetch splat data")
-            .to_vec()
-            .expect("Failed to get means");
-
-        bounds_from_pos(percentile, &means)
-    }
-}
-
-fn bounds_from_pos(percentile: f32, means: &[f32]) -> BoundingBox {
-    // Split into x, y, z values
-    let (mut x_vals, mut y_vals, mut z_vals): (Vec<f32>, Vec<f32>, Vec<f32>) = means
-        .chunks_exact(3)
-        .map(|chunk| (chunk[0], chunk[1], chunk[2]))
-        .collect();
-
-    // Filter out NaN and infinite values before sorting
-    x_vals.retain(|x| x.is_finite());
-    y_vals.retain(|y| y.is_finite());
-    z_vals.retain(|z| z.is_finite());
-
-    x_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    y_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    // Get upper and lower percentiles.
-    let lower_idx = ((1.0 - percentile) / 2.0 * x_vals.len() as f32) as usize;
-    let upper_idx =
-        (x_vals.len() - 1).min(((1.0 + percentile) / 2.0 * x_vals.len() as f32) as usize);
-
-    BoundingBox::from_min_max(
-        Vec3::new(x_vals[lower_idx], y_vals[lower_idx], z_vals[lower_idx]),
-        Vec3::new(x_vals[upper_idx], y_vals[upper_idx], z_vals[upper_idx]),
-    )
 }
 
 impl<B: Backend + SplatForward<B>> Splats<B> {

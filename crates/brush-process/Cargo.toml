@@ -8,7 +8,7 @@ license.workspace = true
 
 [features]
 debug-validation = ["brush-train/debug-validation"]
-training = ["dep:brush-train", "dep:brush-dataset"]
+training = ["dep:brush-train", "dep:brush-dataset", "brush-serde/export"]
 
 [dependencies]
 brush-render.path = "../brush-render"

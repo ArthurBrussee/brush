@@ -13,12 +13,10 @@ use crate::{
 };
 use brush_render::{
     camera::{self, Camera},
-    gaussian_splats::Splats,
     sh::rgb_to_sh,
 };
-use brush_serde::{ParseMetadata, SplatMessage};
+use brush_serde::{ParseMetadata, SplatData, SplatMessage};
 use brush_vfs::BrushVfs;
-use burn::backend::wgpu::WgpuDevice;
 use itertools::Itertools;
 use tokio_with_wasm::alias as tokio_wasm;
 
@@ -36,7 +34,6 @@ fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
 pub(crate) async fn load_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-    device: &WgpuDevice,
 ) -> Option<Result<(Option<SplatMessage>, Dataset), FormatError>> {
     log::info!("Loading colmap dataset");
 
@@ -49,14 +46,12 @@ pub(crate) async fn load_dataset(
     } else {
         return None;
     };
-
-    Some(load_dataset_inner(vfs, load_args, device, cam_path, img_path).await)
+    Some(load_dataset_inner(vfs, load_args, cam_path, img_path).await)
 }
 
 async fn load_dataset_inner(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-    device: &WgpuDevice,
     cam_path: PathBuf,
     img_path: PathBuf,
 ) -> Result<(Option<SplatMessage>, Dataset), FormatError> {
@@ -146,7 +141,6 @@ async fn load_dataset_inner(
         Result::<_, FormatError>::Ok(Dataset::from_views(train_views, eval_views))
     });
 
-    let device = device.clone();
     let load_args = load_args.clone();
 
     let init = tokio_wasm::spawn(async move {
@@ -189,23 +183,25 @@ async fn load_dataset_inner(
             })
             .collect();
 
-        log::info!("Starting from colmap points {}", positions.len() / 3);
-
-        let init_splat = Splats::from_raw(positions, None, None, Some(colors), None, &device);
-        log::info!(
-            "Created init splat from points with {} splats",
-            init_splat.num_splats()
-        );
+        let n_splats = positions.len() / 3;
+        log::info!("Starting from colmap points: {n_splats}");
+        let data = SplatData {
+            means: positions,
+            rotations: None,
+            log_scales: None,
+            sh_coeffs: Some(colors),
+            raw_opacities: None,
+        };
 
         Some(SplatMessage {
             meta: ParseMetadata {
                 up_axis: None,
-                total_splats: init_splat.num_splats(),
+                total_splats: n_splats as u32,
                 frame_count: 1,
                 current_frame: 0,
                 progress: 1.0,
             },
-            splats: init_splat,
+            data,
         })
     });
 

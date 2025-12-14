@@ -10,7 +10,7 @@ clap.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 rerun.workspace = true
-burn.workspace = true
+burn = { workspace = true, features = ["autodiff"] }
 brush-render.path = "../brush-render"
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"

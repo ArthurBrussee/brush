@@ -1,7 +1,5 @@
-#[cfg(feature = "training")]
-use brush_process::message::TrainMessage;
-
 use brush_process::config::TrainStreamConfig;
+use brush_process::message::TrainMessage;
 use brush_process::{message::ProcessMessage, process::create_process};
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
@@ -29,11 +27,9 @@ impl TryFrom<ProcessMessage> for ProgressMessage {
     fn try_from(value: ProcessMessage) -> Result<Self, Self::Error> {
         match value {
             ProcessMessage::NewSource => Ok(Self::NewSource),
-            #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(TrainMessage::TrainStep { iter, .. }) => {
                 Ok(Self::Training { iter })
             }
-            #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(TrainMessage::DoneTraining) => Ok(Self::DoneTraining),
             _ => Err(()),
         }
@@ -56,25 +52,20 @@ impl TrainOptions {
     /// If `output_path` is not null, it must be a valid pointer to a null-terminated C string.
     unsafe fn into_train_stream_config(self) -> TrainStreamConfig {
         let process_args = TrainStreamConfig::default();
-
-        #[cfg(feature = "training")]
-        {
-            let mut process_args = process_args;
-            if !self.output_path.is_null() {
-                // SAFETY: Path is not null, caller guarantees the string is a valid C-string.
-                process_args.process_config.export_path = unsafe {
-                    CStr::from_ptr(self.output_path)
-                        .to_string_lossy()
-                        .into_owned()
-                };
-            }
-            process_args.train_config.total_steps = self.total_steps;
-            process_args.train_config.refine_every = self.refine_every;
-            process_args.load_config.max_resolution = self.max_resolution;
-            process_args.process_config.export_every = self.export_every;
-            process_args.process_config.eval_save_to_disk = true;
+        let mut process_args = process_args;
+        if !self.output_path.is_null() {
+            // SAFETY: Path is not null, caller guarantees the string is a valid C-string.
+            process_args.process_config.export_path = unsafe {
+                CStr::from_ptr(self.output_path)
+                    .to_string_lossy()
+                    .into_owned()
+            };
         }
-
+        process_args.train_config.total_steps = self.total_steps;
+        process_args.train_config.refine_every = self.refine_every;
+        process_args.load_config.max_resolution = self.max_resolution;
+        process_args.process_config.export_every = self.export_every;
+        process_args.process_config.eval_save_to_disk = true;
         process_args
     }
 }

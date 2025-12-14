@@ -1,7 +1,6 @@
 use crate::{Dataset, config::LoadDataseConfig};
 use brush_serde::{DeserializeError, SplatMessage, load_splat_from_ply};
 use brush_vfs::BrushVfs;
-use burn::backend::wgpu::WgpuDevice;
 use image::ImageError;
 use std::{path::Path, sync::Arc};
 
@@ -46,12 +45,11 @@ pub enum DatasetError {
 pub async fn load_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-    device: &WgpuDevice,
 ) -> Result<(Option<SplatMessage>, Dataset), DatasetError> {
-    let mut dataset = colmap::load_dataset(vfs.clone(), load_args, device).await;
+    let mut dataset = colmap::load_dataset(vfs.clone(), load_args).await;
 
     if dataset.is_none() {
-        dataset = nerfstudio::read_dataset(vfs.clone(), load_args, device).await;
+        dataset = nerfstudio::read_dataset(vfs.clone(), load_args).await;
     }
 
     let Some(dataset) = dataset else {
@@ -75,7 +73,7 @@ pub async fn load_dataset(
             .reader_at_path(main_ply)
             .await
             .map_err(DeserializeError)?;
-        Some(load_splat_from_ply(reader, load_args.subsample_points, device.clone()).await?)
+        Some(load_splat_from_ply(reader, load_args.subsample_points).await?)
     } else {
         data_splat_init
     };

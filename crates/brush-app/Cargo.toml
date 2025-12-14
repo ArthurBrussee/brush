@@ -9,17 +9,28 @@ repository.workspace = true
 # Lib for android NDK.
 [lib]
 name = "main"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 # Bin for desktop platforms.
 [[bin]]
 name = "brush_app"
 path = "src/bin.rs"
 
+[features]
+training = ["brush-cli/training", "brush-process/training"]
+tracy = ["dep:tracing-subscriber", "dep:tracing-tracy"]
+debug-validation = ["brush-render/debug-validation", "brush-ui/debug-validation"]
+
 [dependencies]
 # Brush deps.
 brush-ui.path = "../brush-ui"
 brush-render.path = "../brush-render"
+brush-vfs.path = "../brush-vfs"
+brush-process = { path = "../brush-process" }
+
+burn-wgpu.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
 
 egui.workspace = true
 eframe.workspace = true
@@ -31,19 +42,12 @@ log.workspace = true
 tracing-subscriber = { workspace = true, optional = true }
 tracing-tracy = { workspace = true, optional = true }
 
-# Select supported backends per platform.
-[target.'cfg(any(target_family = "macos", target_family = "ios"))'.dependencies]
-wgpu = { workspace = true, features = ["metal"] }
 
-[target.'cfg(target_family = "unix")'.dependencies]
-wgpu = { workspace = true, features = ["vulkan"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
-wgpu = { workspace = true, features = ["vulkan"] }
 winit = { version = "0.30", features = ["android-game-activity"] }
 
 rrfd.path = "../rrfd"
-brush-ui.path = "../brush-ui"
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 
 android_logger = "0.15.0"
@@ -51,10 +55,6 @@ jni = "0.21.1"
 
 # On desktop platforms
 [target.'cfg(any(target_family = "unix", target_family = "windows"))'.dependencies]
-# Default to wayland on linux. Change this to x11 if needed.
-# this perhaps could use a feature on our side as well,
-# so you could run with cargo run --no-default-features --features=11
-wgpu = { workspace = true, features = ["vulkan"] }
 winit = { version = "0.30", features = ["default"] }
 clap.workspace = true
 env_logger.workspace = true
@@ -64,12 +64,8 @@ tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 [target.'cfg(target_family = "windows")'.dependencies]
 winapi.workspace = true
 
-[package.metadata.cargo-shear]
-ignored = ["wgpu"] # Need manual backend selection.
+[dev-dependencies]
+tempfile = "3.23.0"
 
 [lints]
 workspace = true
-
-[features]
-tracy = ["dep:tracing-subscriber", "dep:tracing-tracy"]
-debug-validation = ["brush-render/debug-validation", "brush-ui/debug-validation"]

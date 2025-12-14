@@ -15,13 +15,12 @@ use brush_render::{
 use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect, Slider, collapsing_header::CollapsingState};
 use glam::{UVec2, Vec3};
-use tokio_with_wasm::alias as tokio_wasm;
 use tracing::trace_span;
 use web_time::Instant;
 
 use crate::{
-    UiMode, app::CameraSettings, burn_texture::BurnTexture, draw_checkerboard, panels::AppPane,
-    ui_process::UiProcess, widget_3d::Widget3D,
+    UiMode, app::CameraSettings, burn_texture::BurnTexture, panels::AppPane, ui_process::UiProcess,
+    widget_3d::Widget3D,
 };
 
 #[derive(Clone, PartialEq)]
@@ -60,6 +59,7 @@ impl ErrorDisplay {
     }
 }
 
+#[cfg(feature = "training")]
 async fn export(splat: Splats<MainBackend>) -> Result<(), anyhow::Error> {
     let data = brush_serde::splat_to_ply(splat).await?;
     rrfd::save_file("export.ply", data).await?;
@@ -239,8 +239,7 @@ impl ScenePanel {
         }
 
         ui.scope(|ui| {
-            let mut background = false;
-
+            let background = false;
             // TODO: restore this.
             // let selected = process.selected_view();
             // if let Some(view) = selected.view
@@ -279,7 +278,7 @@ impl ScenePanel {
         &mut self,
         ui: &egui::Ui,
         process: &UiProcess,
-        splats: Option<Splats<MainBackend>>,
+        _splats: Option<Splats<MainBackend>>,
         pos: egui::Pos2,
     ) {
         let inner = |ui: &mut egui::Ui| {
@@ -354,18 +353,20 @@ impl ScenePanel {
                             }
                         });
 
-                        if let Some(splats) = splats
+                        #[cfg(feature = "training")]
+                        if let Some(splats) = _splats
                             && ui.small_button("⬆ Export").clicked()
                         {
                             let sender = self.export_channel.0.clone();
                             let ctx = ui.ctx().clone();
-                            tokio_wasm::task::spawn(async move {
-                                if let Err(e) = export(splats).await {
+                            tokio_with_wasm::alias::task::spawn(async move {
+                                if let Err(e) = export(_splats).await {
                                     let _ = sender.send(e.context("Failed to export splat"));
                                     ctx.request_repaint();
                                 }
                             });
                         }
+
                         ui.add_space(4.0);
                         ui.separator();
                         ui.add_space(4.0);

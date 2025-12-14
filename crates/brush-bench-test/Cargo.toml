@@ -6,7 +6,7 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
-brush-render.path = "../brush-render"
+brush-render = { path = "../brush-render", features = ["debug-validation"] }
 brush-render-bwd.path = "../brush-render-bwd"
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
@@ -15,7 +15,7 @@ anyhow.workspace = true
 image.workspace = true
 glam.workspace = true
 log.workspace = true
-burn.workspace = true
+burn = { workspace = true, features = ["autodiff"] }
 burn-cubecl.workspace = true
 bytemuck.workspace = true
 rand.workspace = true

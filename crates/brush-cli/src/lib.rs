@@ -96,18 +96,9 @@ pub async fn run_cli_ui(
             .tick_strings(&["ℹ️", "ℹ️"]),
     );
 
-    let eval_spinner = ProgressBar::new_spinner().with_style(
-        ProgressStyle::with_template("{spinner:.blue} {msg}")
-            .expect("Invalid indicatif config")
-            .tick_strings(&["✅", "✅"]),
-    );
-
     #[cfg(feature = "training")]
-    let total_steps = train_stream_config.train_config.total_steps;
-    #[cfg(not(feature = "training"))]
-    let total_steps = 1;
-
-    let train_progress = ProgressBar::new(total_steps as u64)
+    let train_progress = {
+        let bar = ProgressBar::new(train_stream_config.train_config.total_steps as u64)
         .with_style(
             ProgressStyle::with_template(
                 "[{elapsed}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} ({per_sec}, {eta} remaining)",
@@ -115,14 +106,21 @@ pub async fn run_cli_ui(
             .expect("Invalid indicatif config").progress_chars("◍○○"),
         )
         .with_message("Steps");
+        sp.add(bar);
+    };
 
     let sp = indicatif::MultiProgress::new();
     let main_spinner = sp.add(main_spinner);
-    let train_progress = sp.add(train_progress);
-    let eval_spinner = sp.add(eval_spinner);
-    let stats_spinner = sp.add(stats_spinner);
-
     main_spinner.enable_steady_tick(Duration::from_millis(120));
+
+    #[cfg(feature = "training")]
+    let eval_spinner = sp.add(
+        ProgressBar::new_spinner().with_style(
+            ProgressStyle::with_template("{spinner:.blue} {msg}")
+                .expect("Invalid indicatif config")
+                .tick_strings(&["✅", "✅"]),
+        ),
+    );
 
     #[cfg(feature = "training")]
     eval_spinner.set_message(format!(
@@ -130,6 +128,7 @@ pub async fn run_cli_ui(
         train_stream_config.process_config.eval_every,
     ));
 
+    let stats_spinner = sp.add(stats_spinner);
     stats_spinner.set_message("Starting up");
     log::info!("Starting up");
 
@@ -138,7 +137,7 @@ pub async fn run_cli_ui(
             sp.println("ℹ️  running in debug mode, compile with --release for best performance");
     }
 
-    let mut duration = Duration::from_secs(0);
+    let duration = Duration::from_secs(0);
 
     while let Some(msg) = stream.next().await {
         let _span = trace_span!("CLI UI").entered();
@@ -219,7 +218,6 @@ pub async fn run_cli_ui(
                 main_spinner.set_message("Completed loading");
                 stats_spinner.set_message("Completed loading");
             }
-
             ProcessMessage::Warning { error } => {
                 log::warn!("{error}");
                 sp.println("⚠️: {error}")?;
