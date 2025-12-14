@@ -2,6 +2,7 @@ use brush_kernel::CubeCount;
 use brush_kernel::create_dispatch_buffer;
 use brush_kernel::create_tensor;
 use brush_kernel::create_uniform_buffer;
+use brush_wgsl::wgsl_kernel;
 use burn::tensor::DType;
 use burn::tensor::Int;
 use burn::tensor::Tensor;
@@ -10,26 +11,27 @@ use burn_cubecl::CubeBackend;
 use burn_cubecl::cubecl::server::Bindings;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
-use shaders::sort_count;
-use shaders::sort_reduce;
-use shaders::sort_scan;
-use shaders::sort_scan_add;
-use shaders::sort_scatter;
 
-use brush_kernel::kernel_source_gen;
+// Kernel definitions using proc macro
+#[wgsl_kernel(source = "src/shaders/sort_count.wgsl")]
+pub struct SortCount;
 
-mod shaders;
+#[wgsl_kernel(source = "src/shaders/sort_reduce.wgsl")]
+pub struct SortReduce;
 
-const WG: u32 = shaders::sorting::WG;
-const ELEMENTS_PER_THREAD: u32 = shaders::sorting::ELEMENTS_PER_THREAD;
-const BLOCK_SIZE: u32 = WG * ELEMENTS_PER_THREAD;
-const BIN_COUNT: u32 = shaders::sorting::BIN_COUNT;
+#[wgsl_kernel(source = "src/shaders/sort_scan.wgsl")]
+pub struct SortScan;
 
-kernel_source_gen!(SortCount {}, sort_count);
-kernel_source_gen!(SortReduce {}, sort_reduce);
-kernel_source_gen!(SortScanAdd {}, sort_scan_add);
-kernel_source_gen!(SortScan {}, sort_scan);
-kernel_source_gen!(SortScatter {}, sort_scatter);
+#[wgsl_kernel(source = "src/shaders/sort_scan_add.wgsl")]
+pub struct SortScanAdd;
+
+#[wgsl_kernel(source = "src/shaders/sort_scatter.wgsl")]
+pub struct SortScatter;
+
+// Import types from the generated modules
+use sort_count::Uniforms;
+
+const BLOCK_SIZE: u32 = SortCount::WG * SortCount::ELEMENTS_PER_THREAD;
 
 pub fn radix_argsort(
     input_keys: CubeTensor<WgpuRuntime>,
@@ -65,18 +67,15 @@ pub fn radix_argsort(
     let num_wgs = create_dispatch_buffer(n_sort.clone(), [BLOCK_SIZE, 1, 1]);
     let num_reduce_wgs: Tensor<CubeBackend<WgpuRuntime, f32, i32, u32>, 1, Int> =
         Tensor::from_primitive(create_dispatch_buffer(num_wgs.clone(), [BLOCK_SIZE, 1, 1]))
-            * Tensor::from_ints([BIN_COUNT, 1, 1], device);
+            * Tensor::from_ints([SortCount::BIN_COUNT, 1, 1], device);
     let num_reduce_wgs: CubeTensor<WgpuRuntime> = num_reduce_wgs.into_primitive();
 
     let mut cur_keys = input_keys;
     let mut cur_vals = input_values;
 
     for pass in 0..sorting_bits.div_ceil(4) {
-        let uniforms_buffer: CubeTensor<WgpuRuntime> = create_uniform_buffer(
-            shaders::sort_count::Uniforms { shift: pass * 4 },
-            device,
-            client,
-        );
+        let uniforms_buffer: CubeTensor<WgpuRuntime> =
+            create_uniform_buffer(Uniforms { shift: pass * 4 }, device, client);
 
         let count_buf = create_tensor([(max_needed_wgs as usize) * 16], device, DType::I32);
 

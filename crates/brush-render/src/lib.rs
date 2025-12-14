@@ -13,7 +13,6 @@ use wgpu::{Adapter, Device, Queue};
 
 mod burn_glue;
 mod dim_check;
-mod kernels;
 pub mod render_aux;
 pub mod shaders;
 

@@ -20,10 +20,8 @@ brush-vfs.path = "../brush-vfs"
 
 glam.workspace = true
 eframe.workspace = true
-
 anyhow.workspace = true
 tokio_with_wasm = { workspace = true, features = ["rt"] }
-
 tokio = { workspace = true, features = ["io-util", "rt"] }
 wasm-bindgen.workspace = true
 web-sys = { workspace = true, features = [
@@ -31,8 +29,10 @@ web-sys = { workspace = true, features = [
     "Document",
     "Window",
 ] }
-wasm-logger = "0.2.0"
 log.workspace = true
+
+# TODO: Make dev only
+wasm-logger = "0.2.0"
 
 # wasm_js random backend needs to be enabled explicitly.
 getrandom = { version = "0.3", features = ["wasm_js"] }

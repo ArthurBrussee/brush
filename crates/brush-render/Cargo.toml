@@ -11,6 +11,7 @@ brush-prefix-sum.path = "../brush-prefix-sum"
 assert_approx_eq.workspace = true
 brush-kernel.path = "../brush-kernel"
 brush-sort.path = "../brush-sort"
+brush-wgsl.path = "../brush-wgsl"
 
 burn.workspace = true
 burn-wgpu.workspace = true
@@ -26,17 +27,12 @@ rand.workspace = true
 ball-tree.workspace = true
 log.workspace = true
 
-naga_oil.workspace = true
 wgpu.workspace = true
 
 rayon.workspace = true
 
 [features]
 debug-validation = []
-
-[build-dependencies]
-brush-wgsl.path = "../brush-wgsl"
-miette.workspace = true
 
 [lints]
 workspace = true

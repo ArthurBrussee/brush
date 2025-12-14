@@ -6,15 +6,11 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
+brush-wgsl.path = "../brush-wgsl"
 burn.workspace = true
 burn-cubecl.workspace = true
 bytemuck.workspace = true
-naga_oil.workspace = true
 wgpu.workspace = true
-
-[build-dependencies]
-brush-wgsl.path = "../brush-wgsl"
-miette.workspace = true
 
 [lints]
 workspace = true
