@@ -2,17 +2,14 @@ use brush_wgsl::wgsl_kernel;
 
 use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::tensor::{DType, Shape};
-pub use burn_cubecl::cubecl::CompilationError;
-pub use burn_cubecl::cubecl::prelude::CompiledKernel;
-pub use burn_cubecl::cubecl::prelude::ExecutionMode;
+
 pub use burn_cubecl::cubecl::{CubeCount, CubeDim, client::ComputeClient, server::ComputeServer};
 pub use burn_cubecl::cubecl::{CubeTask, Runtime};
 pub use burn_cubecl::cubecl::{
     prelude::KernelId,
     server::{Bindings, MetadataBinding},
 };
-pub use burn_cubecl::kernel::KernelMetadata;
-pub use burn_cubecl::{CubeRuntime, cubecl::Compiler, tensor::CubeTensor};
+pub use burn_cubecl::{CubeRuntime, tensor::CubeTensor};
 
 use bytemuck::Pod;
 
@@ -26,57 +23,6 @@ pub fn calc_cube_count<const D: usize>(sizes: [u32; D], workgroup_size: [u32; 3]
         sizes.get(1).unwrap_or(&1).div_ceil(workgroup_size[1]),
         sizes.get(2).unwrap_or(&1).div_ceil(workgroup_size[2]),
     )
-}
-
-/// Parse a pre-compiled WGSL string into a naga Module.
-pub fn parse_wgsl(source: &str) -> naga::Module {
-    naga::front::wgsl::parse_str(source).expect("Failed to parse pre-compiled WGSL")
-}
-
-pub fn module_to_compiled<C: Compiler>(
-    debug_name: &'static str,
-    module: &naga::Module,
-    workgroup_size: [u32; 3],
-) -> Result<CompiledKernel<C>, CompilationError> {
-    let info = naga::valid::Validator::new(
-        naga::valid::ValidationFlags::empty(),
-        naga::valid::Capabilities::all(),
-    )
-    .validate(module)
-    .expect("Failed to compile"); // Ideally this would err but seems hard but with current CubeCL.
-
-    let shader_string =
-        naga::back::wgsl::write_string(module, &info, naga::back::wgsl::WriterFlags::empty())
-            .expect("failed to convert naga module to source");
-
-    // Dawn annoyingly wants some extra syntax to enable subgroups,
-    // so just hack this in when running on wasm.
-    #[cfg(target_family = "wasm")]
-    // Ideally include all subgroup functions here but meh.
-    let shader_string = if shader_string.contains("subgroupAdd")
-        || shader_string.contains("subgroupAny")
-        || shader_string.contains("subgroupMax")
-        || shader_string.contains("subgroupBroadcast")
-        || shader_string.contains("subgroupShuffle")
-    {
-        "enable subgroups;\n".to_owned() + &shader_string
-    } else {
-        shader_string
-    };
-
-    Ok(CompiledKernel {
-        entrypoint_name: "main".to_owned(),
-        debug_name: Some(debug_name),
-        source: shader_string,
-        repr: None,
-        cube_dim: CubeDim::new(workgroup_size[0], workgroup_size[1], workgroup_size[2]),
-        debug_info: None,
-    })
-}
-
-pub fn calc_kernel_id<T: 'static>(values: &[bool]) -> KernelId {
-    let kernel_id = KernelId::new::<T>();
-    kernel_id.info(values.to_vec())
 }
 
 // Reserve a buffer from the client for the given shape.
@@ -169,28 +115,4 @@ pub fn create_dispatch_buffer(
     }
 
     ret
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct DummyKernel;
-
-    #[test]
-    fn test_kernel_id_calculation() {
-        // Test kernel ID generation with different boolean flags
-        let id1 = calc_kernel_id::<DummyKernel>(&[true, false]);
-        let id2 = calc_kernel_id::<DummyKernel>(&[false, true]);
-        let id3 = calc_kernel_id::<DummyKernel>(&[true, false]);
-
-        // Same flags should produce same ID
-        assert_eq!(id1, id3);
-        // Different flags should produce different IDs
-        assert_ne!(id1, id2);
-
-        // Empty flags should work
-        let id_empty = calc_kernel_id::<DummyKernel>(&[]);
-        assert_ne!(id_empty, id1);
-    }
 }

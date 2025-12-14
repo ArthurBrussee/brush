@@ -11,7 +11,6 @@ burn.workspace = true
 burn-cubecl.workspace = true
 bytemuck.workspace = true
 wgpu.workspace = true
-naga = { version = "26", features = ["wgsl-in", "wgsl-out"] }
 
 [lints]
 workspace = true
