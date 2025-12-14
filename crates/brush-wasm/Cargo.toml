@@ -41,7 +41,13 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 dwarf-debug-info = true
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+wasm-opt = [
+    "--enable-bulk-memory",
+    "--enable-nontrapping-float-to-int",
+    "--dce",
+    "--vacuum",
+    "--duplicate-function-elimination",
+]
 
 [package.metadata.cargo-shear]
 ignored = ["getrandom"]
