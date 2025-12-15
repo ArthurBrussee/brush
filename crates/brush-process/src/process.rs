@@ -35,6 +35,8 @@ pub fn create_process(
         } else {
             #[cfg(feature = "training")]
             crate::train_stream::train_stream(vfs, process_args, device, emitter).await?;
+            #[cfg(not(feature = "training"))]
+            anyhow::bail!("Training is not enabled in Brush, cannot load dataset.");
         };
 
         Ok(())
