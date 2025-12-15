@@ -9,7 +9,7 @@ license.workspace = true
 brush-wgsl.path = "../brush-wgsl"
 burn.workspace = true
 burn-cubecl.workspace = true
-bytemuck.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true
