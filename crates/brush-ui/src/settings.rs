@@ -32,9 +32,9 @@ impl AppPane for SettingsPanel {
         "Settings".to_owned()
     }
 
-    fn on_message(&mut self, message: &ProcessMessage, _: &UiProcess) {
+    fn on_message(&mut self, _message: &ProcessMessage, _: &UiProcess) {
         #[cfg(feature = "training")]
-        if let ProcessMessage::DetectedMaxImageResolution { max_resolution } = message {
+        if let ProcessMessage::DetectedMaxImageResolution { max_resolution } = _message {
             self.detected_max_image_resolution = Some(*max_resolution);
             if let Some(popup) = &mut self.popup {
                 popup.set_detected_max_image_resolution(*max_resolution);
