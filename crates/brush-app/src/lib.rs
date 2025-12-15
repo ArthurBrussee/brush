@@ -8,4 +8,5 @@ pub mod wasm;
 
 // FFI for native training API.
 #[cfg(feature = "training")]
+#[cfg(not(target_family = "wasm"))]
 pub mod ffi;
