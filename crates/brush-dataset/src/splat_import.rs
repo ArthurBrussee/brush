@@ -9,7 +9,7 @@ use glam::Vec3;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use tracing::trace_span;
 
-fn bounds_from_pos(percentile: f32, means: &[f32]) -> BoundingBox {
+pub fn bounds_from_pos(percentile: f32, means: &[f32]) -> BoundingBox {
     // Split into x, y, z values
     let (mut x_vals, mut y_vals, mut z_vals): (Vec<f32>, Vec<f32>, Vec<f32>) = means
         .chunks_exact(3)

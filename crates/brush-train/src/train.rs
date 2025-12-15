@@ -8,7 +8,7 @@ use crate::{
     stats::RefineRecord,
 };
 
-use brush_dataset::scene::SceneBatch;
+use brush_dataset::{scene::SceneBatch, splat_import::bounds_from_pos};
 use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
@@ -62,33 +62,6 @@ fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
 
 fn create_default_optimizer() -> OptimizerType {
     AdamScaledConfig::new().with_epsilon(1e-15).init()
-}
-
-fn bounds_from_pos(percentile: f32, means: &[f32]) -> BoundingBox {
-    // Split into x, y, z values
-    let (mut x_vals, mut y_vals, mut z_vals): (Vec<f32>, Vec<f32>, Vec<f32>) = means
-        .chunks_exact(3)
-        .map(|chunk| (chunk[0], chunk[1], chunk[2]))
-        .collect();
-
-    // Filter out NaN and infinite values before sorting
-    x_vals.retain(|x| x.is_finite());
-    y_vals.retain(|y| y.is_finite());
-    z_vals.retain(|z| z.is_finite());
-
-    x_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    y_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    // Get upper and lower percentiles.
-    let lower_idx = ((1.0 - percentile) / 2.0 * x_vals.len() as f32) as usize;
-    let upper_idx =
-        (x_vals.len() - 1).min(((1.0 + percentile) / 2.0 * x_vals.len() as f32) as usize);
-
-    BoundingBox::from_min_max(
-        Vec3::new(x_vals[lower_idx], y_vals[lower_idx], z_vals[lower_idx]),
-        Vec3::new(x_vals[upper_idx], y_vals[upper_idx], z_vals[upper_idx]),
-    )
 }
 
 pub async fn get_splat_bounds<B: Backend>(splats: Splats<B>, percentile: f32) -> BoundingBox {

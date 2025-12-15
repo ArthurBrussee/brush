@@ -160,23 +160,11 @@ impl ScenePanel {
         interactive: bool,
     ) -> egui::Rect {
         let size = ui.available_size();
-        // let selected = process.selected_view();
-
-        // if let Some(tex) = selected.tex.borrow().as_ref() {
-        //     let aspect_ratio = tex.handle.aspect_ratio();
-        //     if size.x / size.y > aspect_ratio {
-        //         size.x = size.y * aspect_ratio;
-        //     } else {
-        //         size.y = size.x / aspect_ratio;
-        //     }
-        // }
         let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
-
         let (rect, response) = ui.allocate_exact_size(
             egui::Vec2::new(size.x as f32, size.y as f32),
             egui::Sense::drag(),
         );
-
         if interactive {
             process.tick_controls(&response, ui);
         }
