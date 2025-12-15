@@ -17,6 +17,10 @@ pub struct SettingsPanel {
     #[cfg(feature = "training")]
     train_progress: Option<(u32, u32, Duration)>, // (current_iter, total_steps, elapsed)
     #[cfg(feature = "training")]
+    last_train_step: (Duration, u32), // (elapsed, iter) for calculating iter/s
+    #[cfg(feature = "training")]
+    train_iter_per_s: f32,
+    #[cfg(feature = "training")]
     popup: Option<SettingsPopup>,
 }
 
@@ -29,6 +33,10 @@ impl SettingsPanel {
             current_source: None,
             #[cfg(feature = "training")]
             train_progress: None,
+            #[cfg(feature = "training")]
+            last_train_step: (Duration::from_secs(0), 0),
+            #[cfg(feature = "training")]
+            train_iter_per_s: 0.0,
             #[cfg(feature = "training")]
             popup: None,
         }
@@ -68,6 +76,20 @@ impl AppPane for SettingsPanel {
                 ..
             }) => {
                 self.train_progress = Some((*iter, *total_steps, *total_elapsed));
+
+                // Calculate smoothed iter/s
+                if let Some(elapsed_diff) = total_elapsed.checked_sub(self.last_train_step.0) {
+                    let iter_diff = iter - self.last_train_step.1;
+                    if iter_diff > 0 && elapsed_diff.as_secs_f32() > 0.0 {
+                        let current_iter_per_s = iter_diff as f32 / elapsed_diff.as_secs_f32();
+                        self.train_iter_per_s = if *iter < 16 {
+                            current_iter_per_s
+                        } else {
+                            0.95 * self.train_iter_per_s + 0.05 * current_iter_per_s
+                        };
+                    }
+                }
+                self.last_train_step = (*total_elapsed, *iter);
             }
             #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(TrainMessage::DoneTraining) => {
@@ -82,11 +104,8 @@ impl AppPane for SettingsPanel {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
-        // Horizontal status bar layout
         ui.horizontal(|ui| {
             ui.set_height(32.0);
-
-            // Load buttons section
             ui.spacing_mut().item_spacing.x = 2.0;
 
             let button_height = 26.0;
@@ -161,14 +180,12 @@ impl AppPane for SettingsPanel {
                 );
             }
 
-            // Training progress on the right
             #[cfg(feature = "training")]
             if let Some((iter, total, elapsed)) = self.train_progress {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let progress = iter as f32 / total as f32;
                     let percent = (progress * 100.0) as u32;
 
-                    // Estimate remaining time
                     let eta_text = if iter > 0 {
                         let elapsed_secs = elapsed.as_secs_f32();
                         let secs_per_iter = elapsed_secs / iter as f32;
@@ -180,44 +197,77 @@ impl AppPane for SettingsPanel {
                         "ETA --".to_owned()
                     };
 
-                    // Progress bar without text (we'll draw text manually)
                     let bar_response = ui.add(
                         egui::ProgressBar::new(progress)
                             .desired_width(450.0)
                             .desired_height(22.0),
                     );
 
-                    // Draw percentage on the left and ETA on the right
                     let bar_rect = bar_response.rect;
-                    let text_color = egui::Color32::WHITE;
-                    let padding = 8.0;
+                    let padding = 10.0;
 
-                    // Percentage on the left
                     ui.painter().text(
                         egui::pos2(bar_rect.left() + padding, bar_rect.center().y),
                         egui::Align2::LEFT_CENTER,
                         format!("{percent}%"),
-                        egui::FontId::proportional(12.0),
-                        text_color,
+                        egui::FontId::proportional(13.0),
+                        egui::Color32::WHITE,
                     );
 
-                    // ETA on the right
+                    let iter_text = format!("{:.1} it/s", self.train_iter_per_s);
+                    let dim_color = egui::Color32::from_rgb(200, 200, 200);
+                    let bright_color = egui::Color32::WHITE;
+
+                    let galley_eta = ui.painter().layout_no_wrap(
+                        eta_text.clone(),
+                        egui::FontId::proportional(12.0),
+                        bright_color,
+                    );
+                    let galley_iter = ui.painter().layout_no_wrap(
+                        iter_text.clone(),
+                        egui::FontId::proportional(11.0),
+                        dim_color,
+                    );
+
+                    let eta_width = galley_eta.size().x;
+                    let iter_width = galley_iter.size().x;
+                    let separator_width = 24.0;
+
                     ui.painter().text(
                         egui::pos2(bar_rect.right() - padding, bar_rect.center().y),
                         egui::Align2::RIGHT_CENTER,
                         eta_text,
                         egui::FontId::proportional(12.0),
-                        text_color,
+                        bright_color,
+                    );
+
+                    ui.painter().text(
+                        egui::pos2(
+                            bar_rect.right() - padding - eta_width - separator_width / 2.0,
+                            bar_rect.center().y,
+                        ),
+                        egui::Align2::CENTER_CENTER,
+                        "-",
+                        egui::FontId::proportional(11.0),
+                        dim_color,
+                    );
+
+                    ui.painter().text(
+                        egui::pos2(
+                            bar_rect.right() - padding - eta_width - separator_width - iter_width,
+                            bar_rect.center().y,
+                        ),
+                        egui::Align2::LEFT_CENTER,
+                        iter_text,
+                        egui::FontId::proportional(11.0),
+                        dim_color,
                     );
 
                     ui.add_space(16.0);
-
-                    // Training label
                     ui.label(egui::RichText::new("Training").size(16.0).strong());
                 });
             }
 
-            // URL dialog window
             if self.show_url_dialog {
                 egui::Window::new("Load from URL")
                     .resizable(false)
