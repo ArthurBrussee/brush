@@ -172,7 +172,6 @@ fn test_batch_generation() {
     assert_eq!(img_dims, [128, 256, 3]);
     let img_data = batch.img_tensor.into_vec::<f32>().unwrap();
     assert!(img_data.iter().all(|&x| x.is_finite()));
-    // TODO: Oh no... SH vals can be >1 I guess... ?
     assert!(img_data.iter().all(|&x| (0.0..=1.1).contains(&x)));
 }
 

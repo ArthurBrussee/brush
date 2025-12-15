@@ -1,7 +1,7 @@
 use crate::{
     UiMode, draw_checkerboard,
     panels::AppPane,
-    ui_process::{TexHandle, UiProcess},
+    ui_process::{BackgroundStyle, TexHandle, UiProcess},
 };
 use brush_dataset::{
     Dataset,
@@ -88,7 +88,7 @@ impl DatasetPanel {
             let bg_height = (image.height() / 32).max(1);
             let blurred = image
                 .resize(bg_width, bg_height, image::imageops::FilterType::Triangle)
-                .blur(7.0);
+                .blur(6.0);
             let blurred_size = [blurred.width() as usize, blurred.height() as usize];
             let blurred_img =
                 egui::ColorImage::from_rgb(blurred_size, &blurred.into_rgb8().into_vec());
@@ -188,6 +188,17 @@ impl AppPane for DatasetPanel {
                 let last_handle = self.selected_view.tex.borrow();
 
                 if let Some(texture_handle) = last_handle.as_ref() {
+                    // if training views have alpha, show a background checker. Masked images
+                    // should still use a black background.
+                    let background = if texture_handle.has_alpha
+                        && selected_view.image.alpha_mode() == AlphaMode::Transparent
+                    {
+                        BackgroundStyle::Checkerboard
+                    } else {
+                        BackgroundStyle::Black
+                    };
+                    process.set_background_style(background);
+
                     let available = ui.available_size();
                     let cursor_min = ui.cursor().min;
                     let aspect_ratio = texture_handle.handle.aspect_ratio();
@@ -212,7 +223,7 @@ impl AppPane for DatasetPanel {
                             blurred.id(),
                             full_rect,
                             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                            Color32::from_gray(120),
+                            Color32::from_gray(80),
                         );
                     } else {
                         ui.painter()

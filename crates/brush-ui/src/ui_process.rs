@@ -43,6 +43,12 @@ impl Default for UiProcess {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum BackgroundStyle {
+    Black,
+    Checkerboard,
+}
+
 impl UiProcess {
     pub fn new() -> Self {
         // Set the global config once on startup.
@@ -55,6 +61,14 @@ impl UiProcess {
         });
 
         Self(RwLock::new(UiProcessInner::new()))
+    }
+
+    pub(crate) fn background_style(&self) -> BackgroundStyle {
+        self.read().background_style
+    }
+
+    pub(crate) fn set_background_style(&self, style: BackgroundStyle) {
+        self.write().background_style = style;
     }
 }
 
@@ -287,6 +301,7 @@ struct UiProcessInner {
     running_process: Option<RunningProcess>,
     cur_device_ctx: Option<DeviceContext>,
     ui_mode: UiMode,
+    background_style: BackgroundStyle,
 }
 
 impl UiProcessInner {
@@ -306,6 +321,7 @@ impl UiProcessInner {
             running_process: None,
             cur_device_ctx: None,
             ui_mode: UiMode::Default,
+            background_style: BackgroundStyle::Black,
         }
     }
 

@@ -19,7 +19,12 @@ use tracing::trace_span;
 use web_time::Instant;
 
 use crate::{
-    UiMode, app::CameraSettings, burn_texture::BurnTexture, panels::AppPane, ui_process::UiProcess,
+    UiMode,
+    app::CameraSettings,
+    burn_texture::BurnTexture,
+    draw_checkerboard,
+    panels::AppPane,
+    ui_process::{BackgroundStyle, UiProcess},
     widget_3d::Widget3D,
 };
 
@@ -253,23 +258,15 @@ impl ScenePanel {
         }
 
         ui.scope(|ui| {
-            let background = false;
-            // TODO: restore this.
-            // let selected = process.selected_view();
-            // if let Some(view) = selected.view
-            //     && let Some(tex) = selected.tex.borrow().as_ref()
-            // {
-            //     // if training views have alpha, show a background checker. Masked images
-            //     // should still use a black background.
-            //     if tex.has_alpha && view.image.alpha_mode() == AlphaMode::Transparent {
-            //         background = true;
-            //         draw_checkerboard(ui, rect, Color32::WHITE);
-            //     }
-            // }
-
-            // If a scene is opaque, it assumes a black background.
-            if !background {
-                ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+            // if training views have alpha, show a background checker. Masked images
+            // should still use a black background.
+            match process.background_style() {
+                BackgroundStyle::Checkerboard => {
+                    draw_checkerboard(ui, rect, Color32::WHITE);
+                }
+                BackgroundStyle::Black => {
+                    ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+                }
             }
 
             if let Some(id) = self.backbuffer.id() {

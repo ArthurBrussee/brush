@@ -153,7 +153,6 @@ pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
     streaming: bool,
 ) -> impl Stream<Item = Result<SplatMessage, DeserializeError>> {
     try_fn_stream(|emitter| async move {
-        // TODO: Just make chunk ply take in data and try to get a header? Simpler maybe.
         let mut file = PlyChunkedReader::new();
         read_chunk(&mut reader, file.buffer_mut()).await?;
 
