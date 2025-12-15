@@ -13,6 +13,7 @@ pub enum TrainMessage {
     TrainStep {
         splats: Box<Splats<MainBackend>>,
         iter: u32,
+        total_steps: u32,
         total_elapsed: web_time::Duration,
     },
     /// Some number of training steps are done.
@@ -32,7 +33,12 @@ pub enum TrainMessage {
 }
 
 pub enum ProcessMessage {
-    NewSource,
+    /// A new process is starting (before we know what type)
+    NewProcess,
+    /// Source has been loaded, contains the display name
+    NewSource {
+        name: String,
+    },
     StartLoading {
         training: bool,
     },

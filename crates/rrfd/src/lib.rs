@@ -20,8 +20,14 @@ pub enum PickFileError {
     IoError(#[from] std::io::Error),
 }
 
-/// Pick a file and return the name & bytes of the file.
-pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
+/// Result of picking a file - contains filename and reader
+pub struct PickedFile<R: AsyncRead + Unpin> {
+    pub name: String,
+    pub reader: R,
+}
+
+/// Pick a file and return the name & reader of the file.
+pub async fn pick_file() -> Result<PickedFile<impl AsyncRead + Unpin>, PickFileError> {
     #[cfg(all(not(target_os = "android"), not(target_family = "wasm")))]
     {
         let file = rfd::AsyncFileDialog::new()
@@ -29,8 +35,12 @@ pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
             .await
             .ok_or(PickFileError::NoFileSelected)?;
 
-        let file = tokio::fs::File::open(file.path()).await?;
-        Ok(tokio::io::BufReader::new(file))
+        let name = file.file_name();
+        let reader = tokio::fs::File::open(file.path()).await?;
+        Ok(PickedFile {
+            name,
+            reader: tokio::io::BufReader::new(reader),
+        })
     }
 
     #[cfg(target_family = "wasm")]
@@ -41,7 +51,10 @@ pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
     #[cfg(target_os = "android")]
     {
         let file = android::pick_file().await?;
-        Ok(tokio::io::BufReader::new(file))
+        Ok(PickedFile {
+            name: "file".to_owned(), // Android doesn't easily give us the filename
+            reader: tokio::io::BufReader::new(file),
+        })
     }
 }
 

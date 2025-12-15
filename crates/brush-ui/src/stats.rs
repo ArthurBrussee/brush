@@ -1,6 +1,5 @@
 use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
 use brush_process::message::ProcessMessage;
-#[cfg(feature = "training")]
 use brush_process::message::TrainMessage;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
@@ -10,16 +9,13 @@ use wgpu::AdapterInfo;
 pub struct StatsPanel {
     device: WgpuDevice,
 
-    train_iter_per_s: f32,
     last_eval: Option<String>,
     cur_sh_degree: u32,
     num_splats: u32,
     frames: u32,
     adapter_info: AdapterInfo,
 
-    #[allow(unused)]
     last_train_step: (Duration, u32),
-    #[allow(unused)]
     train_eval_views: (u32, u32),
 }
 
@@ -28,7 +24,6 @@ impl StatsPanel {
         Self {
             device,
             last_train_step: (Duration::from_secs(0), 0),
-            train_iter_per_s: 0.0,
             last_eval: None,
             num_splats: 0,
             frames: 0,
@@ -65,16 +60,15 @@ impl AppPane for StatsPanel {
     }
 
     fn is_visible(&self, process: &UiProcess) -> bool {
-        process.ui_mode() == UiMode::Default
+        process.ui_mode() == UiMode::Default && process.is_training()
     }
 
     fn on_message(&mut self, message: &ProcessMessage, _: &UiProcess) {
         match message {
-            ProcessMessage::NewSource => {
+            ProcessMessage::NewProcess => {
                 *self = Self::new(self.device.clone(), self.adapter_info.clone());
             }
             ProcessMessage::StartLoading { .. } => {
-                self.train_iter_per_s = 0.0;
                 self.num_splats = 0;
                 self.cur_sh_degree = 0;
                 self.last_eval = None;
@@ -84,25 +78,15 @@ impl AppPane for StatsPanel {
                 self.frames = *frame;
                 self.cur_sh_degree = splats.sh_degree();
             }
-            #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(train) => match train {
                 TrainMessage::TrainStep {
                     splats,
                     iter,
                     total_elapsed,
+                    ..
                 } => {
                     self.cur_sh_degree = splats.sh_degree();
                     self.num_splats = splats.num_splats();
-                    let current_iter_per_s = (iter - self.last_train_step.1) as f32
-                        / total_elapsed
-                            .checked_sub(self.last_train_step.0)
-                            .unwrap()
-                            .as_secs_f32();
-                    self.train_iter_per_s = if *iter < 16 {
-                        current_iter_per_s
-                    } else {
-                        0.95 * self.train_iter_per_s + 0.05 * current_iter_per_s
-                    };
                     self.last_train_step = (*total_elapsed, *iter);
                 }
                 TrainMessage::Dataset { dataset } => {
@@ -158,7 +142,6 @@ impl AppPane for StatsPanel {
                     }
                 });
 
-            #[cfg(feature = "training")]
             if process.is_training() {
                 ui.add_space(10.0);
                 ui.heading("Training Stats");
@@ -174,10 +157,6 @@ impl AppPane for StatsPanel {
                     .show(ui, |ui| {
                         ui.label("Train step");
                         ui.label(format!("{}", self.last_train_step.1));
-                        ui.end_row();
-
-                        ui.label("Steps/s");
-                        ui.label(format!("{:.1}", self.train_iter_per_s));
                         ui.end_row();
 
                         ui.label("Last eval");

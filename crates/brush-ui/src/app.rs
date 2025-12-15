@@ -3,8 +3,10 @@ use crate::UiMode;
 use crate::datasets::DatasetPanel;
 use crate::panels::AppPane;
 use crate::settings::SettingsPanel;
+#[cfg(feature = "training")]
+use crate::stats::StatsPanel;
 use crate::ui_process::UiProcess;
-use crate::{camera_controls::CameraClamping, scene::ScenePanel, stats::StatsPanel};
+use crate::{camera_controls::CameraClamping, scene::ScenePanel};
 use eframe::egui;
 use egui::ThemePreference;
 use egui_tiles::{SimplificationOptions, Tile, TileId, Tiles};
@@ -55,7 +57,7 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
     /// and between rows/columns in a grid layout.
     fn gap_width(&self, _style: &egui::Style) -> f32 {
         match self.process.ui_mode() {
-            UiMode::Default => 0.5,
+            UiMode::Default => 1.0,
             UiMode::FullScreenSplat => 0.0,
             UiMode::EmbeddedViewer => 0.0,
         }
@@ -101,34 +103,47 @@ impl App {
             .options_mut(|opt| opt.theme_preference = ThemePreference::Dark);
 
         let mut tiles: Tiles<PaneType> = Tiles::default();
-        let settings_pane = tiles.insert_pane(Box::new(SettingsPanel::new()));
+
+        // Create panes
+        let status_bar_pane = tiles.insert_pane(Box::new(SettingsPanel::new()));
+        #[cfg(feature = "training")]
         let stats_pane =
             tiles.insert_pane(Box::new(StatsPanel::new(device, state.adapter.get_info())));
-        let side_pane = tiles.insert_vertical_tile(vec![settings_pane, stats_pane]);
-
         let scene_pane = tiles.insert_pane(Box::new(ScenePanel::new(
             state.device.clone(),
             state.queue.clone(),
             state.renderer.clone(),
         )));
 
-        #[allow(unused_mut)]
-        let mut right_panels = vec![scene_pane];
-
+        // Main content area - with or without sidebar depending on training feature
         #[cfg(feature = "training")]
-        right_panels.push(tiles.insert_pane(Box::new(DatasetPanel::new())));
+        let main_content_container = {
+            // Right sidebar: Dataset (top) + Stats (bottom)
+            let dataset_pane = tiles.insert_pane(Box::new(DatasetPanel::new()));
+            let sidebar_panels = vec![dataset_pane, stats_pane];
 
-        let right_side = tiles.insert_container(egui_tiles::Linear::new(
+            let mut sidebar_linear =
+                egui_tiles::Linear::new(egui_tiles::LinearDir::Vertical, sidebar_panels);
+            sidebar_linear.shares.set_share(dataset_pane, 0.50);
+            let right_sidebar = tiles.insert_container(sidebar_linear);
+
+            let mut main_content = egui_tiles::Linear::new(
+                egui_tiles::LinearDir::Horizontal,
+                vec![scene_pane, right_sidebar],
+            );
+            main_content.shares.set_share(right_sidebar, 0.30);
+            tiles.insert_container(main_content)
+        };
+
+        #[cfg(not(feature = "training"))]
+        let main_content_container = scene_pane;
+
+        let mut root_layout = egui_tiles::Linear::new(
             egui_tiles::LinearDir::Vertical,
-            right_panels,
-        ));
-
-        let mut lin = egui_tiles::Linear::new(
-            egui_tiles::LinearDir::Horizontal,
-            vec![side_pane, right_side],
+            vec![status_bar_pane, main_content_container],
         );
-        lin.shares.set_share(side_pane, 0.35);
-        let root_container = tiles.insert_container(lin);
+        root_layout.shares.set_share(status_bar_pane, 0.07);
+        let root_container = tiles.insert_container(root_layout);
 
         let tree = egui_tiles::Tree::new("brush_tree", root_container, tiles);
         let tree_ctx = AppTree { process: context };

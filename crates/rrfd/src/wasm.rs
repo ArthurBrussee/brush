@@ -199,7 +199,7 @@ pub async fn save_file(default_name: &str, data: &[u8]) -> Result<(), PickFileEr
     Ok(())
 }
 
-pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
+pub async fn pick_file() -> Result<crate::PickedFile<impl AsyncRead + Unpin>, PickFileError> {
     let window = web_sys::window().ok_or(PickFileError::NoFileSelected)?;
     let document = window.document().ok_or(PickFileError::NoFileSelected)?;
 
@@ -234,6 +234,7 @@ pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
         .ok_or(PickFileError::NoFileSelected)?;
 
     let file = files.get(0).ok_or(PickFileError::NoFileSelected)?;
+    let name = file.name();
 
     let readable_stream: ReadableStream = file.stream();
     let wasm_stream = WasmReadableStream::from_raw(readable_stream);
@@ -255,5 +256,8 @@ pub async fn pick_file() -> Result<impl AsyncRead + Unpin, PickFileError> {
             })
     });
 
-    Ok(StreamReader::new(byte_stream))
+    Ok(crate::PickedFile {
+        name,
+        reader: StreamReader::new(byte_stream),
+    })
 }

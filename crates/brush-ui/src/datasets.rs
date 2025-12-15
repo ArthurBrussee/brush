@@ -142,7 +142,7 @@ impl AppPane for DatasetPanel {
 
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
-            ProcessMessage::NewSource => {
+            ProcessMessage::NewProcess => {
                 *self = Self::new();
             }
             ProcessMessage::TrainMessage(TrainMessage::Dataset { dataset }) => {
