@@ -81,6 +81,16 @@ pub async fn load_dataset(
     Ok((init_splat, dataset))
 }
 
+/// Best-effort detection of the maximum source image resolution (largest image dimension) in a dataset.
+///
+/// This is used by the UI to set sensible slider ranges before the dataset is fully loaded.
+pub async fn detect_max_image_resolution(vfs: Arc<BrushVfs>) -> Option<u32> {
+    if let Some(max_res) = colmap::detect_max_image_resolution(vfs.clone()).await {
+        return Some(max_res);
+    }
+    nerfstudio::detect_max_image_resolution(vfs).await
+}
+
 fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
     let search_name = path.file_name().expect("File must have a name");
     let search_stem = path.file_stem().expect("File must have a name");

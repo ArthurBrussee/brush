@@ -1,6 +1,7 @@
 #[cfg(feature = "training")]
 use crate::settings_popup::SettingsPopup;
 use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
+use brush_process::message::ProcessMessage;
 use brush_vfs::DataSource;
 use egui::Align2;
 
@@ -9,6 +10,8 @@ pub struct SettingsPanel {
     show_url_dialog: bool,
     #[cfg(feature = "training")]
     popup: Option<SettingsPopup>,
+    #[cfg(feature = "training")]
+    detected_max_image_resolution: Option<u32>,
 }
 
 impl SettingsPanel {
@@ -18,6 +21,8 @@ impl SettingsPanel {
             show_url_dialog: false,
             #[cfg(feature = "training")]
             popup: None,
+            #[cfg(feature = "training")]
+            detected_max_image_resolution: None,
         }
     }
 }
@@ -25,6 +30,16 @@ impl SettingsPanel {
 impl AppPane for SettingsPanel {
     fn title(&self) -> String {
         "Settings".to_owned()
+    }
+
+    fn on_message(&mut self, _message: &ProcessMessage, _: &UiProcess) {
+        #[cfg(feature = "training")]
+        if let ProcessMessage::DetectedMaxImageResolution { max_resolution } = _message {
+            self.detected_max_image_resolution = Some(*max_resolution);
+            if let Some(popup) = &mut self.popup {
+                popup.set_detected_max_image_resolution(*max_resolution);
+            }
+        }
     }
 
     fn is_visible(&self, process: &UiProcess) -> bool {
@@ -136,7 +151,11 @@ impl AppPane for SettingsPanel {
                 let (_sender, receiver) = tokio::sync::oneshot::channel();
                 #[cfg(feature = "training")]
                 {
-                    self.popup = Some(SettingsPopup::new(_sender));
+                    let mut popup = SettingsPopup::new(_sender);
+                    if let Some(max_resolution) = self.detected_max_image_resolution {
+                        popup.set_detected_max_image_resolution(max_resolution);
+                    }
+                    self.popup = Some(popup);
                 }
 
                 process.start_new_process(source, receiver);

@@ -219,6 +219,76 @@ pub async fn read_dataset(
     Some(read_dataset_inner(vfs, load_args, json_files, transforms_path).await)
 }
 
+pub(crate) async fn detect_max_image_resolution(vfs: Arc<BrushVfs>) -> Option<u32> {
+    let json_files: Vec<_> = vfs.files_with_extension("json").collect();
+
+    let transforms_path = if json_files.len() == 1 {
+        json_files.first()?
+    } else {
+        vfs.files_ending_in("transforms.json")
+            .next()
+            .or_else(|| vfs.files_ending_in("transforms_train.json").next())?
+    };
+    let transforms_path = transforms_path.to_path_buf();
+
+    let mut buf = String::new();
+    vfs.reader_at_path(&transforms_path)
+        .await
+        .ok()?
+        .read_to_string(&mut buf)
+        .await
+        .ok()?;
+
+    let scene: JsonScene = serde_json::from_str(&buf).ok()?;
+
+    let mut max_dim: u32 = 0;
+    fn consider(max_dim: &mut u32, w: u32, h: u32) {
+        *max_dim = (*max_dim).max(w).max(h);
+    }
+
+    if let (Some(w), Some(h)) = (scene.w, scene.h) {
+        consider(&mut max_dim, w as u32, h as u32);
+    }
+
+    for frame in &scene.frames {
+        let w = frame.w.or(scene.w);
+        let h = frame.h.or(scene.h);
+        if let (Some(w), Some(h)) = (w, h) {
+            consider(&mut max_dim, w as u32, h as u32);
+        }
+    }
+
+    if max_dim > 0 {
+        return Some(max_dim);
+    }
+
+    // Fallback: infer from the first image if no metadata had width/height.
+    let frame = scene.frames.first()?;
+    let mut path = transforms_path
+        .parent()
+        .expect("Transforms path must be a filename")
+        .join(&frame.file_path);
+
+    if vfs.reader_at_path(&path).await.is_err() {
+        // Assume png's by default if no extension is specified.
+        if path.extension().is_none() {
+            path = path.with_extension("png");
+        }
+    }
+
+    let mut img_bytes = vec![];
+    vfs.reader_at_path(&path)
+        .await
+        .ok()?
+        .read_to_end(&mut img_bytes)
+        .await
+        .ok()?;
+    let img = image::load_from_memory(&img_bytes).ok()?;
+    let (w, h) = img.dimensions();
+    consider(&mut max_dim, w, h);
+    (max_dim > 0).then_some(max_dim)
+}
+
 async fn read_dataset_inner(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
