@@ -1,6 +1,5 @@
 use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
 use brush_process::message::ProcessMessage;
-#[cfg(feature = "training")]
 use brush_process::message::TrainMessage;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
@@ -16,9 +15,7 @@ pub struct StatsPanel {
     frames: u32,
     adapter_info: AdapterInfo,
 
-    #[allow(unused)]
     last_train_step: (Duration, u32),
-    #[allow(unused)]
     train_eval_views: (u32, u32),
 }
 
@@ -63,7 +60,7 @@ impl AppPane for StatsPanel {
     }
 
     fn is_visible(&self, process: &UiProcess) -> bool {
-        process.ui_mode() == UiMode::Default
+        process.ui_mode() == UiMode::Default && process.is_training()
     }
 
     fn on_message(&mut self, message: &ProcessMessage, _: &UiProcess) {
@@ -81,7 +78,6 @@ impl AppPane for StatsPanel {
                 self.frames = *frame;
                 self.cur_sh_degree = splats.sh_degree();
             }
-            #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(train) => match train {
                 TrainMessage::TrainStep {
                     splats,
@@ -146,7 +142,6 @@ impl AppPane for StatsPanel {
                     }
                 });
 
-            #[cfg(feature = "training")]
             if process.is_training() {
                 ui.add_space(10.0);
                 ui.heading("Training Stats");

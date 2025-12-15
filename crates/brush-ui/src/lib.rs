@@ -9,6 +9,7 @@ pub mod ui_process;
 mod panels;
 mod scene;
 mod settings;
+#[cfg(feature = "training")]
 mod stats;
 mod widget_3d;
 

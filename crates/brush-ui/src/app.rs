@@ -3,8 +3,10 @@ use crate::UiMode;
 use crate::datasets::DatasetPanel;
 use crate::panels::AppPane;
 use crate::settings::SettingsPanel;
+#[cfg(feature = "training")]
+use crate::stats::StatsPanel;
 use crate::ui_process::UiProcess;
-use crate::{camera_controls::CameraClamping, scene::ScenePanel, stats::StatsPanel};
+use crate::{camera_controls::CameraClamping, scene::ScenePanel};
 use eframe::egui;
 use egui::ThemePreference;
 use egui_tiles::{SimplificationOptions, Tile, TileId, Tiles};
@@ -104,6 +106,7 @@ impl App {
 
         // Create panes
         let status_bar_pane = tiles.insert_pane(Box::new(SettingsPanel::new()));
+        #[cfg(feature = "training")]
         let stats_pane =
             tiles.insert_pane(Box::new(StatsPanel::new(device, state.adapter.get_info())));
         let scene_pane = tiles.insert_pane(Box::new(ScenePanel::new(
@@ -112,39 +115,33 @@ impl App {
             state.renderer.clone(),
         )));
 
-        // Left sidebar: Dataset (top) + Stats (bottom)
-        #[allow(unused_mut)]
-        let mut left_sidebar_panels = vec![];
-
+        // Main content area - with or without sidebar depending on training feature
         #[cfg(feature = "training")]
-        let dataset_pane = tiles.insert_pane(Box::new(DatasetPanel::new()));
-        #[cfg(feature = "training")]
-        left_sidebar_panels.push(dataset_pane);
+        let main_content_container = {
+            // Right sidebar: Dataset (top) + Stats (bottom)
+            let dataset_pane = tiles.insert_pane(Box::new(DatasetPanel::new()));
+            let sidebar_panels = vec![dataset_pane, stats_pane];
 
-        left_sidebar_panels.push(stats_pane);
+            let mut sidebar_linear =
+                egui_tiles::Linear::new(egui_tiles::LinearDir::Vertical, sidebar_panels);
+            sidebar_linear.shares.set_share(dataset_pane, 0.50);
+            let right_sidebar = tiles.insert_container(sidebar_linear);
 
-        #[allow(unused_mut)]
-        let mut left_sidebar_linear =
-            egui_tiles::Linear::new(egui_tiles::LinearDir::Vertical, left_sidebar_panels);
-        #[cfg(feature = "training")]
-        left_sidebar_linear.shares.set_share(dataset_pane, 0.50);
-        let left_sidebar = tiles.insert_container(left_sidebar_linear);
+            let mut main_content = egui_tiles::Linear::new(
+                egui_tiles::LinearDir::Horizontal,
+                vec![scene_pane, right_sidebar],
+            );
+            main_content.shares.set_share(right_sidebar, 0.30);
+            tiles.insert_container(main_content)
+        };
 
-        // Main content area: Left sidebar + Scene panel (horizontal)
-        let mut main_content = egui_tiles::Linear::new(
-            egui_tiles::LinearDir::Horizontal,
-            vec![left_sidebar, scene_pane],
-        );
-        // Give the scene panel most of the width (left sidebar ~30%)
-        main_content.shares.set_share(left_sidebar, 0.30);
-        let main_content_container = tiles.insert_container(main_content);
+        #[cfg(not(feature = "training"))]
+        let main_content_container = scene_pane;
 
-        // Root: Status bar (top) + Main content (below)
         let mut root_layout = egui_tiles::Linear::new(
             egui_tiles::LinearDir::Vertical,
             vec![status_bar_pane, main_content_container],
         );
-        // Status bar gets a small fixed proportion
         root_layout.shares.set_share(status_bar_pane, 0.07);
         let root_container = tiles.insert_container(root_layout);
 

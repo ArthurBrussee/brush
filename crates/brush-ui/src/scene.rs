@@ -106,6 +106,10 @@ pub struct ScenePanel {
     frame_count: u32,
     frame: f32,
 
+    // Splat info for display
+    num_splats: u32,
+    sh_degree: u32,
+
     // Ui state.
     live_update: bool,
     paused: bool,
@@ -147,6 +151,8 @@ impl ScenePanel {
             frame_count: 0,
             frame: 0.0,
             fully_loaded: false,
+            num_splats: 0,
+            sh_degree: 0,
             export_channel: channel,
             widget_3d,
         }
@@ -431,6 +437,36 @@ impl ScenePanel {
                         }
                     });
 
+                    if self.num_splats > 0 {
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+
+                        let label_color = Color32::from_rgb(140, 140, 140);
+                        let value_color = Color32::from_rgb(200, 200, 200);
+
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Splats").size(11.0).color(label_color));
+                            ui.label(
+                                egui::RichText::new(format!("{}", self.num_splats))
+                                    .size(11.0)
+                                    .color(value_color),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("SH Degree")
+                                    .size(11.0)
+                                    .color(label_color),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("{}", self.sh_degree))
+                                    .size(11.0)
+                                    .color(value_color),
+                            );
+                        });
+                    }
+
                     ui.add_space(4.0);
                 });
         };
@@ -530,6 +566,8 @@ impl ScenePanel {
         self.view_splats = vec![];
         self.frame_count = 0;
         self.frame = 0.0;
+        self.num_splats = 0;
+        self.sh_degree = 0;
     }
 
     fn draw_controls_help(ui: &mut egui::Ui) {
@@ -631,6 +669,10 @@ impl AppPane for ScenePanel {
                     self.fully_loaded = true;
                 }
 
+                // Track splat info
+                self.num_splats = splats.num_splats();
+                self.sh_degree = splats.sh_degree();
+
                 // Mark redraw as dirty if we're live updating.
                 if self.live_update {
                     self.last_state = None;
@@ -639,6 +681,8 @@ impl AppPane for ScenePanel {
             #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(TrainMessage::TrainStep { splats, .. }) => {
                 let splats = *splats.clone();
+                self.num_splats = splats.num_splats();
+                self.sh_degree = splats.sh_degree();
                 self.view_splats = vec![splats];
                 // Mark redraw as dirty if we're live updating.
                 if self.live_update {
@@ -762,6 +806,7 @@ impl AppPane for ScenePanel {
             // Floating play/pause button if needed.
             self.draw_play_pause(ui, rect);
             self.controls_box(ui, process, splats, egui::pos2(rect.min.x, rect.min.y));
+
             let pos = egui::pos2(ui.available_rect_before_wrap().max.x, rect.min.y);
             self.draw_warnings(ui, pos);
         }
