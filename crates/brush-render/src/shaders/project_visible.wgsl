@@ -1,5 +1,3 @@
-#define UNIFORM_WRITE
-
 #import helpers;
 
 struct IsectInfo {
@@ -7,16 +5,14 @@ struct IsectInfo {
     tile_id: u32,
 }
 
-@group(0) @binding(0) var<storage, read_write> uniforms: helpers::RenderUniforms;
+@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
 
 @group(0) @binding(1) var<storage, read> means: array<helpers::PackedVec3>;
 @group(0) @binding(2) var<storage, read> log_scales: array<helpers::PackedVec3>;
 @group(0) @binding(3) var<storage, read> quats: array<vec4f>;
 @group(0) @binding(4) var<storage, read> coeffs: array<helpers::PackedVec3>;
 @group(0) @binding(5) var<storage, read> raw_opacities: array<f32>;
-
 @group(0) @binding(6) var<storage, read> global_from_compact_gid: array<u32>;
-
 @group(0) @binding(7) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
 
 struct ShCoeffs {
@@ -82,8 +78,8 @@ fn sh_coeffs_to_color(
     }
     let z2 = z * z;
 
-    let fTmp0B = -1.092548430592079 * z;
-    let fTmp1A = 0.5462742152960395;
+    let fTmp0B = -1.092548430592079f * z;
+    let fTmp1A = 0.5462742152960395f;
     let fC1 = x * x - y * y;
     let fS1 = 2.f * x * y;
     let pSH6 = (0.9461746957575601f * z2 - 0.3153915652525201f);

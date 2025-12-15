@@ -1,10 +1,12 @@
+#[cfg(not(target_family = "wasm"))]
+use std::path::Path;
+
 use anyhow::Result;
-use brush_dataset::config::AlphaMode;
 use brush_dataset::scene::{sample_to_tensor_data, view_to_sample_image};
-use brush_render::SplatForward;
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
 use brush_render::render_aux::RenderAux;
+use brush_render::{AlphaMode, SplatForward};
 use burn::prelude::Backend;
 use burn::tensor::{Tensor, TensorPrimitive, s};
 use glam::Vec3;
@@ -67,4 +69,24 @@ pub fn eval_stats<B: Backend + SplatForward<B>>(
         rendered: render_rgb,
         aux,
     })
+}
+
+impl<B: Backend> EvalSample<B> {
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn save_to_disk(&self, path: &Path) -> anyhow::Result<()> {
+        use image::Rgb32FImage;
+        log::info!("Saving eval image to disk.");
+        let img = self.rendered.clone();
+        let [h, w, _] = [img.dims()[0], img.dims()[1], img.dims()[2]];
+        let data = img.clone().into_data_async().await?.into_vec::<f32>()?;
+        let img: image::DynamicImage = Rgb32FImage::from_raw(w as u32, h as u32, data)
+            .expect("Failed to create image from tensor")
+            .into();
+        let img: image::DynamicImage = img.into_rgb8().into();
+        let parent = path.parent().expect("Eval must have a filename");
+        tokio::fs::create_dir_all(parent).await?;
+        log::info!("Saving eval view to {path:?}");
+        img.save(path)?;
+        Ok(())
+    }
 }

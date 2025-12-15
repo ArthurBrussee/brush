@@ -391,10 +391,25 @@ fn generate_code(
         .map(|d| format_ident!("{}", d.to_lowercase()))
         .collect();
 
+    // Determine bytemuck path based on which crate we're in
+    // brush-kernel re-exports bytemuck, but when compiling brush-kernel itself we use crate::
+    let is_brush_kernel = std::env::var("CARGO_PKG_NAME")
+        .map(|name| name == "brush-kernel")
+        .unwrap_or(false);
+    let bytemuck_path: TokenStream2 = if is_brush_kernel {
+        quote! { crate::bytemuck }
+    } else {
+        quote! { ::brush_kernel::bytemuck }
+    };
+
     // Type definitions
+    // We manually implement NoUninit instead of using derive because bytemuck's
+    // derive macros can't handle re-exported paths (see https://github.com/Lokathor/bytemuck/issues/208)
+    // SAFETY: Generated structs are repr(C) with only primitive types that have no padding
     let type_defs = info.types.iter().map(|t| {
         let name = format_ident!("{}", t.name);
         let align = proc_macro2::Literal::usize_unsuffixed(t.alignment);
+        let bytemuck = &bytemuck_path;
         let fields = t.fields.iter().map(|(fname, ftype)| {
             let fname = format_ident!("{}", fname);
             let ftype: TokenStream2 = ftype.parse().unwrap();
@@ -402,8 +417,12 @@ fn generate_code(
         });
         quote! {
             #[repr(C, align(#align))]
-            #[derive(bytemuck::Pod, bytemuck::Zeroable, Debug, Clone, Copy)]
+            #[derive(Debug, Clone, Copy)]
             pub struct #name { #(#fields),* }
+
+            // SAFETY: All fields are primitive numeric types with no padding holes.
+            // The struct is repr(C) with explicit alignment.
+            unsafe impl #bytemuck::NoUninit for #name {}
         }
     });
 

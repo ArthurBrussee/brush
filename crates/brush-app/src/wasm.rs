@@ -1,22 +1,41 @@
-#![cfg(target_family = "wasm")]
-
-use crate::three::ThreeVector3;
 use anyhow::Context;
-use brush_process::config::ProcessArgs;
+use brush_process::config::TrainStreamConfig;
 use brush_ui::UiMode;
 use brush_ui::app::App;
 use brush_ui::ui_process::UiProcess;
 use brush_vfs::DataSource;
-use glam::{EulerRot, Quat};
+use glam::{EulerRot, Quat, Vec3};
 use std::sync::Arc;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-mod three;
+// THREE.js Vector3 bindings.
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_name = Vector3, js_namespace = THREE)]
+    pub type ThreeVector3;
+
+    #[wasm_bindgen(method, getter)]
+    fn x(this: &ThreeVector3) -> f64;
+
+    #[wasm_bindgen(method, getter)]
+    fn y(this: &ThreeVector3) -> f64;
+
+    #[wasm_bindgen(method, getter)]
+    fn z(this: &ThreeVector3) -> f64;
+}
+
+impl ThreeVector3 {
+    fn to_glam(&self) -> Vec3 {
+        Vec3::new(self.x() as f32, self.y() as f32, self.z() as f32)
+    }
+}
 
 pub fn wasm_app(canvas_name: &str) -> anyhow::Result<Arc<UiProcess>> {
     // TODO: Make sure some startup bits here only happen once.
+    #[cfg(debug_assertions)]
     wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
+
     let context = Arc::new(UiProcess::new());
 
     let wgpu_options = brush_ui::create_egui_options();
@@ -53,7 +72,7 @@ pub struct EmbeddedApp {
     context: Arc<UiProcess>,
 }
 
-//Wrapper for interop.
+// Wrapper for interop.
 #[wasm_bindgen]
 pub struct CameraSettings(brush_ui::app::CameraSettings);
 
@@ -101,8 +120,7 @@ impl EmbeddedApp {
     #[wasm_bindgen]
     pub fn load_url(&self, url: &str) {
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let _ = sender.send(ProcessArgs::default());
-
+        let _ = sender.send(TrainStreamConfig::default());
         self.context
             .start_new_process(DataSource::Url(url.to_owned()), receiver);
     }

@@ -20,7 +20,8 @@ log.workspace = true
 serde.workspace = true
 hashbrown.workspace = true
 
-burn.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt"] }
+burn = { workspace = true, features = ["autodiff"] }
 burn-cubecl.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

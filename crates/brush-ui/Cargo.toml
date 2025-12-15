@@ -5,8 +5,11 @@ version.workspace = true
 readme.workspace = true
 license.workspace = true
 
+[features]
+training = ["brush-process/training", "dep:brush-dataset", "brush-serde/export", "dep:image"]
+debug-validation = ["brush-process/debug-validation"]
+
 [dependencies]
-brush-dataset.path = "../brush-dataset"
 brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
 brush-process.path = "../brush-process"
@@ -16,7 +19,6 @@ rrfd.path = "../rrfd"
 log.workspace = true
 anyhow.workspace = true
 burn.workspace = true
-burn-fusion.workspace = true
 burn-cubecl.workspace = true
 burn-wgpu.workspace = true
 glam.workspace = true
@@ -30,9 +32,12 @@ tracing.workspace = true
 web-time.workspace = true
 humantime.workspace = true
 tokio-stream.workspace = true
-parking_lot.workspace = true
 wasm-bindgen.workspace = true
 bytemuck = { version = "1.14", features = ["derive"] }
+
+brush-dataset = { path = "../brush-dataset", optional = true }
+image = { workspace = true, optional = true }
+
 
 [lints]
 workspace = true

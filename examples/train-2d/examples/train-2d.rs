@@ -1,17 +1,16 @@
 #![recursion_limit = "256"]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use brush_dataset::{
-    config::AlphaMode,
-    scene::{SceneBatch, sample_to_tensor_data},
-};
+use brush_dataset::scene::{SceneBatch, sample_to_tensor_data};
 use brush_render::{
-    MainBackend,
+    AlphaMode, MainBackend,
     bounding_box::BoundingBox,
     camera::{Camera, focal_to_fov, fov_to_focal},
-    gaussian_splats::{RandomSplatsConfig, Splats},
+    gaussian_splats::Splats,
 };
-use brush_train::{config::TrainConfig, train::SplatTrainer};
+use brush_train::{
+    RandomSplatsConfig, config::TrainConfig, create_random_splats, train::SplatTrainer,
+};
 use brush_ui::burn_texture::BurnTexture;
 use burn::{backend::wgpu::WgpuDevice, module::AutodiffModule, prelude::Backend};
 use egui::{ImageSource, TextureHandle, TextureOptions, load::SizedTexture};
@@ -42,7 +41,7 @@ fn spawn_train_loop(
 
         let init_bounds = BoundingBox::from_min_max(-Vec3::ONE * 5.0, Vec3::ONE * 5.0);
 
-        let mut splats = Splats::from_random_config(
+        let mut splats = create_random_splats(
             &RandomSplatsConfig::new().with_init_count(512),
             init_bounds,
             &mut rng,

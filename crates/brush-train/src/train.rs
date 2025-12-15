@@ -8,8 +8,8 @@ use crate::{
     stats::RefineRecord,
 };
 
-use brush_dataset::{config::AlphaMode, scene::SceneBatch};
-use brush_render::{MainBackend, gaussian_splats::Splats};
+use brush_dataset::{scene::SceneBatch, splat_import::bounds_from_pos};
+use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 use burn::{
@@ -64,6 +64,18 @@ fn create_default_optimizer() -> OptimizerType {
     AdamScaledConfig::new().with_epsilon(1e-15).init()
 }
 
+pub async fn get_splat_bounds<B: Backend>(splats: Splats<B>, percentile: f32) -> BoundingBox {
+    let means: Vec<f32> = splats
+        .means
+        .val()
+        .into_data_async()
+        .await
+        .expect("Failed to fetch splat data")
+        .to_vec()
+        .expect("Failed to get means");
+    bounds_from_pos(percentile, &means)
+}
+
 impl SplatTrainer {
     pub async fn new<B: Backend>(
         config: &TrainConfig,
@@ -79,7 +91,7 @@ impl SplatTrainer {
         const SSIM_WINDOW_SIZE: usize = 11; // Could be configurable but meh, rather keep consistent.
         let ssim = (config.ssim_weight > 0.0).then(|| Ssim::new(SSIM_WINDOW_SIZE, 3, device));
 
-        let bounds = init_splats.get_bounds(BOUND_PERCENTILE).await;
+        let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
 
         Self {
             config: config.clone(),
@@ -405,12 +417,10 @@ impl SplatTrainer {
         }
 
         let refine_count = split_inds.len();
-
         splats = self.refine_splats(&device, record, splats, split_inds, train_t);
 
         // Update current bounds based on the splats.
-        self.bounds = splats.clone().get_bounds(BOUND_PERCENTILE).await;
-
+        self.bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
         client.memory_cleanup();
 
         (

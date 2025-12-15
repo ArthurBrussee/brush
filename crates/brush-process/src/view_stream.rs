@@ -28,12 +28,14 @@ pub(crate) async fn view_stream(
         let mut splat_stream = pin!(brush_serde::stream_splat_from_ply(
             vfs.reader_at_path(path).await?,
             None,
-            device.clone(),
             true,
         ));
 
         while let Some(message) = splat_stream.next().await {
             let message = message?;
+
+            // Convert SplatData to Splats using simple defaults
+            let splats = message.data.to_splats(&device);
 
             // If there's multiple ply files in a zip, don't support animated plys, that would
             // get rather mind bending.
@@ -50,7 +52,7 @@ pub(crate) async fn view_stream(
             emitter
                 .emit(ProcessMessage::ViewSplats {
                     up_axis: message.meta.up_axis,
-                    splats: Box::new(message.splats),
+                    splats: Box::new(splats),
                     frame,
                     total_frames,
                     progress: message.meta.progress,

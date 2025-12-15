@@ -2,9 +2,10 @@
 //!
 //! These tests verify that the benchmark data generation and core operations work correctly.
 
-use brush_dataset::{config::AlphaMode, scene::SceneBatch};
+use brush_dataset::scene::SceneBatch;
 use brush_render::{
-    MainBackend, camera::Camera, gaussian_splats::Splats, validation::validate_splat_gradients,
+    AlphaMode, MainBackend, camera::Camera, gaussian_splats::Splats,
+    validation::validate_splat_gradients,
 };
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
@@ -72,15 +73,8 @@ fn generate_test_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend
 
     let opacities: Vec<f32> = (0..count).map(|_| rng.random_range(0.6..1.0)).collect();
 
-    Splats::<DiffBackend>::from_raw(
-        means,
-        Some(rotations),
-        Some(log_scales),
-        Some(sh_coeffs),
-        Some(opacities),
-        device,
-    )
-    .with_sh_degree(0)
+    Splats::<DiffBackend>::from_raw(means, rotations, log_scales, sh_coeffs, opacities, device)
+        .with_sh_degree(0)
 }
 
 fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
@@ -178,7 +172,6 @@ fn test_batch_generation() {
     assert_eq!(img_dims, [128, 256, 3]);
     let img_data = batch.img_tensor.into_vec::<f32>().unwrap();
     assert!(img_data.iter().all(|&x| x.is_finite()));
-    // TODO: Oh no... SH vals can be >1 I guess... ?
     assert!(img_data.iter().all(|&x| (0.0..=1.1).contains(&x)));
 }
 

@@ -4,6 +4,7 @@ use serde::Deserialize;
 #[cfg(not(target_family = "wasm"))]
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 use tokio::io::BufReader;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -46,28 +47,28 @@ pub enum DataSourceError {
 }
 
 impl DataSource {
-    pub async fn into_vfs(self) -> Result<BrushVfs, DataSourceError> {
+    pub async fn into_vfs(self) -> Result<Arc<BrushVfs>, DataSourceError> {
         match self {
             Self::PickFile => {
                 let reader = BufReader::new(rrfd::pick_file().await?);
                 log::info!("Got file reader");
-                Ok(BrushVfs::from_reader(reader).await?)
+                Ok(Arc::new(BrushVfs::from_reader(reader).await?))
             }
             Self::PickDirectory => {
                 #[cfg(not(target_family = "wasm"))]
                 {
                     let picked = rrfd::pick_directory().await?;
-                    Ok(BrushVfs::from_path(&picked).await?)
+                    Ok(Arc::new(BrushVfs::from_path(&picked).await?))
                 }
                 #[cfg(target_family = "wasm")]
                 {
                     let dir_handle = rrfd::wasm::pick_directory_handle().await?;
-                    Ok(BrushVfs::from_directory_handle(dir_handle).await?)
+                    Ok(Arc::new(BrushVfs::from_directory_handle(dir_handle).await?))
                 }
             }
             Self::Url(url) => Self::fetch_url(url).await,
             #[cfg(not(target_family = "wasm"))]
-            Self::Path(path) => Ok(BrushVfs::from_path(Path::new(&path)).await?),
+            Self::Path(path) => Ok(Arc::new(BrushVfs::from_path(Path::new(&path)).await?)),
             #[cfg(target_family = "wasm")]
             Self::Path(_) => {
                 panic!("Cannot load from filesystem path on WASM");
@@ -75,7 +76,7 @@ impl DataSource {
         }
     }
 
-    async fn fetch_url(url: String) -> Result<BrushVfs, DataSourceError> {
+    async fn fetch_url(url: String) -> Result<Arc<BrushVfs>, DataSourceError> {
         let mut url = url.clone();
 
         if url.starts_with("https://") || url.starts_with("http://") {
@@ -105,7 +106,7 @@ impl DataSource {
             let response = reqwest::get(url).await?.bytes_stream();
             let response = response.map(|b| b.map_err(|_e| std::io::ErrorKind::ConnectionAborted));
             let reader = StreamReader::new(response);
-            Ok(BrushVfs::from_reader(reader).await?)
+            Ok(Arc::new(BrushVfs::from_reader(reader).await?))
         }
 
         #[cfg(target_family = "wasm")]
@@ -150,7 +151,7 @@ impl DataSource {
             let readable_stream = ReadableStream::from_raw(body);
             let async_read = readable_stream.into_async_read().compat();
             let async_read = BufReader::new(async_read);
-            Ok(BrushVfs::from_reader(async_read).await?)
+            Ok(Arc::new(BrushVfs::from_reader(async_read).await?))
         }
     }
 }

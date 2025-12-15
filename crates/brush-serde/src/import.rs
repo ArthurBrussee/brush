@@ -2,11 +2,9 @@ use std::pin::pin;
 use std::time::Duration;
 
 use async_fn_stream::{TryStreamEmitter, try_fn_stream};
-use brush_render::gaussian_splats::Splats;
-use brush_render::{MainBackend, gaussian_splats::inverse_sigmoid, sh::rgb_to_sh};
+use brush_render::gaussian_splats::{Splats, inverse_sigmoid};
+use brush_render::sh::rgb_to_sh;
 use brush_vfs::SendNotWasm;
-use burn::backend::wgpu::WgpuDevice;
-use burn::tensor::{Tensor, TensorData};
 use glam::{Vec3, Vec4, Vec4Swizzles};
 use serde::Deserialize;
 use serde::de::{DeserializeSeed, Error};
@@ -28,9 +26,44 @@ pub struct ParseMetadata {
     pub progress: f32,
 }
 
+/// Raw splat data parsed from a PLY file.
+/// Fields are optional - only positions are guaranteed.
+#[derive(Clone)]
+pub struct SplatData {
+    /// Position data (x, y, z) - always present
+    pub means: Vec<f32>,
+    pub rotations: Option<Vec<f32>>,
+    pub log_scales: Option<Vec<f32>>,
+    pub sh_coeffs: Option<Vec<f32>>,
+    pub raw_opacities: Option<Vec<f32>>,
+}
+
+impl SplatData {
+    pub fn num_splats(&self) -> usize {
+        self.means.len() / 3
+    }
+
+    /// Convert to Splats using simple defaults for missing fields.
+    pub fn to_splats<B: burn::prelude::Backend>(self, device: &B::Device) -> Splats<B> {
+        let n_splats = self.num_splats();
+
+        let rotations = self
+            .rotations
+            .unwrap_or_else(|| [1.0, 0.0, 0.0, 0.0].repeat(n_splats));
+        let log_scales = self.log_scales.unwrap_or_else(|| vec![-4.0; n_splats * 3]);
+        let sh_coeffs = self.sh_coeffs.unwrap_or_else(|| vec![0.5; n_splats * 3]);
+        let opacities = self
+            .raw_opacities
+            .unwrap_or_else(|| vec![inverse_sigmoid(0.5); n_splats]);
+        Splats::from_raw(
+            self.means, rotations, log_scales, sh_coeffs, opacities, device,
+        )
+    }
+}
+
 pub struct SplatMessage {
     pub meta: ParseMetadata,
-    pub splats: Splats<MainBackend>,
+    pub data: SplatData,
 }
 
 enum PlyFormat {
@@ -104,9 +137,8 @@ async fn read_chunk<T: AsyncRead + Unpin>(
 pub async fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
     reader: T,
     subsample_points: Option<u32>,
-    device: WgpuDevice,
 ) -> Result<SplatMessage, DeserializeError> {
-    let stream = stream_splat_from_ply(reader, subsample_points, device, false);
+    let stream = stream_splat_from_ply(reader, subsample_points, false);
     let Some(splat) = pin!(stream).next().await else {
         return Err(DeserializeError::custom(
             "Couldn't load single splat from ply",
@@ -118,11 +150,9 @@ pub async fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
 pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
     mut reader: T,
     subsample_points: Option<u32>,
-    device: WgpuDevice,
     streaming: bool,
 ) -> impl Stream<Item = Result<SplatMessage, DeserializeError>> {
     try_fn_stream(|emitter| async move {
-        // TODO: Just make chunk ply take in data and try to get a header? Simpler maybe.
         let mut file = PlyChunkedReader::new();
         read_chunk(&mut reader, file.buffer_mut()).await?;
 
@@ -170,7 +200,6 @@ pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
                 parse_ply(
                     reader,
                     subsample,
-                    device,
                     &mut file,
                     up_axis,
                     &emitter,
@@ -179,11 +208,10 @@ pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
                 .await?;
             }
             PlyFormat::Brush4DCompressed => {
-                parse_delta_ply(reader, subsample, device, file, up_axis, emitter, updater).await?;
+                parse_delta_ply(reader, subsample, file, up_axis, emitter, updater).await?;
             }
             PlyFormat::SuperSplatCompressed => {
-                parse_compressed_ply(reader, subsample, device, file, up_axis, emitter, updater)
-                    .await?;
+                parse_compressed_ply(reader, subsample, file, up_axis, emitter, updater).await?;
             }
         }
         Ok(())
@@ -197,12 +225,11 @@ fn progress(index: usize, len: usize) -> f32 {
 async fn parse_ply<T: AsyncRead + Unpin>(
     mut reader: T,
     subsample: usize,
-    device: WgpuDevice,
     file: &mut PlyChunkedReader,
     up_axis: Option<Vec3>,
     emitter: &StreamEmitter,
     update: &mut TimedUpdate,
-) -> Result<Splats<MainBackend>, DeserializeError> {
+) -> Result<SplatData, DeserializeError> {
     let header = file.header().expect("Must have header");
     let vertex = header
         .get_element("vertex")
@@ -274,14 +301,13 @@ async fn parse_ply<T: AsyncRead + Unpin>(
         .deserialize(&mut *file)?;
 
         if update.should_update() || row_index == total_splats {
-            let splats = Splats::from_raw(
-                means.clone(),
-                rotations.clone(),
-                log_scales.clone(),
-                coeffs.clone(),
-                opacity.clone(),
-                &device,
-            );
+            let data = SplatData {
+                means: means.clone(),
+                rotations: rotations.clone(),
+                log_scales: log_scales.clone(),
+                sh_coeffs: coeffs.clone(),
+                raw_opacities: opacity.clone(),
+            };
 
             emitter
                 .emit(SplatMessage {
@@ -292,12 +318,12 @@ async fn parse_ply<T: AsyncRead + Unpin>(
                         frame_count: 0,
                         current_frame: 0,
                     },
-                    splats: splats.clone(),
+                    data: data.clone(),
                 })
                 .await;
 
             if row_index == total_splats {
-                return Ok(splats);
+                return Ok(data);
             }
         }
     }
@@ -306,16 +332,14 @@ async fn parse_ply<T: AsyncRead + Unpin>(
 async fn parse_delta_ply<T: AsyncRead + Unpin>(
     mut reader: T,
     subsample: usize,
-    device: WgpuDevice,
     mut file: PlyChunkedReader,
     up_axis: Option<Vec3>,
     emitter: StreamEmitter,
     mut update: TimedUpdate,
 ) -> Result<(), DeserializeError> {
-    let splats = parse_ply(
+    let base_data = parse_ply(
         &mut reader,
         subsample,
-        device.clone(),
         &mut file,
         up_axis,
         &emitter,
@@ -435,34 +459,54 @@ async fn parse_delta_ply<T: AsyncRead + Unpin>(
             })
             .deserialize(&mut file)?;
 
-            let n_splats = splats.num_splats() as usize;
+            let n_splats = base_data.num_splats();
 
-            let means = Tensor::from_data(TensorData::new(means, [n_splats, 3]), &device)
-                + splats.means.val();
-            // The encoding is just literal delta encoding in floats - nothing fancy
-            // like actually considering the quaternion transform.
-            let rotations = Tensor::from_data(TensorData::new(rotations, [n_splats, 4]), &device)
-                + splats.rotations.val();
-            let log_scales = Tensor::from_data(TensorData::new(scales, [n_splats, 3]), &device)
-                + splats.log_scales.val();
+            // Add deltas to base data on CPU
+            let base_means = &base_data.means;
+            let base_rotations = base_data
+                .rotations
+                .as_ref()
+                .expect("Base must have rotations");
+            let base_scales = base_data
+                .log_scales
+                .as_ref()
+                .expect("Base must have scales");
+
+            let frame_means: Vec<f32> = means
+                .iter()
+                .zip(base_means.iter())
+                .map(|(d, b)| d + b)
+                .collect();
+
+            let frame_rotations: Vec<f32> = rotations
+                .iter()
+                .zip(base_rotations.iter())
+                .map(|(d, b)| d + b)
+                .collect();
+
+            let frame_scales: Vec<f32> = scales
+                .iter()
+                .zip(base_scales.iter())
+                .map(|(d, b)| d + b)
+                .collect();
 
             // Emit newly animated splat.
             emitter
                 .emit(SplatMessage {
                     meta: ParseMetadata {
-                        total_splats: count as u32,
+                        total_splats: n_splats as u32,
                         up_axis,
                         frame_count,
                         current_frame: frame,
                         progress: 1.0,
                     },
-                    splats: Splats::from_tensor_data(
-                        means,
-                        rotations,
-                        log_scales,
-                        splats.sh_coeffs.val(),
-                        splats.raw_opacities.val(),
-                    ),
+                    data: SplatData {
+                        means: frame_means,
+                        rotations: Some(frame_rotations),
+                        log_scales: Some(frame_scales),
+                        sh_coeffs: base_data.sh_coeffs.clone(),
+                        raw_opacities: base_data.raw_opacities.clone(),
+                    },
                 })
                 .await;
             frame += 1;
@@ -475,7 +519,6 @@ async fn parse_delta_ply<T: AsyncRead + Unpin>(
 async fn parse_compressed_ply<T: AsyncRead + Unpin>(
     mut reader: T,
     subsample: usize,
-    device: WgpuDevice,
     mut file: PlyChunkedReader,
     up_axis: Option<Vec3>,
     emitter: StreamEmitter,
@@ -602,14 +645,13 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
                         current_frame: 0,
                         progress,
                     },
-                    splats: Splats::from_raw(
-                        means.clone(),
-                        Some(rotations.clone()),
-                        Some(log_scales.clone()),
-                        Some(sh_coeffs.clone()),
-                        Some(opacity.clone()),
-                        &device,
-                    ),
+                    data: SplatData {
+                        means: means.clone(),
+                        rotations: Some(rotations.clone()),
+                        log_scales: Some(log_scales.clone()),
+                        sh_coeffs: Some(sh_coeffs.clone()),
+                        raw_opacities: Some(opacity.clone()),
+                    },
                 })
                 .await;
         }
@@ -650,20 +692,19 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
         emitter
             .emit(SplatMessage {
                 meta: ParseMetadata {
-                    total_splats: means.len() as u32,
+                    total_splats: (means.len() / 3) as u32,
                     up_axis,
                     frame_count: 0,
                     current_frame: 0,
                     progress: 1.0,
                 },
-                splats: Splats::from_raw(
+                data: SplatData {
                     means,
-                    Some(rotations),
-                    Some(log_scales),
-                    Some(total_coeffs),
-                    Some(opacity),
-                    &device,
-                ),
+                    rotations: Some(rotations),
+                    log_scales: Some(log_scales),
+                    sh_coeffs: Some(total_coeffs),
+                    raw_opacities: Some(opacity),
+                },
             })
             .await;
     }
@@ -671,50 +712,49 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "export"))]
 mod tests {
     use super::*;
     use crate::export::splat_to_ply;
     use crate::test_utils::{create_test_splats, create_test_splats_with_count};
-    use burn::backend::wgpu::WgpuDevice;
+    use brush_render::sh::sh_coeffs_for_degree;
     use std::io::Cursor;
 
     #[tokio::test]
     async fn test_import_basic_functionality() {
-        let device = WgpuDevice::default();
-
         let original_splats = create_test_splats(1);
         let ply_bytes = splat_to_ply(original_splats.clone()).await.unwrap();
 
         let cursor = Cursor::new(ply_bytes);
-        let imported_message = load_splat_from_ply(cursor, None, device).await.unwrap();
+        let imported_message = load_splat_from_ply(cursor, None).await.unwrap();
 
-        assert_eq!(imported_message.splats.num_splats(), 1);
-        assert_eq!(imported_message.splats.sh_degree(), 1);
+        assert_eq!(imported_message.data.num_splats(), 1);
         assert_eq!(imported_message.meta.total_splats, 1);
+        // All fields should be present for a full PLY
+        assert!(imported_message.data.rotations.is_some());
+        assert!(imported_message.data.log_scales.is_some());
+        assert!(imported_message.data.sh_coeffs.is_some());
+        assert!(imported_message.data.raw_opacities.is_some());
     }
 
     #[tokio::test]
     async fn test_import_different_sh_degrees() {
-        let device = WgpuDevice::default();
-
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);
             let ply_bytes = splat_to_ply(original_splats).await.unwrap();
 
             let cursor = Cursor::new(ply_bytes);
-            let imported_message = load_splat_from_ply(cursor, None, device.clone())
-                .await
-                .unwrap();
+            let imported_message = load_splat_from_ply(cursor, None).await.unwrap();
 
-            assert_eq!(imported_message.splats.sh_degree(), degree);
+            let n_splats = imported_message.data.num_splats();
+            let sh_coeffs = imported_message.data.sh_coeffs.unwrap();
+            let n_coeffs = sh_coeffs.len() / n_splats / 3;
+            assert_eq!(n_coeffs, sh_coeffs_for_degree(degree) as usize);
         }
     }
 
     #[tokio::test]
     async fn test_import_with_subsample() {
-        let device = WgpuDevice::default();
-
         // Create 4 test splats
         let original_splats = create_test_splats_with_count(0, 4);
         assert_eq!(original_splats.num_splats(), 4);
@@ -723,14 +763,12 @@ mod tests {
 
         // Test no subsampling
         let cursor = Cursor::new(ply_bytes.clone());
-        let imported_message = load_splat_from_ply(cursor, None, device.clone())
-            .await
-            .unwrap();
-        assert_eq!(imported_message.splats.num_splats(), 4);
+        let imported_message = load_splat_from_ply(cursor, None).await.unwrap();
+        assert_eq!(imported_message.data.num_splats(), 4);
 
         // Test subsample every 2nd splat
         let cursor = Cursor::new(ply_bytes);
-        let imported_message = load_splat_from_ply(cursor, Some(2), device).await.unwrap();
-        assert_eq!(imported_message.splats.num_splats(), 2);
+        let imported_message = load_splat_from_ply(cursor, Some(2)).await.unwrap();
+        assert_eq!(imported_message.data.num_splats(), 2);
     }
 }

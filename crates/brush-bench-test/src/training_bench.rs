@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 
-use brush_dataset::{config::AlphaMode, scene::SceneBatch};
-use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
+use brush_dataset::scene::SceneBatch;
+use brush_render::{AlphaMode, MainBackend, camera::Camera, gaussian_splats::Splats};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
@@ -93,15 +93,8 @@ fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
     // Realistic opacity distribution (mostly opaque with some variation)
     let opacities: Vec<f32> = (0..count).map(|_| rng.random_range(0.05..1.0)).collect();
 
-    Splats::<DiffBackend>::from_raw(
-        means,
-        Some(rotations),
-        Some(log_scales),
-        Some(sh_coeffs),
-        Some(opacities),
-        device,
-    )
-    .with_sh_degree(0)
+    Splats::<DiffBackend>::from_raw(means, rotations, log_scales, sh_coeffs, opacities, device)
+        .with_sh_degree(0)
 }
 
 fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBatch {

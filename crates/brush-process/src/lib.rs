@@ -3,9 +3,7 @@
 pub mod config;
 pub mod message;
 pub mod process;
-pub mod train_stream;
 pub mod view_stream;
 
-mod emit_warnings;
-mod eval_export;
-mod visualize_tools;
+#[cfg(feature = "training")]
+pub mod train_stream;

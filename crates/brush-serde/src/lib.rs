@@ -1,19 +1,29 @@
 #![recursion_limit = "256"]
 
+#[cfg(feature = "export")]
 pub mod export;
+#[cfg(feature = "import")]
 pub mod import;
 pub mod ply_gaussian;
 pub mod quant;
 
 // Re-export main functionality
+#[cfg(feature = "export")]
 pub use export::splat_to_ply;
-pub use import::{ParseMetadata, SplatMessage, load_splat_from_ply, stream_splat_from_ply};
+#[cfg(feature = "import")]
+pub use import::{
+    ParseMetadata, SplatData, SplatMessage, load_splat_from_ply, stream_splat_from_ply,
+};
 pub use ply_gaussian::PlyGaussian;
 
 // Re-export serde-ply types for compatibility
-pub use serde_ply::{DeserializeError, SerializeError};
+#[cfg(feature = "import")]
+pub use serde_ply::DeserializeError;
+#[cfg(feature = "export")]
+pub use serde_ply::SerializeError;
 
 #[cfg(test)]
+#[allow(unused)]
 mod test_utils {
     use brush_render::MainBackend;
     use brush_render::gaussian_splats::Splats;
@@ -55,14 +65,7 @@ mod test_utils {
             opacities.push(0.8 - offset * 0.1);
         }
 
-        Splats::<MainBackend>::from_raw(
-            means,
-            Some(rotations),
-            Some(log_scales),
-            Some(sh_coeffs),
-            Some(opacities),
-            &device,
-        )
-        .with_sh_degree(sh_degree)
+        Splats::<MainBackend>::from_raw(means, rotations, log_scales, sh_coeffs, opacities, &device)
+            .with_sh_degree(sh_degree)
     }
 }

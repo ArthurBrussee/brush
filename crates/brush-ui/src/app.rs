@@ -1,10 +1,10 @@
 use crate::UiMode;
+#[cfg(feature = "training")]
+use crate::datasets::DatasetPanel;
 use crate::panels::AppPane;
+use crate::settings::SettingsPanel;
 use crate::ui_process::UiProcess;
-use crate::{
-    camera_controls::CameraClamping, datasets::DatasetPanel, scene::ScenePanel,
-    settings::SettingsPanel, stats::StatsPanel,
-};
+use crate::{camera_controls::CameraClamping, scene::ScenePanel, stats::StatsPanel};
 use eframe::egui;
 use egui::ThemePreference;
 use egui_tiles::{SimplificationOptions, Tile, TileId, Tiles};
@@ -111,11 +111,16 @@ impl App {
             state.queue.clone(),
             state.renderer.clone(),
         )));
-        let dataset_pane = tiles.insert_pane(Box::new(DatasetPanel::new()));
+
+        #[allow(unused_mut)]
+        let mut right_panels = vec![scene_pane];
+
+        #[cfg(feature = "training")]
+        right_panels.push(tiles.insert_pane(Box::new(DatasetPanel::new())));
 
         let right_side = tiles.insert_container(egui_tiles::Linear::new(
             egui_tiles::LinearDir::Vertical,
-            vec![scene_pane, dataset_pane],
+            right_panels,
         ));
 
         let mut lin = egui_tiles::Linear::new(

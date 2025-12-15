@@ -19,17 +19,11 @@ burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
 
-bytemuck.workspace = true
 glam.workspace = true
-
+clap.workspace = true
 tracing.workspace = true
-rand.workspace = true
-ball-tree.workspace = true
 log.workspace = true
-
 wgpu.workspace = true
-
-rayon.workspace = true
 
 [features]
 debug-validation = []

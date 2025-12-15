@@ -1,34 +1,24 @@
-use std::sync::Arc;
-
 use async_fn_stream::try_fn_stream;
 use brush_vfs::DataSource;
-use burn_cubecl::cubecl::Runtime;
-use burn_wgpu::{WgpuDevice, WgpuRuntime};
+use burn_wgpu::WgpuDevice;
 use tokio::sync::oneshot::Receiver;
 use tokio_stream::Stream;
 
 #[allow(unused)]
 use brush_serde;
 
-use crate::{
-    config::ProcessArgs, message::ProcessMessage, train_stream::train_stream,
-    view_stream::view_stream,
-};
+use crate::{config::TrainStreamConfig, message::ProcessMessage, view_stream::view_stream};
 
-pub fn process_stream(
+pub fn create_process(
     source: DataSource,
-    process_args: Receiver<ProcessArgs>,
+    process_args: Receiver<TrainStreamConfig>,
     device: WgpuDevice,
 ) -> impl Stream<Item = Result<ProcessMessage, anyhow::Error>> + 'static {
     try_fn_stream(|emitter| async move {
         log::info!("Starting process with source {source:?}");
         emitter.emit(ProcessMessage::NewSource).await;
 
-        let vfs = Arc::new(source.into_vfs().await?);
-
-        let client = WgpuRuntime::client(&device);
-        // Start with memory cleared out.
-        client.memory_cleanup();
+        let vfs = source.into_vfs().await?;
 
         let vfs_counts = vfs.file_count();
         let ply_count = vfs.files_with_extension("ply").count();
@@ -43,8 +33,10 @@ pub fn process_stream(
             drop(process_args);
             view_stream(vfs, device, emitter).await?;
         } else {
-            // Receive the processing args.
-            train_stream(vfs, process_args, device, emitter).await?;
+            #[cfg(feature = "training")]
+            crate::train_stream::train_stream(vfs, process_args, device, emitter).await?;
+            #[cfg(not(feature = "training"))]
+            anyhow::bail!("Training is not enabled in Brush, cannot load dataset.");
         };
 
         Ok(())

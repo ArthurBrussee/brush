@@ -1,4 +1,4 @@
-use brush_render::{bounding_box::BoundingBox, camera::Camera};
+use brush_render::{AlphaMode, bounding_box::BoundingBox, camera::Camera};
 use brush_vfs::BrushVfs;
 use burn::tensor::TensorData;
 use glam::{Affine3A, Vec3, vec3};
@@ -8,8 +8,6 @@ use std::{
     sync::Arc,
 };
 use tokio::io::AsyncReadExt;
-
-use crate::config::AlphaMode;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ViewType {

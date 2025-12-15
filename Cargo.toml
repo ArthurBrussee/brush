@@ -1,6 +1,29 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "examples/*"]
+members = [
+    "crates/brush-app",
+    "crates/brush-bench-test",
+    "crates/brush-cli",
+    "crates/brush-dataset",
+    "crates/brush-kernel",
+    "crates/brush-prefix-sum",
+    "crates/brush-process",
+    "crates/brush-render",
+    "crates/brush-render-bwd",
+    "crates/brush-rerun",
+    "crates/brush-serde",
+    "crates/brush-serde-macros",
+    "crates/brush-sort",
+    "crates/brush-train",
+    "crates/brush-ui",
+    "crates/brush-vfs",
+    "crates/brush-wgsl",
+    "crates/colmap-reader",
+    "crates/lpips",
+    "crates/lpips-convert",
+    "crates/rrfd",
+    "examples/train-2d",
+]
 default-members = ["crates/brush-app"]
 
 [workspace.package]
@@ -53,7 +76,6 @@ clap = { version = "4.5.23", features = ["derive"] }
 web-time = "1.1.0"
 humantime = "2.1.0"
 async-fn-stream = "0.3"
-miette = { version = "7.4.0", features = ["fancy"] }
 assert_approx_eq = "1.1.0"
 safetensors = "0.7"
 log = "0.4.22"
@@ -70,17 +92,16 @@ wgpu = { version = "26", default-features = false, features = ["naga-ir"] }
 
 serde-ply = "0.2.1"
 
-burn = { git = "https://github.com/tracel-ai/burn", features = [
+burn = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b", features = [
     'wgpu',
-    'autodiff',
 ] }
-burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
-burn-ir = { git = "https://github.com/tracel-ai/burn" }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
+burn-cubecl = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b" }
+burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b" }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b", features = [
     "exclusive-memory-only",
 ] }
-burn-fusion = { git = "https://github.com/tracel-ai/burn" }
-burn-import = { git = "https://github.com/tracel-ai/burn", default-features = false, features = [
+burn-fusion = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b" }
+burn-import = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b", default-features = false, features = [
     "pytorch",
 ] }
 
@@ -104,7 +125,6 @@ ball-tree = "0.5.1"
 web-sys = { version = "0.3.74" }
 async_zip = { version = "0.0.18", default-features = false, features = ["tokio", "deflate"] }
 hashbrown = "0.16"
-parking_lot = "0.12"
 alphanumeric-sort = "1.5.3"
 
 # Uncomment this to use local burn/cubecl.

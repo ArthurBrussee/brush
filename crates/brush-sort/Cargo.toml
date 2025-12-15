@@ -12,8 +12,6 @@ burn.workspace = true
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 tracing.workspace = true
-bytemuck.workspace = true
-wgpu.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

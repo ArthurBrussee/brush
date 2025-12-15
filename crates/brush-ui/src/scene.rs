@@ -1,4 +1,6 @@
-use brush_dataset::config::AlphaMode;
+#[cfg(feature = "training")]
+use brush_process::message::TrainMessage;
+
 use brush_process::message::ProcessMessage;
 use core::f32;
 use egui::{Align2, Area, Frame, Pos2, Ui, epaint::mutex::RwLock as EguiRwLock};
@@ -13,13 +15,17 @@ use brush_render::{
 use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect, Slider, collapsing_header::CollapsingState};
 use glam::{UVec2, Vec3};
-use tokio_with_wasm::alias as tokio_wasm;
 use tracing::trace_span;
 use web_time::Instant;
 
 use crate::{
-    UiMode, app::CameraSettings, burn_texture::BurnTexture, draw_checkerboard, panels::AppPane,
-    ui_process::UiProcess, widget_3d::Widget3D,
+    UiMode,
+    app::CameraSettings,
+    burn_texture::BurnTexture,
+    draw_checkerboard,
+    panels::AppPane,
+    ui_process::{BackgroundStyle, UiProcess},
+    widget_3d::Widget3D,
 };
 
 #[derive(Clone, PartialEq)]
@@ -58,6 +64,7 @@ impl ErrorDisplay {
     }
 }
 
+#[cfg(feature = "training")]
 async fn export(splat: Splats<MainBackend>) -> Result<(), anyhow::Error> {
     let data = brush_serde::splat_to_ply(splat).await?;
     rrfd::save_file("export.ply", data).await?;
@@ -152,24 +159,12 @@ impl ScenePanel {
         splats: Option<Splats<MainBackend>>,
         interactive: bool,
     ) -> egui::Rect {
-        let mut size = ui.available_size();
-        let selected = process.selected_view();
-
-        if let Some(tex) = selected.tex.borrow().as_ref() {
-            let aspect_ratio = tex.handle.aspect_ratio();
-            if size.x / size.y > aspect_ratio {
-                size.x = size.y * aspect_ratio;
-            } else {
-                size.y = size.x / aspect_ratio;
-            }
-        }
+        let size = ui.available_size();
         let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
-
         let (rect, response) = ui.allocate_exact_size(
             egui::Vec2::new(size.x as f32, size.y as f32),
             egui::Sense::drag(),
         );
-
         if interactive {
             process.tick_controls(&response, ui);
         }
@@ -184,8 +179,22 @@ impl ScenePanel {
 
         let settings = process.get_cam_settings();
 
-        let focal_y = fov_to_focal(camera.fov_y, size.y) as f32;
-        camera.fov_x = focal_to_fov(focal_y as f64, size.x);
+        // Adjust FOV so that the scene view shows at least what's visible in the dataset view.
+        // The camera has original fov_x and fov_y from the dataset. We need to ensure
+        // the viewport shows at least that much in both dimensions.
+        let camera_aspect = (camera.fov_x / 2.0).tan() / (camera.fov_y / 2.0).tan();
+        let viewport_aspect = size.x as f64 / size.y as f64;
+
+        if viewport_aspect > camera_aspect {
+            // Viewport is wider than camera - keep fov_y, expand fov_x
+            let focal_y = fov_to_focal(camera.fov_y, size.y);
+            camera.fov_x = focal_to_fov(focal_y, size.x);
+        } else {
+            // Viewport is taller than camera - keep fov_x, expand fov_y
+            let focal_x = fov_to_focal(camera.fov_x, size.x);
+            camera.fov_y = focal_to_fov(focal_x, size.y);
+        }
+
         let grid_opacity = process.get_grid_opacity();
 
         let state = RenderState {
@@ -237,23 +246,15 @@ impl ScenePanel {
         }
 
         ui.scope(|ui| {
-            let mut background = false;
-
-            let selected = process.selected_view();
-            if let Some(view) = selected.view
-                && let Some(tex) = selected.tex.borrow().as_ref()
-            {
-                // if training views have alpha, show a background checker. Masked images
-                // should still use a black background.
-                if tex.has_alpha && view.image.alpha_mode() == AlphaMode::Transparent {
-                    background = true;
+            // if training views have alpha, show a background checker. Masked images
+            // should still use a black background.
+            match process.background_style() {
+                BackgroundStyle::Checkerboard => {
                     draw_checkerboard(ui, rect, Color32::WHITE);
                 }
-            }
-
-            // If a scene is opaque, it assumes a black background.
-            if !background {
-                ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+                BackgroundStyle::Black => {
+                    ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+                }
             }
 
             if let Some(id) = self.backbuffer.id() {
@@ -276,7 +277,7 @@ impl ScenePanel {
         &mut self,
         ui: &egui::Ui,
         process: &UiProcess,
-        splats: Option<Splats<MainBackend>>,
+        _splats: Option<Splats<MainBackend>>,
         pos: egui::Pos2,
     ) {
         let inner = |ui: &mut egui::Ui| {
@@ -351,18 +352,20 @@ impl ScenePanel {
                             }
                         });
 
-                        if let Some(splats) = splats
+                        #[cfg(feature = "training")]
+                        if let Some(splats) = _splats
                             && ui.small_button("⬆ Export").clicked()
                         {
                             let sender = self.export_channel.0.clone();
                             let ctx = ui.ctx().clone();
-                            tokio_wasm::task::spawn(async move {
+                            tokio_with_wasm::alias::task::spawn(async move {
                                 if let Err(e) = export(splats).await {
                                     let _ = sender.send(e.context("Failed to export splat"));
                                     ctx.request_repaint();
                                 }
                             });
                         }
+
                         ui.add_space(4.0);
                         ui.separator();
                         ui.add_space(4.0);
@@ -596,7 +599,8 @@ impl AppPane for ScenePanel {
                     self.last_state = None;
                 }
             }
-            ProcessMessage::TrainStep { splats, .. } => {
+            #[cfg(feature = "training")]
+            ProcessMessage::TrainMessage(TrainMessage::TrainStep { splats, .. }) => {
                 let splats = *splats.clone();
                 self.view_splats = vec![splats];
                 // Mark redraw as dirty if we're live updating.
