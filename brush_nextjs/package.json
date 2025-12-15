@@ -12,8 +12,8 @@
     "dev:viewer": "npm run build:wasm-dev-viewer && next dev --turbopack --experimental-https",
     "release": "npm run build:wasm-release && next dev --turbopack --experimental-https",
     "release:viewer": "npm run build:wasm-release-viewer && next dev --turbopack --experimental-https",
-    "build": "npm run build:wasm-release && next build --turbopack",
-    "build:viewer": "npm run build:wasm-release-viewer && next build --turbopack"
+    "build": "npm run build:wasm-release && NEXT_PUBLIC_BASE_PATH=/brush-demo next build --turbopack",
+    "build:viewer": "npm run build:wasm-release-viewer && NEXT_PUBLIC_BASE_PATH=/brush-demo next build --turbopack"
   },
   "dependencies": {
     "@types/three": "^0.175.0",
