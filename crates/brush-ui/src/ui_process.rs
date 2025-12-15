@@ -116,9 +116,22 @@ impl UiProcess {
     }
 
     pub fn set_train_paused(&self, paused: bool) {
+        self.write().train_paused = paused;
         if let Some(process) = self.read().running_process.as_ref() {
             let _ = process.control.send(ControlMessage::Paused(paused));
         }
+    }
+
+    pub fn is_train_paused(&self) -> bool {
+        self.read().train_paused
+    }
+
+    pub fn set_live_update(&self, enabled: bool) {
+        self.write().live_update = enabled;
+    }
+
+    pub fn is_live_update(&self) -> bool {
+        self.read().live_update
     }
 
     pub fn get_cam_settings(&self) -> CameraSettings {
@@ -303,6 +316,8 @@ struct UiProcessInner {
     cur_device_ctx: Option<DeviceContext>,
     ui_mode: UiMode,
     background_style: BackgroundStyle,
+    train_paused: bool,
+    live_update: bool,
 }
 
 impl UiProcessInner {
@@ -323,6 +338,8 @@ impl UiProcessInner {
             cur_device_ctx: None,
             ui_mode: UiMode::Default,
             background_style: BackgroundStyle::Black,
+            train_paused: false,
+            live_update: true,
         }
     }
 

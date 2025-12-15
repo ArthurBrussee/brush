@@ -5,7 +5,6 @@ use brush_process::message::ProcessMessage;
 use core::f32;
 use egui::{Align2, Area, Frame, Pos2, Ui, epaint::mutex::RwLock as EguiRwLock};
 use std::sync::Arc;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use brush_render::{
     MainBackend,
@@ -64,13 +63,6 @@ impl ErrorDisplay {
     }
 }
 
-#[cfg(feature = "training")]
-async fn export(splat: Splats<MainBackend>) -> Result<(), anyhow::Error> {
-    let data = brush_serde::splat_to_ply(splat).await?;
-    rrfd::save_file("export.ply", data).await?;
-    Ok(())
-}
-
 fn box_ui<R>(
     id: &str,
     ui: &egui::Ui,
@@ -111,15 +103,9 @@ pub struct ScenePanel {
     sh_degree: u32,
 
     // Ui state.
-    live_update: bool,
     paused: bool,
     err: Option<ErrorDisplay>,
     warnings: Vec<ErrorDisplay>,
-
-    export_channel: (
-        UnboundedSender<anyhow::Error>,
-        UnboundedReceiver<anyhow::Error>,
-    ),
 
     // Keep track of what was last rendered.
     last_state: Option<RenderState>,
@@ -134,8 +120,6 @@ impl ScenePanel {
         queue: wgpu::Queue,
         renderer: Arc<EguiRwLock<Renderer>>,
     ) -> Self {
-        let channel = tokio::sync::mpsc::unbounded_channel();
-
         // Create Widget3D for 3D overlay rendering
         let widget_3d = Some(Widget3D::new(device.clone(), queue.clone()));
 
@@ -145,7 +129,6 @@ impl ScenePanel {
             err: None,
             warnings: vec![],
             view_splats: vec![],
-            live_update: true,
             paused: false,
             last_state: None,
             frame_count: 0,
@@ -153,7 +136,6 @@ impl ScenePanel {
             fully_loaded: false,
             num_splats: 0,
             sh_degree: 0,
-            export_channel: channel,
             widget_3d,
         }
     }
@@ -279,13 +261,7 @@ impl ScenePanel {
         rect
     }
 
-    fn controls_box(
-        &mut self,
-        ui: &egui::Ui,
-        process: &UiProcess,
-        _splats: Option<Splats<MainBackend>>,
-        pos: egui::Pos2,
-    ) {
+    fn controls_box(&self, ui: &egui::Ui, process: &UiProcess, pos: egui::Pos2) {
         let inner = |ui: &mut egui::Ui| {
             if process.is_loading() {
                 ui.horizontal(|ui| {
@@ -325,49 +301,6 @@ impl ScenePanel {
                 .body_unindented(|ui| {
                     ui.set_max_width(180.0);
                     ui.spacing_mut().item_spacing.y = 6.0;
-
-                    // Training controls
-                    if process.is_training() {
-                        let label = if self.paused {
-                            "⏸ Paused"
-                        } else {
-                            "⏵ Training"
-                        };
-
-                        if ui.selectable_label(!self.paused, label).clicked() {
-                            self.paused = !self.paused;
-                            process.set_train_paused(self.paused);
-                        }
-
-                        ui.scope(|ui| {
-                            ui.style_mut().visuals.selection.bg_fill =
-                                Color32::from_rgb(120, 40, 40);
-                            if ui
-                                .selectable_label(self.live_update, "🔴 Live update")
-                                .clicked()
-                            {
-                                self.live_update = !self.live_update;
-                            }
-                        });
-
-                        #[cfg(feature = "training")]
-                        if let Some(splats) = _splats
-                            && ui.small_button("⬆ Export").clicked()
-                        {
-                            let sender = self.export_channel.0.clone();
-                            let ctx = ui.ctx().clone();
-                            tokio_with_wasm::alias::task::spawn(async move {
-                                if let Err(e) = export(splats).await {
-                                    let _ = sender.send(e.context("Failed to export splat"));
-                                    ctx.request_repaint();
-                                }
-                            });
-                        }
-
-                        ui.add_space(4.0);
-                        ui.separator();
-                        ui.add_space(4.0);
-                    }
 
                     // Background color picker
                     ui.horizontal(|ui| {
@@ -624,7 +557,6 @@ impl AppPane for ScenePanel {
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
             ProcessMessage::NewProcess => {
-                self.live_update = true;
                 self.err = None;
             }
             ProcessMessage::StartLoading { training } => {
@@ -674,7 +606,7 @@ impl AppPane for ScenePanel {
                 self.sh_degree = splats.sh_degree();
 
                 // Mark redraw as dirty if we're live updating.
-                if self.live_update {
+                if process.is_live_update() {
                     self.last_state = None;
                 }
             }
@@ -685,7 +617,7 @@ impl AppPane for ScenePanel {
                 self.sh_degree = splats.sh_degree();
                 self.view_splats = vec![splats];
                 // Mark redraw as dirty if we're live updating.
-                if self.live_update {
+                if process.is_live_update() {
                     self.last_state = None;
                 }
             }
@@ -704,11 +636,6 @@ impl AppPane for ScenePanel {
         if let Some(err) = self.err.as_ref() {
             err.draw(ui);
             return;
-        }
-
-        // Handle export errors
-        while let Ok(err) = self.export_channel.1.try_recv() {
-            self.warnings.push(ErrorDisplay::new(&err));
         }
 
         let cur_time = Instant::now();
@@ -800,12 +727,12 @@ impl AppPane for ScenePanel {
 
         let splats = self.view_splats.get(frame).cloned();
         let interactive = matches!(process.ui_mode(), UiMode::Default | UiMode::FullScreenSplat);
-        let rect = self.draw_splats(ui, process, splats.clone(), interactive);
+        let rect = self.draw_splats(ui, process, splats, interactive);
 
         if interactive {
             // Floating play/pause button if needed.
             self.draw_play_pause(ui, rect);
-            self.controls_box(ui, process, splats, egui::pos2(rect.min.x, rect.min.y));
+            self.controls_box(ui, process, egui::pos2(rect.min.x, rect.min.y));
 
             let pos = egui::pos2(ui.available_rect_before_wrap().max.x, rect.min.y);
             self.draw_warnings(ui, pos);

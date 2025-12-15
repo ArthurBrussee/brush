@@ -4,8 +4,12 @@ use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
 use brush_process::message::ProcessMessage;
 #[cfg(feature = "training")]
 use brush_process::message::TrainMessage;
+#[cfg(feature = "training")]
+use brush_render::{MainBackend, gaussian_splats::Splats};
 use brush_vfs::DataSource;
 use egui::Align2;
+#[cfg(feature = "training")]
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 #[cfg(feature = "training")]
 use web_time::Duration;
 
@@ -22,6 +26,13 @@ pub struct SettingsPanel {
     train_iter_per_s: f32,
     #[cfg(feature = "training")]
     popup: Option<SettingsPopup>,
+    #[cfg(feature = "training")]
+    current_splats: Option<Splats<MainBackend>>,
+    #[cfg(feature = "training")]
+    export_channel: (
+        UnboundedSender<anyhow::Error>,
+        UnboundedReceiver<anyhow::Error>,
+    ),
 }
 
 impl SettingsPanel {
@@ -39,8 +50,19 @@ impl SettingsPanel {
             train_iter_per_s: 0.0,
             #[cfg(feature = "training")]
             popup: None,
+            #[cfg(feature = "training")]
+            current_splats: None,
+            #[cfg(feature = "training")]
+            export_channel: tokio::sync::mpsc::unbounded_channel(),
         }
     }
+}
+
+#[cfg(feature = "training")]
+async fn export(splat: Splats<MainBackend>) -> Result<(), anyhow::Error> {
+    let data = brush_serde::splat_to_ply(splat).await?;
+    rrfd::save_file("export.ply", data).await?;
+    Ok(())
 }
 
 impl AppPane for SettingsPanel {
@@ -59,6 +81,7 @@ impl AppPane for SettingsPanel {
                 #[cfg(feature = "training")]
                 {
                     self.train_progress = None;
+                    self.current_splats = None;
                 }
             }
             ProcessMessage::NewSource { name } => {
@@ -73,9 +96,11 @@ impl AppPane for SettingsPanel {
                 iter,
                 total_steps,
                 total_elapsed,
+                splats,
                 ..
             }) => {
                 self.train_progress = Some((*iter, *total_steps, *total_elapsed));
+                self.current_splats = Some(splats.as_ref().clone());
 
                 // Calculate smoothed iter/s
                 if let Some(elapsed_diff) = total_elapsed.checked_sub(self.last_train_step.0) {
@@ -264,7 +289,74 @@ impl AppPane for SettingsPanel {
                     );
 
                     ui.add_space(16.0);
-                    ui.label(egui::RichText::new("Training").size(16.0).strong());
+
+                    // Play/Pause button integrated with Training label
+                    let paused = process.is_train_paused();
+                    let button_color = egui::Color32::from_rgb(70, 130, 180);
+                    let (icon, label) = if paused {
+                        ("⏸", "Paused")
+                    } else {
+                        ("⏵", "Training")
+                    };
+
+                    let train_button = egui::Button::new(
+                        egui::RichText::new(format!("{icon} {label}"))
+                            .size(14.0)
+                            .strong(),
+                    )
+                    .min_size(egui::vec2(100.0, 26.0));
+
+                    let train_button = if !paused {
+                        train_button.fill(button_color)
+                    } else {
+                        train_button
+                    };
+
+                    if ui.add(train_button).clicked() {
+                        process.set_train_paused(!paused);
+                    }
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    // Live view toggle
+                    let live_update = process.is_live_update();
+                    let live_color = egui::Color32::from_rgb(180, 60, 60);
+                    let live_button =
+                        egui::Button::new(egui::RichText::new("🔴 Live view").size(13.0))
+                            .min_size(egui::vec2(85.0, 26.0));
+
+                    let live_button = if live_update {
+                        live_button.fill(live_color)
+                    } else {
+                        live_button
+                    };
+
+                    if ui.add(live_button).clicked() {
+                        process.set_live_update(!live_update);
+                    }
+
+                    // Export button
+                    if let Some(splats) = self.current_splats.clone() {
+                        ui.add_space(4.0);
+                        if ui
+                            .add(
+                                egui::Button::new(egui::RichText::new("⬆ Export").size(13.0))
+                                    .min_size(egui::vec2(70.0, 26.0)),
+                            )
+                            .clicked()
+                        {
+                            let sender = self.export_channel.0.clone();
+                            let ctx = ui.ctx().clone();
+                            tokio_with_wasm::alias::task::spawn(async move {
+                                if let Err(e) = export(splats).await {
+                                    let _ = sender.send(e);
+                                    ctx.request_repaint();
+                                }
+                            });
+                        }
+                    }
                 });
             }
 
