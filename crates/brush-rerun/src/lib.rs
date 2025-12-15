@@ -1,9 +1,9 @@
 use clap::Args;
 
-// Exclude entirely on wasm.
 #[cfg(not(target_family = "wasm"))]
 pub mod burn_to_rerun;
-#[cfg(not(target_family = "wasm"))]
+
+// visualize_tools has a noop implementation for WASM.
 pub mod visualize_tools;
 
 #[derive(Clone, Args)]

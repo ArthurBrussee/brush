@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use main::ffi::{ProgressMessage, TrainExitCode, TrainOptions, train_and_save};
+use brush_app::ffi::{ProgressMessage, TrainExitCode, TrainOptions, train_and_save};
 
 #[repr(C)]
 struct CallbackState {

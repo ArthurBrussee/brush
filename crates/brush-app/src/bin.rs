@@ -1,8 +1,5 @@
 #![recursion_limit = "256"]
 
-#[cfg(feature = "training")]
-pub mod ffi;
-
 use brush_ui::app::App;
 
 use brush_cli::Cli;

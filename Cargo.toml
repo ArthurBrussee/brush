@@ -1,6 +1,29 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "examples/*"]
+members = [
+    "crates/brush-app",
+    "crates/brush-bench-test",
+    "crates/brush-cli",
+    "crates/brush-dataset",
+    "crates/brush-kernel",
+    "crates/brush-prefix-sum",
+    "crates/brush-process",
+    "crates/brush-render",
+    "crates/brush-render-bwd",
+    "crates/brush-rerun",
+    "crates/brush-serde",
+    "crates/brush-serde-macros",
+    "crates/brush-sort",
+    "crates/brush-train",
+    "crates/brush-ui",
+    "crates/brush-vfs",
+    "crates/brush-wgsl",
+    "crates/colmap-reader",
+    "crates/lpips",
+    "crates/lpips-convert",
+    "crates/rrfd",
+    "examples/train-2d",
+]
 default-members = ["crates/brush-app"]
 
 [workspace.package]

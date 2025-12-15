@@ -6,9 +6,9 @@ readme.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# Lib for android NDK.
+# Lib for android NDK and WASM.
 [lib]
-name = "main"
+name = "brush_app"
 crate-type = ["cdylib", "rlib"]
 
 # Bin for desktop platforms.
@@ -63,8 +63,37 @@ tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
 android_logger = "0.15.0"
 jni = "0.21.1"
 
+# On WASM
+[target.'cfg(target_family = "wasm")'.dependencies]
+glam.workspace = true
+tokio_with_wasm = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["io-util", "rt"] }
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = [
+    "HtmlCanvasElement",
+    "Document",
+    "Window",
+] }
+wasm-logger = "0.2.0"
+# wasm_js random backend needs to be enabled explicitly.
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
 [dev-dependencies]
 tempfile = "3.23.0"
+
+[package.metadata.wasm-pack.profile.dev.wasm-bindgen]
+dwarf-debug-info = true
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+    "-Oz",
+    "--converge",
+    "--enable-bulk-memory",
+    "--enable-nontrapping-float-to-int",
+]
+
+[package.metadata.cargo-shear]
+ignored = ["getrandom"]
 
 [lints]
 workspace = true

@@ -80,9 +80,9 @@ dependencies = [
 
 [[package]]
 name = "aligned"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "377e4c0ba83e4431b10df45c1d4666f178ea9c552cac93e60c3a88bf32785923"
+checksum = "ee4508988c62edf04abd8d92897fca0c2995d907ce1dfeaf369dac3716a40685"
 dependencies = [
  "as-slice",
 ]
@@ -1023,15 +1023,21 @@ dependencies = [
  "eframe",
  "egui",
  "env_logger",
+ "getrandom 0.3.4",
+ "glam",
  "jni",
  "log",
  "rrfd",
  "tempfile",
  "tokio",
  "tokio-stream",
+ "tokio_with_wasm",
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
+ "wasm-bindgen",
+ "wasm-logger",
+ "web-sys",
  "winapi",
  "winit",
 ]
@@ -1315,25 +1321,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-streams",
- "web-sys",
-]
-
-[[package]]
-name = "brush-wasm"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "brush-process",
- "brush-ui",
- "brush-vfs",
- "eframe",
- "getrandom 0.3.4",
- "glam",
- "log",
- "tokio",
- "tokio_with_wasm",
- "wasm-bindgen",
- "wasm-logger",
  "web-sys",
 ]
 
@@ -1991,9 +1978,9 @@ dependencies = [
 
 [[package]]
 name = "camino"
-version = "1.2.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "276a59bf2b2c967788139340c9f0c5b12d7fd6630315c15c217e559de85d2609"
+checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
 dependencies = [
  "serde_core",
 ]
@@ -5122,7 +5109,7 @@ dependencies = [
  "rgb",
  "tiff",
  "zune-core 0.5.0",
- "zune-jpeg 0.5.6",
+ "zune-jpeg 0.5.7",
 ]
 
 [[package]]
@@ -11779,9 +11766,9 @@ dependencies = [
 
 [[package]]
 name = "zune-jpeg"
-version = "0.5.6"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f520eebad972262a1dde0ec455bce4f8b298b1e5154513de58c114c4c54303e8"
+checksum = "51d915729b0e7d5fe35c2f294c5dc10b30207cc637920e5b59077bfa3da63f28"
 dependencies = [
  "zune-core 0.5.0",
 ]
