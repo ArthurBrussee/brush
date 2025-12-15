@@ -312,16 +312,8 @@ impl ScenePanel {
                     .min_size(egui::vec2(14.0, 14.0));
 
                     ui.add(help_button).on_hover_ui_at_pointer(|ui| {
-                        ui.set_max_width(280.0);
-                        ui.heading("Controls");
-                        ui.separator();
-                        ui.label("• Left click and drag to orbit");
-                        ui.label("• Right click + drag to look around");
-                        ui.label("• Middle click + drag to pan");
-                        ui.label("• Scroll to zoom");
-                        ui.label("• WASD to fly, Q&E up/down");
-                        ui.label("• Z&C to roll, X to reset roll");
-                        ui.label("• Shift to move faster");
+                        ui.set_max_width(200.0);
+                        Self::draw_controls_help(ui);
                     });
                 })
                 .body_unindented(|ui| {
@@ -539,6 +531,51 @@ impl ScenePanel {
         self.frame_count = 0;
         self.frame = 0.0;
     }
+
+    fn draw_controls_help(ui: &mut egui::Ui) {
+        let key_color = Color32::from_rgb(130, 170, 220);
+        let action_color = Color32::from_rgb(140, 140, 140);
+        let title_color = Color32::from_rgb(200, 200, 200);
+
+        let controls = [
+            ("Left drag", "Orbit"),
+            ("Right drag", "Look around"),
+            ("Middle drag", "Pan"),
+            ("Scroll", "Zoom"),
+            ("WASD / QE", "Fly"),
+            ("Shift", "Move faster"),
+            ("F", "Fullscreen"),
+        ];
+
+        Frame::new()
+            .fill(Color32::from_rgba_unmultiplied(40, 40, 45, 200))
+            .corner_radius(8.0)
+            .inner_margin(egui::Margin::symmetric(18, 14))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Controls")
+                            .size(14.0)
+                            .strong()
+                            .color(title_color),
+                    );
+                    ui.add_space(10.0);
+
+                    egui::Grid::new("controls_grid")
+                        .num_columns(2)
+                        .spacing([16.0, 6.0])
+                        .show(ui, |ui| {
+                            for (key, action) in controls {
+                                ui.label(egui::RichText::new(key).size(13.0).color(key_color));
+                                ui.label(
+                                    egui::RichText::new(action).size(13.0).color(action_color),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                });
+            });
+    }
 }
 
 impl AppPane for ScenePanel {
@@ -548,7 +585,7 @@ impl AppPane for ScenePanel {
 
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
-            ProcessMessage::NewSource => {
+            ProcessMessage::NewProcess => {
                 self.live_update = true;
                 self.err = None;
             }
@@ -640,18 +677,65 @@ impl AppPane for ScenePanel {
             && self.view_splats.is_empty()
             && process.ui_mode() == UiMode::Default
         {
-            ui.heading("Load a ply file or dataset to get started.");
-            ui.add_space(5.0);
+            ui.vertical_centered(|ui| {
+                ui.add_space(ui.available_height() * 0.30);
 
-            if cfg!(debug_assertions) {
-                ui.scope(|ui| {
-                    ui.visuals_mut().override_text_color = Some(Color32::LIGHT_BLUE);
-                    ui.heading(
-                        "Note: running in debug mode, compile with --release for best performance",
-                    );
+                ui.horizontal(|ui| {
+                    let box_color = Color32::from_rgba_unmultiplied(40, 40, 45, 200);
+                    let title_color = Color32::from_rgb(200, 200, 200);
+                    let text_color = Color32::from_rgb(150, 150, 150);
+
+                    // Center the two boxes
+                    ui.add_space((ui.available_width() - 500.0).max(0.0) / 2.0);
+
+                    // Getting started box
+                    Frame::new()
+                        .fill(box_color)
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::symmetric(18, 14))
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Getting Started")
+                                        .size(14.0)
+                                        .strong()
+                                        .color(title_color),
+                                );
+                                ui.add_space(10.0);
+                                ui.label(
+                                    egui::RichText::new("Load a .ply splat file")
+                                        .size(13.0)
+                                        .color(text_color),
+                                );
+                                ui.label(
+                                    egui::RichText::new("or a dataset to train")
+                                        .size(13.0)
+                                        .color(text_color),
+                                );
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new("Use the status bar above")
+                                        .size(12.0)
+                                        .color(Color32::from_rgb(120, 120, 120)),
+                                );
+                            });
+                        });
+
+                    ui.add_space(20.0);
+
+                    // Controls box
+                    Self::draw_controls_help(ui);
                 });
-                ui.add_space(10.0);
-            }
+
+                if cfg!(debug_assertions) {
+                    ui.add_space(24.0);
+                    ui.label(
+                        egui::RichText::new("⚠ Debug build - use --release for best performance")
+                            .size(11.0)
+                            .color(Color32::from_rgb(180, 140, 60)),
+                    );
+                }
+            });
             return;
         }
 

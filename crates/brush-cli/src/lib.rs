@@ -158,8 +158,12 @@ pub async fn run_cli_ui(
         };
 
         match msg {
-            ProcessMessage::NewSource => {
+            ProcessMessage::NewProcess => {
                 main_spinner.set_message("Starting process...");
+            }
+            ProcessMessage::NewSource { name } => {
+                log::info!("Loading: {name}");
+                main_spinner.set_message(format!("Loading {name}..."));
             }
             ProcessMessage::StartLoading { training } => {
                 if !training {

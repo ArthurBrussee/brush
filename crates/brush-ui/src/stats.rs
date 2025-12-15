@@ -70,7 +70,7 @@ impl AppPane for StatsPanel {
 
     fn on_message(&mut self, message: &ProcessMessage, _: &UiProcess) {
         match message {
-            ProcessMessage::NewSource => {
+            ProcessMessage::NewProcess => {
                 *self = Self::new(self.device.clone(), self.adapter_info.clone());
             }
             ProcessMessage::StartLoading { .. } => {
@@ -90,6 +90,7 @@ impl AppPane for StatsPanel {
                     splats,
                     iter,
                     total_elapsed,
+                    ..
                 } => {
                     self.cur_sh_degree = splats.sh_degree();
                     self.num_splats = splats.num_splats();

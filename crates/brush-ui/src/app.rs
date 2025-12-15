@@ -55,7 +55,7 @@ impl egui_tiles::Behavior<PaneType> for AppTree {
     /// and between rows/columns in a grid layout.
     fn gap_width(&self, _style: &egui::Style) -> f32 {
         match self.process.ui_mode() {
-            UiMode::Default => 0.5,
+            UiMode::Default => 1.0,
             UiMode::FullScreenSplat => 0.0,
             UiMode::EmbeddedViewer => 0.0,
         }
@@ -101,34 +101,52 @@ impl App {
             .options_mut(|opt| opt.theme_preference = ThemePreference::Dark);
 
         let mut tiles: Tiles<PaneType> = Tiles::default();
-        let settings_pane = tiles.insert_pane(Box::new(SettingsPanel::new()));
+
+        // Create panes
+        let status_bar_pane = tiles.insert_pane(Box::new(SettingsPanel::new()));
         let stats_pane =
             tiles.insert_pane(Box::new(StatsPanel::new(device, state.adapter.get_info())));
-        let side_pane = tiles.insert_vertical_tile(vec![settings_pane, stats_pane]);
-
         let scene_pane = tiles.insert_pane(Box::new(ScenePanel::new(
             state.device.clone(),
             state.queue.clone(),
             state.renderer.clone(),
         )));
 
+        // Left sidebar: Dataset (top) + Stats (bottom)
         #[allow(unused_mut)]
-        let mut right_panels = vec![scene_pane];
+        let mut left_sidebar_panels = vec![];
 
         #[cfg(feature = "training")]
-        right_panels.push(tiles.insert_pane(Box::new(DatasetPanel::new())));
+        let dataset_pane = tiles.insert_pane(Box::new(DatasetPanel::new()));
+        #[cfg(feature = "training")]
+        left_sidebar_panels.push(dataset_pane);
 
-        let right_side = tiles.insert_container(egui_tiles::Linear::new(
-            egui_tiles::LinearDir::Vertical,
-            right_panels,
-        ));
+        left_sidebar_panels.push(stats_pane);
 
-        let mut lin = egui_tiles::Linear::new(
+        let mut left_sidebar_linear =
+            egui_tiles::Linear::new(egui_tiles::LinearDir::Vertical, left_sidebar_panels);
+        // Dataset panel takes about half the space
+        #[cfg(feature = "training")]
+        left_sidebar_linear.shares.set_share(dataset_pane, 0.50);
+        let left_sidebar = tiles.insert_container(left_sidebar_linear);
+
+        // Main content area: Left sidebar + Scene panel (horizontal)
+        let mut main_content = egui_tiles::Linear::new(
             egui_tiles::LinearDir::Horizontal,
-            vec![side_pane, right_side],
+            vec![left_sidebar, scene_pane],
         );
-        lin.shares.set_share(side_pane, 0.35);
-        let root_container = tiles.insert_container(lin);
+        // Give the scene panel most of the width (left sidebar ~30%)
+        main_content.shares.set_share(left_sidebar, 0.30);
+        let main_content_container = tiles.insert_container(main_content);
+
+        // Root: Status bar (top) + Main content (below)
+        let mut root_layout = egui_tiles::Linear::new(
+            egui_tiles::LinearDir::Vertical,
+            vec![status_bar_pane, main_content_container],
+        );
+        // Status bar gets a small fixed proportion
+        root_layout.shares.set_share(status_bar_pane, 0.07);
+        let root_container = tiles.insert_container(root_layout);
 
         let tree = egui_tiles::Tree::new("brush_tree", root_container, tiles);
         let tree_ctx = AppTree { process: context };

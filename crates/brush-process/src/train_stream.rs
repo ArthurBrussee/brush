@@ -241,6 +241,7 @@ pub(crate) async fn train_stream(
             let message = ProcessMessage::TrainMessage(TrainMessage::TrainStep {
                 splats: Box::new(splats.valid()),
                 iter,
+                total_steps: train_stream_args.train_config.total_steps,
                 total_elapsed: train_duration,
             });
             emitter.emit(message).await;

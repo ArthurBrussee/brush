@@ -16,7 +16,7 @@ pub fn create_process(
 ) -> impl Stream<Item = Result<ProcessMessage, anyhow::Error>> + 'static {
     try_fn_stream(|emitter| async move {
         log::info!("Starting process with source {source:?}");
-        emitter.emit(ProcessMessage::NewSource).await;
+        emitter.emit(ProcessMessage::NewProcess).await;
 
         let vfs = source.into_vfs().await?;
 
@@ -29,7 +29,30 @@ pub fn create_process(
             ply_count
         );
 
-        if vfs_counts == ply_count {
+        let is_training = vfs_counts != ply_count;
+
+        // Emit source info - just the display name
+        let paths: Vec<_> = vfs.file_paths().collect();
+        let source_name = if let Some(base_path) = vfs.base_path() {
+            base_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(if is_training { "dataset" } else { "file" })
+                .to_owned()
+        } else if paths.len() == 1 {
+            paths[0]
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("input.ply")
+                .to_owned()
+        } else {
+            format!("{} files", paths.len())
+        };
+        emitter
+            .emit(ProcessMessage::NewSource { name: source_name })
+            .await;
+
+        if !is_training {
             drop(process_args);
             view_stream(vfs, device, emitter).await?;
         } else {

@@ -22,7 +22,7 @@ extern "C" fn test_progress_callback(process_message: ProgressMessage, user_data
     state.call_count.fetch_add(1, Ordering::SeqCst);
 
     match process_message {
-        ProgressMessage::NewSource => {
+        ProgressMessage::NewProcess => {
             println!("FFI Test: Training starting...");
         }
         ProgressMessage::Training { iter } => {

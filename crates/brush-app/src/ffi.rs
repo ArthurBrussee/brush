@@ -16,7 +16,7 @@ pub enum TrainExitCode {
 
 #[repr(C)]
 pub enum ProgressMessage {
-    NewSource,
+    NewProcess,
     Training { iter: u32 },
     DoneTraining,
 }
@@ -26,7 +26,7 @@ impl TryFrom<ProcessMessage> for ProgressMessage {
 
     fn try_from(value: ProcessMessage) -> Result<Self, Self::Error> {
         match value {
-            ProcessMessage::NewSource => Ok(Self::NewSource),
+            ProcessMessage::NewProcess => Ok(Self::NewProcess),
             ProcessMessage::TrainMessage(TrainMessage::TrainStep { iter, .. }) => {
                 Ok(Self::Training { iter })
             }
