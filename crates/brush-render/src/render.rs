@@ -2,16 +2,11 @@ use crate::{
     INTERSECTS_UPPER_BOUND, MainBackendBase,
     camera::Camera,
     dim_check::DimCheck,
+    get_tile_offset::{CHECKS_PER_ITER, get_tile_offsets},
     render_aux::RenderAux,
     sh::sh_degree_from_coeffs,
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::frontend::CompilationArg;
-use burn_cubecl::cubecl::prelude::{ABSOLUTE_POS, Tensor};
-use burn_cubecl::cubecl::server::Bindings;
-use burn_cubecl::cubecl::{self, terminate};
-
 use brush_kernel::create_dispatch_buffer;
 use brush_kernel::create_tensor;
 use brush_kernel::create_uniform_buffer;
@@ -23,6 +18,7 @@ use burn::tensor::{
     FloatDType,
     ops::{FloatTensorOps, IntTensorOps},
 };
+use burn_cubecl::cubecl::server::Bindings;
 
 use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
@@ -273,34 +269,9 @@ pub(crate) fn render_forward(
                 )
             });
 
-        #[cube(launch_unchecked)]
-        pub fn get_tile_offsets(
-            tile_id_from_isect: &Tensor<u32>,
-            tile_offsets: &mut Tensor<u32>,
-            num_inter: &Tensor<u32>,
-        ) {
-            let inter = num_inter[0];
-            let isect_id = ABSOLUTE_POS;
-            if isect_id >= inter {
-                terminate!();
-            }
-            let prev_tid = tile_id_from_isect[isect_id - 1];
-            let tid = tile_id_from_isect[isect_id];
-
-            if isect_id == inter - 1 {
-                // Write the end of the previous tile.
-                tile_offsets[tid * 2 + 1] = ABSOLUTE_POS + 1;
-            }
-            if tid != prev_tid {
-                // Write the end of the previous tile.
-                tile_offsets[prev_tid * 2 + 1] = ABSOLUTE_POS;
-                // Write start of this tile.
-                tile_offsets[tid * 2] = ABSOLUTE_POS;
-            }
-        }
-
-        let cube_dim = CubeDim::new_1d(512);
-        let num_vis_map_wg = create_dispatch_buffer(num_intersections.clone(), [256, 1, 1]);
+        let cube_dim = CubeDim::new_1d(256);
+        let num_vis_map_wg =
+            create_dispatch_buffer(num_intersections.clone(), [256 * CHECKS_PER_ITER, 1, 1]);
         let cube_count = CubeCount::Dynamic(num_vis_map_wg.handle.binding());
 
         // Tiles without splats will be written as having a range of [0, 0].

@@ -25,6 +25,7 @@ mod tests;
 pub mod bounding_box;
 pub mod camera;
 pub mod gaussian_splats;
+mod get_tile_offset;
 pub mod render;
 pub mod validation;
 
