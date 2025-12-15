@@ -4,7 +4,7 @@
 @group(0) @binding(1) var<storage, read> projected: array<helpers::ProjectedSplat>;
 
 #ifdef PREPASS
-    @group(0) @binding(2) var<storage, read_write> splat_intersect_counts: array<atomic<u32>>;
+    @group(0) @binding(2) var<storage, read_write> splat_intersect_counts: array<u32>;
 #else
     @group(0) @binding(2) var<storage, read> splat_cum_hit_counts: array<u32>;
     @group(0) @binding(3) var<storage, read_write> tile_id_from_isect: array<u32>;
