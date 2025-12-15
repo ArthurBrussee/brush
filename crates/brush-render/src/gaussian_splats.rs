@@ -41,7 +41,6 @@ impl<B: Backend> Splats<B> {
         device: &B::Device,
     ) -> Self {
         let _ = trace_span!("Splats::from_raw").entered();
-
         let n_splats = pos_data.len() / 3;
         let log_scales = Tensor::from_data(TensorData::new(scale_data, [n_splats, 3]), device);
         let means_tensor = Tensor::from_data(TensorData::new(pos_data, [n_splats, 3]), device);
@@ -51,10 +50,8 @@ impl<B: Backend> Splats<B> {
             TensorData::new(coeffs_data, [n_splats, n_coeffs / 3, 3]),
             device,
         );
-
         let raw_opacities =
             Tensor::from_data(TensorData::new(opac_data, [n_splats]), device).require_grad();
-
         Self::from_tensor_data(
             means_tensor,
             rotations,

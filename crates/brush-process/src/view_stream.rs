@@ -35,7 +35,7 @@ pub(crate) async fn view_stream(
             let message = message?;
 
             // Convert SplatData to Splats using simple defaults
-            let splats = message.data.to_splats(&device);
+            let splats = message.data.into_splats(&device);
 
             // If there's multiple ply files in a zip, don't support animated plys, that would
             // get rather mind bending.

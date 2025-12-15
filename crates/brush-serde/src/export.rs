@@ -264,7 +264,7 @@ mod tests {
             let imported_message = load_splat_from_ply(cursor, None)
                 .await
                 .expect("Failed to deserialize splats");
-            let imported_splats = imported_message.data.to_splats(&device);
+            let imported_splats = imported_message.data.into_splats(&device);
 
             assert_eq!(imported_splats.sh_degree(), degree);
             assert_coeffs_match(&original_splats, &imported_splats).await;
