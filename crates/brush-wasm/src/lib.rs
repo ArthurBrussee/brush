@@ -16,7 +16,9 @@ mod three;
 
 pub fn wasm_app(canvas_name: &str) -> anyhow::Result<Arc<UiProcess>> {
     // TODO: Make sure some startup bits here only happen once.
+    #[cfg(debug_assertions)]
     wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
+
     let context = Arc::new(UiProcess::new());
 
     let wgpu_options = brush_ui::create_egui_options();
