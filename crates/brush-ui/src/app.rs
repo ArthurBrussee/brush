@@ -123,9 +123,9 @@ impl App {
 
         left_sidebar_panels.push(stats_pane);
 
+        #[allow(unused_mut)]
         let mut left_sidebar_linear =
             egui_tiles::Linear::new(egui_tiles::LinearDir::Vertical, left_sidebar_panels);
-        // Dataset panel takes about half the space
         #[cfg(feature = "training")]
         left_sidebar_linear.shares.set_share(dataset_pane, 0.50);
         let left_sidebar = tiles.insert_container(left_sidebar_linear);
