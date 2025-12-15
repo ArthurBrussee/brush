@@ -169,6 +169,7 @@ pub async fn run_cli_ui(
                 }
                 main_spinner.set_message("Loading data...");
             }
+            ProcessMessage::DetectedMaxImageResolution { .. } => {}
             ProcessMessage::ViewSplats { .. } => {}
             #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(train) => match train {

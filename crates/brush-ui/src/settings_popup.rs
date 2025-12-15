@@ -8,6 +8,7 @@ use tokio::sync::oneshot::Sender;
 pub(crate) struct SettingsPopup {
     send_args: Option<Sender<TrainStreamConfig>>,
     args: TrainStreamConfig,
+    detected_max_image_resolution: Option<u32>,
 }
 
 impl SettingsPopup {
@@ -15,7 +16,12 @@ impl SettingsPopup {
         Self {
             send_args: Some(send_args),
             args: TrainStreamConfig::default(),
+            detected_max_image_resolution: None,
         }
+    }
+
+    pub(crate) fn set_detected_max_image_resolution(&mut self, max_resolution: u32) {
+        self.detected_max_image_resolution = Some(max_resolution);
     }
 
     pub(crate) fn is_done(&self) -> bool {
@@ -115,8 +121,23 @@ impl SettingsPopup {
 
             // Dataset
             ui.heading("Dataset");
+            let slider_max = self
+                .detected_max_image_resolution
+                .unwrap_or(0)
+                .max(self.args.load_config.max_resolution)
+                .max(2048);
             ui.label("Max image resolution");
-            slider(ui, &mut self.args.load_config.max_resolution, 32..=2048, "", false);
+            if self.args.load_config.max_resolution == u32::MAX {
+                self.args.load_config.max_resolution =
+                    self.detected_max_image_resolution.unwrap_or(2048);
+            }
+            slider(
+                ui,
+                &mut self.args.load_config.max_resolution,
+                32..=slider_max,
+                "",
+                false,
+            );
 
 
             let mut limit_frames = self.args.load_config.max_frames.is_some();

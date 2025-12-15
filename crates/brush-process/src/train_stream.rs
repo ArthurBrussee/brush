@@ -4,7 +4,10 @@ use crate::{
 };
 use anyhow::Context;
 use async_fn_stream::TryStreamEmitter;
-use brush_dataset::{load_dataset, scene::Scene, scene_loader::SceneLoader, splat_data_to_splats};
+use brush_dataset::{
+    detect_max_image_resolution, load_dataset, scene::Scene, scene_loader::SceneLoader,
+    splat_data_to_splats,
+};
 use brush_render::{MainBackend, gaussian_splats::Splats};
 use brush_rerun::{RerunConfig, visualize_tools::VisualizeTools};
 use brush_train::{
@@ -41,8 +44,29 @@ pub(crate) async fn train_stream(
         .emit(ProcessMessage::StartLoading { training: true })
         .await;
 
+    let detected_max_resolution = detect_max_image_resolution(vfs.clone()).await;
+    if let Some(max_resolution) = detected_max_resolution {
+        emitter
+            .emit(ProcessMessage::DetectedMaxImageResolution { max_resolution })
+            .await;
+    }
+
     // Now wait for the process args.
-    let train_stream_args = process_args.await?;
+    let mut train_stream_args = process_args.await?;
+    if train_stream_args.load_config.max_resolution == u32::MAX {
+        if let Some(max_resolution) = detected_max_resolution {
+            train_stream_args.load_config.max_resolution = max_resolution;
+        } else {
+            train_stream_args.load_config.max_resolution = 1920;
+            emitter
+                .emit(ProcessMessage::Warning {
+                    error: anyhow::anyhow!(
+                        "Failed to detect dataset image resolution; falling back to --max-resolution=1920"
+                    ),
+                })
+                .await;
+        }
+    }
 
     let visualize = tracing::trace_span!("Create rerun")
         .in_scope(|| VisualizeTools::new(train_stream_args.rerun_config.rerun_enabled));

@@ -49,6 +49,29 @@ pub(crate) async fn load_dataset(
     Some(load_dataset_inner(vfs, load_args, cam_path, img_path).await)
 }
 
+pub(crate) async fn detect_max_image_resolution(vfs: Arc<BrushVfs>) -> Option<u32> {
+    let cam_path = if let Some(path) = vfs.files_ending_in("cameras.bin").next() {
+        let path = path.parent().expect("unreachable");
+        path.join("cameras.bin")
+    } else if let Some(path) = vfs.files_ending_in("cameras.txt").next() {
+        let path = path.parent().expect("unreachable");
+        path.join("cameras.txt")
+    } else {
+        return None;
+    };
+
+    let is_binary = cam_path.ends_with("cameras.bin");
+    let mut cam_file = vfs.reader_at_path(&cam_path).await.ok()?;
+    let cam_model_data = colmap_reader::read_cameras(&mut cam_file, is_binary)
+        .await
+        .ok()?;
+
+    cam_model_data
+        .into_iter()
+        .map(|cam| cam.width.max(cam.height) as u32)
+        .max()
+}
+
 async fn load_dataset_inner(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,

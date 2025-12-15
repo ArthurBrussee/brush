@@ -36,6 +36,12 @@ pub enum ProcessMessage {
     StartLoading {
         training: bool,
     },
+    /// Best-effort estimate of the maximum source image resolution (largest image dimension) in the dataset.
+    ///
+    /// Sent early so UIs can adjust any resolution-related controls before starting the full load.
+    DetectedMaxImageResolution {
+        max_resolution: u32,
+    },
     /// Loaded a splat from a ply file.
     ///
     /// Nb: This includes all the intermediately loaded splats.
