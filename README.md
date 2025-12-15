@@ -51,7 +51,7 @@ Simply `cargo run` or `cargo run --release` from the workspace root. Brush can a
 ### Web
 Brush can be compiled to WASM. Run `npm run dev` to start the demo website using Next.js, see the brush_nextjs directory.
 
-Brush uses [`wasm-pack`](https://rustwasm.github.io/wasm-bindgen/introduction.html) to build the WASM bundle. You can also use it without a bundler, see [wasm-pack's documentation](hhttps://rustwasm.github.io/wasm-bindgen/examples/without-a-bundler.html).
+Brush uses [`wasm-pack`](https://drager.github.io/wasm-pack/) to build the WASM bundle. You can also use it without a bundler, see [wasm-pack's documentation](https://drager.github.io/wasm-pack/book/).
 
 WebGPU is still an upcoming standard, and as such, only Chrome 134+ on Windows and macOS is currently supported.
 
