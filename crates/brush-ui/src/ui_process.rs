@@ -67,6 +67,7 @@ impl UiProcess {
         self.read().background_style
     }
 
+    #[allow(unused)]
     pub(crate) fn set_background_style(&self, style: BackgroundStyle) {
         self.write().background_style = style;
     }
