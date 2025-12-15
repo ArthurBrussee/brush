@@ -19,10 +19,11 @@ use burn::{backend::Autodiff, module::AutodiffModule, prelude::Backend};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
+
+#[allow(unused)]
+use std::path::Path;
+
 use tokio::sync::oneshot::Receiver;
 use tokio_with_wasm::alias as tokio_wasm;
 use tracing::{Instrument, trace_span};
@@ -291,6 +292,9 @@ async fn run_eval(
                 .join(format!("{img_name}.png"));
             sample.save_to_disk(&path).await?;
         }
+
+        #[cfg(target_family = "wasm")]
+        let _ = save_path;
 
         visualize.log_eval_sample(iter, i as u32, sample).await?;
     }

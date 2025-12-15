@@ -5883,7 +5883,7 @@ checksum = "96a1fe2275b68991faded2c80aa4a33dba398b77d276038b8f50701a22e55918"
 [[package]]
 name = "naga"
 version = "26.0.2"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#bdf430c352130166dd8b36491c7e84829ebdc852"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#45dce121756e3e64530d91b65deb3400ebcc65e7"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -10607,7 +10607,7 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 [[package]]
 name = "wgpu"
 version = "26.0.2"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#bdf430c352130166dd8b36491c7e84829ebdc852"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#45dce121756e3e64530d91b65deb3400ebcc65e7"
 dependencies = [
  "arrayvec",
  "bitflags 2.10.0",
@@ -10635,7 +10635,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "26.0.2"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#bdf430c352130166dd8b36491c7e84829ebdc852"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#45dce121756e3e64530d91b65deb3400ebcc65e7"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -10665,7 +10665,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "26.0.2"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#bdf430c352130166dd8b36491c7e84829ebdc852"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#45dce121756e3e64530d91b65deb3400ebcc65e7"
 dependencies = [
  "wgpu-hal",
 ]
@@ -10673,7 +10673,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "26.0.2"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#bdf430c352130166dd8b36491c7e84829ebdc852"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#45dce121756e3e64530d91b65deb3400ebcc65e7"
 dependencies = [
  "wgpu-hal",
 ]
@@ -10681,7 +10681,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "26.0.2"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#bdf430c352130166dd8b36491c7e84829ebdc852"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#45dce121756e3e64530d91b65deb3400ebcc65e7"
 dependencies = [
  "wgpu-hal",
 ]
@@ -10689,7 +10689,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "26.0.2"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#bdf430c352130166dd8b36491c7e84829ebdc852"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#45dce121756e3e64530d91b65deb3400ebcc65e7"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -10736,7 +10736,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "26.0.2"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#bdf430c352130166dd8b36491c7e84829ebdc852"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=v26#45dce121756e3e64530d91b65deb3400ebcc65e7"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",

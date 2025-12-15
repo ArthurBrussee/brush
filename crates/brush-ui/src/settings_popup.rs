@@ -48,11 +48,6 @@ impl SettingsPopup {
             ui.add(s);
         }
 
-        fn text_input(ui: &mut Ui, label: &str, text: &mut String) {
-            let label = ui.label(label);
-            ui.text_edit_singleline(text).labelled_by(label.id);
-        }
-
         if self.send_args.is_none() {
             return;
         }
@@ -194,6 +189,11 @@ impl SettingsPopup {
 
             #[cfg(not(target_family = "wasm"))]
             ui.collapsing("Export", |ui| {
+                fn text_input(ui: &mut Ui, label: &str, text: &mut String) {
+                    let label = ui.label(label);
+                    ui.text_edit_singleline(text).labelled_by(label.id);
+                }
+
                 let pc = &mut self.args.process_config;
                 ui.add(Slider::new(&mut pc.export_every, 1..=15000)
                     .clamping(egui::SliderClamping::Never).prefix("every ").suffix(" steps"));
