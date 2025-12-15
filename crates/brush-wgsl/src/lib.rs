@@ -179,19 +179,23 @@ struct IncludeInfo {
     module_name: String,
 }
 
-fn create_composer(includes: &[IncludeInfo]) -> Composer {
+fn create_composer(includes: &[IncludeInfo]) -> Result<Composer, String> {
     let mut composer = Composer::default().with_capabilities(Capabilities::all());
     for inc in includes {
-        composer
-            .add_composable_module(ComposableModuleDescriptor {
-                source: &inc.source,
-                file_path: &inc.file_path,
-                as_name: Some(inc.module_name.clone()),
-                ..Default::default()
-            })
-            .expect("Failed to add include module");
+        if let Err(e) = composer.add_composable_module(ComposableModuleDescriptor {
+            source: &inc.source,
+            file_path: &inc.file_path,
+            as_name: Some(inc.module_name.clone()),
+            ..Default::default()
+        }) {
+            return Err(format!(
+                "Failed to add include '{}': {}",
+                inc.file_path,
+                e.emit_to_string(&composer)
+            ));
+        }
     }
-    composer
+    Ok(composer)
 }
 
 fn compile_to_wgsl(module: &naga::Module) -> String {
@@ -230,20 +234,23 @@ fn extract_shader_info(
     source_path: &str,
     includes: &[IncludeInfo],
     defines: &[String],
-) -> ShaderInfo {
-    let module = create_composer(includes)
+) -> Result<ShaderInfo, String> {
+    let mut composer = create_composer(includes)?;
+    let module = composer
         .make_naga_module(NagaModuleDescriptor {
             source,
             file_path: source_path,
             ..Default::default()
         })
-        .expect("Shader compilation failed");
+        .map_err(|e| e.emit_to_string(&composer))?;
 
-    assert_eq!(
-        module.entry_points.len(),
-        1,
-        "Expected exactly 1 entry point"
-    );
+    if module.entry_points.len() != 1 {
+        return Err(format!(
+            "Expected exactly 1 entry point in '{}', found {}",
+            source_path,
+            module.entry_points.len()
+        ));
+    }
     let workgroup_size = module.entry_points[0].workgroup_size;
     let ctx = module.to_ctx();
 
@@ -304,28 +311,27 @@ fn extract_shader_info(
         .collect();
 
     // Compile all define combinations
-    let variants = generate_define_combinations(defines)
-        .into_iter()
-        .map(|combo| {
-            let suffix = variant_suffix(defines, &combo);
-            let module = create_composer(includes)
-                .make_naga_module(NagaModuleDescriptor {
-                    source,
-                    file_path: source_path,
-                    shader_defs: combo,
-                    ..Default::default()
-                })
-                .expect("Variant compilation failed");
-            (suffix, compile_to_wgsl(&module))
-        })
-        .collect();
+    let mut variants = Vec::new();
+    for combo in generate_define_combinations(defines) {
+        let suffix = variant_suffix(defines, &combo);
+        let mut variant_composer = create_composer(includes)?;
+        let module = variant_composer
+            .make_naga_module(NagaModuleDescriptor {
+                source,
+                file_path: source_path,
+                shader_defs: combo,
+                ..Default::default()
+            })
+            .map_err(|e| e.emit_to_string(&variant_composer))?;
+        variants.push((suffix, compile_to_wgsl(&module)));
+    }
 
-    ShaderInfo {
+    Ok(ShaderInfo {
         workgroup_size,
         types,
         constants,
         variants,
-    }
+    })
 }
 
 fn generate_define_combinations(defines: &[String]) -> Vec<HashMap<String, ShaderDefValue>> {
@@ -403,9 +409,6 @@ fn generate_code(
     };
 
     // Type definitions
-    // We manually implement NoUninit instead of using derive because bytemuck's
-    // derive macros can't handle re-exported paths (see https://github.com/Lokathor/bytemuck/issues/208)
-    // SAFETY: Generated structs are repr(C) with only primitive types that have no padding
     let type_defs = info.types.iter().map(|t| {
         let name = format_ident!("{}", t.name);
         let align = proc_macro2::Literal::usize_unsuffixed(t.alignment);
@@ -417,12 +420,8 @@ fn generate_code(
         });
         quote! {
             #[repr(C, align(#align))]
-            #[derive(Debug, Clone, Copy)]
+            #[derive(Debug, Clone, Copy, #bytemuck::NoUninit)]
             pub struct #name { #(#fields),* }
-
-            // SAFETY: All fields are primitive numeric types with no padding holes.
-            // The struct is repr(C) with explicit alignment.
-            unsafe impl #bytemuck::NoUninit for #name {}
         }
     });
 
@@ -643,7 +642,14 @@ pub fn wgsl_kernel(attr: TokenStream, item: TokenStream) -> TokenStream {
         });
     }
 
-    let info = extract_shader_info(&source, &args.source, &includes, &defines);
+    let info = match extract_shader_info(&source, &args.source, &includes, &defines) {
+        Ok(info) => info,
+        Err(e) => {
+            return syn::Error::new(proc_macro2::Span::call_site(), e)
+                .to_compile_error()
+                .into();
+        }
+    };
     let include_paths: Vec<_> = includes.iter().map(|i| i.file_path.clone()).collect();
 
     generate_code(
