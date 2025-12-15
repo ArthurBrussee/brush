@@ -175,20 +175,39 @@ impl AppPane for SettingsPanel {
                         let remaining_iters = total.saturating_sub(iter);
                         let remaining_secs = (secs_per_iter * remaining_iters as f32) as u64;
                         let remaining = Duration::from_secs(remaining_secs);
-                        format!(
-                            "{percent}%  -  ETA {}",
-                            humantime::format_duration(remaining)
-                        )
+                        format!("ETA {}", humantime::format_duration(remaining))
                     } else {
-                        format!("{percent}%  -  ETA --")
+                        "ETA --".to_owned()
                     };
 
-                    // Progress bar with percentage and ETA inside
-                    ui.add(
+                    // Progress bar without text (we'll draw text manually)
+                    let bar_response = ui.add(
                         egui::ProgressBar::new(progress)
                             .desired_width(450.0)
-                            .desired_height(22.0)
-                            .text(egui::RichText::new(eta_text).size(12.0)),
+                            .desired_height(22.0),
+                    );
+
+                    // Draw percentage on the left and ETA on the right
+                    let bar_rect = bar_response.rect;
+                    let text_color = egui::Color32::WHITE;
+                    let padding = 8.0;
+
+                    // Percentage on the left
+                    ui.painter().text(
+                        egui::pos2(bar_rect.left() + padding, bar_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        format!("{percent}%"),
+                        egui::FontId::proportional(12.0),
+                        text_color,
+                    );
+
+                    // ETA on the right
+                    ui.painter().text(
+                        egui::pos2(bar_rect.right() - padding, bar_rect.center().y),
+                        egui::Align2::RIGHT_CENTER,
+                        eta_text,
+                        egui::FontId::proportional(12.0),
+                        text_color,
                     );
 
                     ui.add_space(16.0);
