@@ -186,8 +186,22 @@ impl ScenePanel {
 
         let settings = process.get_cam_settings();
 
-        let focal_y = fov_to_focal(camera.fov_y, size.y) as f32;
-        camera.fov_x = focal_to_fov(focal_y as f64, size.x);
+        // Adjust FOV so that the scene view shows at least what's visible in the dataset view.
+        // The camera has original fov_x and fov_y from the dataset. We need to ensure
+        // the viewport shows at least that much in both dimensions.
+        let camera_aspect = (camera.fov_x / 2.0).tan() / (camera.fov_y / 2.0).tan();
+        let viewport_aspect = size.x as f64 / size.y as f64;
+
+        if viewport_aspect > camera_aspect {
+            // Viewport is wider than camera - keep fov_y, expand fov_x
+            let focal_y = fov_to_focal(camera.fov_y, size.y);
+            camera.fov_x = focal_to_fov(focal_y, size.x);
+        } else {
+            // Viewport is taller than camera - keep fov_x, expand fov_y
+            let focal_x = fov_to_focal(camera.fov_x, size.x);
+            camera.fov_y = focal_to_fov(focal_x, size.y);
+        }
+
         let grid_opacity = process.get_grid_opacity();
 
         let state = RenderState {

@@ -9,7 +9,9 @@ use brush_dataset::{
 };
 use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::AlphaMode;
-use egui::{Color32, Frame, Slider, TextureOptions, collapsing_header::CollapsingState, pos2};
+use egui::{
+    Color32, Frame, Rect, Slider, TextureOptions, collapsing_header::CollapsingState, pos2,
+};
 
 use tokio_with_wasm::alias as tokio_wasm;
 
@@ -80,6 +82,20 @@ impl DatasetPanel {
 
             let has_alpha = image.color().has_alpha();
             let img_size = [image.width() as usize, image.height() as usize];
+
+            // Create blurred background: downscale 32x then blur
+            let bg_width = (image.width() / 32).max(1);
+            let bg_height = (image.height() / 32).max(1);
+            let blurred = image
+                .resize(bg_width, bg_height, image::imageops::FilterType::Triangle)
+                .blur(7.0);
+            let blurred_size = [blurred.width() as usize, blurred.height() as usize];
+            let blurred_img =
+                egui::ColorImage::from_rgb(blurred_size, &blurred.into_rgb8().into_vec());
+
+            // Yield in case we're cancelled.
+            tokio_wasm::task::yield_now().await;
+
             let color_img = if has_alpha {
                 let data = image.into_rgba8().into_vec();
                 egui::ColorImage::from_rgba_unmultiplied(img_size, &data)
@@ -89,6 +105,11 @@ impl DatasetPanel {
 
             let image_name = view_send.image.img_name();
             let egui_handle = ctx.load_texture(image_name, color_img, TextureOptions::default());
+            let blurred_handle = ctx.load_texture(
+                format!("{}_blurred", view_send.image.img_name()),
+                blurred_img,
+                TextureOptions::default(),
+            );
 
             // Yield in case we're cancelled.
             tokio_wasm::task::yield_now().await;
@@ -97,6 +118,7 @@ impl DatasetPanel {
             let _ = sender.send(Some(TexHandle {
                 handle: egui_handle,
                 has_alpha,
+                blurred_bg: Some(blurred_handle),
             }));
             // Show updated texture asap.
             ctx.request_repaint();
@@ -166,16 +188,36 @@ impl AppPane for DatasetPanel {
                 let last_handle = self.selected_view.tex.borrow();
 
                 if let Some(texture_handle) = last_handle.as_ref() {
-                    let mut size = ui.available_size();
+                    let available = ui.available_size();
+                    let cursor_min = ui.cursor().min;
                     let aspect_ratio = texture_handle.handle.aspect_ratio();
 
+                    let mut size = available;
                     if size.x / size.y > aspect_ratio {
                         size.x = size.y * aspect_ratio;
                     } else {
                         size.y = size.x / aspect_ratio;
                     }
-                    let min = ui.cursor().min;
+
+                    // Center the image in the available space
+                    let offset_x = (available.x - size.x) / 2.0;
+                    let offset_y = (available.y - size.y) / 2.0;
+                    let min = cursor_min + egui::vec2(offset_x, offset_y);
                     let rect = egui::Rect::from_min_size(min, size);
+
+                    // Blurred background for letterbox areas
+                    let full_rect = egui::Rect::from_min_size(cursor_min, available);
+                    if let Some(blurred) = &texture_handle.blurred_bg {
+                        ui.painter().image(
+                            blurred.id(),
+                            full_rect,
+                            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                            Color32::from_gray(120),
+                        );
+                    } else {
+                        ui.painter()
+                            .rect_filled(full_rect, 0.0, Color32::from_gray(30));
+                    }
 
                     if texture_handle.has_alpha {
                         if selected_view.image.alpha_mode() == AlphaMode::Masked {
@@ -185,6 +227,7 @@ impl AppPane for DatasetPanel {
                         }
                     }
 
+                    // Draw the main image on top
                     ui.painter().image(
                         texture_handle.handle.id(),
                         rect,
@@ -200,13 +243,13 @@ impl AppPane for DatasetPanel {
                         );
                     }
 
-                    ui.allocate_rect(rect, egui::Sense::click());
+                    ui.allocate_rect(full_rect, egui::Sense::click());
 
-                    // Controls window in top left
+                    // Controls window in top left of the panel (not offset with image)
                     let id = ui.id().with("dataset_controls_box");
                     egui::Area::new(id)
                         .kind(egui::UiKind::Window)
-                        .current_pos(egui::pos2(rect.min.x, rect.min.y))
+                        .current_pos(egui::pos2(cursor_min.x, cursor_min.y))
                         .movable(false)
                         .show(ui.ctx(), |ui| {
                             // Add transparent background frame
