@@ -136,7 +136,10 @@ impl BrushVfs {
         self.lookup.values().cloned()
     }
 
-    pub async fn from_reader(reader: impl DynRead + 'static) -> Result<Self, VfsConstructError> {
+    pub async fn from_reader(
+        reader: impl DynRead + 'static,
+        name: Option<String>,
+    ) -> Result<Self, VfsConstructError> {
         // Small hack to peek some bytes: Read them
         // and add them at the start again.
         let mut data = BufReader::new(reader);
@@ -146,7 +149,7 @@ impl BrushVfs {
 
         if peek.starts_with(b"ply") {
             // For single PLY files, keep the reader for streaming
-            let path = PathBuf::from("input.ply");
+            let path = PathBuf::from(name.unwrap_or_else(|| "input.ply".to_owned()));
 
             Ok(Self {
                 lookup: lookup_from_paths(std::slice::from_ref(&path)),
@@ -194,7 +197,8 @@ impl BrushVfs {
             // it's not really just a single path.
             let file = tokio::fs::File::open(dir).await?;
             let reader = BufReader::new(file);
-            Self::from_reader(reader).await
+            let name = dir.file_name().and_then(|n| n.to_str()).map(String::from);
+            Self::from_reader(reader, name).await
         } else {
             // Make a VFS with all files contained in the directory.
             async fn walk_dir(dir: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
@@ -420,7 +424,9 @@ mod tests {
     #[tokio::test]
     async fn test_zip_vfs_workflow() {
         let zip_data = create_test_zip().await;
-        let vfs = BrushVfs::from_reader(Cursor::new(zip_data)).await.unwrap();
+        let vfs = BrushVfs::from_reader(Cursor::new(zip_data), None)
+            .await
+            .unwrap();
         assert_eq!(vfs.file_count(), 2);
 
         let txt_files: Vec<_> = vfs.files_with_extension("txt").collect();
@@ -468,9 +474,10 @@ mod tests {
     #[tokio::test]
     async fn test_format_detection_and_errors() {
         // Test PLY format
-        let vfs = BrushVfs::from_reader(Cursor::new(
-            b"ply\nformat ascii 1.0\nend_header\nvertex data",
-        ))
+        let vfs = BrushVfs::from_reader(
+            Cursor::new(b"ply\nformat ascii 1.0\nend_header\nvertex data"),
+            None,
+        )
         .await
         .unwrap();
         let mut content = String::new();
@@ -484,11 +491,11 @@ mod tests {
 
         // Test error cases
         assert!(matches!(
-            BrushVfs::from_reader(Cursor::new(b"unknown")).await,
+            BrushVfs::from_reader(Cursor::new(b"unknown"), None).await,
             Err(VfsConstructError::UnknownDataType)
         ));
         assert!(matches!(
-            BrushVfs::from_reader(Cursor::new(b"<!DOCTYPE html>")).await,
+            BrushVfs::from_reader(Cursor::new(b"<!DOCTYPE html>"), None).await,
             Err(VfsConstructError::InvalidHtml(_))
         ));
     }

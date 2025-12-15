@@ -50,9 +50,12 @@ impl DataSource {
     pub async fn into_vfs(self) -> Result<Arc<BrushVfs>, DataSourceError> {
         match self {
             Self::PickFile => {
-                let reader = BufReader::new(rrfd::pick_file().await?);
-                log::info!("Got file reader");
-                Ok(Arc::new(BrushVfs::from_reader(reader).await?))
+                let picked = rrfd::pick_file().await?;
+                log::info!("Got file: {}", picked.name);
+                let reader = BufReader::new(picked.reader);
+                Ok(Arc::new(
+                    BrushVfs::from_reader(reader, Some(picked.name)).await?,
+                ))
             }
             Self::PickDirectory => {
                 #[cfg(not(target_family = "wasm"))]
@@ -103,10 +106,31 @@ impl DataSource {
             use tokio_stream::StreamExt;
             use tokio_util::io::StreamReader;
 
-            let response = reqwest::get(url).await?.bytes_stream();
-            let response = response.map(|b| b.map_err(|_e| std::io::ErrorKind::ConnectionAborted));
-            let reader = StreamReader::new(response);
-            Ok(Arc::new(BrushVfs::from_reader(reader).await?))
+            let response = reqwest::get(&url).await?;
+
+            // Try to get filename from Content-Disposition header, fall back to URL
+            let name = response
+                .headers()
+                .get(reqwest::header::CONTENT_DISPOSITION)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| {
+                    // Parse "attachment; filename=\"name.ply\"" or "filename=name.ply"
+                    s.split(';').find_map(|part| {
+                        let part = part.trim();
+                        if part.starts_with("filename=") {
+                            let name = part.trim_start_matches("filename=");
+                            Some(name.trim_matches('"').to_owned())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .or_else(|| url.rsplit('/').next().map(String::from));
+
+            let stream = response.bytes_stream();
+            let stream = stream.map(|b| b.map_err(|_e| std::io::ErrorKind::ConnectionAborted));
+            let reader = StreamReader::new(stream);
+            Ok(Arc::new(BrushVfs::from_reader(reader, name).await?))
         }
 
         #[cfg(target_family = "wasm")]
@@ -144,6 +168,26 @@ impl DataSource {
                 )));
             }
 
+            // Try to get filename from Content-Disposition header, fall back to URL
+            let name = resp
+                .headers()
+                .get("Content-Disposition")
+                .ok()
+                .flatten()
+                .and_then(|s| {
+                    // Parse "attachment; filename=\"name.ply\"" or "filename=name.ply"
+                    s.split(';').find_map(|part| {
+                        let part = part.trim();
+                        if part.starts_with("filename=") {
+                            let name = part.trim_start_matches("filename=");
+                            Some(name.trim_matches('"').to_owned())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .or_else(|| url.rsplit('/').next().map(String::from));
+
             let body = resp
                 .body()
                 .ok_or_else(|| DataSourceError::FetchError("Response has no body".to_string()))?;
@@ -151,7 +195,7 @@ impl DataSource {
             let readable_stream = ReadableStream::from_raw(body);
             let async_read = readable_stream.into_async_read().compat();
             let async_read = BufReader::new(async_read);
-            Ok(Arc::new(BrushVfs::from_reader(async_read).await?))
+            Ok(Arc::new(BrushVfs::from_reader(async_read, name).await?))
         }
     }
 }
