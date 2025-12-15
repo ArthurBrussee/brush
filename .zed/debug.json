@@ -4,7 +4,7 @@
     "mode": "debug",
     "request": "launch",
     "cwd": "${ZED_WORKTREE_ROOT}",
-    "program": "${ZED_WORKTREE_ROOT}/target/debug/brush_app",
+    "program": "${ZED_WORKTREE_ROOT}/target/debug/brush",
     "adapter": "CodeLLDB",
     "build": {
       "label": "Build",

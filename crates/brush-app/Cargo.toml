@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 # Bin for desktop platforms.
 [[bin]]
-name = "brush_app"
+name = "brush"
 path = "src/bin.rs"
 
 [features]
