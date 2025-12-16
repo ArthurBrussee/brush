@@ -230,7 +230,7 @@ pub async fn run_cli_ui(
             }
             ProcessMessage::Warning { error } => {
                 log::warn!("{error}");
-                sp.println("⚠️: {error}")?;
+                sp.println(format!("⚠️: {error}"))?;
             }
         }
     }
