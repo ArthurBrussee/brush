@@ -118,7 +118,10 @@ impl AppPane for SettingsPanel {
             }
             #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(TrainMessage::DoneTraining) => {
-                self.train_progress = None;
+                // Keep train_progress at 100% so the status bar controls remain visible
+                if let Some((_, total, elapsed)) = self.train_progress {
+                    self.train_progress = Some((total, total, elapsed));
+                }
             }
             _ => {}
         }
@@ -290,51 +293,58 @@ impl AppPane for SettingsPanel {
 
                     ui.add_space(16.0);
 
-                    // Play/Pause button integrated with Training label
-                    let paused = process.is_train_paused();
-                    let button_color = egui::Color32::from_rgb(70, 130, 180);
-                    let (icon, label) = if paused {
-                        ("⏸", "Paused")
+                    if iter == total {
+                        ui.add(
+                            egui::Button::new(egui::RichText::new("Done").size(14.0).strong())
+                                .min_size(egui::vec2(100.0, 26.0))
+                                .fill(egui::Color32::from_rgb(60, 140, 60)),
+                        );
                     } else {
-                        ("⏵", "Training")
-                    };
+                        let paused = process.is_train_paused();
+                        let button_color = egui::Color32::from_rgb(70, 130, 180);
+                        let (icon, label) = if paused {
+                            ("⏸", "Paused")
+                        } else {
+                            ("⏵", "Training")
+                        };
 
-                    let train_button = egui::Button::new(
-                        egui::RichText::new(format!("{icon} {label}"))
-                            .size(14.0)
-                            .strong(),
-                    )
-                    .min_size(egui::vec2(100.0, 26.0));
+                        let train_button = egui::Button::new(
+                            egui::RichText::new(format!("{icon} {label}"))
+                                .size(14.0)
+                                .strong(),
+                        )
+                        .min_size(egui::vec2(100.0, 26.0));
 
-                    let train_button = if !paused {
-                        train_button.fill(button_color)
-                    } else {
-                        train_button
-                    };
+                        let train_button = if !paused {
+                            train_button.fill(button_color)
+                        } else {
+                            train_button
+                        };
 
-                    if ui.add(train_button).clicked() {
-                        process.set_train_paused(!paused);
-                    }
+                        if ui.add(train_button).clicked() {
+                            process.set_train_paused(!paused);
+                        }
 
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
 
-                    // Live view toggle
-                    let live_update = process.is_live_update();
-                    let live_color = egui::Color32::from_rgb(180, 60, 60);
-                    let live_button =
-                        egui::Button::new(egui::RichText::new("🔴 Live view").size(13.0))
-                            .min_size(egui::vec2(85.0, 26.0));
+                        // Live view toggle (only shown during training)
+                        let live_update = process.is_live_update();
+                        let live_color = egui::Color32::from_rgb(180, 60, 60);
+                        let live_button =
+                            egui::Button::new(egui::RichText::new("🔴 Live view").size(13.0))
+                                .min_size(egui::vec2(85.0, 26.0));
 
-                    let live_button = if live_update {
-                        live_button.fill(live_color)
-                    } else {
-                        live_button
-                    };
+                        let live_button = if live_update {
+                            live_button.fill(live_color)
+                        } else {
+                            live_button
+                        };
 
-                    if ui.add(live_button).clicked() {
-                        process.set_live_update(!live_update);
+                        if ui.add(live_button).clicked() {
+                            process.set_live_update(!live_update);
+                        }
                     }
 
                     // Export button
