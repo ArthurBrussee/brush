@@ -7,8 +7,8 @@ pub mod splat_import;
 
 mod formats;
 
-pub use formats::load_dataset;
 pub use formats::detect_max_image_resolution;
+pub use formats::load_dataset;
 pub use splat_import::splat_data_to_splats;
 
 use core::f32;
