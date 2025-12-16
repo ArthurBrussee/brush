@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use image::DynamicImage;
 use rand::{SeedableRng, seq::SliceRandom};
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{RwLock, mpsc};
 use tokio_with_wasm::alias as tokio_wasm;
 
@@ -10,9 +10,8 @@ use crate::scene::{Scene, SceneBatch, sample_to_tensor_data, view_to_sample_imag
 
 pub struct SceneLoader {
     receiver: Receiver<SceneBatch>,
-
-    // We need to keep track of the spawned tasks such that they don't drop before we do.
-    _tasks: tokio_wasm::task::JoinSet<()>,
+    // Keep a sender alive so the channel doesn't close if tasks are aborted.
+    _sender: Sender<SceneBatch>,
 }
 
 struct ImageCache {
@@ -73,8 +72,6 @@ impl SceneLoader {
 
         let load_cache = Arc::new(RwLock::new(ImageCache::new(MAX_CACHE_MB, num_views)));
 
-        let mut join_set = tokio_wasm::task::JoinSet::new();
-
         for i in 0..parallelism {
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed + i as u64);
             let views = scene.views.clone();
@@ -82,7 +79,7 @@ impl SceneLoader {
             let load_cache = load_cache.clone();
             let send_batch = send_batch.clone();
 
-            join_set.spawn(async move {
+            tokio_wasm::task::spawn(async move {
                 let mut shuf_indices = vec![];
 
                 loop {
@@ -131,7 +128,7 @@ impl SceneLoader {
 
         Self {
             receiver: rec_batch,
-            _tasks: join_set,
+            _sender: send_batch,
         }
     }
 
