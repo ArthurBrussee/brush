@@ -44,8 +44,8 @@ fn bytes_format(bytes: u64) -> String {
 }
 
 impl AppPane for StatsPanel {
-    fn title(&self) -> String {
-        "Stats".to_owned()
+    fn title(&self) -> egui::WidgetText {
+        "Stats".into()
     }
 
     fn init(

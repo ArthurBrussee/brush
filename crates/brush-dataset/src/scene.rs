@@ -119,7 +119,7 @@ impl LoadImage {
 
     pub fn img_name(&self) -> String {
         Path::new(&self.path)
-            .file_stem()
+            .file_name()
             .expect("No file name for eval view.")
             .to_string_lossy()
             .to_string()

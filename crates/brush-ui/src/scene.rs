@@ -2,6 +2,7 @@
 use brush_process::message::TrainMessage;
 
 use brush_process::message::ProcessMessage;
+use brush_vfs::DataSource;
 use core::f32;
 use egui::{Align2, Area, Frame, Pos2, Ui, epaint::mutex::RwLock as EguiRwLock};
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use brush_render::{
     gaussian_splats::Splats,
 };
 use eframe::egui_wgpu::Renderer;
-use egui::{Color32, Rect, Slider, collapsing_header::CollapsingState};
+use egui::{Color32, Rect, Slider};
 use glam::{UVec2, Vec3};
 use tracing::trace_span;
 use web_time::Instant;
@@ -118,6 +119,10 @@ pub struct ScenePanel {
     last_state: Option<RenderState>,
     #[serde(skip)]
     widget_3d: Option<Widget3D>,
+    #[serde(skip)]
+    source_name: Option<String>,
+    #[serde(skip)]
+    source_type: Option<DataSource>,
 }
 
 impl ScenePanel {
@@ -245,152 +250,6 @@ impl ScenePanel {
         });
 
         rect
-    }
-
-    fn controls_box(&self, ui: &egui::Ui, process: &UiProcess, pos: egui::Pos2) {
-        let inner = |ui: &mut egui::Ui| {
-            if process.is_loading() {
-                ui.horizontal(|ui| {
-                    ui.label("Loading...");
-                    ui.spinner();
-                });
-                return;
-            }
-
-            // Custom title bar using egui's CollapsingState
-            let state = CollapsingState::load_with_default_open(
-                ui.ctx(),
-                ui.id().with("controls_collapse"),
-                false,
-            );
-
-            // Show a header
-            state
-                .show_header(ui, |ui| {
-                    ui.label(egui::RichText::new("Controls").strong());
-
-                    ui.add_space(5.0);
-
-                    // Help button
-                    let help_button = egui::Button::new(
-                        egui::RichText::new("?").size(10.0).color(Color32::WHITE),
-                    )
-                    .fill(egui::Color32::from_rgb(60, 120, 200))
-                    .corner_radius(6.0)
-                    .min_size(egui::vec2(14.0, 14.0));
-
-                    ui.add(help_button).on_hover_ui_at_pointer(|ui| {
-                        ui.set_max_width(200.0);
-                        Self::draw_controls_help(ui);
-                    });
-                })
-                .body_unindented(|ui| {
-                    ui.set_max_width(180.0);
-                    ui.spacing_mut().item_spacing.y = 6.0;
-
-                    // Background color picker
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("Background").size(12.0));
-                        let mut settings = process.get_cam_settings();
-                        let mut bg_color = settings.background.map_or(egui::Color32::BLACK, |b| {
-                            egui::Color32::from_rgb(
-                                (b.x * 255.0) as u8,
-                                (b.y * 255.0) as u8,
-                                (b.z * 255.0) as u8,
-                            )
-                        });
-
-                        if ui.color_edit_button_srgba(&mut bg_color).changed() {
-                            settings.background = Some(glam::vec3(
-                                bg_color.r() as f32 / 255.0,
-                                bg_color.g() as f32 / 255.0,
-                                bg_color.b() as f32 / 255.0,
-                            ));
-                            process.set_cam_settings(&settings);
-                        }
-                    });
-
-                    ui.add_space(4.0);
-
-                    // FOV slider
-                    ui.label(egui::RichText::new("Field of View").size(12.0));
-                    let current_camera = process.current_camera();
-                    let mut fov_degrees = current_camera.fov_y.to_degrees() as f32;
-
-                    let response = ui.add(
-                        Slider::new(&mut fov_degrees, 10.0..=140.0)
-                            .suffix("°")
-                            .show_value(true)
-                            .custom_formatter(|val, _| format!("{val:.0}°")),
-                    );
-
-                    if response.changed() {
-                        process.set_cam_fov(fov_degrees.to_radians() as f64);
-                    }
-
-                    // Splat scale slider
-                    ui.label(egui::RichText::new("Splat Scale").size(12.0));
-                    let mut settings = process.get_cam_settings();
-                    let mut scale = settings.splat_scale.unwrap_or(1.0);
-
-                    let response = ui.add(
-                        Slider::new(&mut scale, 0.01..=2.0)
-                            .logarithmic(true)
-                            .show_value(true)
-                            .custom_formatter(|val, _| format!("{val:.1}x")),
-                    );
-
-                    if response.changed() {
-                        settings.splat_scale = Some(scale);
-                        process.set_cam_settings(&settings);
-                    }
-
-                    ui.add_space(4.0);
-
-                    // Grid toggle
-                    ui.horizontal(|ui| {
-                        let mut enabled = process.get_cam_settings().grid_enabled.unwrap_or(false);
-                        if ui.checkbox(&mut enabled, "Show Grid").changed() {
-                            settings.grid_enabled = Some(enabled);
-                            process.set_cam_settings(&settings);
-                        }
-                    });
-
-                    if self.num_splats > 0 {
-                        ui.add_space(4.0);
-                        ui.separator();
-                        ui.add_space(4.0);
-
-                        let label_color = Color32::from_rgb(140, 140, 140);
-                        let value_color = Color32::from_rgb(200, 200, 200);
-
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Splats").size(11.0).color(label_color));
-                            ui.label(
-                                egui::RichText::new(format!("{}", self.num_splats))
-                                    .size(11.0)
-                                    .color(value_color),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("SH Degree")
-                                    .size(11.0)
-                                    .color(label_color),
-                            );
-                            ui.label(
-                                egui::RichText::new(format!("{}", self.sh_degree))
-                                    .size(11.0)
-                                    .color(value_color),
-                            );
-                        });
-                    }
-
-                    ui.add_space(4.0);
-                });
-        };
-
-        box_ui("controls_box", ui, Align2::LEFT_TOP, pos, inner);
     }
 
     fn draw_play_pause(&mut self, ui: &egui::Ui, rect: Rect) {
@@ -533,11 +392,177 @@ impl ScenePanel {
                 });
             });
     }
+
+    fn draw_controls_content(
+        ui: &mut egui::Ui,
+        process: &UiProcess,
+        num_splats: u32,
+        sh_degree: u32,
+    ) {
+        ui.spacing_mut().item_spacing.y = 6.0;
+
+        // Background color picker
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Background").size(12.0));
+            let mut settings = process.get_cam_settings();
+            let mut bg_color = settings.background.map_or(egui::Color32::BLACK, |b| {
+                egui::Color32::from_rgb(
+                    (b.x * 255.0) as u8,
+                    (b.y * 255.0) as u8,
+                    (b.z * 255.0) as u8,
+                )
+            });
+
+            if ui.color_edit_button_srgba(&mut bg_color).changed() {
+                settings.background = Some(glam::vec3(
+                    bg_color.r() as f32 / 255.0,
+                    bg_color.g() as f32 / 255.0,
+                    bg_color.b() as f32 / 255.0,
+                ));
+                process.set_cam_settings(&settings);
+            }
+        });
+
+        ui.add_space(4.0);
+
+        // FOV slider
+        ui.label(egui::RichText::new("Field of View").size(12.0));
+        let current_camera = process.current_camera();
+        let mut fov_degrees = current_camera.fov_y.to_degrees() as f32;
+
+        let response = ui.add(
+            Slider::new(&mut fov_degrees, 10.0..=140.0)
+                .suffix("°")
+                .show_value(true)
+                .custom_formatter(|val, _| format!("{val:.0}°")),
+        );
+
+        if response.changed() {
+            process.set_cam_fov(fov_degrees.to_radians() as f64);
+        }
+
+        // Splat scale slider
+        ui.label(egui::RichText::new("Splat Scale").size(12.0));
+        let mut settings = process.get_cam_settings();
+        let mut scale = settings.splat_scale.unwrap_or(1.0);
+
+        let response = ui.add(
+            Slider::new(&mut scale, 0.01..=2.0)
+                .logarithmic(true)
+                .show_value(true)
+                .custom_formatter(|val, _| format!("{val:.1}x")),
+        );
+
+        if response.changed() {
+            settings.splat_scale = Some(scale);
+            process.set_cam_settings(&settings);
+        }
+
+        ui.add_space(4.0);
+
+        // Grid toggle
+        ui.horizontal(|ui| {
+            let mut settings = process.get_cam_settings();
+            let mut enabled = settings.grid_enabled.unwrap_or(false);
+            if ui.checkbox(&mut enabled, "Show Grid").changed() {
+                settings.grid_enabled = Some(enabled);
+                process.set_cam_settings(&settings);
+            }
+        });
+
+        if num_splats > 0 {
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            let label_color = Color32::from_rgb(140, 140, 140);
+            let value_color = Color32::from_rgb(200, 200, 200);
+
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Splats").size(11.0).color(label_color));
+                ui.label(
+                    egui::RichText::new(format!("{num_splats}"))
+                        .size(11.0)
+                        .color(value_color),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("SH Degree")
+                        .size(11.0)
+                        .color(label_color),
+                );
+                ui.label(
+                    egui::RichText::new(format!("{sh_degree}"))
+                        .size(11.0)
+                        .color(value_color),
+                );
+            });
+        }
+    }
 }
 
 impl AppPane for ScenePanel {
-    fn title(&self) -> String {
-        "Scene".to_owned()
+    fn title(&self) -> egui::WidgetText {
+        match (&self.source_type, &self.source_name) {
+            (Some(t), Some(n)) => {
+                let mut job = egui::text::LayoutJob::default();
+                job.append(
+                    n,
+                    0.0,
+                    egui::TextFormat {
+                        color: Color32::WHITE,
+                        ..Default::default()
+                    },
+                );
+                job.append(
+                    &format!(" | {t}"),
+                    0.0,
+                    egui::TextFormat {
+                        color: Color32::from_rgb(120, 120, 120),
+                        ..Default::default()
+                    },
+                );
+                job.into()
+            }
+            (None, Some(n)) => n.clone().into(),
+            _ => "Scene".into(),
+        }
+    }
+
+    fn tab_bar_right_ui(&self, ui: &mut egui::Ui, process: &UiProcess) {
+        // Help button (toggle popup) - blue style
+        let help_button =
+            egui::Button::new(egui::RichText::new("?").size(14.0).color(Color32::WHITE))
+                .fill(egui::Color32::from_rgb(60, 100, 180))
+                .corner_radius(6.0)
+                .min_size(egui::vec2(20.0, 14.0));
+
+        let help_response = ui.add(help_button);
+
+        egui::containers::Popup::from_toggle_button_response(&help_response)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                Self::draw_controls_help(ui);
+            });
+
+        ui.add_space(4.0);
+
+        // Controls dropdown
+        let gear_button =
+            egui::Button::new(egui::RichText::new("⚙").size(14.0).color(Color32::WHITE))
+                .fill(egui::Color32::from_rgb(80, 80, 85))
+                .corner_radius(6.0)
+                .min_size(egui::vec2(20.0, 14.0));
+
+        let response = ui.add(gear_button);
+
+        egui::containers::Popup::from_toggle_button_response(&response)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_min_width(180.0);
+                Self::draw_controls_content(ui, process, self.num_splats, self.sh_degree);
+            });
     }
 
     fn init(
@@ -556,6 +581,12 @@ impl AppPane for ScenePanel {
         match message {
             ProcessMessage::NewProcess => {
                 self.err = None;
+                self.source_name = None;
+                self.source_type = None;
+            }
+            ProcessMessage::NewSource { name, source } => {
+                self.source_name = Some(name.clone());
+                self.source_type = Some(source.clone());
             }
             ProcessMessage::StartLoading { training } => {
                 // If training reset. Otherwise, keep existing splats until new ones are fully loaded.
@@ -730,7 +761,6 @@ impl AppPane for ScenePanel {
         if interactive {
             // Floating play/pause button if needed.
             self.draw_play_pause(ui, rect);
-            self.controls_box(ui, process, egui::pos2(rect.min.x, rect.min.y));
 
             let pos = egui::pos2(ui.available_rect_before_wrap().max.x, rect.min.y);
             self.draw_warnings(ui, pos);

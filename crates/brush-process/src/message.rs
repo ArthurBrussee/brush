@@ -1,5 +1,6 @@
 use brush_render::MainBackend;
 use brush_render::gaussian_splats::Splats;
+use brush_vfs::DataSource;
 use glam::Vec3;
 
 #[cfg(feature = "training")]
@@ -42,9 +43,10 @@ pub enum TrainMessage {
 pub enum ProcessMessage {
     /// A new process is starting (before we know what type)
     NewProcess,
-    /// Source has been loaded, contains the display name
+    /// Source has been loaded, contains the display name and type
     NewSource {
         name: String,
+        source: DataSource,
     },
     StartLoading {
         training: bool,

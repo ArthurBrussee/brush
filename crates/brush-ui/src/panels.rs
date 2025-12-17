@@ -7,7 +7,7 @@ use egui::mutex::RwLock;
 use crate::ui_process::UiProcess;
 
 pub(crate) trait AppPane {
-    fn title(&self) -> String;
+    fn title(&self) -> egui::WidgetText;
 
     /// Initialize runtime state after creation or deserialization.
     #[allow(unused_variables)]
@@ -45,5 +45,11 @@ pub(crate) trait AppPane {
     /// Override the inner margin for this panel.
     fn inner_margin(&self) -> f32 {
         12.0
+    }
+
+    /// Optional UI to add to the right side of the tab bar.
+    fn tab_bar_right_ui(&self, ui: &mut egui::Ui, process: &UiProcess) {
+        let _ = ui;
+        let _ = process;
     }
 }

@@ -1,4 +1,5 @@
 use crate::{BrushVfs, VfsConstructError};
+use core::fmt;
 use rrfd::PickFileError;
 use serde::Deserialize;
 #[cfg(not(target_family = "wasm"))]
@@ -26,6 +27,17 @@ impl FromStr for DataSource {
             }
             // This path might not exist but that's ok, rather find that out later.
             s => Ok(Self::Path(s.to_owned())),
+        }
+    }
+}
+
+impl fmt::Display for DataSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PickFile => write!(f, "File"),
+            Self::PickDirectory => write!(f, "Directory"),
+            Self::Url(_) => write!(f, "URL"),
+            Self::Path(_) => write!(f, "Path"),
         }
     }
 }

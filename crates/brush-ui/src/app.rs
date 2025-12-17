@@ -58,7 +58,7 @@ pub(crate) struct AppTree {
 
 impl egui_tiles::Behavior<Pane> for AppTree {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
-        pane.as_pane().title().into()
+        pane.as_pane().title()
     }
 
     fn pane_ui(
@@ -74,9 +74,28 @@ impl egui_tiles::Behavior<Pane> for AppTree {
         egui_tiles::UiResponse::None
     }
 
+    fn top_bar_right_ui(
+        &mut self,
+        tiles: &Tiles<Pane>,
+        ui: &mut egui::Ui,
+        _tile_id: TileId,
+        tabs: &egui_tiles::Tabs,
+        _scroll_offset: &mut f32,
+    ) {
+        // Use the tabs parameter directly to find the active pane
+        if let Some(active_id) = tabs.active
+            && let Some(egui_tiles::Tile::Pane(pane)) = tiles.get(active_id)
+        {
+            pane.as_pane().tab_bar_right_ui(ui, self.process.as_ref());
+        }
+    }
+
     fn simplification_options(&self) -> SimplificationOptions {
         SimplificationOptions {
-            all_panes_must_have_tabs: self.process.ui_mode() == UiMode::Default,
+            all_panes_must_have_tabs: matches!(
+                self.process.ui_mode(),
+                UiMode::Default | UiMode::FullScreenSplat
+            ),
             ..Default::default()
         }
     }
