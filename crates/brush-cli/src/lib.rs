@@ -161,7 +161,7 @@ pub async fn run_cli_ui(
             ProcessMessage::NewProcess => {
                 main_spinner.set_message("Starting process...");
             }
-            ProcessMessage::NewSource { name } => {
+            ProcessMessage::NewSource { name, .. } => {
                 log::info!("Loading: {name}");
                 main_spinner.set_message(format!("Loading {name}..."));
             }

@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use crate::{
     UiMode, draw_checkerboard,
     panels::AppPane,
@@ -9,10 +11,9 @@ use brush_dataset::{
 };
 use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::AlphaMode;
-use egui::{
-    Color32, Frame, Rect, Slider, TextureOptions, collapsing_header::CollapsingState, pos2,
-};
+use egui::{Color32, Rect, Slider, TextureOptions, pos2};
 
+use tokio::sync::watch::Sender;
 use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(Clone)]
@@ -35,38 +36,44 @@ fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
 }
 
 pub struct DatasetPanel {
-    view_type: ViewType,
+    view_type: Cell<ViewType>,
     cur_dataset: Dataset,
-    selected_view: SelectedView,
-    sender: tokio::sync::watch::Sender<Option<TexHandle>>,
+    selected_view: Option<SelectedView>,
+    sender: Option<Sender<Option<TexHandle>>>,
     loading_task: Option<tokio_wasm::task::JoinHandle<()>>,
+    current_view_index: Cell<Option<usize>>,
 }
 
-impl DatasetPanel {
-    pub(crate) fn new() -> Self {
+impl Default for DatasetPanel {
+    fn default() -> Self {
         let (sender, tex) = tokio::sync::watch::channel(None);
 
         Self {
-            view_type: ViewType::Train,
+            view_type: Cell::new(ViewType::Train),
             cur_dataset: Dataset::empty(),
             loading_task: None,
-            sender,
-            selected_view: SelectedView { view: None, tex },
+            sender: Some(sender),
+            selected_view: Some(SelectedView { view: None, tex }),
+            current_view_index: Cell::new(None),
         }
     }
+}
 
+impl DatasetPanel {
     pub fn set_selected_view(&mut self, view: &SceneView, ctx: &egui::Context) {
+        let Some(sender) = self.sender.clone() else {
+            return;
+        };
+
         let view_send = view.clone();
 
         if let Some(task) = self.loading_task.take() {
             task.abort();
         }
 
-        let sender = self.sender.clone();
         let ctx = ctx.clone();
 
         self.loading_task = Some(tokio_with_wasm::alias::spawn(async move {
-            // When selecting images super rapidly, might happen, don't waste resources loading.
             let image = view_send
                 .image
                 .load()
@@ -123,17 +130,76 @@ impl DatasetPanel {
             // Show updated texture asap.
             ctx.request_repaint();
         }));
-        self.selected_view.view = Some(view.clone());
+        if let Some(selected_view) = &mut self.selected_view {
+            selected_view.view = Some(view.clone());
+        }
     }
 
     pub fn is_selected_view_loading(&self) -> bool {
         self.loading_task.as_ref().is_some_and(|t| !t.is_finished())
     }
+
+    fn focus_picked(&self, process: &UiProcess) {
+        let pick_scene = selected_scene(self.view_type.get(), &self.cur_dataset);
+
+        if let Some(idx) = self.current_view_index.get()
+            && let Some(view) = pick_scene.views.get(idx)
+        {
+            process.focus_view(&view.camera);
+        }
+    }
 }
 
 impl AppPane for DatasetPanel {
-    fn title(&self) -> String {
-        "Dataset".to_owned()
+    fn title(&self) -> egui::WidgetText {
+        let Some(selected_view_state) = &self.selected_view else {
+            return "Dataset".into();
+        };
+        let Some(selected_view) = &selected_view_state.view else {
+            return "Dataset".into();
+        };
+
+        let img_name = selected_view.image.img_name();
+
+        // Try to get image info from texture handle
+        let last_handle = selected_view_state.tex.borrow();
+        if let Some(texture_handle) = last_handle.as_ref() {
+            let mask_info = if texture_handle.has_alpha {
+                if selected_view.image.alpha_mode() == AlphaMode::Transparent {
+                    "rgba"
+                } else {
+                    "masked"
+                }
+            } else {
+                "rgb"
+            };
+
+            let mut job = egui::text::LayoutJob::default();
+            job.append(
+                &img_name,
+                0.0,
+                egui::TextFormat {
+                    color: Color32::WHITE,
+                    ..Default::default()
+                },
+            );
+            job.append(
+                &format!(
+                    " ({}x{} {})",
+                    texture_handle.handle.size()[0],
+                    texture_handle.handle.size()[1],
+                    mask_info
+                ),
+                0.0,
+                egui::TextFormat {
+                    color: Color32::from_rgb(120, 120, 120),
+                    ..Default::default()
+                },
+            );
+            job.into()
+        } else {
+            img_name.into()
+        }
     }
 
     fn is_visible(&self, process: &UiProcess) -> bool {
@@ -143,7 +209,7 @@ impl AppPane for DatasetPanel {
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
             ProcessMessage::NewProcess => {
-                *self = Self::new();
+                *self = Self::default();
             }
             ProcessMessage::TrainMessage(TrainMessage::Dataset { dataset }) => {
                 if let Some(view) = dataset.train.views.first() {
@@ -168,14 +234,17 @@ impl AppPane for DatasetPanel {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
-        let pick_scene = selected_scene(self.view_type, &self.cur_dataset).clone();
+        let Some(selected_view_state) = &self.selected_view else {
+            return;
+        };
+
         let mv = process.current_camera().world_to_local() * process.model_local_to_world();
+        let pick_scene = selected_scene(self.view_type.get(), &self.cur_dataset).clone();
         let mut nearest_view_ind = pick_scene.get_nearest_view(mv.inverse());
 
         if let Some(nearest) = nearest_view_ind.as_mut() {
             // Update image if dirty.
-            let dirty = self
-                .selected_view
+            let dirty = selected_view_state
                 .view
                 .as_ref()
                 .is_none_or(|view| view.image != pick_scene.views[*nearest].image);
@@ -184,8 +253,12 @@ impl AppPane for DatasetPanel {
                 self.set_selected_view(&pick_scene.views[*nearest], ui.ctx());
             }
 
-            if let Some(selected_view) = &self.selected_view.view {
-                let last_handle = self.selected_view.tex.borrow();
+            let Some(selected_view_state) = &self.selected_view else {
+                return;
+            };
+
+            if let Some(selected_view) = &selected_view_state.view {
+                let last_handle = selected_view_state.tex.borrow();
 
                 if let Some(texture_handle) = last_handle.as_ref() {
                     // if training views have alpha, show a background checker. Masked images
@@ -255,129 +328,7 @@ impl AppPane for DatasetPanel {
                     }
 
                     ui.allocate_rect(full_rect, egui::Sense::click());
-
-                    // Controls window in top left of the panel (not offset with image)
-                    let id = ui.id().with("dataset_controls_box");
-                    egui::Area::new(id)
-                        .kind(egui::UiKind::Window)
-                        .current_pos(egui::pos2(cursor_min.x, cursor_min.y))
-                        .movable(false)
-                        .show(ui.ctx(), |ui| {
-                            // Add transparent background frame
-                            let style = ui.style_mut();
-                            let fill = style.visuals.window_fill;
-                            style.visuals.window_fill =
-                                Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 200);
-                            let frame = Frame::window(style);
-
-                            frame.show(ui, |ui| {
-                                // Custom title bar using egui's CollapsingState
-                                let state = CollapsingState::load_with_default_open(
-                                    ui.ctx(),
-                                    ui.id().with("dataset_controls_collapse"),
-                                    false,
-                                );
-
-                                // Show a header with image name
-                                state
-                                    .show_header(ui, |ui| {
-                                        ui.label(
-                                            egui::RichText::new(texture_handle.handle.name())
-                                                .strong(),
-                                        );
-                                    })
-                                    .body_unindented(|ui| {
-                                        ui.set_max_width(200.0);
-                                        ui.spacing_mut().item_spacing.y = 6.0;
-
-                                        let view_count = pick_scene.views.len();
-
-                                        // Navigation buttons and slider
-                                        ui.horizontal(|ui| {
-                                            let mut interacted = false;
-                                            if ui.button("⏪").clicked() {
-                                                *nearest = (*nearest + view_count - 1) % view_count;
-                                                interacted = true;
-                                            }
-                                            if ui
-                                                .add(
-                                                    Slider::new(nearest, 0..=view_count - 1)
-                                                        .suffix(format!("/ {view_count}"))
-                                                        .custom_formatter(|num, _| {
-                                                            format!("{}", num as usize + 1)
-                                                        })
-                                                        .custom_parser(|s| {
-                                                            s.parse::<usize>()
-                                                                .ok()
-                                                                .map(|n| n as f64 - 1.0)
-                                                        }),
-                                                )
-                                                .dragged()
-                                            {
-                                                interacted = true;
-                                            }
-                                            if ui.button("⏩").clicked() {
-                                                *nearest = (*nearest + 1) % view_count;
-                                                interacted = true;
-                                            }
-
-                                            if interacted {
-                                                process
-                                                    .focus_view(&pick_scene.views[*nearest].camera);
-                                            }
-                                        });
-
-                                        ui.add_space(4.0);
-
-                                        // View type selector (train/eval)
-                                        if self.cur_dataset.eval.is_some() {
-                                            ui.horizontal(|ui| {
-                                                for (t, l) in [ViewType::Train, ViewType::Eval]
-                                                    .into_iter()
-                                                    .zip(["train", "eval"])
-                                                {
-                                                    if ui
-                                                        .selectable_label(self.view_type == t, l)
-                                                        .clicked()
-                                                    {
-                                                        self.view_type = t;
-                                                        *nearest = 0;
-                                                        process.focus_view(
-                                                            &pick_scene.views[*nearest].camera,
-                                                        );
-                                                    };
-                                                }
-                                            });
-
-                                            ui.add_space(4.0);
-                                        }
-
-                                        // Image info
-
-                                        let mask_info = if texture_handle.has_alpha {
-                                            if selected_view.image.alpha_mode()
-                                                == AlphaMode::Transparent
-                                            {
-                                                "rgb, alpha transparency"
-                                            } else {
-                                                "rgb, masked"
-                                            }
-                                        } else {
-                                            "rgb"
-                                        };
-
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "{}x{} {}",
-                                                texture_handle.handle.size()[0],
-                                                texture_handle.handle.size()[1],
-                                                mask_info
-                                            ))
-                                            .size(11.0),
-                                        );
-                                    });
-                            });
-                        });
+                    self.current_view_index.set(Some(*nearest));
                 }
             }
         }
@@ -389,5 +340,80 @@ impl AppPane for DatasetPanel {
 
     fn inner_margin(&self) -> f32 {
         0.0
+    }
+
+    fn tab_bar_right_ui(&self, ui: &mut egui::Ui, process: &UiProcess) {
+        let pick_scene = selected_scene(self.view_type.get(), &self.cur_dataset);
+        let view_count = pick_scene.views.len();
+
+        if view_count == 0 {
+            return;
+        }
+
+        let mut current_idx = self.current_view_index.get().unwrap_or(0);
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if self.cur_dataset.eval.is_some() {
+                let gear_button =
+                    egui::Button::new(egui::RichText::new("⚙").size(14.0).color(Color32::WHITE))
+                        .fill(egui::Color32::from_rgb(80, 80, 85))
+                        .corner_radius(6.0)
+                        .min_size(egui::vec2(20.0, 14.0));
+
+                let response = ui.add(gear_button);
+
+                egui::containers::Popup::from_toggle_button_response(&response)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        ui.label("View");
+                        let current_type = self.view_type.get();
+                        for (t, l) in [(ViewType::Train, "train"), (ViewType::Eval, "eval")] {
+                            if ui.selectable_label(current_type == t, l).clicked() {
+                                self.view_type.set(t);
+                                self.current_view_index.set(Some(0));
+                                self.focus_picked(process);
+                            }
+                        }
+                    });
+
+                ui.add_space(4.0);
+            }
+
+            let nav_button = |ui: &mut egui::Ui, icon: &str| {
+                ui.add(
+                    egui::Button::new(egui::RichText::new(icon).size(12.0).color(Color32::WHITE))
+                        .fill(egui::Color32::from_rgb(80, 80, 85))
+                        .corner_radius(4.0)
+                        .min_size(egui::vec2(18.0, 14.0)),
+                )
+            };
+
+            if nav_button(ui, "▶").clicked() {
+                current_idx = (current_idx + 1) % view_count;
+                self.current_view_index.set(Some(current_idx));
+                self.focus_picked(process);
+            }
+
+            let mut idx = current_idx;
+            if ui
+                .add(
+                    Slider::new(&mut idx, 0..=view_count - 1)
+                        .suffix(format!("/ {view_count}"))
+                        .custom_formatter(|num, _| format!("{}", num as usize + 1))
+                        .custom_parser(|s| s.parse::<usize>().ok().map(|n| n as f64 - 1.0)),
+                )
+                .changed()
+            {
+                current_idx = idx;
+                self.current_view_index.set(Some(current_idx));
+                self.focus_picked(process);
+            }
+
+            if nav_button(ui, "◀").clicked() {
+                current_idx = (current_idx + view_count - 1) % view_count;
+                self.current_view_index.set(Some(current_idx));
+                self.focus_picked(process);
+            }
+        });
     }
 }

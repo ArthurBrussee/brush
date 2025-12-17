@@ -1,37 +1,26 @@
+use std::sync::Arc;
+
 use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
 use brush_process::message::ProcessMessage;
 use brush_process::message::TrainMessage;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
+use eframe::egui_wgpu::Renderer;
+use egui::mutex::RwLock;
 use web_time::Duration;
 use wgpu::AdapterInfo;
 
+#[derive(Default)]
 pub struct StatsPanel {
-    device: WgpuDevice,
-
+    device: Option<WgpuDevice>,
     last_eval: Option<String>,
     cur_sh_degree: u32,
     num_splats: u32,
     frames: u32,
-    adapter_info: AdapterInfo,
-
+    adapter_info: Option<AdapterInfo>,
     last_train_step: (Duration, u32),
     train_eval_views: (u32, u32),
-}
-
-impl StatsPanel {
-    pub(crate) fn new(device: WgpuDevice, adapter_info: AdapterInfo) -> Self {
-        Self {
-            device,
-            last_train_step: (Duration::from_secs(0), 0),
-            last_eval: None,
-            num_splats: 0,
-            frames: 0,
-            cur_sh_degree: 0,
-            train_eval_views: (0, 0),
-            adapter_info,
-        }
-    }
+    training_complete: bool,
 }
 
 fn bytes_format(bytes: u64) -> String {
@@ -55,8 +44,20 @@ fn bytes_format(bytes: u64) -> String {
 }
 
 impl AppPane for StatsPanel {
-    fn title(&self) -> String {
-        "Stats".to_owned()
+    fn title(&self) -> egui::WidgetText {
+        "Stats".into()
+    }
+
+    fn init(
+        &mut self,
+        _device: wgpu::Device,
+        _queue: wgpu::Queue,
+        _renderer: Arc<RwLock<Renderer>>,
+        burn_device: burn_wgpu::WgpuDevice,
+        adapter_info: wgpu::AdapterInfo,
+    ) {
+        self.device = Some(burn_device);
+        self.adapter_info = Some(adapter_info);
     }
 
     fn is_visible(&self, process: &UiProcess) -> bool {
@@ -66,7 +67,13 @@ impl AppPane for StatsPanel {
     fn on_message(&mut self, message: &ProcessMessage, _: &UiProcess) {
         match message {
             ProcessMessage::NewProcess => {
-                *self = Self::new(self.device.clone(), self.adapter_info.clone());
+                self.last_eval = None;
+                self.cur_sh_degree = 0;
+                self.num_splats = 0;
+                self.frames = 0;
+                self.last_train_step = (Duration::from_secs(0), 0);
+                self.train_eval_views = (0, 0);
+                self.training_complete = false;
             }
             ProcessMessage::StartLoading { .. } => {
                 self.num_splats = 0;
@@ -105,6 +112,9 @@ impl AppPane for StatsPanel {
                 } => {
                     self.last_eval = Some(format!("{avg_psnr:.2} PSNR, {avg_ssim:.3} SSIM"));
                 }
+                TrainMessage::DoneTraining => {
+                    self.training_complete = true;
+                }
                 _ => {}
             },
             _ => {}
@@ -116,7 +126,11 @@ impl AppPane for StatsPanel {
             let _ = process;
 
             // Model Stats
-            ui.heading("Model Stats");
+            ui.heading(if self.training_complete {
+                "Final Model Stats"
+            } else {
+                "Model Stats"
+            });
             ui.separator();
 
             let first_col_width = ui.available_width() * 0.4;
@@ -186,59 +200,63 @@ impl AppPane for StatsPanel {
                     });
             }
 
-            ui.add_space(10.0);
-            ui.heading("GPU");
-            ui.separator();
+            if let Some(device) = &self.device {
+                ui.add_space(10.0);
+                ui.heading("GPU");
+                ui.separator();
 
-            let client = WgpuRuntime::client(&self.device);
-            let memory = client.memory_usage();
+                let client = WgpuRuntime::client(device);
+                let memory = client.memory_usage();
 
-            let first_col_width = ui.available_width() * 0.4;
-            egui::Grid::new("memory_stats_grid")
-                .num_columns(2)
-                .spacing([20.0, 4.0])
-                .striped(true)
-                .min_col_width(first_col_width)
-                .max_col_width(first_col_width)
-                .show(ui, |ui| {
-                    ui.label("Bytes in use");
-                    ui.label(bytes_format(memory.bytes_in_use));
-                    ui.end_row();
-
-                    ui.label("Bytes reserved");
-                    ui.label(bytes_format(memory.bytes_reserved));
-                    ui.end_row();
-
-                    ui.label("Active allocations");
-                    ui.label(format!("{}", memory.number_allocs));
-                    ui.end_row();
-                });
-
-            // On WASM, adapter info is mostly private, not worth showing.
-            if !cfg!(target_family = "wasm") {
                 let first_col_width = ui.available_width() * 0.4;
-                egui::Grid::new("gpu_info_grid")
+                egui::Grid::new("memory_stats_grid")
                     .num_columns(2)
                     .spacing([20.0, 4.0])
                     .striped(true)
                     .min_col_width(first_col_width)
                     .max_col_width(first_col_width)
                     .show(ui, |ui| {
-                        ui.label("Name");
-                        ui.label(&self.adapter_info.name);
+                        ui.label("Bytes in use");
+                        ui.label(bytes_format(memory.bytes_in_use));
                         ui.end_row();
 
-                        ui.label("Type");
-                        ui.label(format!("{:?}", self.adapter_info.device_type));
+                        ui.label("Bytes reserved");
+                        ui.label(bytes_format(memory.bytes_reserved));
                         ui.end_row();
 
-                        ui.label("Driver");
-                        ui.label(format!(
-                            "{}, {}",
-                            self.adapter_info.driver, self.adapter_info.driver_info
-                        ));
+                        ui.label("Active allocations");
+                        ui.label(format!("{}", memory.number_allocs));
                         ui.end_row();
                     });
+
+                // On WASM, adapter info is mostly private, not worth showing.
+                if !cfg!(target_family = "wasm")
+                    && let Some(adapter_info) = &self.adapter_info
+                {
+                    let first_col_width = ui.available_width() * 0.4;
+                    egui::Grid::new("gpu_info_grid")
+                        .num_columns(2)
+                        .spacing([20.0, 4.0])
+                        .striped(true)
+                        .min_col_width(first_col_width)
+                        .max_col_width(first_col_width)
+                        .show(ui, |ui| {
+                            ui.label("Name");
+                            ui.label(&adapter_info.name);
+                            ui.end_row();
+
+                            ui.label("Type");
+                            ui.label(format!("{:?}", adapter_info.device_type));
+                            ui.end_row();
+
+                            ui.label("Driver");
+                            ui.label(format!(
+                                "{}, {}",
+                                adapter_info.driver, adapter_info.driver_info
+                            ));
+                            ui.end_row();
+                        });
+                }
             }
         });
     }

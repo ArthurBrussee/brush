@@ -8,18 +8,16 @@ use egui::Align2;
 pub struct SettingsPanel {
     url: String,
     show_url_dialog: bool,
-    pending_source_type: Option<String>,
-    current_source: Option<(String, String)>, // (name, source_type)
+    current_source: Option<(String, DataSource)>,
     #[cfg(feature = "training")]
     training: TrainingState,
 }
 
-impl SettingsPanel {
-    pub(crate) fn new() -> Self {
+impl Default for SettingsPanel {
+    fn default() -> Self {
         Self {
             url: "splat.com/example.ply".to_owned(),
             show_url_dialog: false,
-            pending_source_type: None,
             current_source: None,
             #[cfg(feature = "training")]
             training: TrainingState::new(),
@@ -28,8 +26,8 @@ impl SettingsPanel {
 }
 
 impl AppPane for SettingsPanel {
-    fn title(&self) -> String {
-        "Status".to_owned()
+    fn title(&self) -> egui::WidgetText {
+        "Status".into()
     }
 
     fn is_visible(&self, process: &UiProcess) -> bool {
@@ -43,12 +41,8 @@ impl AppPane for SettingsPanel {
                 #[cfg(feature = "training")]
                 self.training.reset();
             }
-            ProcessMessage::NewSource { name } => {
-                let source_type = self
-                    .pending_source_type
-                    .take()
-                    .unwrap_or_else(|| "File".to_owned());
-                self.current_source = Some((name.clone(), source_type));
+            ProcessMessage::NewSource { name, source } => {
+                self.current_source = Some((name.clone(), source.clone()));
             }
             #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(msg) => {
@@ -113,24 +107,9 @@ impl AppPane for SettingsPanel {
             }
 
             ui.add_space(16.0);
-            ui.separator();
-            ui.add_space(12.0);
 
-            // Status section - show source info or prompt
-            if let Some((name, source_type)) = &self.current_source {
-                ui.label(
-                    egui::RichText::new(source_type)
-                        .size(14.0)
-                        .color(egui::Color32::from_rgb(140, 140, 140)),
-                );
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new(name)
-                        .size(15.0)
-                        .strong()
-                        .color(egui::Color32::from_rgb(220, 220, 220)),
-                );
-            } else {
+            // Status section - show prompt when nothing loaded
+            if self.current_source.is_none() {
                 ui.label(
                     egui::RichText::new("Load a .ply file or dataset to get started")
                         .size(14.0)
@@ -183,12 +162,6 @@ impl AppPane for SettingsPanel {
             }
 
             if let Some(source) = load_option {
-                self.pending_source_type = Some(match &source {
-                    DataSource::PickFile => "File".to_owned(),
-                    DataSource::PickDirectory => "Directory".to_owned(),
-                    DataSource::Url(_) => "URL".to_owned(),
-                    DataSource::Path(_) => "Path".to_owned(),
-                });
                 let (_sender, receiver) = tokio::sync::oneshot::channel();
                 #[cfg(feature = "training")]
                 {
