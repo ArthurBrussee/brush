@@ -92,16 +92,16 @@ wgpu = { version = "26", default-features = false, features = ["naga-ir"] }
 
 serde-ply = "0.2.1"
 
-burn = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b", features = [
+burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
 ] }
-burn-cubecl = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b" }
-burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b" }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b", features = [
+burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
+burn-ir = { git = "https://github.com/tracel-ai/burn" }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
 ] }
-burn-fusion = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b" }
-burn-import = { git = "https://github.com/tracel-ai/burn", rev = "3086e5baec45d634e3a8435d1b62295bf9c4858b", default-features = false, features = [
+burn-fusion = { git = "https://github.com/tracel-ai/burn" }
+burn-import = { git = "https://github.com/tracel-ai/burn", default-features = false, features = [
     "pytorch",
 ] }
 
