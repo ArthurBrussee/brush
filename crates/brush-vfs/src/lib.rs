@@ -74,8 +74,7 @@ enum VfsContainer {
     InMemory {
         entries: HashMap<PathBuf, Arc<Vec<u8>>>,
     },
-    /// A single file being streamed (e.g., PLY from HTTP).
-    /// The reader can only be consumed once.
+    /// A single file being streamed. The reader can only be consumed once.
     Streaming { reader: StreamingReader },
     /// Native directory - reads from disk on demand
     #[cfg(not(target_family = "wasm"))]
@@ -122,7 +121,7 @@ pub enum VfsConstructError {
     #[error("I/O error while constructing BrushVfs.")]
     IoError(#[from] std::io::Error),
     #[error("Got a status page instead of content: \n\n {0}")]
-    InvalidHtml(String),
+    ReceivedHTML(String),
     #[error("Unknown data type. Only zip and ply files are supported")]
     UnknownDataType,
 }
@@ -137,15 +136,14 @@ impl BrushVfs {
     }
 
     pub async fn from_reader(
-        reader: impl DynRead + 'static,
+        mut reader: impl DynRead + 'static,
         name: Option<String>,
     ) -> Result<Self, VfsConstructError> {
         // Small hack to peek some bytes: Read them
         // and add them at the start again.
-        let mut data = BufReader::new(reader);
-        let peek = read_at_most(&mut data, 64).await?;
+        let peek = read_at_most(&mut reader, 64).await?;
         let mut reader: Box<dyn DynRead> =
-            Box::new(AsyncReadExt::chain(Cursor::new(peek.clone()), data));
+            Box::new(AsyncReadExt::chain(Cursor::new(peek.clone()), reader));
 
         if peek.starts_with(b"ply") {
             // For single PLY files, keep the reader for streaming
@@ -184,7 +182,7 @@ impl BrushVfs {
         } else if peek.starts_with(b"<!DOCTYPE html>") {
             let mut html = String::new();
             reader.read_to_string(&mut html).await?;
-            Err(VfsConstructError::InvalidHtml(html))
+            Err(VfsConstructError::ReceivedHTML(html))
         } else {
             Err(VfsConstructError::UnknownDataType)
         }
@@ -496,7 +494,7 @@ mod tests {
         ));
         assert!(matches!(
             BrushVfs::from_reader(Cursor::new(b"<!DOCTYPE html>"), None).await,
-            Err(VfsConstructError::InvalidHtml(_))
+            Err(VfsConstructError::ReceivedHTML(_))
         ));
     }
 }

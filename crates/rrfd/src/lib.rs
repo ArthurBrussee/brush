@@ -36,11 +36,8 @@ pub async fn pick_file() -> Result<PickedFile<impl AsyncRead + Unpin>, PickFileE
             .ok_or(PickFileError::NoFileSelected)?;
 
         let name = file.file_name();
-        let reader = tokio::fs::File::open(file.path()).await?;
-        Ok(PickedFile {
-            name,
-            reader: tokio::io::BufReader::new(reader),
-        })
+        let file = tokio::fs::File::open(file.path()).await?;
+        Ok(PickedFile { name, reader: file })
     }
 
     #[cfg(target_family = "wasm")]
@@ -53,7 +50,7 @@ pub async fn pick_file() -> Result<PickedFile<impl AsyncRead + Unpin>, PickFileE
         let file = android::pick_file().await?;
         Ok(PickedFile {
             name: "file".to_owned(), // Android doesn't easily give us the filename
-            reader: tokio::io::BufReader::new(file),
+            reader: file,
         })
     }
 }
