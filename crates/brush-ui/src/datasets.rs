@@ -13,6 +13,7 @@ use egui::{
     Color32, Frame, Rect, Slider, TextureOptions, collapsing_header::CollapsingState, pos2,
 };
 
+use tokio::sync::watch::Sender;
 use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(Clone)]
@@ -37,32 +38,37 @@ fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
 pub struct DatasetPanel {
     view_type: ViewType,
     cur_dataset: Dataset,
-    selected_view: SelectedView,
-    sender: tokio::sync::watch::Sender<Option<TexHandle>>,
+    selected_view: Option<SelectedView>,
+    sender: Option<Sender<Option<TexHandle>>>,
     loading_task: Option<tokio_wasm::task::JoinHandle<()>>,
 }
 
-impl DatasetPanel {
-    pub(crate) fn new() -> Self {
+impl Default for DatasetPanel {
+    fn default() -> Self {
         let (sender, tex) = tokio::sync::watch::channel(None);
 
         Self {
             view_type: ViewType::Train,
             cur_dataset: Dataset::empty(),
             loading_task: None,
-            sender,
-            selected_view: SelectedView { view: None, tex },
+            sender: Some(sender),
+            selected_view: Some(SelectedView { view: None, tex }),
         }
     }
+}
 
+impl DatasetPanel {
     pub fn set_selected_view(&mut self, view: &SceneView, ctx: &egui::Context) {
+        let Some(sender) = self.sender.clone() else {
+            return;
+        };
+
         let view_send = view.clone();
 
         if let Some(task) = self.loading_task.take() {
             task.abort();
         }
 
-        let sender = self.sender.clone();
         let ctx = ctx.clone();
 
         self.loading_task = Some(tokio_with_wasm::alias::spawn(async move {
@@ -123,7 +129,9 @@ impl DatasetPanel {
             // Show updated texture asap.
             ctx.request_repaint();
         }));
-        self.selected_view.view = Some(view.clone());
+        if let Some(selected_view) = &mut self.selected_view {
+            selected_view.view = Some(view.clone());
+        }
     }
 
     pub fn is_selected_view_loading(&self) -> bool {
@@ -143,7 +151,7 @@ impl AppPane for DatasetPanel {
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
         match message {
             ProcessMessage::NewProcess => {
-                *self = Self::new();
+                *self = Self::default();
             }
             ProcessMessage::TrainMessage(TrainMessage::Dataset { dataset }) => {
                 if let Some(view) = dataset.train.views.first() {
@@ -168,14 +176,17 @@ impl AppPane for DatasetPanel {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
+        let Some(selected_view_state) = &self.selected_view else {
+            return;
+        };
+
         let pick_scene = selected_scene(self.view_type, &self.cur_dataset).clone();
         let mv = process.current_camera().world_to_local() * process.model_local_to_world();
         let mut nearest_view_ind = pick_scene.get_nearest_view(mv.inverse());
 
         if let Some(nearest) = nearest_view_ind.as_mut() {
             // Update image if dirty.
-            let dirty = self
-                .selected_view
+            let dirty = selected_view_state
                 .view
                 .as_ref()
                 .is_none_or(|view| view.image != pick_scene.views[*nearest].image);
@@ -184,8 +195,12 @@ impl AppPane for DatasetPanel {
                 self.set_selected_view(&pick_scene.views[*nearest], ui.ctx());
             }
 
-            if let Some(selected_view) = &self.selected_view.view {
-                let last_handle = self.selected_view.tex.borrow();
+            let Some(selected_view_state) = &self.selected_view else {
+                return;
+            };
+
+            if let Some(selected_view) = &selected_view_state.view {
+                let last_handle = selected_view_state.tex.borrow();
 
                 if let Some(texture_handle) = last_handle.as_ref() {
                     // if training views have alpha, show a background checker. Masked images

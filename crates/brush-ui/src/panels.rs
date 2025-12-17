@@ -1,11 +1,27 @@
+use std::sync::Arc;
+
 use brush_process::message::ProcessMessage;
+use eframe::egui_wgpu::Renderer;
+use egui::mutex::RwLock;
 
 use crate::ui_process::UiProcess;
 
 pub(crate) trait AppPane {
     fn title(&self) -> String;
 
-    /// Draw the pane's UI's content/
+    /// Initialize runtime state after creation or deserialization.
+    #[allow(unused_variables)]
+    fn init(
+        &mut self,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        renderer: Arc<RwLock<Renderer>>,
+        burn_device: burn_wgpu::WgpuDevice,
+        adapter_info: wgpu::AdapterInfo,
+    ) {
+    }
+
+    /// Draw the pane's UI's content.
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess);
 
     /// Handle an incoming message from the UI.

@@ -17,6 +17,8 @@ use glam::{UVec2, Vec3};
 use tracing::trace_span;
 use web_time::Instant;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     UiMode,
     app::CameraSettings,
@@ -88,58 +90,37 @@ fn box_ui<R>(
         });
 }
 
+#[derive(Default, Serialize, Deserialize)]
 pub struct ScenePanel {
-    pub(crate) backbuffer: BurnTexture,
+    #[serde(skip)]
+    pub(crate) backbuffer: Option<BurnTexture>,
+    #[serde(skip)]
     pub(crate) last_draw: Option<Instant>,
-
+    #[serde(skip)]
     view_splats: Vec<Splats<MainBackend>>,
-
+    #[serde(skip)]
     fully_loaded: bool,
+    #[serde(skip)]
     frame_count: u32,
+    #[serde(skip)]
     frame: f32,
-
-    // Splat info for display
+    #[serde(skip)]
     num_splats: u32,
+    #[serde(skip)]
     sh_degree: u32,
-
-    // Ui state.
+    #[serde(skip)]
     paused: bool,
+    #[serde(skip)]
     err: Option<ErrorDisplay>,
+    #[serde(skip)]
     warnings: Vec<ErrorDisplay>,
-
-    // Keep track of what was last rendered.
+    #[serde(skip)]
     last_state: Option<RenderState>,
-
-    // 3D widgets for visualization
+    #[serde(skip)]
     widget_3d: Option<Widget3D>,
 }
 
 impl ScenePanel {
-    pub(crate) fn new(
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        renderer: Arc<EguiRwLock<Renderer>>,
-    ) -> Self {
-        // Create Widget3D for 3D overlay rendering
-        let widget_3d = Some(Widget3D::new(device.clone(), queue.clone()));
-
-        Self {
-            backbuffer: BurnTexture::new(renderer, device, queue),
-            last_draw: None,
-            err: None,
-            warnings: vec![],
-            view_splats: vec![],
-            paused: false,
-            last_state: None,
-            frame_count: 0,
-            frame: 0.0,
-            fully_loaded: false,
-            num_splats: 0,
-            sh_degree: 0,
-            widget_3d,
-        }
-    }
-
     pub(crate) fn draw_splats(
         &mut self,
         ui: &mut egui::Ui,
@@ -217,10 +198,13 @@ impl ScenePanel {
                     settings.splat_scale,
                 );
 
-                self.backbuffer.update_texture(img);
+                if let Some(backbuffer) = &mut self.backbuffer {
+                    backbuffer.update_texture(img);
+                }
 
                 if let Some(widget_3d) = &mut self.widget_3d
-                    && let Some(texture) = self.backbuffer.texture()
+                    && let Some(backbuffer) = &self.backbuffer
+                    && let Some(texture) = backbuffer.texture()
                 {
                     widget_3d.render_to_texture(
                         &camera,
@@ -245,7 +229,9 @@ impl ScenePanel {
                 }
             }
 
-            if let Some(id) = self.backbuffer.id() {
+            if let Some(backbuffer) = &self.backbuffer
+                && let Some(id) = backbuffer.id()
+            {
                 ui.painter().image(
                     id,
                     rect,
@@ -552,6 +538,18 @@ impl ScenePanel {
 impl AppPane for ScenePanel {
     fn title(&self) -> String {
         "Scene".to_owned()
+    }
+
+    fn init(
+        &mut self,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        renderer: Arc<EguiRwLock<Renderer>>,
+        _burn_device: burn_wgpu::WgpuDevice,
+        _adapter_info: wgpu::AdapterInfo,
+    ) {
+        self.widget_3d = Some(Widget3D::new(device.clone(), queue.clone()));
+        self.backbuffer = Some(BurnTexture::new(renderer, device, queue));
     }
 
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {

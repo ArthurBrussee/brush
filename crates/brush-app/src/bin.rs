@@ -67,6 +67,7 @@ fn main() -> Result<(), anyhow::Error> {
                         .with_active(true)
                         .with_icon(std::sync::Arc::new(icon)),
                     wgpu_options: brush_ui::create_egui_options(),
+                    persist_window: true,
                     ..Default::default()
                 };
 

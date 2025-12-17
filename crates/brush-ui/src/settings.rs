@@ -14,8 +14,8 @@ pub struct SettingsPanel {
     training: TrainingState,
 }
 
-impl SettingsPanel {
-    pub(crate) fn new() -> Self {
+impl Default for SettingsPanel {
+    fn default() -> Self {
         Self {
             url: "splat.com/example.ply".to_owned(),
             show_url_dialog: false,

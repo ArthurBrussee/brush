@@ -111,9 +111,10 @@ eframe = { version = "0.32", default-features = false, features = [
     "android-game-activity",
     "wayland",
     "x11",
+    "persistence",
 ] }
 
-egui_tiles = "0.13.0"
+egui_tiles = { version = "0.13.0", features = ["serde"] }
 
 rerun = { version = "0.27", default-features = false, features = [
     'sdk',

@@ -430,10 +430,16 @@ pub fn draw_training_progress(ui: &mut egui::Ui, state: &mut TrainingState, proc
             ui.add_space(8.0);
         }
 
+        let is_complete = iter == total;
         let bar_response = ui.add(
             egui::ProgressBar::new(progress)
                 .desired_width(550.0)
-                .desired_height(22.0),
+                .desired_height(22.0)
+                .fill(if is_complete {
+                    egui::Color32::from_rgb(100, 200, 100)
+                } else {
+                    ui.visuals().selection.bg_fill
+                }),
         );
 
         let bar_rect = bar_response.rect;
@@ -444,7 +450,7 @@ pub fn draw_training_progress(ui: &mut egui::Ui, state: &mut TrainingState, proc
             let export_color = egui::Color32::from_rgb(100, 150, 255);
             let manual_export_color = egui::Color32::from_rgb(100, 200, 100);
             let next_export = ((iter / export_every) + 1) * export_every;
-            let row_top = bar_rect.bottom() + 3.0;
+            let row_top = bar_rect.bottom() - 3.0;
 
             let mut export_iter = export_every;
             while export_iter <= total {
@@ -477,72 +483,94 @@ pub fn draw_training_progress(ui: &mut egui::Ui, state: &mut TrainingState, proc
             }
         }
 
-        ui.painter().text(
-            egui::pos2(bar_rect.left() + padding, bar_rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            format!("{percent}%"),
-            egui::FontId::proportional(13.0),
-            egui::Color32::WHITE,
-        );
+        if is_complete {
+            // When complete, show bold centered 100%
+            ui.painter().text(
+                bar_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "100%",
+                egui::FontId::new(14.0, egui::FontFamily::Proportional),
+                egui::Color32::WHITE,
+            );
+        } else {
+            // Show percentage on left
+            ui.painter().text(
+                egui::pos2(bar_rect.left() + padding, bar_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                format!("{percent}%"),
+                egui::FontId::proportional(13.0),
+                egui::Color32::WHITE,
+            );
 
-        let iter_text = format!("{:.1} it/s", state.train_iter_per_s);
-        let dim_color = egui::Color32::from_rgb(200, 200, 200);
-        let bright_color = egui::Color32::WHITE;
+            // Show iter/s and ETA on right
+            let iter_text = format!("{:.1} it/s", state.train_iter_per_s);
+            let dim_color = egui::Color32::from_rgb(200, 200, 200);
+            let bright_color = egui::Color32::WHITE;
 
-        let galley_eta = ui.painter().layout_no_wrap(
-            eta_text.clone(),
-            egui::FontId::proportional(12.0),
-            bright_color,
-        );
-        let galley_iter = ui.painter().layout_no_wrap(
-            iter_text.clone(),
-            egui::FontId::proportional(11.0),
-            dim_color,
-        );
+            let galley_eta = ui.painter().layout_no_wrap(
+                eta_text.clone(),
+                egui::FontId::proportional(12.0),
+                bright_color,
+            );
+            let galley_iter = ui.painter().layout_no_wrap(
+                iter_text.clone(),
+                egui::FontId::proportional(11.0),
+                dim_color,
+            );
 
-        let eta_width = galley_eta.size().x;
-        let iter_width = galley_iter.size().x;
-        let separator_width = 24.0;
+            let eta_width = galley_eta.size().x;
+            let iter_width = galley_iter.size().x;
+            let separator_width = 24.0;
 
-        ui.painter().text(
-            egui::pos2(bar_rect.right() - padding, bar_rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            eta_text,
-            egui::FontId::proportional(12.0),
-            bright_color,
-        );
+            ui.painter().text(
+                egui::pos2(bar_rect.right() - padding, bar_rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                eta_text,
+                egui::FontId::proportional(12.0),
+                bright_color,
+            );
 
-        ui.painter().text(
-            egui::pos2(
-                bar_rect.right() - padding - eta_width - separator_width / 2.0,
-                bar_rect.center().y,
-            ),
-            egui::Align2::CENTER_CENTER,
-            "-",
-            egui::FontId::proportional(11.0),
-            dim_color,
-        );
+            ui.painter().text(
+                egui::pos2(
+                    bar_rect.right() - padding - eta_width - separator_width / 2.0,
+                    bar_rect.center().y,
+                ),
+                egui::Align2::CENTER_CENTER,
+                "-",
+                egui::FontId::proportional(11.0),
+                dim_color,
+            );
 
-        ui.painter().text(
-            egui::pos2(
-                bar_rect.right() - padding - eta_width - separator_width - iter_width,
-                bar_rect.center().y,
-            ),
-            egui::Align2::LEFT_CENTER,
-            iter_text,
-            egui::FontId::proportional(11.0),
-            dim_color,
-        );
+            ui.painter().text(
+                egui::pos2(
+                    bar_rect.right() - padding - eta_width - separator_width - iter_width,
+                    bar_rect.center().y,
+                ),
+                egui::Align2::LEFT_CENTER,
+                iter_text,
+                egui::FontId::proportional(11.0),
+                dim_color,
+            );
+        }
 
         ui.add_space(16.0);
 
         if iter == total {
-            ui.label(
-                egui::RichText::new("Done")
-                    .size(15.0)
+            // Training complete - show prominent indicator
+            let done_color = egui::Color32::from_rgb(100, 200, 100);
+
+            let button = egui::Button::new(
+                egui::RichText::new("Training Complete!")
+                    .size(14.0)
                     .strong()
-                    .color(egui::Color32::from_rgb(100, 200, 100)),
-            );
+                    .color(egui::Color32::WHITE),
+            )
+            .min_size(egui::vec2(150.0, 26.0))
+            .corner_radius(13.0)
+            .fill(done_color)
+            .sense(egui::Sense::hover());
+
+            ui.add(button);
         } else {
             let paused = process.is_train_paused();
             let training_on_color = egui::Color32::from_rgb(70, 130, 180);

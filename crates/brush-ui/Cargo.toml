@@ -18,6 +18,7 @@ rrfd.path = "../rrfd"
 
 log.workspace = true
 anyhow.workspace = true
+serde.workspace = true
 burn.workspace = true
 burn-cubecl.workspace = true
 burn-wgpu.workspace = true
