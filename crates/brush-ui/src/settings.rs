@@ -194,7 +194,6 @@ impl AppPane for SettingsPanel {
                 {
                     self.training.popup = Some(crate::training_ui::SettingsPopup::new(_sender));
                 }
-
                 process.start_new_process(source, receiver);
             }
         });

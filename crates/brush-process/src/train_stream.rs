@@ -41,10 +41,9 @@ pub(crate) async fn train_stream(
         .emit(ProcessMessage::StartLoading { training: true })
         .await;
 
-    // Now wait for the process args.
+    // Now wait for the process args (this is async as it waits for the users UI input).
     let train_stream_args = process_args.await?;
 
-    // Send the training config to the UI.
     emitter
         .emit(ProcessMessage::TrainMessage(TrainMessage::TrainConfig {
             config: Box::new(train_stream_args.clone()),

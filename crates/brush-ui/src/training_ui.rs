@@ -1,4 +1,7 @@
+use std::ops::RangeInclusive;
+
 use crate::ui_process::UiProcess;
+use anyhow::Error;
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::TrainMessage;
 use brush_render::AlphaMode;
@@ -11,6 +14,20 @@ use web_time::Duration;
 pub(crate) struct SettingsPopup {
     send_args: Option<Sender<TrainStreamConfig>>,
     args: TrainStreamConfig,
+}
+
+fn slider<T>(ui: &mut Ui, value: &mut T, range: RangeInclusive<T>, text: &str, logarithmic: bool)
+where
+    T: egui::emath::Numeric,
+{
+    let mut s = Slider::new(value, range).clamping(egui::SliderClamping::Never);
+    if logarithmic {
+        s = s.logarithmic(true);
+    }
+    if !text.is_empty() {
+        s = s.text(text);
+    }
+    ui.add(s);
 }
 
 impl SettingsPopup {
@@ -29,25 +46,6 @@ impl SettingsPopup {
     }
 
     pub(crate) fn ui(&mut self, ui: &egui::Ui) {
-        fn slider<T>(
-            ui: &mut Ui,
-            value: &mut T,
-            range: std::ops::RangeInclusive<T>,
-            text: &str,
-            logarithmic: bool,
-        ) where
-            T: egui::emath::Numeric,
-        {
-            let mut s = Slider::new(value, range).clamping(egui::SliderClamping::Never);
-            if logarithmic {
-                s = s.logarithmic(true);
-            }
-            if !text.is_empty() {
-                s = s.text(text);
-            }
-            ui.add(s);
-        }
-
         if self.send_args.is_none() {
             return;
         }
@@ -253,18 +251,16 @@ impl SettingsPopup {
 }
 
 pub struct TrainingState {
-    pub train_progress: Option<(u32, u32)>, // (current_iter, total_steps, elapsed)
-    pub last_train_step: Option<(Duration, u32)>, // (elapsed, iter) for calculating iter/s
-    pub train_iter_per_s: f32,
-    iter_per_s_samples: u32, // number of samples for smoothing ramp-up
-    pub train_config: Option<TrainStreamConfig>,
-    pub manual_export_iters: Vec<u32>,
     pub popup: Option<SettingsPopup>,
-    pub current_splats: Option<Splats<MainBackend>>,
-    pub export_channel: (
-        UnboundedSender<anyhow::Error>,
-        UnboundedReceiver<anyhow::Error>,
-    ),
+
+    train_progress: Option<(u32, u32)>, // (current_iter, total_steps, elapsed)
+    last_train_step: Option<(Duration, u32)>, // (elapsed, iter) for calculating iter/s
+    train_iter_per_s: f32,
+    iter_per_s_samples: u32, // number of samples for smoothing ramp-up
+    train_config: Option<TrainStreamConfig>,
+    manual_export_iters: Vec<u32>,
+    current_splats: Option<Splats<MainBackend>>,
+    export_channel: (UnboundedSender<Error>, UnboundedReceiver<Error>),
 }
 
 impl TrainingState {
@@ -339,7 +335,7 @@ impl Default for TrainingState {
     }
 }
 
-async fn export(splat: Splats<MainBackend>) -> Result<(), anyhow::Error> {
+async fn export(splat: Splats<MainBackend>) -> Result<(), Error> {
     let data = brush_serde::splat_to_ply(splat).await?;
     rrfd::save_file("export.ply", data).await?;
     Ok(())
