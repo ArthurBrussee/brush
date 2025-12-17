@@ -17,7 +17,7 @@ import java.io.IOException;
 
 public class MainActivity extends GameActivity {
     static {
-        System.loadLibrary("main");
+        System.loadLibrary("brush_app");
     }
 
     private void hideSystemUI() {
