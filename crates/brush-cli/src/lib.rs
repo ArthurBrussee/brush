@@ -176,6 +176,7 @@ pub async fn run_cli_ui(
             ProcessMessage::ViewSplats { .. } => {}
             #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(train) => match train {
+                TrainMessage::TrainConfig { .. } => {}
                 TrainMessage::Dataset { dataset } => {
                     let train_views = dataset.train.views.len();
                     let eval_views = dataset.eval.as_ref().map_or(0, |v| v.views.len());

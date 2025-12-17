@@ -44,6 +44,13 @@ pub(crate) async fn train_stream(
     // Now wait for the process args.
     let train_stream_args = process_args.await?;
 
+    // Send the training config to the UI.
+    emitter
+        .emit(ProcessMessage::TrainMessage(TrainMessage::TrainConfig {
+            config: Box::new(train_stream_args.clone()),
+        }))
+        .await;
+
     let visualize = tracing::trace_span!("Create rerun")
         .in_scope(|| VisualizeTools::new(train_stream_args.rerun_config.rerun_enabled));
 
