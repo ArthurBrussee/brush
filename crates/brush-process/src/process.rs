@@ -19,8 +19,12 @@ pub fn create_process(
         emitter.emit(ProcessMessage::NewProcess).await;
 
         let vfs = source.into_vfs().await?;
-
         let vfs_counts = vfs.file_count();
+
+        if vfs_counts == 0 {
+            return Err(anyhow::anyhow!("No files found."));
+        }
+
         let ply_count = vfs.files_with_extension("ply").count();
 
         log::info!(
