@@ -17,7 +17,7 @@ mod widget_3d;
 mod datasets;
 
 #[cfg(feature = "training")]
-mod settings_popup;
+mod training_ui;
 
 use eframe::egui_wgpu::WgpuConfiguration;
 use std::sync::Arc;
