@@ -61,7 +61,7 @@ impl SettingsPopup {
             ui.heading("Training");
             slider(ui, &mut self.args.train_config.total_steps, 1..=50000, " steps", false);
 
-            ui.label("Max Splats");
+            ui.label("Max Splats Cap");
             ui.add(Slider::new(&mut self.args.train_config.max_splats, 1000000..=10000000)
                 .custom_formatter(|n, _| format!("{:.0}k", n as f32 / 1000.0))
                 .custom_parser(|str| {
