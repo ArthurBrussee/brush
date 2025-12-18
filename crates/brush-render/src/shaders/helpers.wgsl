@@ -184,9 +184,6 @@ fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixe
 
     var cov2d = J * covar_cam * transpose(J);
 
-    // add a little blur along axes.
-    cov2d[0][0] += COV_BLUR;
-    cov2d[1][1] += COV_BLUR;
     return cov2d;
 }
 

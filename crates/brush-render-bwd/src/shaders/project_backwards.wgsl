@@ -5,15 +5,17 @@
 @group(0) @binding(1) var<storage, read> means: array<helpers::PackedVec3>;
 @group(0) @binding(2) var<storage, read> log_scales: array<helpers::PackedVec3>;
 @group(0) @binding(3) var<storage, read> quats: array<vec4f>;
+@group(0) @binding(4) var<storage, read> raw_opac: array<f32>;
 
-@group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(5) var<storage, read> global_from_compact_gid: array<u32>;
 
-@group(0) @binding(5) var<storage, read> v_grads: array<vec4f>;
+@group(0) @binding(6) var<storage, read> v_grads: array<vec4f>;
 
-@group(0) @binding(6) var<storage, read_write> v_means: array<helpers::PackedVec3>;
-@group(0) @binding(7) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
-@group(0) @binding(8) var<storage, read_write> v_quats: array<vec4f>;
-@group(0) @binding(9) var<storage, read_write> v_coeffs: array<f32>;
+@group(0) @binding(7) var<storage, read_write> v_means: array<helpers::PackedVec3>;
+@group(0) @binding(8) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
+@group(0) @binding(9) var<storage, read_write> v_quats: array<vec4f>;
+@group(0) @binding(10) var<storage, read_write> v_coeffs: array<f32>;
+@group(0) @binding(11) var<storage, read_write> v_opacs: array<f32>;
 
 const SH_C0: f32 = 0.2820947917738781f;
 
@@ -367,7 +369,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let M = rotmat * S;
 
     let covar = M * transpose(M);
-    let cov2d = helpers::calc_cov2d(covar, mean_c, focal, img_size, pixel_center, viewmat);
+    var cov2d = helpers::calc_cov2d(covar, mean_c, focal, img_size, pixel_center, viewmat);
+
+    // compute opacity gradient with accounting for the filter compensation factor
+    // nb: we detach the filter compensation factor from the 2d covariance gradient computation for stability reasons
+    let det_raw = max(determinant(cov2d), 0.0f);
+    cov2d[0][0] += helpers::COV_BLUR;
+    cov2d[1][1] += helpers::COV_BLUR;
+    let filter_comp = sqrt(det_raw / determinant(cov2d));
+    let v_opac_filter_comp = v_opacs[global_gid];
+    let opac = helpers::sigmoid(raw_opac[global_gid]);
+    v_opacs[global_gid] = v_opac_filter_comp * filter_comp * opac * (1.0f - opac);
+
     let covar2d_inv = helpers::inverse(cov2d);
 
     let v_covar2d_inv = mat2x2f(vec2f(v_conics.x, v_conics.y * 0.5f), vec2f(v_conics.y * 0.5f, v_conics.z));

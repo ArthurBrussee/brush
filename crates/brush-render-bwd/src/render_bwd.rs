@@ -45,6 +45,7 @@ pub(crate) fn render_backward(
     means: CubeTensor<WgpuRuntime>,
     quats: CubeTensor<WgpuRuntime>,
     log_scales: CubeTensor<WgpuRuntime>,
+    raw_opac: CubeTensor<WgpuRuntime>,
     out_img: CubeTensor<WgpuRuntime>,
 
     projected_splats: CubeTensor<WgpuRuntime>,
@@ -61,6 +62,7 @@ pub(crate) fn render_backward(
     let means = into_contiguous(means);
     let log_scales = into_contiguous(log_scales);
     let quats = into_contiguous(quats);
+    let raw_opac = into_contiguous(raw_opac);
 
     // We're in charge of these, SHOULD be contiguous but might as well.
     let projected_splats = into_contiguous(projected_splats);
@@ -146,12 +148,14 @@ pub(crate) fn render_backward(
                 means.handle.binding(),
                 log_scales.handle.binding(),
                 quats.handle.binding(),
+                raw_opac.handle.binding(),
                 global_from_compact_gid.handle.binding(),
                 v_grads.handle.binding(),
                 v_means.handle.clone().binding(),
                 v_scales.handle.clone().binding(),
                 v_quats.handle.clone().binding(),
-                v_coeffs.handle.clone().binding()
+                v_coeffs.handle.clone().binding(),
+                v_raw_opac.handle.clone().binding(),
             ]),
         ).expect("Failed to bwd-diff splats");
     });

@@ -50,7 +50,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
     quat *= inverseSqrt(quat_norm_sqr);
 
     let cov3d = helpers::calc_cov3d(scale, quat);
-    let cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
+    var cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
+
+    // filter with isotropic gaussian and compute the compensation factor
+    let det_raw = max(determinant(cov2d), 0.0f);
+    cov2d[0][0] += helpers::COV_BLUR;
+    cov2d[1][1] += helpers::COV_BLUR;
+    let filter_comp = sqrt(det_raw / determinant(cov2d));
 
     if abs(determinant(cov2d)) < 1e-24 {
         return;
@@ -61,7 +67,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
 
     let opac = helpers::sigmoid(raw_opacities[global_gid]);
 
-    if opac < 1.0 / 255.0 {
+    if filter_comp * opac < 1.0 / 255.0 {
         return;
     }
 

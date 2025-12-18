@@ -73,6 +73,7 @@ impl SplatBackwardOps<Self> for MainBackendBase {
             state.means,
             state.quats,
             state.log_scales,
+            state.raw_opac,
             state.out_img,
             state.projected_splats,
             state.uniforms_buffer,

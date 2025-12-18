@@ -184,7 +184,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let mean_c = R * mean + viewmat[3].xyz;
 
     let covar = helpers::calc_cov3d(scale, quat);
-    let cov2d = helpers::calc_cov2d(covar, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
+    var cov2d = helpers::calc_cov2d(covar, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
+
+    // filter with isotropic gaussian and compute the compensation factor
+    let det_raw = max(determinant(cov2d), 0.0f);
+    cov2d[0][0] += helpers::COV_BLUR;
+    cov2d[1][1] += helpers::COV_BLUR;
+    let filter_comp = sqrt(det_raw / determinant(cov2d));
+
     let conic = helpers::inverse(cov2d);
 
     // compute the projected mean
@@ -241,6 +248,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     projected[compact_gid] = helpers::create_projected_splat(
         mean2d,
         vec3f(conic[0][0], conic[0][1], conic[1][1]),
-        vec4f(color, opac)
+        vec4f(color, filter_comp * opac)
     );
 }
