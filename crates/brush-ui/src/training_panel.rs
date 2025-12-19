@@ -156,13 +156,39 @@ impl AppPane for TrainingPanel {
     }
 
     fn top_bar_right_ui(&mut self, ui: &mut egui::Ui, _process: &UiProcess) {
+        let text_color = ui.visuals().strong_text_color();
+
+        // Show iter/s and ETA
+        if self.train_iter_per_s > 0.0
+            && let Some((iter, total)) = self.train_progress
+        {
+            let remaining_iters = total.saturating_sub(iter);
+            let remaining_secs = (remaining_iters as f32 / self.train_iter_per_s) as u64;
+            let remaining = Duration::from_secs(remaining_secs);
+
+            ui.label(
+                RichText::new(format!(
+                    "{:.0} it/s  ETA {}",
+                    self.train_iter_per_s,
+                    humantime::format_duration(remaining)
+                ))
+                .size(12.0)
+                .color(text_color),
+            );
+            ui.add_space(8.0);
+        }
+
         // Show training elapsed time
         if let Some((elapsed, _)) = self.last_train_step {
-            let text_color = ui.visuals().strong_text_color();
+            // Truncate to seconds for human-friendly display
+            let elapsed_secs = Duration::from_secs(elapsed.as_secs());
             ui.label(
-                RichText::new(format!("{} elapsed", humantime::format_duration(elapsed)))
-                    .size(12.0)
-                    .color(text_color),
+                RichText::new(format!(
+                    "{} elapsed",
+                    humantime::format_duration(elapsed_secs)
+                ))
+                .size(12.0)
+                .color(text_color),
             );
             ui.add_space(4.0);
         }
@@ -317,9 +343,8 @@ impl AppPane for TrainingPanel {
             }
         }
 
-        // Progress text overlay - all right aligned
-        let primary_color = egui::Color32::WHITE;
-        let secondary_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180);
+        // Progress text overlay - right aligned
+        let text_color = egui::Color32::WHITE;
 
         if is_complete {
             ui.painter().text(
@@ -330,51 +355,12 @@ impl AppPane for TrainingPanel {
                 egui::Color32::WHITE,
             );
         } else {
-            let mut job = egui::text::LayoutJob {
-                halign: egui::Align::RIGHT,
-                ..Default::default()
-            };
-
-            // iter/total
-            job.append(
-                &format!("{iter}/{total}"),
-                0.0,
-                egui::TextFormat {
-                    font_id: egui::FontId::proportional(12.0),
-                    color: primary_color,
-                    ..Default::default()
-                },
-            );
-
-            // Secondary: speed and ETA
-            if self.train_iter_per_s > 0.0 {
-                let remaining_iters = total.saturating_sub(iter);
-                let remaining_secs = (remaining_iters as f32 / self.train_iter_per_s) as u64;
-                let remaining = Duration::from_secs(remaining_secs);
-
-                job.append(
-                    &format!(
-                        "  {:.0} it/s  ETA {}",
-                        self.train_iter_per_s,
-                        humantime::format_duration(remaining)
-                    ),
-                    0.0,
-                    egui::TextFormat {
-                        font_id: egui::FontId::proportional(10.0),
-                        color: secondary_color,
-                        ..Default::default()
-                    },
-                );
-            }
-
-            let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
-            ui.painter().galley(
-                egui::pos2(
-                    bar_rect.right() - padding - galley.rect.width(),
-                    bar_rect.center().y - galley.rect.height() / 2.0,
-                ),
-                galley,
-                egui::Color32::WHITE,
+            ui.painter().text(
+                egui::pos2(bar_rect.right() - padding, bar_rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                format!("{iter}/{total}"),
+                egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                text_color,
             );
         }
     }

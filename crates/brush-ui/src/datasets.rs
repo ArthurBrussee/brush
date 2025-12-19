@@ -1,4 +1,4 @@
-use std::{cell::Cell, time::Duration};
+use std::cell::Cell;
 
 use crate::{
     UiMode, draw_checkerboard,
@@ -13,7 +13,7 @@ use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::AlphaMode;
 use egui::{Color32, Rect, Slider, TextureOptions, pos2};
 
-use tokio::{sync::watch::Sender, time::sleep};
+use tokio::sync::watch::Sender;
 use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(Clone)]
@@ -86,8 +86,6 @@ impl DatasetPanel {
             if sender.is_closed() {
                 return;
             }
-
-            sleep(Duration::from_secs(1)).await;
 
             // Yield in case we're cancelled.
             tokio_wasm::task::yield_now().await;
@@ -331,16 +329,17 @@ impl AppPane for DatasetPanel {
                         egui::Color32::WHITE,
                     );
 
-                    if self.is_selected_view_loading()
-                        && self
+                    if self.is_selected_view_loading() {
+                        if self
                             .loading_start
                             .is_some_and(|t| t.elapsed().as_secs_f32() > 0.1)
-                    {
-                        ui.painter().rect_filled(
-                            rect,
-                            0.0,
-                            Color32::from_rgba_unmultiplied(200, 200, 220, 80),
-                        );
+                        {
+                            ui.painter().rect_filled(
+                                rect,
+                                0.0,
+                                Color32::from_rgba_unmultiplied(200, 200, 220, 80),
+                            );
+                        }
                     } else {
                         // Clear loading start when done
                         self.loading_start = None;
