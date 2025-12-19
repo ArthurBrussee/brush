@@ -117,7 +117,7 @@ impl egui_tiles::Behavior<PaneRef> for AppTree {
         egui_tiles::UiResponse::None
     }
 
-    fn tab_bar_right_ui(
+    fn top_bar_right_ui(
         &mut self,
         tiles: &Tiles<PaneRef>,
         ui: &mut Ui,
@@ -130,7 +130,7 @@ impl egui_tiles::Behavior<PaneRef> for AppTree {
         {
             pane.borrow_mut()
                 .as_pane_mut()
-                .tab_bar_right_ui(ui, self.process.as_ref());
+                .top_bar_right_ui(ui, self.process.as_ref());
         }
     }
 

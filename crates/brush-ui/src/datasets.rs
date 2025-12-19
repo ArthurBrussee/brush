@@ -357,7 +357,7 @@ impl AppPane for DatasetPanel {
         0.0
     }
 
-    fn tab_bar_right_ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
+    fn top_bar_right_ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         let pick_scene = selected_scene(self.view_type, &self.cur_dataset);
         let view_count = pick_scene.views.len();
 

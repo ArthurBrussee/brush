@@ -634,7 +634,7 @@ impl AppPane for ScenePanel {
         }
     }
 
-    fn tab_bar_right_ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
+    fn top_bar_right_ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         // Only show reset button if we have content loaded
         let has_content = !self.view_splats.is_empty() || process.is_training();
 

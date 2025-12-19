@@ -155,7 +155,7 @@ impl AppPane for TrainingPanel {
         6.0
     }
 
-    fn tab_bar_right_ui(&mut self, ui: &mut egui::Ui, _process: &UiProcess) {
+    fn top_bar_right_ui(&mut self, ui: &mut egui::Ui, _process: &UiProcess) {
         // Show training elapsed time
         if let Some((elapsed, _)) = self.last_train_step {
             let text_color = ui.visuals().strong_text_color();
