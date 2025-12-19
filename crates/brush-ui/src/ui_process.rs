@@ -126,14 +126,6 @@ impl UiProcess {
         self.read().train_paused
     }
 
-    pub fn set_live_update(&self, enabled: bool) {
-        self.write().live_update = enabled;
-    }
-
-    pub fn is_live_update(&self) -> bool {
-        self.read().live_update
-    }
-
     pub fn get_cam_settings(&self) -> CameraSettings {
         self.read().controls.settings.clone()
     }
@@ -304,6 +296,32 @@ impl UiProcess {
     pub fn set_ui_mode(&self, mode: UiMode) {
         self.write().ui_mode = mode;
     }
+
+    pub fn request_reset_layout(&self) {
+        self.write().reset_layout_requested = true;
+    }
+
+    pub fn take_reset_layout_request(&self) -> bool {
+        let mut inner = self.write();
+        let requested = inner.reset_layout_requested;
+        inner.reset_layout_requested = false;
+        requested
+    }
+
+    pub fn reset_session(&self) {
+        let mut inner = self.write();
+        let device_ctx = inner.cur_device_ctx.clone();
+        *inner = UiProcessInner::new();
+        inner.cur_device_ctx = device_ctx;
+        inner.session_reset_requested = true;
+    }
+
+    pub fn take_session_reset_request(&self) -> bool {
+        let mut inner = self.write();
+        let requested = inner.session_reset_requested;
+        inner.session_reset_requested = false;
+        requested
+    }
 }
 
 struct UiProcessInner {
@@ -317,7 +335,8 @@ struct UiProcessInner {
     ui_mode: UiMode,
     background_style: BackgroundStyle,
     train_paused: bool,
-    live_update: bool,
+    reset_layout_requested: bool,
+    session_reset_requested: bool,
 }
 
 impl UiProcessInner {
@@ -339,7 +358,8 @@ impl UiProcessInner {
             ui_mode: UiMode::Default,
             background_style: BackgroundStyle::Black,
             train_paused: false,
-            live_update: true,
+            reset_layout_requested: false,
+            session_reset_requested: false,
         }
     }
 

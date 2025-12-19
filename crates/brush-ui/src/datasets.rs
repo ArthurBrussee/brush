@@ -36,12 +36,13 @@ fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
 }
 
 pub struct DatasetPanel {
-    view_type: Cell<ViewType>,
+    view_type: ViewType,
     cur_dataset: Dataset,
     selected_view: Option<SelectedView>,
     sender: Option<Sender<Option<TexHandle>>>,
     loading_task: Option<tokio_wasm::task::JoinHandle<()>>,
     current_view_index: Cell<Option<usize>>,
+    loading_start: Option<web_time::Instant>,
 }
 
 impl Default for DatasetPanel {
@@ -49,12 +50,13 @@ impl Default for DatasetPanel {
         let (sender, tex) = tokio::sync::watch::channel(None);
 
         Self {
-            view_type: Cell::new(ViewType::Train),
+            view_type: ViewType::Train,
             cur_dataset: Dataset::empty(),
             loading_task: None,
             sender: Some(sender),
             selected_view: Some(SelectedView { view: None, tex }),
             current_view_index: Cell::new(None),
+            loading_start: None,
         }
     }
 }
@@ -71,6 +73,7 @@ impl DatasetPanel {
             task.abort();
         }
 
+        self.loading_start = Some(web_time::Instant::now());
         let ctx = ctx.clone();
 
         self.loading_task = Some(tokio_with_wasm::alias::spawn(async move {
@@ -140,7 +143,7 @@ impl DatasetPanel {
     }
 
     fn focus_picked(&self, process: &UiProcess) {
-        let pick_scene = selected_scene(self.view_type.get(), &self.cur_dataset);
+        let pick_scene = selected_scene(self.view_type, &self.cur_dataset);
 
         if let Some(idx) = self.current_view_index.get()
             && let Some(view) = pick_scene.views.get(idx)
@@ -185,14 +188,14 @@ impl AppPane for DatasetPanel {
             );
             job.append(
                 &format!(
-                    " ({}x{} {})",
+                    "  |  {}x{} {}",
                     texture_handle.handle.size()[0],
                     texture_handle.handle.size()[1],
                     mask_info
                 ),
                 0.0,
                 egui::TextFormat {
-                    color: Color32::from_rgb(120, 120, 120),
+                    color: Color32::from_rgb(140, 140, 140),
                     ..Default::default()
                 },
             );
@@ -235,11 +238,19 @@ impl AppPane for DatasetPanel {
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         let Some(selected_view_state) = &self.selected_view else {
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    egui::RichText::new("Waiting for training to start")
+                        .size(14.0)
+                        .color(Color32::from_rgb(140, 140, 140))
+                        .italics(),
+                );
+            });
             return;
         };
 
         let mv = process.current_camera().world_to_local() * process.model_local_to_world();
-        let pick_scene = selected_scene(self.view_type.get(), &self.cur_dataset).clone();
+        let pick_scene = selected_scene(self.view_type, &self.cur_dataset).clone();
         let mut nearest_view_ind = pick_scene.get_nearest_view(mv.inverse());
 
         if let Some(nearest) = nearest_view_ind.as_mut() {
@@ -319,12 +330,50 @@ impl AppPane for DatasetPanel {
                         egui::Color32::WHITE,
                     );
 
+                    // Show loading shimmer if loading for more than 0.1s
                     if self.is_selected_view_loading() {
-                        ui.painter().rect_filled(
-                            rect,
-                            0.0,
-                            Color32::from_rgba_unmultiplied(200, 200, 220, 80),
-                        );
+                        let show_shimmer = self
+                            .loading_start
+                            .is_some_and(|t| t.elapsed().as_secs_f32() > 0.1);
+
+                        if show_shimmer {
+                            let time = ui.input(|i| i.time) as f32;
+                            let shimmer_pos = (time * 0.8).fract();
+
+                            // Draw base overlay
+                            ui.painter().rect_filled(
+                                rect,
+                                0.0,
+                                Color32::from_rgba_unmultiplied(40, 40, 50, 120),
+                            );
+
+                            // Draw moving shimmer band
+                            let shimmer_width = rect.width() * 0.3;
+                            let shimmer_x = rect.left() - shimmer_width
+                                + shimmer_pos * (rect.width() + shimmer_width * 2.0);
+                            let shimmer_rect = egui::Rect::from_min_max(
+                                egui::pos2(shimmer_x.max(rect.left()), rect.top()),
+                                egui::pos2(
+                                    (shimmer_x + shimmer_width).min(rect.right()),
+                                    rect.bottom(),
+                                ),
+                            );
+
+                            if shimmer_rect.width() > 0.0 {
+                                // Gradient-like shimmer using multiple overlapping rects
+                                let alpha = 40;
+                                ui.painter().rect_filled(
+                                    shimmer_rect,
+                                    0.0,
+                                    Color32::from_rgba_unmultiplied(255, 255, 255, alpha),
+                                );
+                            }
+                            // Request repaint for animation
+                            ui.ctx().request_repaint();
+                        }
+                    } else {
+                        // Clear loading start when done
+                        self.loading_start = None;
                     }
 
                     ui.allocate_rect(full_rect, egui::Sense::click());
@@ -332,18 +381,14 @@ impl AppPane for DatasetPanel {
                 }
             }
         }
-
-        if process.is_loading() && process.is_training() {
-            ui.label("Loading...");
-        }
     }
 
     fn inner_margin(&self) -> f32 {
         0.0
     }
 
-    fn tab_bar_right_ui(&self, ui: &mut egui::Ui, process: &UiProcess) {
-        let pick_scene = selected_scene(self.view_type.get(), &self.cur_dataset);
+    fn tab_bar_right_ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
+        let pick_scene = selected_scene(self.view_type, &self.cur_dataset);
         let view_count = pick_scene.views.len();
 
         if view_count == 0 {
@@ -356,9 +401,9 @@ impl AppPane for DatasetPanel {
             if self.cur_dataset.eval.is_some() {
                 let gear_button =
                     egui::Button::new(egui::RichText::new("⚙").size(14.0).color(Color32::WHITE))
-                        .fill(egui::Color32::from_rgb(80, 80, 85))
+                        .fill(egui::Color32::from_rgb(70, 70, 75))
                         .corner_radius(6.0)
-                        .min_size(egui::vec2(20.0, 14.0));
+                        .min_size(egui::vec2(22.0, 18.0));
 
                 let response = ui.add(gear_button);
 
@@ -366,25 +411,28 @@ impl AppPane for DatasetPanel {
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show(|ui| {
                         ui.label("View");
-                        let current_type = self.view_type.get();
                         for (t, l) in [(ViewType::Train, "train"), (ViewType::Eval, "eval")] {
-                            if ui.selectable_label(current_type == t, l).clicked() {
-                                self.view_type.set(t);
+                            if ui.selectable_label(self.view_type == t, l).clicked() {
+                                self.view_type = t;
                                 self.current_view_index.set(Some(0));
                                 self.focus_picked(process);
                             }
                         }
                     });
 
-                ui.add_space(4.0);
+                ui.add_space(6.0);
             }
 
             let nav_button = |ui: &mut egui::Ui, icon: &str| {
                 ui.add(
-                    egui::Button::new(egui::RichText::new(icon).size(12.0).color(Color32::WHITE))
-                        .fill(egui::Color32::from_rgb(80, 80, 85))
-                        .corner_radius(4.0)
-                        .min_size(egui::vec2(18.0, 14.0)),
+                    egui::Button::new(
+                        egui::RichText::new(icon)
+                            .size(10.0)
+                            .color(Color32::from_rgb(200, 200, 200)),
+                    )
+                    .fill(egui::Color32::from_rgb(60, 60, 65))
+                    .corner_radius(6.0)
+                    .min_size(egui::vec2(20.0, 18.0)),
                 )
             };
 

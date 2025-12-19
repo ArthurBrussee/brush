@@ -48,7 +48,7 @@ pub(crate) trait AppPane {
     }
 
     /// Optional UI to add to the right side of the tab bar.
-    fn tab_bar_right_ui(&self, ui: &mut egui::Ui, process: &UiProcess) {
+    fn tab_bar_right_ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         let _ = ui;
         let _ = process;
     }
