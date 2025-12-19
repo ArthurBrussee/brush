@@ -60,18 +60,18 @@ impl Pane {
     fn scene() -> RefCell<Self> {
         RefCell::new(Self::Scene(ScenePanel::default()))
     }
+}
 
-    #[cfg(feature = "training")]
+#[cfg(feature = "training")]
+impl Pane {
     fn stats() -> RefCell<Self> {
         RefCell::new(Self::Stats(StatsPanel::default()))
     }
 
-    #[cfg(feature = "training")]
     fn dataset() -> RefCell<Self> {
         RefCell::new(Self::Dataset(DatasetPanel::default()))
     }
 
-    #[cfg(feature = "training")]
     fn training() -> RefCell<Self> {
         RefCell::new(Self::Training(TrainingPanel::default()))
     }
@@ -153,7 +153,7 @@ impl egui_tiles::Behavior<PaneRef> for AppTree {
     }
 
     fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
-        26.0 // Slightly taller than default (24.0)
+        26.0
     }
 }
 
@@ -196,22 +196,39 @@ impl App {
         let mut tree = cc
             .storage
             .and_then(|s| eframe::get_value::<egui_tiles::Tree<PaneRef>>(s, TREE_STORAGE_KEY))
-            .unwrap_or_else(Self::create_default_tree);
+            .unwrap_or_else(|| {
+                let mut tiles: Tiles<PaneRef> = Tiles::default();
+                let scene_pane = tiles.insert_pane(Pane::scene());
 
-        let device = state.device.clone();
-        let queue = state.queue.clone();
-        let renderer = state.renderer.clone();
-        let adapter_info = state.adapter.get_info();
+                #[cfg(feature = "training")]
+                let root_id = {
+                    let stats_pane = tiles.insert_pane(Pane::stats());
+                    let dataset_pane = tiles.insert_pane(Pane::dataset());
+                    let training_pane = tiles.insert_pane(Pane::training());
+                    Self::build_default_layout(
+                        &mut tiles,
+                        scene_pane,
+                        stats_pane,
+                        dataset_pane,
+                        training_pane,
+                    )
+                };
+
+                #[cfg(not(feature = "training"))]
+                let root_id = scene_pane;
+
+                egui_tiles::Tree::new("brush_tree", root_id, tiles)
+            });
 
         // Initialize all panels with runtime state
         for (_, tile) in tree.tiles.iter_mut() {
             if let egui_tiles::Tile::Pane(pane) = tile {
                 pane.get_mut().as_pane_mut().init(
-                    device.clone(),
-                    queue.clone(),
-                    renderer.clone(),
+                    state.device.clone(),
+                    state.queue.clone(),
+                    state.renderer.clone(),
                     burn_device.clone(),
-                    adapter_info.clone(),
+                    state.adapter.get_info(),
                 );
             }
         }
@@ -220,28 +237,6 @@ impl App {
             tree,
             tree_ctx: AppTree { process: context },
         }
-    }
-
-    fn create_default_tree() -> egui_tiles::Tree<PaneRef> {
-        let mut tiles: Tiles<PaneRef> = Tiles::default();
-        let scene_pane = tiles.insert_pane(Pane::scene());
-        #[cfg(feature = "training")]
-        let stats_pane = tiles.insert_pane(Pane::stats());
-        #[cfg(feature = "training")]
-        let dataset_pane = tiles.insert_pane(Pane::dataset());
-        #[cfg(feature = "training")]
-        let training_pane = tiles.insert_pane(Pane::training());
-        #[cfg(feature = "training")]
-        let root_id = Self::build_default_layout(
-            &mut tiles,
-            scene_pane,
-            stats_pane,
-            dataset_pane,
-            training_pane,
-        );
-        #[cfg(not(feature = "training"))]
-        let root_id = scene_pane;
-        egui_tiles::Tree::new("brush_tree", root_id, tiles)
     }
 
     #[cfg(feature = "training")]
@@ -335,7 +330,6 @@ impl eframe::App for App {
             }
         }
 
-        // Compute visibility
         fn is_visible(
             id: TileId,
             tiles: &Tiles<PaneRef>,

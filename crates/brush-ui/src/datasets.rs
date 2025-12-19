@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::{cell::Cell, time::Duration};
 
 use crate::{
     UiMode, draw_checkerboard,
@@ -13,7 +13,7 @@ use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::AlphaMode;
 use egui::{Color32, Rect, Slider, TextureOptions, pos2};
 
-use tokio::sync::watch::Sender;
+use tokio::{sync::watch::Sender, time::sleep};
 use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(Clone)]
@@ -86,6 +86,8 @@ impl DatasetPanel {
             if sender.is_closed() {
                 return;
             }
+
+            sleep(Duration::from_secs(1)).await;
 
             // Yield in case we're cancelled.
             tokio_wasm::task::yield_now().await;
@@ -322,7 +324,6 @@ impl AppPane for DatasetPanel {
                         }
                     }
 
-                    // Draw the main image on top
                     ui.painter().image(
                         texture_handle.handle.id(),
                         rect,
@@ -330,47 +331,16 @@ impl AppPane for DatasetPanel {
                         egui::Color32::WHITE,
                     );
 
-                    // Show loading shimmer if loading for more than 0.1s
-                    if self.is_selected_view_loading() {
-                        let show_shimmer = self
+                    if self.is_selected_view_loading()
+                        && self
                             .loading_start
-                            .is_some_and(|t| t.elapsed().as_secs_f32() > 0.1);
-
-                        if show_shimmer {
-                            let time = ui.input(|i| i.time) as f32;
-                            let shimmer_pos = (time * 0.8).fract();
-
-                            // Draw base overlay
-                            ui.painter().rect_filled(
-                                rect,
-                                0.0,
-                                Color32::from_rgba_unmultiplied(40, 40, 50, 120),
-                            );
-
-                            // Draw moving shimmer band
-                            let shimmer_width = rect.width() * 0.3;
-                            let shimmer_x = rect.left() - shimmer_width
-                                + shimmer_pos * (rect.width() + shimmer_width * 2.0);
-                            let shimmer_rect = egui::Rect::from_min_max(
-                                egui::pos2(shimmer_x.max(rect.left()), rect.top()),
-                                egui::pos2(
-                                    (shimmer_x + shimmer_width).min(rect.right()),
-                                    rect.bottom(),
-                                ),
-                            );
-
-                            if shimmer_rect.width() > 0.0 {
-                                // Gradient-like shimmer using multiple overlapping rects
-                                let alpha = 40;
-                                ui.painter().rect_filled(
-                                    shimmer_rect,
-                                    0.0,
-                                    Color32::from_rgba_unmultiplied(255, 255, 255, alpha),
-                                );
-                            }
-                            // Request repaint for animation
-                            ui.ctx().request_repaint();
-                        }
+                            .is_some_and(|t| t.elapsed().as_secs_f32() > 0.1)
+                    {
+                        ui.painter().rect_filled(
+                            rect,
+                            0.0,
+                            Color32::from_rgba_unmultiplied(200, 200, 220, 80),
+                        );
                     } else {
                         // Clear loading start when done
                         self.loading_start = None;
