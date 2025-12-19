@@ -83,21 +83,6 @@ pub(crate) struct AppTree {
     process: Arc<UiProcess>,
 }
 
-fn find_pane(tiles: &Tiles<RefCell<Pane>>, f: fn(&Pane) -> bool) -> TileId {
-    tiles
-        .iter()
-        .find_map(|(id, tile)| {
-            if let egui_tiles::Tile::Pane(pane) = tile
-                && f(&pane.borrow())
-            {
-                Some(*id)
-            } else {
-                None
-            }
-        })
-        .expect("Missing pane")
-}
-
 impl egui_tiles::Behavior<PaneRef> for AppTree {
     fn tab_title_for_pane(&mut self, pane: &PaneRef) -> egui::WidgetText {
         pane.borrow().as_pane().title()
@@ -293,6 +278,21 @@ impl eframe::App for App {
 
         #[cfg(feature = "training")]
         if process.take_reset_layout_request() {
+            fn find_pane(tiles: &Tiles<RefCell<Pane>>, f: fn(&Pane) -> bool) -> TileId {
+                tiles
+                    .iter()
+                    .find_map(|(id, tile)| {
+                        if let egui_tiles::Tile::Pane(pane) = tile
+                            && f(&pane.borrow())
+                        {
+                            Some(*id)
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("Missing pane")
+            }
+
             let tree: &mut egui_tiles::Tree<PaneRef> = &mut self.tree;
             let scene_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Scene(_)));
             let stats_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Stats(_)));
