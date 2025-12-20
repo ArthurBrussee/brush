@@ -528,7 +528,7 @@ fn generate_code(
                         debug_name: Some(#struct_name_str),
                         source: source.to_owned(),
                         repr: None,
-                        cube_dim: burn_cubecl::cubecl::CubeDim::new(
+                        cube_dim: burn_cubecl::cubecl::CubeDim::new_3d(
                             Self::WORKGROUP_SIZE[0], Self::WORKGROUP_SIZE[1], Self::WORKGROUP_SIZE[2]
                         ),
                         debug_info: None,
