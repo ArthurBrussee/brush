@@ -282,6 +282,10 @@ impl UiProcess {
                 Ok(ProcessMessage::DoneLoading) => {
                     inner.is_loading = false;
                 }
+                Err(_) => {
+                    inner.is_loading = false;
+                    inner.is_training = false;
+                }
                 _ => (),
             }
         }

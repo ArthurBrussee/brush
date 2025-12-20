@@ -868,9 +868,18 @@ impl AppPane for ScenePanel {
         // Track the scene rect for centering popups
         let scene_rect = ui.available_rect_before_wrap();
 
-        if let Some(err) = self.err.as_ref() {
-            err.draw(ui);
-            return;
+        if let Some(err) = &self.err {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    Frame::new()
+                        .fill(Color32::from_rgba_unmultiplied(60, 30, 30, 220))
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::symmetric(24, 20))
+                        .show(ui, |ui| {
+                            err.draw(ui);
+                        });
+                });
+            });
         }
 
         let cur_time = Instant::now();
@@ -881,11 +890,10 @@ impl AppPane for ScenePanel {
         // Empty scene, nothing to show - show load buttons
         let show_welcome = !process.is_training()
             && self.view_splats.is_empty()
-            && process.ui_mode() == UiMode::Default;
+            && process.ui_mode() != UiMode::EmbeddedViewer;
 
         if show_welcome {
             let box_color = Color32::from_rgba_unmultiplied(40, 40, 45, 200);
-            let title_color = Color32::from_rgb(200, 200, 200);
             let text_color = Color32::from_rgb(150, 150, 150);
             let box_width = 320.0;
 
@@ -904,13 +912,6 @@ impl AppPane for ScenePanel {
                             .show(ui, |ui| {
                                 ui.set_min_width(box_width);
                                 ui.vertical(|ui| {
-                                    ui.label(
-                                        RichText::new("Getting Started")
-                                            .size(18.0)
-                                            .strong()
-                                            .color(title_color),
-                                    );
-                                    ui.add_space(12.0);
                                     ui.label(
                                         RichText::new(
                                             "Load a .ply splat file or a dataset to train",
