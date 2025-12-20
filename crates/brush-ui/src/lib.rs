@@ -8,7 +8,6 @@ pub mod ui_process;
 
 mod panels;
 mod scene;
-mod settings;
 #[cfg(feature = "training")]
 mod stats;
 mod widget_3d;
@@ -17,7 +16,10 @@ mod widget_3d;
 mod datasets;
 
 #[cfg(feature = "training")]
-mod training_ui;
+mod training_panel;
+
+#[cfg(feature = "training")]
+mod settings_popup;
 
 use eframe::egui_wgpu::WgpuConfiguration;
 use std::sync::Arc;

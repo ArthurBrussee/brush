@@ -2,16 +2,19 @@ use crate::UiMode;
 #[cfg(feature = "training")]
 use crate::datasets::DatasetPanel;
 use crate::panels::AppPane;
-use crate::settings::SettingsPanel;
 #[cfg(feature = "training")]
 use crate::stats::StatsPanel;
+#[cfg(feature = "training")]
+use crate::training_panel::TrainingPanel;
 use crate::ui_process::UiProcess;
 use crate::{camera_controls::CameraClamping, scene::ScenePanel};
+use brush_process::message::ProcessMessage;
 use eframe::egui;
-use egui::ThemePreference;
-use egui_tiles::{SimplificationOptions, TileId, Tiles};
+use egui::{ThemePreference, Ui};
+use egui_tiles::{SimplificationOptions, Tabs, TileId, Tiles};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::trace_span;
@@ -20,73 +23,99 @@ use tracing::trace_span;
 #[derive(Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
 pub enum Pane {
-    Settings(#[serde(skip)] SettingsPanel),
-    Scene(#[serde(skip)] Box<ScenePanel>),
+    Scene(#[serde(skip)] ScenePanel),
     #[cfg(feature = "training")]
     Stats(#[serde(skip)] StatsPanel),
     #[cfg(feature = "training")]
     Dataset(#[serde(skip)] DatasetPanel),
+    #[cfg(feature = "training")]
+    Training(#[serde(skip)] TrainingPanel),
 }
 
 impl Pane {
     fn as_pane(&self) -> &dyn AppPane {
         match self {
-            Self::Settings(p) => p,
-            Self::Scene(p) => p.as_ref(),
+            Self::Scene(p) => p,
             #[cfg(feature = "training")]
             Self::Stats(p) => p,
             #[cfg(feature = "training")]
             Self::Dataset(p) => p,
+            #[cfg(feature = "training")]
+            Self::Training(p) => p,
         }
     }
 
     fn as_pane_mut(&mut self) -> &mut dyn AppPane {
         match self {
-            Self::Settings(p) => p,
-            Self::Scene(p) => p.as_mut(),
+            Self::Scene(p) => p,
             #[cfg(feature = "training")]
             Self::Stats(p) => p,
             #[cfg(feature = "training")]
             Self::Dataset(p) => p,
+            #[cfg(feature = "training")]
+            Self::Training(p) => p,
         }
     }
+
+    fn scene() -> RefCell<Self> {
+        RefCell::new(Self::Scene(ScenePanel::default()))
+    }
 }
+
+#[cfg(feature = "training")]
+impl Pane {
+    fn stats() -> RefCell<Self> {
+        RefCell::new(Self::Stats(StatsPanel::default()))
+    }
+
+    fn dataset() -> RefCell<Self> {
+        RefCell::new(Self::Dataset(DatasetPanel::default()))
+    }
+
+    fn training() -> RefCell<Self> {
+        RefCell::new(Self::Training(TrainingPanel::default()))
+    }
+}
+
+type PaneRef = RefCell<Pane>;
 
 pub(crate) struct AppTree {
     process: Arc<UiProcess>,
 }
 
-impl egui_tiles::Behavior<Pane> for AppTree {
-    fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
-        pane.as_pane().title()
+impl egui_tiles::Behavior<PaneRef> for AppTree {
+    fn tab_title_for_pane(&mut self, pane: &PaneRef) -> egui::WidgetText {
+        pane.borrow().as_pane().title()
     }
 
     fn pane_ui(
         &mut self,
         ui: &mut egui::Ui,
         _tile_id: TileId,
-        pane: &mut Pane,
+        pane: &mut PaneRef,
     ) -> egui_tiles::UiResponse {
-        let p = pane.as_pane_mut();
+        let process = self.process.as_ref();
+        let margin = pane.borrow().as_pane().inner_margin();
         egui::Frame::new()
-            .inner_margin(p.inner_margin())
-            .show(ui, |ui| p.ui(ui, self.process.as_ref()));
+            .inner_margin(margin)
+            .show(ui, |ui| pane.get_mut().as_pane_mut().ui(ui, process));
         egui_tiles::UiResponse::None
     }
 
     fn top_bar_right_ui(
         &mut self,
-        tiles: &Tiles<Pane>,
-        ui: &mut egui::Ui,
+        tiles: &Tiles<PaneRef>,
+        ui: &mut Ui,
         _tile_id: TileId,
-        tabs: &egui_tiles::Tabs,
+        tabs: &Tabs,
         _scroll_offset: &mut f32,
     ) {
-        // Use the tabs parameter directly to find the active pane
         if let Some(active_id) = tabs.active
             && let Some(egui_tiles::Tile::Pane(pane)) = tiles.get(active_id)
         {
-            pane.as_pane().tab_bar_right_ui(ui, self.process.as_ref());
+            pane.borrow_mut()
+                .as_pane_mut()
+                .top_bar_right_ui(ui, self.process.as_ref());
         }
     }
 
@@ -107,6 +136,10 @@ impl egui_tiles::Behavior<Pane> for AppTree {
             0.0
         }
     }
+
+    fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
+        26.0
+    }
 }
 
 #[derive(Clone, PartialEq, Default)]
@@ -118,10 +151,10 @@ pub struct CameraSettings {
     pub clamping: CameraClamping,
 }
 
-const TREE_STORAGE_KEY: &str = "brush_tile_tree";
+const TREE_STORAGE_KEY: &str = "brush_tile_tree_v2";
 
 pub struct App {
-    tree: egui_tiles::Tree<Pane>,
+    tree: egui_tiles::Tree<PaneRef>,
     tree_ctx: AppTree,
 }
 
@@ -147,13 +180,35 @@ impl App {
         // Try to restore saved tree, or create default
         let mut tree = cc
             .storage
-            .and_then(|s| eframe::get_value::<egui_tiles::Tree<Pane>>(s, TREE_STORAGE_KEY))
-            .unwrap_or_else(Self::create_default_tree);
+            .and_then(|s| eframe::get_value::<egui_tiles::Tree<PaneRef>>(s, TREE_STORAGE_KEY))
+            .unwrap_or_else(|| {
+                let mut tiles: Tiles<PaneRef> = Tiles::default();
+                let scene_pane = tiles.insert_pane(Pane::scene());
+
+                #[cfg(feature = "training")]
+                let root_id = {
+                    let stats_pane = tiles.insert_pane(Pane::stats());
+                    let dataset_pane = tiles.insert_pane(Pane::dataset());
+                    let training_pane = tiles.insert_pane(Pane::training());
+                    Self::build_default_layout(
+                        &mut tiles,
+                        scene_pane,
+                        stats_pane,
+                        dataset_pane,
+                        training_pane,
+                    )
+                };
+
+                #[cfg(not(feature = "training"))]
+                let root_id = scene_pane;
+
+                egui_tiles::Tree::new("brush_tree", root_id, tiles)
+            });
 
         // Initialize all panels with runtime state
         for (_, tile) in tree.tiles.iter_mut() {
             if let egui_tiles::Tile::Pane(pane) = tile {
-                pane.as_pane_mut().init(
+                pane.get_mut().as_pane_mut().init(
                     state.device.clone(),
                     state.queue.clone(),
                     state.renderer.clone(),
@@ -169,43 +224,29 @@ impl App {
         }
     }
 
-    fn create_default_tree() -> egui_tiles::Tree<Pane> {
-        let mut tiles: Tiles<Pane> = Tiles::default();
-
-        let status_pane = tiles.insert_pane(Pane::Settings(SettingsPanel::default()));
-        let scene_pane = tiles.insert_pane(Pane::Scene(Box::default()));
-
-        #[cfg(feature = "training")]
-        let main_content = {
-            let stats_pane = tiles.insert_pane(Pane::Stats(StatsPanel::default()));
-            let dataset_pane = tiles.insert_pane(Pane::Dataset(DatasetPanel::default()));
-
-            let mut sidebar = egui_tiles::Linear::new(
-                egui_tiles::LinearDir::Vertical,
-                vec![dataset_pane, stats_pane],
-            );
-            sidebar.shares.set_share(dataset_pane, 0.50);
-            let sidebar_id = tiles.insert_container(sidebar);
-
-            let mut content = egui_tiles::Linear::new(
-                egui_tiles::LinearDir::Horizontal,
-                vec![scene_pane, sidebar_id],
-            );
-            content.shares.set_share(sidebar_id, 0.30);
-            tiles.insert_container(content)
-        };
-
-        #[cfg(not(feature = "training"))]
-        let main_content = scene_pane;
-
-        let mut root = egui_tiles::Linear::new(
+    #[cfg(feature = "training")]
+    fn build_default_layout(
+        tiles: &mut Tiles<PaneRef>,
+        scene_pane: TileId,
+        stats_pane: TileId,
+        dataset_pane: TileId,
+        training_pane: TileId,
+    ) -> TileId {
+        let mut sidebar = egui_tiles::Linear::new(
             egui_tiles::LinearDir::Vertical,
-            vec![status_pane, main_content],
+            vec![training_pane, dataset_pane, stats_pane],
         );
-        root.shares.set_share(status_pane, 0.06);
-        let root_id = tiles.insert_container(root);
+        sidebar.shares.set_share(training_pane, 0.07);
+        sidebar.shares.set_share(dataset_pane, 0.5);
+        sidebar.shares.set_share(stats_pane, 0.43);
+        let sidebar_id = tiles.insert_container(sidebar);
 
-        egui_tiles::Tree::new("brush_tree", root_id, tiles)
+        let mut content = egui_tiles::Linear::new(
+            egui_tiles::LinearDir::Horizontal,
+            vec![scene_pane, sidebar_id],
+        );
+        content.shares.set_share(sidebar_id, 0.35);
+        tiles.insert_container(content)
     }
 
     fn receive_messages(&mut self) {
@@ -213,7 +254,7 @@ impl App {
         for message in self.tree_ctx.process.message_queue() {
             for (_, tile) in self.tree.tiles.iter_mut() {
                 if let egui_tiles::Tile::Pane(pane) = tile {
-                    let p = pane.as_pane_mut();
+                    let p = pane.get_mut().as_pane_mut();
                     match &message {
                         Ok(msg) => p.on_message(msg, self.tree_ctx.process.as_ref()),
                         Err(e) => p.on_error(e, self.tree_ctx.process.as_ref()),
@@ -235,10 +276,63 @@ impl eframe::App for App {
 
         let process = self.tree_ctx.process.clone();
 
-        // Compute visibility
+        #[cfg(feature = "training")]
+        if process.take_reset_layout_request() {
+            fn find_pane(tiles: &Tiles<RefCell<Pane>>, f: fn(&Pane) -> bool) -> TileId {
+                tiles
+                    .iter()
+                    .find_map(|(id, tile)| {
+                        if let egui_tiles::Tile::Pane(pane) = tile
+                            && f(&pane.borrow())
+                        {
+                            Some(*id)
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("Missing pane")
+            }
+
+            let tree: &mut egui_tiles::Tree<PaneRef> = &mut self.tree;
+            let scene_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Scene(_)));
+            let stats_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Stats(_)));
+            let dataset_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Dataset(_)));
+            let training_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Training(_)));
+
+            // Remove all container tiles
+            let container_ids: Vec<TileId> = tree
+                .tiles
+                .iter()
+                .filter_map(|(id, tile)| {
+                    matches!(tile, egui_tiles::Tile::Container(_)).then_some(*id)
+                })
+                .collect();
+            for id in container_ids {
+                tree.tiles.remove(id);
+            }
+            tree.root = Some(Self::build_default_layout(
+                &mut tree.tiles,
+                scene_pane,
+                stats_pane,
+                dataset_pane,
+                training_pane,
+            ));
+        }
+
+        // Check for session reset request - notify all panes
+        if process.take_session_reset_request() {
+            for (_, tile) in self.tree.tiles.iter_mut() {
+                if let egui_tiles::Tile::Pane(pane) = tile {
+                    pane.get_mut()
+                        .as_pane_mut()
+                        .on_message(&ProcessMessage::NewProcess, &process);
+                }
+            }
+        }
+
         fn is_visible(
             id: TileId,
-            tiles: &Tiles<Pane>,
+            tiles: &Tiles<PaneRef>,
             process: &UiProcess,
             cache: &mut HashMap<TileId, bool>,
         ) -> bool {
@@ -246,7 +340,7 @@ impl eframe::App for App {
                 return v;
             }
             let v = match tiles.get(id) {
-                Some(egui_tiles::Tile::Pane(p)) => p.as_pane().is_visible(process),
+                Some(egui_tiles::Tile::Pane(p)) => p.borrow().as_pane().is_visible(process),
                 Some(egui_tiles::Tile::Container(c)) => c
                     .active_children()
                     .any(|&cid| is_visible(cid, tiles, process, cache)),
