@@ -250,7 +250,7 @@ impl AppPane for TrainingPanel {
                     ui.add_space(6.0);
                 }
 
-                let export_button_width = if self.current_splats.is_some() && !is_complete {
+                let export_button_width = if self.current_splats.is_some() {
                     65.0
                 } else {
                     0.0
@@ -272,23 +272,35 @@ impl AppPane for TrainingPanel {
 
                 let bar_rect = bar_response.rect;
 
-                if !is_complete && let Some(splats) = self.current_splats.clone() {
+                if let Some(splats) = self.current_splats.clone() {
                     ui.add_space(6.0);
+                    // Make export button more prominent when training is complete
+                    let (button_text, button_color) = if is_complete {
+                        ("Export", egui::Color32::from_rgb(60, 160, 60))
+                    } else {
+                        ("Export", egui::Color32::from_rgb(80, 140, 80))
+                    };
                     if ui
                         .add(
                             egui::Button::new(
-                                RichText::new("Export")
+                                RichText::new(button_text)
                                     .size(12.0)
                                     .color(egui::Color32::WHITE),
                             )
                             .min_size(egui::vec2(55.0, 20.0))
                             .corner_radius(6.0)
-                            .fill(egui::Color32::from_rgb(80, 140, 80)),
+                            .fill(button_color),
                         )
-                        .on_hover_text("Export current model")
+                        .on_hover_text(if is_complete {
+                            "Export trained model"
+                        } else {
+                            "Export current model"
+                        })
                         .clicked()
                     {
-                        self.manual_export_iters.push(iter);
+                        if !is_complete {
+                            self.manual_export_iters.push(iter);
+                        }
                         let sender = self.export_channel.0.clone();
                         let ctx = ui.ctx().clone();
                         tokio_with_wasm::alias::task::spawn(async move {
