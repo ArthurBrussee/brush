@@ -132,6 +132,7 @@ async fn test_reference() -> Result<()> {
             splats.rotations.val().into_primitive().tensor(),
             splats.sh_coeffs.val().into_primitive().tensor(),
             splats.raw_opacities.val().into_primitive().tensor(),
+            splats.render_mode,
             Vec3::ZERO,
         );
 

@@ -9,8 +9,15 @@ use burn::{
     prelude::Backend,
     tensor::{Tensor, TensorData, TensorPrimitive, activation::sigmoid, s},
 };
+use clap::ValueEnum;
 use glam::Vec3;
 use tracing::trace_span;
+
+#[derive(Module, Clone, Copy, Debug, ValueEnum)]
+pub enum SplatRenderMode {
+    Default,
+    Mip,
+}
 
 #[derive(Module, Debug)]
 pub struct Splats<B: Backend> {
@@ -19,6 +26,7 @@ pub struct Splats<B: Backend> {
     pub log_scales: Param<Tensor<B, 2>>,
     pub sh_coeffs: Param<Tensor<B, 3>>,
     pub raw_opacities: Param<Tensor<B, 1>>,
+    pub render_mode: SplatRenderMode,
 }
 
 fn norm_vec<B: Backend>(vec: Tensor<B, 2>) -> Tensor<B, 2> {
@@ -38,6 +46,7 @@ impl<B: Backend> Splats<B> {
         scale_data: Vec<f32>,
         coeffs_data: Vec<f32>,
         opac_data: Vec<f32>,
+        mode: SplatRenderMode,
         device: &B::Device,
     ) -> Self {
         let _ = trace_span!("Splats::from_raw").entered();
@@ -58,6 +67,7 @@ impl<B: Backend> Splats<B> {
             log_scales,
             sh_coeffs,
             raw_opacities,
+            mode,
         )
     }
 
@@ -90,6 +100,7 @@ impl<B: Backend> Splats<B> {
         log_scales: Tensor<B, 2>,
         sh_coeffs: Tensor<B, 3>,
         raw_opacity: Tensor<B, 1>,
+        mode: SplatRenderMode,
     ) -> Self {
         assert_eq!(means.dims()[1], 3, "Means must be 3D");
         assert_eq!(rotation.dims()[1], 4, "Rotation must be 4D");
@@ -101,6 +112,7 @@ impl<B: Backend> Splats<B> {
             rotations: Param::initialized(ParamId::new(), rotation.detach().require_grad()),
             raw_opacities: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
             log_scales: Param::initialized(ParamId::new(), log_scales.detach().require_grad()),
+            render_mode: mode,
         }
     }
 
@@ -235,7 +247,6 @@ impl<B: Backend + SplatForward<B>> Splats<B> {
         if let Some(scale) = splat_scale {
             scales = scales + scale.ln();
         };
-
         let (img, aux) = B::render_splats(
             camera,
             img_size,
@@ -244,6 +255,7 @@ impl<B: Backend + SplatForward<B>> Splats<B> {
             self.rotations.val().into_primitive().tensor(),
             self.sh_coeffs.val().into_primitive().tensor(),
             self.raw_opacities.val().into_primitive().tensor(),
+            self.render_mode,
             background,
             false,
         );

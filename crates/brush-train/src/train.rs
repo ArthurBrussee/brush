@@ -4,11 +4,12 @@ use crate::{
     msg::{RefineStats, TrainStepStats},
     multinomial::multinomial_sample,
     quat_vec::quaternion_vec_multiply,
+    splat_init::bounds_from_pos,
     ssim::Ssim,
     stats::RefineRecord,
 };
 
-use brush_dataset::{scene::SceneBatch, splat_import::bounds_from_pos};
+use brush_dataset::scene::SceneBatch;
 use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
@@ -136,6 +137,7 @@ impl SplatTrainer {
                 splats.rotations.val().into_primitive().tensor(),
                 splats.sh_coeffs.val().into_primitive().tensor(),
                 splats.raw_opacities.val().into_primitive().tensor(),
+                splats.render_mode,
                 background,
             );
 

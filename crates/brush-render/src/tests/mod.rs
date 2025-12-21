@@ -1,4 +1,4 @@
-use crate::{MainBackend, SplatForward, camera::Camera};
+use crate::{MainBackend, SplatForward, camera::Camera, gaussian_splats::SplatRenderMode};
 use assert_approx_eq::assert_approx_eq;
 use burn::tensor::{Tensor, TensorPrimitive};
 use burn_wgpu::WgpuDevice;
@@ -35,6 +35,7 @@ fn renders_at_all() {
         quats.into_primitive().tensor(),
         sh_coeffs.into_primitive().tensor(),
         raw_opacity.into_primitive().tensor(),
+        SplatRenderMode::Default,
         Vec3::ZERO,
         true,
     );

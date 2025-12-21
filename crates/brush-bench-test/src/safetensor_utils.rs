@@ -1,4 +1,4 @@
-use brush_render::gaussian_splats::Splats;
+use brush_render::gaussian_splats::{SplatRenderMode, Splats};
 use burn::{
     prelude::Backend,
     tensor::{Float, Tensor, TensorData},
@@ -27,5 +27,6 @@ pub fn splats_from_safetensors<B: Backend>(
         safetensor_to_burn::<B, 2>(&tensors.tensor("scales")?, device),
         safetensor_to_burn::<B, 3>(&tensors.tensor("coeffs")?, device),
         safetensor_to_burn::<B, 1>(&tensors.tensor("opacities")?, device),
+        SplatRenderMode::Default,
     ))
 }

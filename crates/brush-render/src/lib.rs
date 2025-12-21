@@ -12,6 +12,8 @@ use glam::Vec3;
 use render_aux::RenderAux;
 use wgpu::{Adapter, Device, Queue};
 
+use crate::gaussian_splats::SplatRenderMode;
+
 mod burn_glue;
 mod dim_check;
 pub mod render_aux;
@@ -62,6 +64,7 @@ pub trait SplatForward<B: Backend> {
         quats: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
+        render_mode: SplatRenderMode,
         background: Vec3,
         bwd_info: bool,
     ) -> (FloatTensor<B>, RenderAux<B>);

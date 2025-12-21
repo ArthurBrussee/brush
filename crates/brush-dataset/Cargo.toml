@@ -22,8 +22,6 @@ glam.workspace = true
 tracing.workspace = true
 log.workspace = true
 rand.workspace = true
-ball-tree.workspace = true
-rayon.workspace = true
 
 tokio_with_wasm.workspace = true
 clap.workspace = true

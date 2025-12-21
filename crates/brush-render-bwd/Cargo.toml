@@ -22,5 +22,8 @@ burn-ir.workspace = true
 glam.workspace = true
 tracing.workspace = true
 
+[package.metadata.cargo-shear]
+ignored = ["bytemuck"]
+
 [lints]
 workspace = true

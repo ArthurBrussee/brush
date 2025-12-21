@@ -179,12 +179,25 @@ fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f)
 fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f, viewmat: mat4x4f) -> mat2x2f {
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let covar_cam = R * cov3d * transpose(R);
-
     let J = calc_cam_J(mean_c, focal, img_size, pixel_center);
+    return J * covar_cam * transpose(J);
+}
 
-    var cov2d = J * covar_cam * transpose(J);
+fn compensate_cov2d(cov2d: ptr<function, mat2x2f>, opac: ptr<function, f32>) {
+    let cov_start = *cov2d;
+    var cov_end = *cov2d;
+    // add a constant blur along axes.
+    cov_end[0][0] += COV_BLUR;
+    cov_end[1][1] += COV_BLUR;
 
-    return cov2d;
+#ifdef MIP_SPLATTING
+    // filter with isotropic gaussian and compute the compensation factor
+    let det_raw = max(determinant(cov_start), 0.0f);
+    let filter_comp = sqrt(det_raw / determinant(cov_end));
+    *opac = *opac * filter_comp;
+#endif
+
+    *cov2d = cov_end;
 }
 
 fn inverse(m: mat2x2f) -> mat2x2f {

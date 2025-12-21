@@ -1,7 +1,11 @@
 #![recursion_limit = "256"]
 
 use brush_dataset::scene::SceneBatch;
-use brush_render::{AlphaMode, MainBackend, camera::Camera, gaussian_splats::Splats};
+use brush_render::{
+    AlphaMode, MainBackend,
+    camera::Camera,
+    gaussian_splats::{SplatRenderMode, Splats},
+};
 use brush_render_bwd::burn_glue::SplatForwardDiff;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
@@ -24,7 +28,6 @@ const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1536, 1024), (1920, 1080), 
 const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
 const ITERS_PER_SYNC: u32 = 10;
 
-/// Generate realistic scene-distributed splats
 fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(SEED);
 
@@ -93,8 +96,16 @@ fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
     // Realistic opacity distribution (mostly opaque with some variation)
     let opacities: Vec<f32> = (0..count).map(|_| rng.random_range(0.05..1.0)).collect();
 
-    Splats::<DiffBackend>::from_raw(means, rotations, log_scales, sh_coeffs, opacities, device)
-        .with_sh_degree(0)
+    Splats::<DiffBackend>::from_raw(
+        means,
+        rotations,
+        log_scales,
+        sh_coeffs,
+        opacities,
+        SplatRenderMode::Default,
+        device,
+    )
+    .with_sh_degree(0)
 }
 
 fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBatch {
@@ -211,6 +222,7 @@ mod backward_rendering {
                     splats.rotations.val().into_primitive().tensor(),
                     splats.sh_coeffs.val().into_primitive().tensor(),
                     splats.raw_opacities.val().into_primitive().tensor(),
+                    splats.render_mode,
                     Vec3::ZERO,
                 );
                 let img: Tensor<DiffBackend, 3> =
@@ -242,6 +254,7 @@ mod backward_rendering {
                     splats.rotations.val().into_primitive().tensor(),
                     splats.sh_coeffs.val().into_primitive().tensor(),
                     splats.raw_opacities.val().into_primitive().tensor(),
+                    splats.render_mode,
                     Vec3::ZERO,
                 );
                 let img: Tensor<DiffBackend, 3> =

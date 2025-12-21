@@ -4,7 +4,9 @@
 
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
-    AlphaMode, MainBackend, camera::Camera, gaussian_splats::Splats,
+    AlphaMode, MainBackend,
+    camera::Camera,
+    gaussian_splats::{SplatRenderMode, Splats},
     validation::validate_splat_gradients,
 };
 use brush_render_bwd::burn_glue::SplatForwardDiff;
@@ -73,8 +75,16 @@ fn generate_test_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend
 
     let opacities: Vec<f32> = (0..count).map(|_| rng.random_range(0.6..1.0)).collect();
 
-    Splats::<DiffBackend>::from_raw(means, rotations, log_scales, sh_coeffs, opacities, device)
-        .with_sh_degree(0)
+    Splats::<DiffBackend>::from_raw(
+        means,
+        rotations,
+        log_scales,
+        sh_coeffs,
+        opacities,
+        SplatRenderMode::Default,
+        device,
+    )
+    .with_sh_degree(0)
 }
 
 fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
@@ -220,6 +230,7 @@ fn test_gradient_validation() {
         splats.rotations.val().into_primitive().tensor(),
         splats.sh_coeffs.val().into_primitive().tensor(),
         splats.raw_opacities.val().into_primitive().tensor(),
+        splats.render_mode,
         Vec3::ZERO,
     );
 

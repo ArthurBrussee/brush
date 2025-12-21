@@ -3,6 +3,7 @@ use crate::message::ProcessMessage;
 use std::{pin::pin, sync::Arc};
 
 use async_fn_stream::TryStreamEmitter;
+use brush_render::gaussian_splats::SplatRenderMode;
 use brush_serde;
 use brush_vfs::BrushVfs;
 use burn_cubecl::cubecl::Runtime;
@@ -34,8 +35,8 @@ pub(crate) async fn view_stream(
         while let Some(message) = splat_stream.next().await {
             let message = message?;
 
-            // Convert SplatData to Splats using simple defaults
-            let splats = message.data.into_splats(&device);
+            let mode = message.meta.render_mode.unwrap_or(SplatRenderMode::Default);
+            let splats = message.data.into_splats(&device, mode);
 
             // If there's multiple ply files in a zip, don't support animated plys, that would
             // get rather mind bending.

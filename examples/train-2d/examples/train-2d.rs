@@ -6,7 +6,7 @@ use brush_render::{
     AlphaMode, MainBackend,
     bounding_box::BoundingBox,
     camera::{Camera, focal_to_fov, fov_to_focal},
-    gaussian_splats::Splats,
+    gaussian_splats::{SplatRenderMode, Splats},
 };
 use brush_train::{
     RandomSplatsConfig, config::TrainConfig, create_random_splats, train::SplatTrainer,
@@ -45,6 +45,7 @@ fn spawn_train_loop(
             &RandomSplatsConfig::new().with_init_count(512),
             init_bounds,
             &mut rng,
+            SplatRenderMode::Default,
             &device,
         );
 
