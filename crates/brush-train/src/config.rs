@@ -7,7 +7,7 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "30000")]
     pub total_steps: u32,
 
-    #[arg(long, help_heading = "Training options", default_value_t = SplatRenderMode::Default)]
+    #[arg(long, help_heading = "Training options", default_value = "default")]
     pub render_mode: SplatRenderMode,
 
     /// Start learning rate for the mean parameters.
