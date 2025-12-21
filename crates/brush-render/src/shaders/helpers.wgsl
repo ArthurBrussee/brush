@@ -183,7 +183,7 @@ fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixe
     return J * covar_cam * transpose(J);
 }
 
-fn compensate_cov2d(cov2d: ptr<function, mat2x2f>, opac: ptr<function, f32>) {
+fn compensate_cov2d(cov2d: ptr<function, mat2x2f>) -> f32 {
     let cov_start = *cov2d;
     var cov_end = *cov2d;
     // add a constant blur along axes.
@@ -194,10 +194,11 @@ fn compensate_cov2d(cov2d: ptr<function, mat2x2f>, opac: ptr<function, f32>) {
     // filter with isotropic gaussian and compute the compensation factor
     let det_raw = max(determinant(cov_start), 0.0f);
     let filter_comp = sqrt(det_raw / determinant(cov_end));
-    *opac = *opac * filter_comp;
+#else
+    let filter_comp = 1.0f;
 #endif
-
     *cov2d = cov_end;
+    return filter_comp;
 }
 
 fn inverse(m: mat2x2f) -> mat2x2f {

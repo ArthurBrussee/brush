@@ -185,7 +185,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     let covar = helpers::calc_cov3d(scale, quat);
     var cov2d = helpers::calc_cov2d(covar, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
-    helpers::compensate_cov2d(&cov2d, &opac);
+    opac *= helpers::compensate_cov2d(&cov2d);
 
     let conic = helpers::inverse(cov2d);
 

@@ -371,18 +371,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let covar = M * transpose(M);
     var cov2d = helpers::calc_cov2d(covar, mean_c, focal, img_size, pixel_center, viewmat);
 
-#ifdef MIP_SPLATTING
-    // compute opacity gradient with accounting for the filter compensation factor
-    // nb: we detach the filter compensation factor from the 2d covariance gradient computation for stability reasons
-    let det_raw = max(determinant(cov2d), 0.0f);
-    cov2d[0][0] += helpers::COV_BLUR;
-    cov2d[1][1] += helpers::COV_BLUR;
-
-    let filter_comp = sqrt(det_raw / determinant(cov2d));
-#else
-    let filter_comp = 1.0f;
-#endif
-
+    let filter_comp = helpers::compensate_cov2d(&cov2d);
     let opac = helpers::sigmoid(raw_opac[global_gid]);
     v_opacs[global_gid] = filter_comp * v_opacs[global_gid] * opac * (1.0f - opac);
 
