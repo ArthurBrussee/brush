@@ -93,37 +93,29 @@ pub(crate) async fn train_stream(
     let estimated_up = dataset.estimate_up();
 
     // Convert SplatData to Splats using KNN initialization
-    let (up_axis, init_splats) = init_splats.map_or_else(
-        // Default: just use random splats.
-        || {
-            let render_mode = train_stream_args
-                .train_config
-                .render_mode
-                .unwrap_or(SplatRenderMode::Default);
-
-            log::info!("Starting with random splat config.");
-            // Create a bounding box the size of all the cameras plus a bit.
-            let mut bounds = dataset.train.bounds();
-            bounds.extent *= 1.25;
-            let config = RandomSplatsConfig::new();
-            (
-                None,
-                create_random_splats(&config, bounds, &mut rng, render_mode, &device),
-            )
-        },
-        // Otherwise: Use knn init.
-        |msg| {
-            // Prefer train_config explicit render mode, else use what the checkpoint has.
-            let render_mode = train_stream_args
-                .train_config
-                .render_mode
-                .or(msg.meta.render_mode)
-                .unwrap_or(SplatRenderMode::Default);
-
-            let splats = to_init_splats(msg.data, render_mode, &device);
-            (msg.meta.up_axis, splats)
-        },
-    );
+    let (up_axis, init_splats) = if let Some(msg) = init_splats {
+        // Use loaded splats with KNN init
+        let render_mode = train_stream_args
+            .train_config
+            .render_mode
+            .or(msg.meta.render_mode)
+            .unwrap_or(SplatRenderMode::Default);
+        let splats = to_init_splats(msg.data, render_mode, &device);
+        (msg.meta.up_axis, splats)
+    } else {
+        // Default: just use random splats
+        let render_mode = train_stream_args
+            .train_config
+            .render_mode
+            .unwrap_or(SplatRenderMode::Default);
+        log::info!("Starting with random splat config.");
+        // Create a bounding box the size of all the cameras plus a bit.
+        let mut bounds = dataset.train.bounds();
+        bounds.extent *= 1.25;
+        let config = RandomSplatsConfig::new();
+        let splats = create_random_splats(&config, bounds, &mut rng, render_mode, &device);
+        (None, splats)
+    };
 
     emitter
         .emit(ProcessMessage::ViewSplats {
