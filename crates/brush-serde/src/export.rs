@@ -170,7 +170,7 @@ pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, Seri
         "Exported from Brush".to_owned(),
         "Vertical axis: y".to_owned(),
         format!("SH degree: {}", sh_degree),
-        format!("Render mode: {}", render_mode_str),
+        format!("SplatRenderMode: {}", render_mode_str),
     ];
     serde_ply::to_bytes(&ply, SerializeOptions::binary_le().with_comments(comments))
 }
