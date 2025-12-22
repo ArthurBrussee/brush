@@ -16,6 +16,7 @@ use brush_render::{
     MainBackend,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
+    render_splats,
 };
 use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect, Slider};
@@ -329,7 +330,8 @@ impl ScenePanel {
             if pixel_size.x > 8 && pixel_size.y > 8 && dirty {
                 let _span = trace_span!("Render splats").entered();
                 // Could add an option for background color.
-                let (img, _) = splats.render(
+                let (img, _) = render_splats(
+                    &splats,
                     &camera,
                     pixel_size,
                     settings.background.unwrap_or(Vec3::ZERO),

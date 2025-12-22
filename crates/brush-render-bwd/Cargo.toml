@@ -5,6 +5,9 @@ version.workspace = true
 readme.workspace = true
 license.workspace = true
 
+[features]
+debug-validation = ["brush-render/debug-validation"]
+
 [dependencies]
 brush-kernel.path = "../brush-kernel"
 brush-render.path = "../brush-render"

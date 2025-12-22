@@ -7,6 +7,7 @@ use brush_render::{
     bounding_box::BoundingBox,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::{SplatRenderMode, Splats},
+    render_splats,
 };
 use brush_train::{
     RandomSplatsConfig, config::TrainConfig, create_random_splats, train::SplatTrainer,
@@ -167,7 +168,8 @@ impl eframe::App for App {
                 return;
             };
 
-            let (img, _) = msg.splats.render(
+            let (img, _) = render_splats(
+                &msg.splats,
                 &self.camera,
                 glam::uvec2(self.image.width(), self.image.height()),
                 Vec3::ZERO, // Just render with a black background

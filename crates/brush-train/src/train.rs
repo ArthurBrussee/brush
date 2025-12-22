@@ -12,7 +12,7 @@ use crate::{
 use brush_dataset::scene::SceneBatch;
 use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
-use brush_render_bwd::burn_glue::SplatForwardDiff;
+use brush_render_bwd::render_splats;
 use burn::{
     backend::{
         Autodiff,
@@ -126,15 +126,10 @@ impl SplatTrainer {
             // results just seem worse.
             let background = Vec3::ZERO;
 
-            let diff_out = <DiffBackend as SplatForwardDiff<_>>::render_splats(
+            let diff_out = render_splats(
+                &splats,
                 camera,
                 glam::uvec2(img_w as u32, img_h as u32),
-                splats.means.val().into_primitive().tensor(),
-                splats.log_scales.val().into_primitive().tensor(),
-                splats.rotations.val().into_primitive().tensor(),
-                splats.sh_coeffs.val().into_primitive().tensor(),
-                splats.raw_opacities.val().into_primitive().tensor(),
-                splats.render_mode,
                 background,
             );
 

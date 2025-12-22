@@ -227,41 +227,43 @@ impl<B: Backend> Splats<B> {
     }
 }
 
-impl<B: Backend + SplatForward<B>> Splats<B> {
-    /// Render the splats.
-    ///
-    /// NB: This doesn't work on a differentiable backend.
-    pub fn render(
-        &self,
-        camera: &Camera,
-        img_size: glam::UVec2,
-        background: Vec3,
-        splat_scale: Option<f32>,
-    ) -> (Tensor<B, 3>, RenderAux<B>) {
-        let mut scales = self.log_scales.val();
+/// Render splats on a non-differentiable backend.
+///
+/// NB: This doesn't work on a differentiable backend. Use
+/// [`brush_render_bwd::render_splats`] for that.
+pub fn render_splats<B: Backend + SplatForward<B>>(
+    splats: &Splats<B>,
+    camera: &Camera,
+    img_size: glam::UVec2,
+    background: Vec3,
+    splat_scale: Option<f32>,
+) -> (Tensor<B, 3>, RenderAux<B>) {
+    #[cfg(any(feature = "debug-validation", test))]
+    splats.validate_values();
 
-        #[cfg(any(feature = "debug-validation", test))]
-        self.validate_values();
+    let mut scales = splats.log_scales.val();
 
-        // Add in scaling if needed.
-        if let Some(scale) = splat_scale {
-            scales = scales + scale.ln();
-        };
-        let (img, aux) = B::render_splats(
-            camera,
-            img_size,
-            self.means.val().into_primitive().tensor(),
-            scales.into_primitive().tensor(),
-            self.rotations.val().into_primitive().tensor(),
-            self.sh_coeffs.val().into_primitive().tensor(),
-            self.raw_opacities.val().into_primitive().tensor(),
-            self.render_mode,
-            background,
-            false,
-        );
-        let img = Tensor::from_primitive(TensorPrimitive::Float(img));
-        #[cfg(any(feature = "debug-validation", test))]
-        aux.validate_values();
-        (img, aux)
-    }
+    // Add in scaling if needed.
+    if let Some(scale) = splat_scale {
+        scales = scales + scale.ln();
+    };
+
+    let (img, aux) = B::render_splats(
+        camera,
+        img_size,
+        splats.means.val().into_primitive().tensor(),
+        scales.into_primitive().tensor(),
+        splats.rotations.val().into_primitive().tensor(),
+        splats.sh_coeffs.val().into_primitive().tensor(),
+        splats.raw_opacities.val().into_primitive().tensor(),
+        splats.render_mode,
+        background,
+        false,
+    );
+    let img = Tensor::from_primitive(TensorPrimitive::Float(img));
+
+    #[cfg(any(feature = "debug-validation", test))]
+    aux.validate_values();
+
+    (img, aux)
 }

@@ -1,7 +1,7 @@
 use brush_render::{
     MainBackendBase, SplatForward,
     camera::Camera,
-    gaussian_splats::SplatRenderMode,
+    gaussian_splats::{SplatRenderMode, Splats},
     render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
@@ -411,4 +411,35 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             v_refine_weight,
         }
     }
+}
+
+/// Render splats on a differentiable backend.
+pub fn render_splats<B>(
+    splats: &Splats<B>,
+    camera: &Camera,
+    img_size: glam::UVec2,
+    background: Vec3,
+) -> SplatOutputDiff<B>
+where
+    B: Backend + SplatForwardDiff<B>,
+{
+    #[cfg(any(feature = "debug-validation", test))]
+    splats.validate_values();
+
+    let result = B::render_splats(
+        camera,
+        img_size,
+        splats.means.val().into_primitive().tensor(),
+        splats.log_scales.val().into_primitive().tensor(),
+        splats.rotations.val().into_primitive().tensor(),
+        splats.sh_coeffs.val().into_primitive().tensor(),
+        splats.raw_opacities.val().into_primitive().tensor(),
+        splats.render_mode,
+        background,
+    );
+
+    #[cfg(any(feature = "debug-validation", test))]
+    result.aux.validate_values();
+
+    result
 }

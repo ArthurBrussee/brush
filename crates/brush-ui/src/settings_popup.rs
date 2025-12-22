@@ -107,7 +107,7 @@ impl SettingsPopup {
             ui.add(Slider::new(&mut self.args.model_config.sh_degree, 0..=4));
 
             let mut render_mode_enabled = self.args.train_config.render_mode.is_some();
-            if ui.checkbox(&mut render_mode_enabled, "Override render mode").clicked() {
+            if ui.checkbox(&mut render_mode_enabled, "Render mode").clicked() {
                 self.args.train_config.render_mode = if render_mode_enabled {
                     Some(SplatRenderMode::Mip)
                 } else {

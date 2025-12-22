@@ -13,6 +13,7 @@ use render_aux::RenderAux;
 use wgpu::{Adapter, Device, Queue};
 
 use crate::gaussian_splats::SplatRenderMode;
+pub use crate::gaussian_splats::render_splats;
 
 mod burn_glue;
 mod dim_check;
