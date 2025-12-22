@@ -13,7 +13,7 @@ use clap::ValueEnum;
 use glam::Vec3;
 use tracing::trace_span;
 
-#[derive(Module, Clone, Copy, Debug, ValueEnum)]
+#[derive(Module, Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum SplatRenderMode {
     Default,
     Mip,

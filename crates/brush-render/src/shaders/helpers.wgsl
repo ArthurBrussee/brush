@@ -183,6 +183,12 @@ fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixe
     return J * covar_cam * transpose(J);
 }
 
+#ifdef MIP_SPLATTING
+    const COV_BLUR: f32 = 0.1;
+#else
+    const COV_BLUR: f32 = 0.3;
+#endif
+
 fn compensate_cov2d(cov2d: ptr<function, mat2x2f>) -> f32 {
     let cov_start = *cov2d;
     var cov_end = *cov2d;
@@ -209,8 +215,6 @@ fn inverse(m: mat2x2f) -> mat2x2f {
     let inv_det = 1.0f / det;
     return mat2x2f(vec2f(m[1][1] * inv_det, -m[0][1] * inv_det), vec2f(-m[0][1] * inv_det, m[0][0] * inv_det));
 }
-
-const COV_BLUR: f32 = 0.3;
 
 fn cov_compensation(cov2d: vec3f) -> f32 {
     let cov_orig = cov2d - vec3f(COV_BLUR, 0.0, COV_BLUR);

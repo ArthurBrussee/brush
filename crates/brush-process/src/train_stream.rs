@@ -5,7 +5,10 @@ use crate::{
 use anyhow::Context;
 use async_fn_stream::TryStreamEmitter;
 use brush_dataset::{load_dataset, scene::Scene, scene_loader::SceneLoader};
-use brush_render::{MainBackend, gaussian_splats::Splats};
+use brush_render::{
+    MainBackend,
+    gaussian_splats::{SplatRenderMode, Splats},
+};
 use brush_rerun::{RerunConfig, visualize_tools::VisualizeTools};
 use brush_train::{
     RandomSplatsConfig, create_random_splats,
@@ -86,16 +89,18 @@ pub(crate) async fn train_stream(
         }))
         .await;
 
-    let estimated_up = dataset.estimate_up();
     log::info!("Loading initial splats if any.");
-
-    // TODO: Make config.
-    let render_mode = train_stream_args.train_config.render_mode;
+    let estimated_up = dataset.estimate_up();
 
     // Convert SplatData to Splats using KNN initialization
     let (up_axis, init_splats) = init_splats.map_or_else(
         // Default: just use random splats.
         || {
+            let render_mode = train_stream_args
+                .train_config
+                .render_mode
+                .unwrap_or(SplatRenderMode::Default);
+
             log::info!("Starting with random splat config.");
             // Create a bounding box the size of all the cameras plus a bit.
             let mut bounds = dataset.train.bounds();
@@ -108,6 +113,13 @@ pub(crate) async fn train_stream(
         },
         // Otherwise: Use knn init.
         |msg| {
+            // Prefer train_config explicit render mode, else use what the checkpoint has.
+            let render_mode = train_stream_args
+                .train_config
+                .render_mode
+                .or(msg.meta.render_mode)
+                .unwrap_or(SplatRenderMode::Default);
+
             let splats = to_init_splats(msg.data, render_mode, &device);
             (msg.meta.up_axis, splats)
         },

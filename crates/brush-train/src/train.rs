@@ -48,11 +48,8 @@ pub struct SplatTrainer {
     sched_scale: ExponentialLrScheduler,
     refine_record: Option<RefineRecord<MainBackend>>,
     optim: Option<OptimizerType>,
-
     ssim: Option<Ssim<DiffBackend>>,
-
     bounds: BoundingBox,
-
     #[cfg(not(target_family = "wasm"))]
     lpips: Option<lpips::LpipsModel<DiffBackend>>,
 }

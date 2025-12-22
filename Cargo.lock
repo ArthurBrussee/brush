@@ -1295,6 +1295,7 @@ dependencies = [
  "humantime",
  "image",
  "log",
+ "rand 0.9.2",
  "rrfd",
  "serde",
  "tokio",
