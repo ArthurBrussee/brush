@@ -26,6 +26,9 @@ tracing.workspace = true
 log.workspace = true
 wgpu.workspace = true
 
+[package.metadata.cargo-shear]
+ignored = ["bytemuck"]
+
 [features]
 debug-validation = []
 

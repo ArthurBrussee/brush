@@ -11,29 +11,11 @@ use glam::Vec3;
 use crate::{
     MainBackendBase, SplatForward,
     camera::Camera,
-    render::{calc_tile_bounds, max_intersections, render_forward},
+    gaussian_splats::SplatRenderMode,
+    render::{calc_tile_bounds, max_intersections},
     render_aux::RenderAux,
     shaders,
 };
-
-// Implement forward functions for the inner wgpu backend.
-impl SplatForward<Self> for MainBackendBase {
-    fn render_splats(
-        camera: &Camera,
-        img_size: glam::UVec2,
-        means: FloatTensor<Self>,
-        log_scales: FloatTensor<Self>,
-        quats: FloatTensor<Self>,
-        sh_coeffs: FloatTensor<Self>,
-        opacity: FloatTensor<Self>,
-        background: Vec3,
-        bwd_info: bool,
-    ) -> (FloatTensor<Self>, RenderAux<Self>) {
-        render_forward(
-            camera, img_size, means, log_scales, quats, sh_coeffs, opacity, background, bwd_info,
-        )
-    }
-}
 
 impl SplatForward<Self> for Fusion<MainBackendBase> {
     fn render_splats(
@@ -44,6 +26,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         opacity: FloatTensor<Self>,
+        render_mode: SplatRenderMode,
         background: Vec3,
         bwd_info: bool,
     ) -> (FloatTensor<Self>, RenderAux<Self>) {
@@ -51,6 +34,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
         struct CustomOp {
             cam: Camera,
             img_size: glam::UVec2,
+            render_mode: SplatRenderMode,
             bwd_info: bool,
             background: Vec3,
             desc: CustomOpIr,
@@ -85,6 +69,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                     h.get_float_tensor::<MainBackendBase>(quats),
                     h.get_float_tensor::<MainBackendBase>(sh_coeffs),
                     h.get_float_tensor::<MainBackendBase>(opacity),
+                    self.render_mode,
                     self.background,
                     self.bwd_info,
                 );
@@ -189,6 +174,7 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             img_size,
             bwd_info,
             background,
+            render_mode,
             desc: desc.clone(),
         };
 

@@ -1,6 +1,7 @@
 use brush_render::{
     MainBackendBase, SplatForward,
     camera::Camera,
+    gaussian_splats::{SplatRenderMode, Splats},
     render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
@@ -29,7 +30,7 @@ use burn_fusion::{
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use glam::Vec3;
 
-use crate::render_bwd::{SplatGrads, render_backward};
+use crate::render_bwd::SplatGrads;
 
 /// Like [`SplatForward`], but for backends that support differentiation.
 ///
@@ -48,6 +49,7 @@ pub trait SplatForwardDiff<B: Backend> {
         quats: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacity: FloatTensor<B>,
+        render_mode: SplatRenderMode,
         background: Vec3,
     ) -> SplatOutputDiff<B>;
 }
@@ -63,40 +65,20 @@ pub trait SplatBackwardOps<B: Backend> {
     ) -> SplatGrads<B>;
 }
 
-impl SplatBackwardOps<Self> for MainBackendBase {
-    fn render_splats_bwd(
-        state: GaussianBackwardState<Self>,
-        v_output: FloatTensor<Self>,
-    ) -> SplatGrads<Self> {
-        render_backward(
-            v_output,
-            state.means,
-            state.quats,
-            state.log_scales,
-            state.out_img,
-            state.projected_splats,
-            state.uniforms_buffer,
-            state.compact_gid_from_isect,
-            state.global_from_compact_gid,
-            state.tile_offsets,
-            state.sh_degree,
-        )
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct GaussianBackwardState<B: Backend> {
-    means: FloatTensor<B>,
-    quats: FloatTensor<B>,
-    log_scales: FloatTensor<B>,
-    raw_opac: FloatTensor<B>,
-    out_img: FloatTensor<B>,
-    projected_splats: FloatTensor<B>,
-    uniforms_buffer: IntTensor<B>,
-    compact_gid_from_isect: IntTensor<B>,
-    global_from_compact_gid: IntTensor<B>,
-    tile_offsets: IntTensor<B>,
-    sh_degree: u32,
+    pub(crate) means: FloatTensor<B>,
+    pub(crate) quats: FloatTensor<B>,
+    pub(crate) log_scales: FloatTensor<B>,
+    pub(crate) raw_opac: FloatTensor<B>,
+    pub(crate) out_img: FloatTensor<B>,
+    pub(crate) projected_splats: FloatTensor<B>,
+    pub(crate) uniforms_buffer: IntTensor<B>,
+    pub(crate) compact_gid_from_isect: IntTensor<B>,
+    pub(crate) global_from_compact_gid: IntTensor<B>,
+    pub(crate) tile_offsets: IntTensor<B>,
+    pub(crate) render_mode: SplatRenderMode,
+    pub(crate) sh_degree: u32,
 }
 
 #[derive(Debug)]
@@ -178,6 +160,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacity: FloatTensor<Self>,
+        render_mode: SplatRenderMode,
         background: Vec3,
     ) -> SplatOutputDiff<Self> {
         // Get backend tensors & dequantize if needed. Could try and support quantized inputs
@@ -208,6 +191,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
             quats.clone().into_primitive(),
             sh_coeffs.clone().into_primitive(),
             raw_opacity.clone().into_primitive(),
+            render_mode,
             background,
             true,
         );
@@ -240,6 +224,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
                     uniforms_buffer: aux.uniforms_buffer,
                     tile_offsets: aux.tile_offsets,
                     compact_gid_from_isect: aux.compact_gid_from_isect,
+                    render_mode,
                     global_from_compact_gid: aux.global_from_compact_gid,
                 };
 
@@ -272,6 +257,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
         #[derive(Debug)]
         struct CustomOp {
             desc: CustomOpIr,
+            render_mode: SplatRenderMode,
             sh_degree: u32,
         }
 
@@ -312,6 +298,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                     global_from_compact_gid: h
                         .get_int_tensor::<MainBackendBase>(global_from_compact_gid),
                     sh_degree: self.sh_degree,
+                    render_mode: self.render_mode,
                 };
 
                 let grads =
@@ -401,6 +388,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                     // state,
                     desc,
                     sh_degree: state.sh_degree,
+                    render_mode: state.render_mode,
                 },
             )
             .outputs();
@@ -423,4 +411,35 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             v_refine_weight,
         }
     }
+}
+
+/// Render splats on a differentiable backend.
+pub fn render_splats<B>(
+    splats: &Splats<B>,
+    camera: &Camera,
+    img_size: glam::UVec2,
+    background: Vec3,
+) -> SplatOutputDiff<B>
+where
+    B: Backend + SplatForwardDiff<B>,
+{
+    #[cfg(any(feature = "debug-validation", test))]
+    splats.validate_values();
+
+    let result = B::render_splats(
+        camera,
+        img_size,
+        splats.means.val().into_primitive().tensor(),
+        splats.log_scales.val().into_primitive().tensor(),
+        splats.rotations.val().into_primitive().tensor(),
+        splats.sh_coeffs.val().into_primitive().tensor(),
+        splats.raw_opacities.val().into_primitive().tensor(),
+        splats.render_mode,
+        background,
+    );
+
+    #[cfg(any(feature = "debug-validation", test))]
+    result.aux.validate_values();
+
+    result
 }

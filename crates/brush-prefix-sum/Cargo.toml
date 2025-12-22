@@ -13,5 +13,8 @@ bytemuck = { workspace = true, features = ["derive"] }
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 
+[package.metadata.cargo-shear]
+ignored = ["bytemuck"]
+
 [lints]
 workspace = true

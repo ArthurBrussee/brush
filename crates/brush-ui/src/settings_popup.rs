@@ -2,12 +2,15 @@ use std::ops::RangeInclusive;
 
 use brush_process::config::TrainStreamConfig;
 use brush_render::AlphaMode;
+use brush_render::gaussian_splats::SplatRenderMode;
 use egui::{Align2, Slider, Ui};
 use tokio::sync::oneshot::Sender;
 
 pub(crate) struct SettingsPopup {
     send_args: Option<Sender<TrainStreamConfig>>,
     args: TrainStreamConfig,
+    // Unique ID per instance so window state isn't persisted across popup opens
+    window_id: egui::Id,
 }
 
 fn slider<T>(ui: &mut Ui, value: &mut T, range: RangeInclusive<T>, text: &str, logarithmic: bool)
@@ -29,6 +32,7 @@ impl SettingsPopup {
         Self {
             send_args: Some(send_args),
             args: TrainStreamConfig::default(),
+            window_id: egui::Id::new(rand::random::<u64>()),
         }
     }
 
@@ -45,10 +49,11 @@ impl SettingsPopup {
         }
 
         egui::Window::new("Settings")
+        .id(self.window_id)
         .resizable(true)
         .collapsible(false)
         .default_pos(center)
-        .default_size([300.0, 700.0])
+        .default_size([300.0, 750.0])
         .pivot(Align2::CENTER_CENTER)
         .show(ui.ctx(), |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -100,6 +105,21 @@ impl SettingsPopup {
             ui.heading("Model");
             ui.label("Spherical Harmonics Degree:");
             ui.add(Slider::new(&mut self.args.model_config.sh_degree, 0..=4));
+
+            let mut render_mode_enabled = self.args.train_config.render_mode.is_some();
+            if ui.checkbox(&mut render_mode_enabled, "Render mode").clicked() {
+                self.args.train_config.render_mode = if render_mode_enabled {
+                    Some(SplatRenderMode::Mip)
+                } else {
+                    None
+                };
+            }
+            if let Some(ref mut render_mode) = self.args.train_config.render_mode {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(render_mode, SplatRenderMode::Default, "Default");
+                    ui.selectable_value(render_mode, SplatRenderMode::Mip, "Mip");
+                });
+            }
 
             ui.add_space(16.0);
 

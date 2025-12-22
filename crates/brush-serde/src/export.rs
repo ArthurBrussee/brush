@@ -1,6 +1,6 @@
 use std::vec;
 
-use brush_render::gaussian_splats::Splats;
+use brush_render::gaussian_splats::{SplatRenderMode, Splats};
 use brush_render::sh::sh_coeffs_for_degree;
 use burn::prelude::Backend;
 use burn::tensor::Transaction;
@@ -158,12 +158,19 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
 pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, SerializeError> {
     let splats = splats.with_normed_rotations();
     let sh_degree = splats.sh_degree();
+    let render_mode = splats.render_mode;
     let ply = read_splat_data(splats.clone()).await;
+
+    let render_mode_str = match render_mode {
+        SplatRenderMode::Default => "default",
+        SplatRenderMode::Mip => "mip",
+    };
 
     let comments = vec![
         "Exported from Brush".to_owned(),
         "Vertical axis: y".to_owned(),
         format!("SH degree: {}", sh_degree),
+        format!("SplatRenderMode: {}", render_mode_str),
     ];
     serde_ply::to_bytes(&ply, SerializeOptions::binary_le().with_comments(comments))
 }
@@ -174,6 +181,7 @@ mod tests {
     use crate::import::load_splat_from_ply;
     use crate::test_utils::create_test_splats;
     use brush_render::MainBackend;
+    use brush_render::gaussian_splats::SplatRenderMode;
     use burn::backend::wgpu::WgpuDevice;
     use std::io::Cursor;
 
@@ -264,7 +272,9 @@ mod tests {
             let imported_message = load_splat_from_ply(cursor, None)
                 .await
                 .expect("Failed to deserialize splats");
-            let imported_splats = imported_message.data.into_splats(&device);
+            let imported_splats = imported_message
+                .data
+                .into_splats(&device, SplatRenderMode::Default);
 
             assert_eq!(imported_splats.sh_degree(), degree);
             assert_coeffs_match(&original_splats, &imported_splats).await;

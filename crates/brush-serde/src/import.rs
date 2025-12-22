@@ -2,7 +2,7 @@ use std::pin::pin;
 use std::time::Duration;
 
 use async_fn_stream::{TryStreamEmitter, try_fn_stream};
-use brush_render::gaussian_splats::{Splats, inverse_sigmoid};
+use brush_render::gaussian_splats::{SplatRenderMode, Splats, inverse_sigmoid};
 use brush_render::sh::rgb_to_sh;
 use brush_vfs::SendNotWasm;
 use glam::{Vec3, Vec4Swizzles};
@@ -20,6 +20,8 @@ type StreamEmitter = TryStreamEmitter<SplatMessage, DeserializeError>;
 
 pub struct ParseMetadata {
     pub up_axis: Option<Vec3>,
+    pub render_mode: Option<SplatRenderMode>,
+
     pub total_splats: u32,
     pub frame_count: u32,
     pub current_frame: u32,
@@ -44,7 +46,11 @@ impl SplatData {
     }
 
     /// Convert into Splats using simple defaults for missing fields.
-    pub fn into_splats<B: burn::prelude::Backend>(self, device: &B::Device) -> Splats<B> {
+    pub fn into_splats<B: burn::prelude::Backend>(
+        self,
+        device: &B::Device,
+        mode: SplatRenderMode,
+    ) -> Splats<B> {
         let n_splats = self.num_splats();
         let rotations = self
             .rotations
@@ -56,7 +62,7 @@ impl SplatData {
             .unwrap_or_else(|| vec![inverse_sigmoid(0.5); n_splats]);
 
         Splats::from_raw(
-            self.means, rotations, log_scales, sh_coeffs, opacities, device,
+            self.means, rotations, log_scales, sh_coeffs, opacities, mode, device,
         )
     }
 }
@@ -164,11 +170,33 @@ pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
         let up_axis = header
             .comments
             .iter()
-            .filter_map(|c| match c.to_lowercase().strip_prefix("vertical axis: ") {
-                Some("x") => Some(Vec3::X),
-                Some("y") => Some(Vec3::NEG_Y),
-                Some("z") => Some(Vec3::NEG_Z),
-                _ => None,
+            .filter_map(|c| {
+                match c
+                    .to_lowercase()
+                    .strip_prefix("vertical axis: ")
+                    .map(|s| s.trim())
+                {
+                    Some("x") => Some(Vec3::X),
+                    Some("y") => Some(Vec3::NEG_Y),
+                    Some("z") => Some(Vec3::NEG_Z),
+                    _ => None,
+                }
+            })
+            .next_back();
+
+        let render_mode = header
+            .comments
+            .iter()
+            .filter_map(|c| {
+                match c
+                    .to_lowercase()
+                    .strip_prefix("SplatRenderMode: ")
+                    .map(|s| s.trim())
+                {
+                    Some("mip") => Some(SplatRenderMode::Mip),
+                    Some("default") => Some(SplatRenderMode::Default),
+                    _ => None,
+                }
             })
             .next_back();
 
@@ -199,12 +227,22 @@ pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
                     &mut file,
                     up_axis,
                     &emitter,
+                    render_mode,
                     &mut updater,
                 )
                 .await?;
             }
             PlyFormat::SuperSplatCompressed => {
-                parse_compressed_ply(reader, subsample, file, up_axis, emitter, updater).await?;
+                parse_compressed_ply(
+                    reader,
+                    subsample,
+                    file,
+                    up_axis,
+                    emitter,
+                    render_mode,
+                    updater,
+                )
+                .await?;
             }
         }
         Ok(())
@@ -227,6 +265,7 @@ async fn parse_ply<T: AsyncRead + Unpin>(
     file: &mut PlyChunkedReader,
     up_axis: Option<Vec3>,
     emitter: &StreamEmitter,
+    render_mode: Option<SplatRenderMode>,
     update: &mut TimedUpdate,
 ) -> Result<(), DeserializeError> {
     let header = file.header().expect("Must have header");
@@ -311,6 +350,7 @@ async fn parse_ply<T: AsyncRead + Unpin>(
                 progress: progress(row_index, total_splats),
                 frame_count: 0,
                 current_frame: 0,
+                render_mode,
             };
 
             if row_index == total_splats {
@@ -334,6 +374,7 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
     mut file: PlyChunkedReader,
     up_axis: Option<Vec3>,
     emitter: StreamEmitter,
+    render_mode: Option<SplatRenderMode>,
     mut update: TimedUpdate,
 ) -> Result<(), DeserializeError> {
     #[derive(Default, Deserialize)]
@@ -456,6 +497,7 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
                 frame_count: 0,
                 current_frame: 0,
                 progress,
+                render_mode,
             };
 
             let data = SplatData {
@@ -507,6 +549,7 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
             frame_count: 0,
             current_frame: 0,
             progress: 1.0,
+            render_mode,
         };
         let data = SplatData {
             means,
@@ -575,7 +618,7 @@ mod tests {
         let imported_message = load_splat_from_ply(cursor, None).await.unwrap();
         assert_eq!(imported_message.data.num_splats(), 4);
 
-        // Test subsample every 2nd splat
+        // Test subsampling every 2nd splat
         let cursor = Cursor::new(ply_bytes);
         let imported_message = load_splat_from_ply(cursor, Some(2)).await.unwrap();
         assert_eq!(imported_message.data.num_splats(), 2);

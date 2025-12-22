@@ -23,6 +23,7 @@ burn.workspace = true
 burn-cubecl.workspace = true
 burn-wgpu.workspace = true
 glam.workspace = true
+rand.workspace = true
 egui.workspace = true
 egui_tiles.workspace = true
 eframe.workspace = true

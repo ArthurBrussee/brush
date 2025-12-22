@@ -5,15 +5,17 @@
 @group(0) @binding(1) var<storage, read> means: array<helpers::PackedVec3>;
 @group(0) @binding(2) var<storage, read> log_scales: array<helpers::PackedVec3>;
 @group(0) @binding(3) var<storage, read> quats: array<vec4f>;
+@group(0) @binding(4) var<storage, read> raw_opac: array<f32>;
 
-@group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(5) var<storage, read> global_from_compact_gid: array<u32>;
 
-@group(0) @binding(5) var<storage, read> v_grads: array<vec4f>;
+@group(0) @binding(6) var<storage, read> v_grads: array<vec4f>;
 
-@group(0) @binding(6) var<storage, read_write> v_means: array<helpers::PackedVec3>;
-@group(0) @binding(7) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
-@group(0) @binding(8) var<storage, read_write> v_quats: array<vec4f>;
-@group(0) @binding(9) var<storage, read_write> v_coeffs: array<f32>;
+@group(0) @binding(7) var<storage, read_write> v_means: array<helpers::PackedVec3>;
+@group(0) @binding(8) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
+@group(0) @binding(9) var<storage, read_write> v_quats: array<vec4f>;
+@group(0) @binding(10) var<storage, read_write> v_coeffs: array<f32>;
+@group(0) @binding(11) var<storage, read_write> v_opacs: array<f32>;
 
 const SH_C0: f32 = 0.2820947917738781f;
 
@@ -367,11 +369,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let M = rotmat * S;
 
     let covar = M * transpose(M);
-    let cov2d = helpers::calc_cov2d(covar, mean_c, focal, img_size, pixel_center, viewmat);
+    var cov2d = helpers::calc_cov2d(covar, mean_c, focal, img_size, pixel_center, viewmat);
+
+    let filter_comp = helpers::compensate_cov2d(&cov2d);
+    let opac = helpers::sigmoid(raw_opac[global_gid]);
+    v_opacs[global_gid] = filter_comp * v_opacs[global_gid] * opac * (1.0f - opac);
+
     let covar2d_inv = helpers::inverse(cov2d);
-
     let v_covar2d_inv = mat2x2f(vec2f(v_conics.x, v_conics.y * 0.5f), vec2f(v_conics.y * 0.5f, v_conics.z));
-
     let v_covar2d = inverse_vjp(covar2d_inv, v_covar2d_inv);
 
     // covar_world_to_cam

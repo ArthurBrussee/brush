@@ -49,17 +49,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
 
     quat *= inverseSqrt(quat_norm_sqr);
 
+    var opac = helpers::sigmoid(raw_opacities[global_gid]);
     let cov3d = helpers::calc_cov3d(scale, quat);
-    let cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
-
-    if abs(determinant(cov2d)) < 1e-24 {
-        return;
-    }
+    var cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
+    opac *= helpers::compensate_cov2d(&cov2d);
 
     // compute the projected mean
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
-
-    let opac = helpers::sigmoid(raw_opacities[global_gid]);
 
     if opac < 1.0 / 255.0 {
         return;

@@ -1,15 +1,14 @@
+use brush_render::gaussian_splats::SplatRenderMode;
 use clap::Parser;
-use serde::Deserialize;
 
-#[derive(Clone, Parser, Deserialize)]
+#[derive(Clone, Parser)]
 pub struct TrainConfig {
     /// Total number of steps to train for.
     #[arg(long, help_heading = "Training options", default_value = "30000")]
     pub total_steps: u32,
 
-    /// Max nr. of splats. This is an upper bound, but the actual final number of splats might be lower than this.
-    #[arg(long, help_heading = "Refine options", default_value = "10000000")]
-    pub max_splats: u32,
+    #[arg(long, help_heading = "Training options")]
+    pub render_mode: Option<SplatRenderMode>,
 
     /// Start learning rate for the mean parameters.
     #[arg(long, help_heading = "Training options", default_value = "2e-5")]
@@ -46,6 +45,10 @@ pub struct TrainConfig {
     /// Learning rate for the rotation parameters.
     #[arg(long, help_heading = "Training options", default_value = "2e-3")]
     pub lr_rotation: f64,
+
+    /// Max nr. of splats. This is an upper bound, but the actual final number of splats might be lower than this.
+    #[arg(long, help_heading = "Refine options", default_value = "10000000")]
+    pub max_splats: u32,
 
     /// Frequency of 'refinement' where gaussians are replaced and densified. This should
     /// roughly be the number of images it takes to properly "cover" your scene.

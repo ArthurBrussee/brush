@@ -4,10 +4,12 @@
 
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
-    AlphaMode, MainBackend, camera::Camera, gaussian_splats::Splats,
+    AlphaMode, MainBackend,
+    camera::Camera,
+    gaussian_splats::{SplatRenderMode, Splats},
     validation::validate_splat_gradients,
 };
-use brush_render_bwd::burn_glue::SplatForwardDiff;
+use brush_render_bwd::render_splats;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
     backend::{Autodiff, wgpu::WgpuDevice},
@@ -73,8 +75,16 @@ fn generate_test_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend
 
     let opacities: Vec<f32> = (0..count).map(|_| rng.random_range(0.6..1.0)).collect();
 
-    Splats::<DiffBackend>::from_raw(means, rotations, log_scales, sh_coeffs, opacities, device)
-        .with_sh_degree(0)
+    Splats::<DiffBackend>::from_raw(
+        means,
+        rotations,
+        log_scales,
+        sh_coeffs,
+        opacities,
+        SplatRenderMode::Default,
+        device,
+    )
+    .with_sh_degree(0)
 }
 
 fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
@@ -212,16 +222,7 @@ fn test_gradient_validation() {
     );
     let img_size = glam::uvec2(64, 64);
 
-    let result = <DiffBackend as SplatForwardDiff<DiffBackend>>::render_splats(
-        &camera,
-        img_size,
-        splats.means.val().into_primitive().tensor(),
-        splats.log_scales.val().into_primitive().tensor(),
-        splats.rotations.val().into_primitive().tensor(),
-        splats.sh_coeffs.val().into_primitive().tensor(),
-        splats.raw_opacities.val().into_primitive().tensor(),
-        Vec3::ZERO,
-    );
+    let result = render_splats(&splats, &camera, img_size, Vec3::ZERO);
 
     let rendered: Tensor<DiffBackend, 3> =
         Tensor::from_primitive(TensorPrimitive::Float(result.img));
