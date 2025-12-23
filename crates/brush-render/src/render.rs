@@ -8,10 +8,10 @@ use crate::{
     sh::sh_degree_from_coeffs,
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
-use brush_kernel::create_dispatch_buffer;
+use brush_kernel::create_dispatch_buffer_1d;
 use brush_kernel::create_tensor;
 use brush_kernel::create_uniform_buffer;
-use brush_kernel::{CubeCount, calc_cube_count};
+use brush_kernel::{CubeCount, calc_cube_count_1d};
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::tensor::{DType, IntDType, ops::FloatTensor};
@@ -143,7 +143,7 @@ impl SplatForward<Self> for MainBackendBase {
             unsafe {
             client.launch_unchecked(
                 ProjectSplats::task(mip_splat),
-                calc_cube_count([total_splats as u32], ProjectSplats::WORKGROUP_SIZE),
+                calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
                 Bindings::new().with_buffers(
                 vec![
                     uniforms_buffer.handle.clone().binding(),
@@ -182,7 +182,7 @@ impl SplatForward<Self> for MainBackendBase {
         tracing::trace_span!("ProjectVisible").in_scope(|| {
             // Create a buffer to determine how many threads to dispatch for all visible splats.
             let num_vis_wg =
-                create_dispatch_buffer(num_visible.clone(), ProjectVisible::WORKGROUP_SIZE);
+                create_dispatch_buffer_1d(num_visible.clone(), ProjectVisible::WORKGROUP_SIZE[0]);
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
                 client
@@ -212,7 +212,7 @@ impl SplatForward<Self> for MainBackendBase {
                 Self::int_zeros([total_splats + 1].into(), device, IntDType::U32);
 
             let num_vis_map_wg =
-                create_dispatch_buffer(num_visible, MapGaussiansToIntersect::WORKGROUP_SIZE);
+                create_dispatch_buffer_1d(num_visible, MapGaussiansToIntersect::WORKGROUP_SIZE[0]);
 
             // First do a prepass to compute the tile counts, then fill in intersection counts.
             tracing::trace_span!("MapGaussiansToIntersectPrepass").in_scope(|| {
@@ -279,7 +279,7 @@ impl SplatForward<Self> for MainBackendBase {
 
             let cube_dim = CubeDim::new_1d(256);
             let num_vis_map_wg =
-                create_dispatch_buffer(num_intersections.clone(), [256 * CHECKS_PER_ITER, 1, 1]);
+                create_dispatch_buffer_1d(num_intersections.clone(), 256 * CHECKS_PER_ITER);
             let cube_count = CubeCount::Dynamic(num_vis_map_wg.handle.binding());
 
             // Tiles without splats will be written as having a range of [0, 0].

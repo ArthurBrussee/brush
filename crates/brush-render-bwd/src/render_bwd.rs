@@ -1,4 +1,4 @@
-use brush_kernel::{CubeCount, calc_cube_count};
+use brush_kernel::{CubeCount, calc_cube_count_1d};
 use brush_render::gaussian_splats::SplatRenderMode;
 use brush_wgsl::wgsl_kernel;
 
@@ -139,7 +139,7 @@ impl SplatBackwardOps<Self> for MainBackendBase {
         unsafe {
         client.launch_unchecked(
             ProjectBackwards::task(mip_splat),
-            calc_cube_count([num_points as u32], ProjectBackwards::WORKGROUP_SIZE),
+            calc_cube_count_1d(num_points as u32, ProjectBackwards::WORKGROUP_SIZE[0]),
             Bindings::new().with_buffers(
             vec![
                 uniforms_buffer.handle.binding(),

@@ -1,5 +1,5 @@
 use brush_kernel::CubeCount;
-use brush_kernel::create_dispatch_buffer;
+use brush_kernel::create_dispatch_buffer_1d;
 use brush_kernel::create_tensor;
 use brush_kernel::create_uniform_buffer;
 use brush_wgsl::wgsl_kernel;
@@ -64,9 +64,9 @@ pub fn radix_argsort(
 
     let max_needed_wgs = max_n.div_ceil(BLOCK_SIZE);
 
-    let num_wgs = create_dispatch_buffer(n_sort.clone(), [BLOCK_SIZE, 1, 1]);
+    let num_wgs = create_dispatch_buffer_1d(n_sort.clone(), BLOCK_SIZE);
     let num_reduce_wgs: Tensor<CubeBackend<WgpuRuntime, f32, i32, u32>, 1, Int> =
-        Tensor::from_primitive(create_dispatch_buffer(num_wgs.clone(), [BLOCK_SIZE, 1, 1]))
+        Tensor::from_primitive(create_dispatch_buffer_1d(num_wgs.clone(), BLOCK_SIZE))
             * Tensor::from_ints([SortCount::BIN_COUNT, 1, 1], device);
     let num_reduce_wgs: CubeTensor<WgpuRuntime> = num_reduce_wgs.into_primitive();
 

@@ -1,12 +1,11 @@
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::frontend::CompilationArg;
-use burn_cubecl::cubecl::prelude::{CUBE_DIM_X, CUBE_POS_X, CUBE_POS_Y, Tensor, UNIT_POS};
+use burn_cubecl::cubecl::prelude::{
+    CUBE_COUNT_X, CUBE_DIM_X, CUBE_POS_X, CUBE_POS_Y, Tensor, UNIT_POS,
+};
 
 pub(crate) const CHECKS_PER_ITER: u32 = 8;
-
-// Maximum workgroups per dimension (WebGPU limit)
-const MAX_WG_PER_DIM: u32 = 65535;
 
 #[cube]
 fn check_tile_boundary(
@@ -40,7 +39,7 @@ pub fn get_tile_offsets(
 ) {
     let inter = num_inter[0];
     // Compute linear position from 2D dispatch (for large dispatches that exceed 65535 workgroups)
-    let workgroup_id = CUBE_POS_X + CUBE_POS_Y * MAX_WG_PER_DIM;
+    let workgroup_id = CUBE_POS_X + CUBE_POS_Y * CUBE_COUNT_X;
     let absolute_pos = workgroup_id * CUBE_DIM_X + UNIT_POS;
     let base_id = absolute_pos * CHECKS_PER_ITER;
 

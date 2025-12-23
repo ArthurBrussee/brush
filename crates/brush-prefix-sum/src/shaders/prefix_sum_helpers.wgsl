@@ -3,17 +3,14 @@
 
 const THREADS_PER_GROUP: u32 = 512u;
 
-// Maximum workgroups per dimension (WebGPU limit)
-const MAX_WG_PER_DIM: u32 = 65535u;
-
 // Compute linear workgroup ID from 2D dispatch
-fn get_workgroup_id(wid: vec3u) -> u32 {
-    return wid.x + wid.y * MAX_WG_PER_DIM;
+fn get_workgroup_id(wid: vec3u, num_wgs: vec3u) -> u32 {
+    return wid.x + wid.y * num_wgs.x;
 }
 
 // Compute linear global invocation ID from 2D dispatch
-fn get_global_id(gid: vec3u, wid: vec3u, lid: u32) -> u32 {
-    return get_workgroup_id(wid) * THREADS_PER_GROUP + lid;
+fn get_global_id(wid: vec3u, num_wgs: vec3u, lid: u32) -> u32 {
+    return get_workgroup_id(wid, num_wgs) * THREADS_PER_GROUP + lid;
 }
 
 var<workgroup> bucket: array<u32, THREADS_PER_GROUP>;

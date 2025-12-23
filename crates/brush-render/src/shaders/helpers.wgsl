@@ -1,17 +1,14 @@
 const TILE_WIDTH: u32 = 16u;
 const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 
-// Maximum workgroups per dimension (WebGPU limit)
-const MAX_WG_PER_DIM: u32 = 65535u;
-
 // Compute linear workgroup ID from 2D dispatch
-fn get_workgroup_id(wid: vec3u) -> u32 {
-    return wid.x + wid.y * MAX_WG_PER_DIM;
+fn get_workgroup_id(wid: vec3u, num_wgs: vec3u) -> u32 {
+    return wid.x + wid.y * num_wgs.x;
 }
 
 // Compute linear global invocation ID from 2D dispatch
-fn get_global_id(wid: vec3u, lid: u32, wg_size: u32) -> u32 {
-    return get_workgroup_id(wid) * wg_size + lid;
+fn get_global_id(wid: vec3u, num_wgs: vec3u, lid: u32, wg_size: u32) -> u32 {
+    return get_workgroup_id(wid, num_wgs) * wg_size + lid;
 }
 
 // Helper function to compact bits for 2D z-order decoding

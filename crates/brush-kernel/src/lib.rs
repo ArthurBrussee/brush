@@ -20,20 +20,28 @@ pub use bytemuck;
 #[wgsl_kernel(source = "src/shaders/wg.wgsl")]
 struct Wg;
 
-// Maximum workgroups per dimension (WebGPU limit)
-const MAX_WG_PER_DIM: u32 = 65535;
+/// Calculate workgroup count for a 1D dispatch, tiling into 2D if needed.
+/// Use this for kernels processing a 1D array of elements that may exceed 65535 workgroups.
+pub fn calc_cube_count_1d(num_elements: u32, workgroup_size: u32) -> CubeCount {
+    let total_wgs = num_elements.div_ceil(workgroup_size);
 
-pub fn calc_cube_count<const D: usize>(sizes: [u32; D], workgroup_size: [u32; 3]) -> CubeCount {
-    let mut wg_x = sizes.first().unwrap_or(&1).div_ceil(workgroup_size[0]);
-    let mut wg_y = sizes.get(1).unwrap_or(&1).div_ceil(workgroup_size[1]);
-    let wg_z = sizes.get(2).unwrap_or(&1).div_ceil(workgroup_size[2]);
-
-    // If wg_x exceeds the limit and wg_y is 1, split into 2D dispatch.
-    if wg_x > MAX_WG_PER_DIM && wg_y == 1 {
-        wg_y = wg_x.div_ceil(MAX_WG_PER_DIM);
-        wg_x = MAX_WG_PER_DIM;
+    // WebGPU limit is 65535 workgroups per dimension.
+    // Split into 2D using sqrt to minimize total dispatched workgroups.
+    if total_wgs > 65535 {
+        let wg_y = (total_wgs as f64).sqrt().ceil() as u32;
+        let wg_x = total_wgs.div_ceil(wg_y);
+        CubeCount::Static(wg_x, wg_y, 1)
+    } else {
+        CubeCount::Static(total_wgs, 1, 1)
     }
+}
 
+/// Calculate workgroup count for a general 3D dispatch.
+/// Does not handle tiling - use calc_cube_count_1d for large 1D dispatches.
+pub fn calc_cube_count_3d(sizes: [u32; 3], workgroup_size: [u32; 3]) -> CubeCount {
+    let wg_x = sizes[0].div_ceil(workgroup_size[0]);
+    let wg_y = sizes[1].div_ceil(workgroup_size[1]);
+    let wg_z = sizes[2].div_ceil(workgroup_size[2]);
     CubeCount::Static(wg_x, wg_y, wg_z)
 }
 
@@ -93,21 +101,22 @@ pub fn create_uniform_buffer<R: CubeRuntime, T: NoUninit>(
     )
 }
 
-pub fn create_dispatch_buffer(
-    thread_nums: CubeTensor<WgpuRuntime>,
-    wg_size: [u32; 3],
+/// Create a dynamic dispatch buffer for 1D dispatches.
+/// Takes a tensor containing the thread count and workgroup size.
+/// Returns a buffer with (wg_x, wg_y, 1) that tiles into 2D if needed.
+pub fn create_dispatch_buffer_1d(
+    thread_count: CubeTensor<WgpuRuntime>,
+    wg_size: u32,
 ) -> CubeTensor<WgpuRuntime> {
     assert!(
-        thread_nums.is_contiguous(),
-        "Thread nums should be contiguous"
+        thread_count.is_contiguous(),
+        "Thread count should be contiguous"
     );
-    let client = thread_nums.client;
-    let ret = create_tensor([3], &thread_nums.device, DType::I32);
+    let client = thread_count.client;
+    let ret = create_tensor([3], &thread_count.device, DType::I32);
 
     let data = create_meta_binding(wg::Uniforms {
-        wg_size_x: wg_size[0] as i32,
-        wg_size_y: wg_size[1] as i32,
-        wg_size_z: wg_size[2] as i32,
+        wg_size: wg_size as i32,
     });
 
     // SAFETY: wgsl FFI, kernel checked to have no OOB, bounded loops.
@@ -118,7 +127,7 @@ pub fn create_dispatch_buffer(
                 CubeCount::Static(1, 1, 1),
                 Bindings::new()
                     .with_buffers(vec![
-                        thread_nums.handle.binding(),
+                        thread_count.handle.binding(),
                         ret.handle.clone().binding(),
                     ])
                     .with_metadata(data),

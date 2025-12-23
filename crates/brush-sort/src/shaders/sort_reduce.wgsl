@@ -11,13 +11,14 @@ var<workgroup> sums: array<u32, sorting::WG>;
 fn main(
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>,
 ) {
     let num_keys = num_keys_arr[0];
     // let num_keys = num_keys_arr[0];
     let num_wgs = sorting::div_ceil(num_keys, sorting::BLOCK_SIZE);
     let num_reduce_wgs = sorting::BIN_COUNT * sorting::div_ceil(num_wgs, sorting::BLOCK_SIZE);
 
-    let group_id = sorting::get_workgroup_id(wid);
+    let group_id = sorting::get_workgroup_id(wid, num_workgroups);
 
     if group_id >= num_reduce_wgs {
         return;
