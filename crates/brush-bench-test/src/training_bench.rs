@@ -26,6 +26,9 @@ type DiffBackend = Autodiff<MainBackend>;
 
 const SEED: u64 = 42;
 const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1536, 1024), (1920, 1080), (2048, 2048)];
+// Higher resolutions for benchmarking - note that very high resolutions (4K+)
+// may exceed intersection buffer limits without chunked rendering
+const HIGH_RESOLUTIONS: [(u32, u32); 2] = [(2560, 1440), (3200, 1800)]; // 1440p, ~3K
 const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
 const ITERS_PER_SYNC: u32 = 10;
 
@@ -149,8 +152,8 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
 #[divan::bench_group(max_time = 1)]
 mod forward_rendering {
     use crate::{
-        AutodiffModule, Backend, Camera, ITERS_PER_SYNC, MainBackend, Quat, RESOLUTIONS,
-        SPLAT_COUNTS, Vec3, WgpuDevice, gen_splats, render_splats,
+        AutodiffModule, Backend, Camera, HIGH_RESOLUTIONS, ITERS_PER_SYNC, MainBackend, Quat,
+        RESOLUTIONS, SPLAT_COUNTS, Vec3, WgpuDevice, gen_splats, render_splats,
     };
 
     #[divan::bench(args = SPLAT_COUNTS)]
@@ -198,13 +201,40 @@ mod forward_rendering {
             MainBackend::sync(&device).expect("Failed to sync");
         });
     }
+
+    /// High resolution benchmarks (4K, 8K) with 2M splats
+    #[divan::bench(args = HIGH_RESOLUTIONS)]
+    fn render_2m_splats_highres(bencher: divan::Bencher, (width, height): (u32, u32)) {
+        let device = WgpuDevice::default();
+        let splats = gen_splats(&device, 2_000_000).valid();
+        let camera = Camera::new(
+            Vec3::new(0.0, 0.0, 5.0),
+            Quat::IDENTITY,
+            50.0,
+            50.0,
+            glam::vec2(0.5, 0.5),
+        );
+
+        bencher.bench_local(move || {
+            for _ in 0..ITERS_PER_SYNC {
+                let _ = render_splats(
+                    &splats,
+                    &camera,
+                    glam::uvec2(width, height),
+                    Vec3::ZERO,
+                    None,
+                );
+            }
+            MainBackend::sync(&device).expect("Failed to sync");
+        });
+    }
 }
 
 #[divan::bench_group(max_time = 2)]
 mod backward_rendering {
     use crate::{
-        Backend, Camera, DiffBackend, ITERS_PER_SYNC, MainBackend, Quat, RESOLUTIONS, Tensor,
-        TensorPrimitive, Vec3, WgpuDevice, gen_splats, render_splats_diff,
+        Backend, Camera, DiffBackend, HIGH_RESOLUTIONS, ITERS_PER_SYNC, MainBackend, Quat,
+        RESOLUTIONS, Tensor, TensorPrimitive, Vec3, WgpuDevice, gen_splats, render_splats_diff,
     };
 
     #[divan::bench(args = [1_000_000, 2_000_000, 5_000_000])]
@@ -233,6 +263,30 @@ mod backward_rendering {
 
     #[divan::bench(args = RESOLUTIONS)]
     fn render_grad_2m_splats(bencher: divan::Bencher, (width, height): (u32, u32)) {
+        let device = WgpuDevice::default();
+        let splats = gen_splats(&device, 2_000_000);
+        let camera = Camera::new(
+            Vec3::new(0.0, 0.0, 5.0),
+            Quat::IDENTITY,
+            50.0,
+            50.0,
+            glam::vec2(0.5, 0.5),
+        );
+        bencher.bench_local(move || {
+            for _ in 0..ITERS_PER_SYNC {
+                let diff_out =
+                    render_splats_diff(&splats, &camera, glam::uvec2(width, height), Vec3::ZERO);
+                let img: Tensor<DiffBackend, 3> =
+                    Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+                let _ = img.mean().backward();
+            }
+            MainBackend::sync(&device).expect("Failed to sync");
+        });
+    }
+
+    /// High resolution backward benchmarks (4K, 8K) with 2M splats
+    #[divan::bench(args = HIGH_RESOLUTIONS)]
+    fn render_grad_2m_splats_highres(bencher: divan::Bencher, (width, height): (u32, u32)) {
         let device = WgpuDevice::default();
         let splats = gen_splats(&device, 2_000_000);
         let camera = Camera::new(
