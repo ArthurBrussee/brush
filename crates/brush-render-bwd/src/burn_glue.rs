@@ -74,11 +74,11 @@ pub struct GaussianBackwardState<B: Backend> {
     pub(crate) out_img: FloatTensor<B>,
     pub(crate) projected_splats: FloatTensor<B>,
     pub(crate) uniforms_buffer: IntTensor<B>,
-    pub(crate) compact_gid_from_isect: IntTensor<B>,
     pub(crate) global_from_compact_gid: IntTensor<B>,
-    pub(crate) tile_offsets: IntTensor<B>,
+    pub(crate) num_visible: IntTensor<B>,
     pub(crate) render_mode: SplatRenderMode,
     pub(crate) sh_degree: u32,
+    pub(crate) img_size: glam::UVec2,
 }
 
 #[derive(Debug)]
@@ -198,10 +198,8 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
 
         let wrapped_aux = RenderAux::<Self> {
             projected_splats: <Self as AutodiffBackend>::from_inner(aux.projected_splats.clone()),
-            num_intersections: aux.num_intersections,
-            tile_offsets: aux.tile_offsets.clone(),
-            compact_gid_from_isect: aux.compact_gid_from_isect.clone(),
             global_from_compact_gid: aux.global_from_compact_gid.clone(),
+            num_visible: aux.num_visible.clone(),
             uniforms_buffer: aux.uniforms_buffer.clone(),
             visible: <Self as AutodiffBackend>::from_inner(aux.visible),
             img_size: aux.img_size,
@@ -222,10 +220,10 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
                     out_img: out_img.clone(),
                     projected_splats: aux.projected_splats,
                     uniforms_buffer: aux.uniforms_buffer,
-                    tile_offsets: aux.tile_offsets,
-                    compact_gid_from_isect: aux.compact_gid_from_isect,
                     render_mode,
                     global_from_compact_gid: aux.global_from_compact_gid,
+                    num_visible: aux.num_visible,
+                    img_size: aux.img_size,
                 };
 
                 let out_img = prep.finish(state, out_img);
@@ -259,6 +257,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             desc: CustomOpIr,
             render_mode: SplatRenderMode,
             sh_degree: u32,
+            img_size: glam::UVec2,
         }
 
         impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp {
@@ -277,9 +276,8 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                     out_img,
                     projected_splats,
                     uniforms_buffer,
-                    tile_offsets,
-                    compact_gid_from_isect,
                     global_from_compact_gid,
+                    num_visible,
                 ] = inputs;
 
                 let [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine] = outputs;
@@ -292,13 +290,12 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                     out_img: h.get_float_tensor::<MainBackendBase>(out_img),
                     projected_splats: h.get_float_tensor::<MainBackendBase>(projected_splats),
                     uniforms_buffer: h.get_int_tensor::<MainBackendBase>(uniforms_buffer),
-                    tile_offsets: h.get_int_tensor::<MainBackendBase>(tile_offsets),
-                    compact_gid_from_isect: h
-                        .get_int_tensor::<MainBackendBase>(compact_gid_from_isect),
                     global_from_compact_gid: h
                         .get_int_tensor::<MainBackendBase>(global_from_compact_gid),
+                    num_visible: h.get_int_tensor::<MainBackendBase>(num_visible),
                     sh_degree: self.sh_degree,
                     render_mode: self.render_mode,
+                    img_size: self.img_size,
                 };
 
                 let grads =
@@ -361,9 +358,8 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             state.out_img,
             state.projected_splats,
             state.uniforms_buffer,
-            state.tile_offsets,
-            state.compact_gid_from_isect,
             state.global_from_compact_gid,
+            state.num_visible,
         ];
 
         let stream = OperationStreams::with_inputs(&input_tensors);
@@ -385,10 +381,10 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                 stream,
                 OperationIr::Custom(desc.clone()),
                 CustomOp {
-                    // state,
                     desc,
                     sh_degree: state.sh_degree,
                     render_mode: state.render_mode,
+                    img_size: state.img_size,
                 },
             )
             .outputs();

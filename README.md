@@ -79,7 +79,7 @@ You can also open this folder as a project in Android Studio and run things from
 
 ## Benchmarks
 
-Rendering and training are generally faster than gsplat. You can run benchmarks of some of the kernels using `cargo bench`.
+Rendering and training are generally faster than gsplat. You can run benchmarks of some of the kernels using `cargo bench -p brush-bench-test`.
 
 # Acknowledgements
 

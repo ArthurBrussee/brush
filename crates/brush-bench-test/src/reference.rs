@@ -5,7 +5,7 @@ use brush_render::{
     gaussian_splats::Splats,
 };
 use brush_render_bwd::render_splats;
-use brush_rerun::burn_to_rerun::{BurnToImage, BurnToRerun};
+use brush_rerun::burn_to_rerun::BurnToImage;
 use burn::{
     backend::{Autodiff, wgpu::WgpuDevice},
     prelude::Backend,
@@ -138,10 +138,6 @@ async fn test_reference() -> Result<()> {
             rec.log(
                 "img/dif",
                 &(img_ref.clone() - out.clone()).into_rerun_image().await,
-            )?;
-            rec.log(
-                "images/tile_depth",
-                &aux.calc_tile_depth().into_rerun().await,
             )?;
         }
 

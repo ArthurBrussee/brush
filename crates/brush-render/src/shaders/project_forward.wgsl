@@ -1,9 +1,6 @@
-#define UNIFORM_WRITE
-
 #import helpers;
 
-// Unfiroms contains the splat count which we're writing to.
-@group(0) @binding(0) var<storage, read_write> uniforms: helpers::RenderUniforms;
+@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
 
 @group(0) @binding(1) var<storage, read> means: array<helpers::PackedVec3>;
 @group(0) @binding(2) var<storage, read> quats: array<vec4f>;
@@ -12,6 +9,8 @@
 
 @group(0) @binding(5) var<storage, read_write> global_from_compact_gid: array<u32>;
 @group(0) @binding(6) var<storage, read_write> depths: array<f32>;
+// Separate atomic buffer for num_visible count
+@group(0) @binding(7) var<storage, read_write> num_visible: atomic<u32>;
 
 const WG_SIZE: u32 = 256u;
 
@@ -77,7 +76,7 @@ fn main(
         return;
     }
     // Now write all the data to the buffers.
-    let write_id = atomicAdd(&uniforms.num_visible, 1u);
+    let write_id = atomicAdd(&num_visible, 1u);
     global_from_compact_gid[write_id] = global_gid;
     depths[write_id] = mean_c.z;
 }

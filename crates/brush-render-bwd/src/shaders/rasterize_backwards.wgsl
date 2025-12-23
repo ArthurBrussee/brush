@@ -80,7 +80,10 @@ fn main(
     for (var i = 0u; i < PIXELS_PER_THREAD; i++) {
         // Process 4 consecutive pixels in the original linear order
         let thread_id = global_id.x * PIXELS_PER_THREAD + i;
-        pix_locs[i] = helpers::map_1d_to_2d(thread_id, uniforms.tile_bounds.x);
+        // pix_loc_chunk is chunk-relative
+        let pix_loc_chunk = helpers::map_1d_to_2d(thread_id, uniforms.chunk_tile_bounds.x);
+        // Convert to full image coordinates
+        pix_locs[i] = pix_loc_chunk + uniforms.chunk_offset;
         let pix_id = pix_locs[i].x + pix_locs[i].y * uniforms.img_size.x;
         pix_ids[i] = pix_id;
 
@@ -98,8 +101,10 @@ fn main(
         pix_outs[i] = vec4f(0.0, 0.0, 0.0, 1.0);
     }
 
-    let tile_loc = vec2u(pix_locs[0].x / helpers::TILE_WIDTH, pix_locs[0].y / helpers::TILE_WIDTH);
-    let tile_id = tile_loc.x + tile_loc.y * uniforms.tile_bounds.x;
+    // Compute chunk-relative tile location for tile_offsets lookup
+    let pix_loc_chunk_0 = pix_locs[0] - uniforms.chunk_offset;
+    let tile_loc = vec2u(pix_loc_chunk_0.x / helpers::TILE_WIDTH, pix_loc_chunk_0.y / helpers::TILE_WIDTH);
+    let tile_id = tile_loc.x + tile_loc.y * uniforms.chunk_tile_bounds.x;
 
     // have all threads in tile process the same gaussians in batches
     // first collect gaussians between the bin counts.

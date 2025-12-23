@@ -30,12 +30,18 @@ fn main(
     @builtin(global_invocation_id) global_id: vec3u,
     @builtin(local_invocation_index) local_idx: u32,
 ) {
-    let pix_loc = helpers::map_1d_to_2d(global_id.x, uniforms.tile_bounds.x);
+    // pix_loc is chunk-relative (within this chunk's coordinate system)
+    let pix_loc_chunk = helpers::map_1d_to_2d(global_id.x, uniforms.chunk_tile_bounds.x);
+    // Convert to full image coordinates for output
+    let pix_loc = pix_loc_chunk + uniforms.chunk_offset;
     let pix_id = pix_loc.x + pix_loc.y * uniforms.img_size.x;
+    // pixel_coord uses full image coordinates for gaussian intersection
     let pixel_coord = vec2f(pix_loc) + 0.5f;
-    let tile_loc = vec2u(pix_loc.x / helpers::TILE_WIDTH, pix_loc.y / helpers::TILE_WIDTH);
+    // tile_loc is chunk-relative for tile_offsets lookup
+    let tile_loc = vec2u(pix_loc_chunk.x / helpers::TILE_WIDTH, pix_loc_chunk.y / helpers::TILE_WIDTH);
 
-    let tile_id = tile_loc.x + tile_loc.y * uniforms.tile_bounds.x;
+    let tile_id = tile_loc.x + tile_loc.y * uniforms.chunk_tile_bounds.x;
+    // Check against full image bounds
     let inside = pix_loc.x < uniforms.img_size.x && pix_loc.y < uniforms.img_size.y;
 
     // have all threads in tile process the same gaussians in batches
