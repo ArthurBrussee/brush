@@ -1,4 +1,4 @@
-use brush_kernel::calc_cube_count;
+use brush_kernel::calc_cube_count_1d;
 use brush_kernel::create_tensor;
 use brush_wgsl::wgsl_kernel;
 use burn::tensor::DType;
@@ -29,7 +29,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
         client
             .launch_unchecked(
                 PrefixSumScan::task(),
-                calc_cube_count([num as u32], PrefixSumScan::WORKGROUP_SIZE),
+                calc_cube_count_1d(num as u32, PrefixSumScan::WORKGROUP_SIZE[0]),
                 Bindings::new().with_buffers(vec![
                     input.handle.binding(),
                     outputs.handle.clone().binding(),
@@ -56,7 +56,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
         client
             .launch_unchecked(
                 PrefixSumScanSums::task(),
-                calc_cube_count([work_size[0] as u32], PrefixSumScanSums::WORKGROUP_SIZE),
+                calc_cube_count_1d(work_size[0] as u32, PrefixSumScanSums::WORKGROUP_SIZE[0]),
                 Bindings::new().with_buffers(vec![
                     outputs.handle.clone().binding(),
                     group_buffer[0].handle.clone().binding(),
@@ -71,7 +71,10 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
             client
                 .launch_unchecked(
                     PrefixSumScanSums::task(),
-                    calc_cube_count([work_size[l + 1] as u32], PrefixSumScanSums::WORKGROUP_SIZE),
+                    calc_cube_count_1d(
+                        work_size[l + 1] as u32,
+                        PrefixSumScanSums::WORKGROUP_SIZE[0],
+                    ),
                     Bindings::new().with_buffers(vec![
                         group_buffer[l].handle.clone().binding(),
                         group_buffer[l + 1].handle.clone().binding(),
@@ -89,7 +92,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
             client
                 .launch_unchecked(
                     PrefixSumAddScannedSums::task(),
-                    calc_cube_count([work_sz as u32], PrefixSumAddScannedSums::WORKGROUP_SIZE),
+                    calc_cube_count_1d(work_sz as u32, PrefixSumAddScannedSums::WORKGROUP_SIZE[0]),
                     Bindings::new().with_buffers(vec![
                         group_buffer[l].handle.clone().binding(),
                         group_buffer[l - 1].handle.clone().binding(),
@@ -104,9 +107,9 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
         client
             .launch_unchecked(
                 PrefixSumAddScannedSums::task(),
-                calc_cube_count(
-                    [(work_size[0] * threads_per_group) as u32],
-                    PrefixSumAddScannedSums::WORKGROUP_SIZE,
+                calc_cube_count_1d(
+                    (work_size[0] * threads_per_group) as u32,
+                    PrefixSumAddScannedSums::WORKGROUP_SIZE[0],
                 ),
                 Bindings::new().with_buffers(vec![
                     group_buffer[0].handle.clone().binding(),
@@ -198,6 +201,38 @@ mod tests {
             .zip(prefix_sum_ref)
         {
             assert_eq!(*summed, reff);
+        }
+    }
+
+    #[test]
+    fn test_sum_large() {
+        // Test with 20M elements to verify 2D dispatch works correctly.
+        const NUM_ELEMENTS: usize = 30_000_000;
+
+        // Use small values to avoid overflow in prefix sum
+        let data: Vec<i32> = (0..NUM_ELEMENTS).map(|i| (i % 100) as i32).collect();
+
+        let device = Default::default();
+        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
+        let summed = prefix_sum(keys);
+        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed).to_data();
+
+        // Verify a few samples rather than all 20M elements
+        let summed_slice = summed.as_slice::<i32>().expect("Wrong type");
+        assert_eq!(summed_slice.len(), NUM_ELEMENTS);
+
+        // First element should equal first input
+        assert_eq!(summed_slice[0], data[0]);
+
+        // Check some specific indices
+        let check_indices = [0, 1000, 10_000, 100_000, 1_000_000, 10_000_000, 19_999_999];
+        for &idx in &check_indices {
+            let expected: i32 = data[..=idx].iter().sum();
+            assert_eq!(
+                summed_slice[idx], expected,
+                "Mismatch at index {idx}: got {}, expected {expected}",
+                summed_slice[idx]
+            );
         }
     }
 }

@@ -1,7 +1,9 @@
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::frontend::CompilationArg;
-use burn_cubecl::cubecl::prelude::{ABSOLUTE_POS, Tensor};
+use burn_cubecl::cubecl::prelude::{
+    CUBE_COUNT_X, CUBE_DIM_X, CUBE_POS_X, CUBE_POS_Y, Tensor, UNIT_POS,
+};
 
 pub(crate) const CHECKS_PER_ITER: u32 = 8;
 
@@ -36,7 +38,10 @@ pub fn get_tile_offsets(
     num_inter: &Tensor<u32>,
 ) {
     let inter = num_inter[0];
-    let base_id = ABSOLUTE_POS * CHECKS_PER_ITER;
+    // Compute linear position from 2D dispatch (for large dispatches that exceed 65535 workgroups)
+    let workgroup_id = CUBE_POS_X + CUBE_POS_Y * CUBE_COUNT_X;
+    let absolute_pos = workgroup_id * CUBE_DIM_X + UNIT_POS;
+    let base_id = absolute_pos * CHECKS_PER_ITER;
 
     #[unroll]
     for i in 0..CHECKS_PER_ITER {

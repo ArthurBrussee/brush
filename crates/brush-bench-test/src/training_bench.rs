@@ -25,7 +25,7 @@ fn main() {
 type DiffBackend = Autodiff<MainBackend>;
 
 const SEED: u64 = 42;
-const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1536, 1024), (1920, 1080), (2048, 2048)];
+const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
 const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
 const ITERS_PER_SYNC: u32 = 10;
 

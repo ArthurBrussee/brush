@@ -21,13 +21,14 @@ var<workgroup> local_histogram: array<atomic<u32>, sorting::BIN_COUNT>;
 @workgroup_size(sorting::WG, 1, 1)
 fn main(
     @builtin(local_invocation_id) local_id: vec3<u32>,
-    @builtin(workgroup_id) gid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>,
 ) {
     let num_keys = num_keys_arr[0];
     // let num_keys = num_keys_arr[0];
     let num_wgs = sorting::div_ceil(num_keys, sorting::BLOCK_SIZE);
 
-    let group_id = gid.x;
+    let group_id = sorting::get_workgroup_id(wid, num_workgroups);
 
     if group_id >= num_wgs {
         return;
@@ -75,12 +76,12 @@ fn main(
                 local_sum += lds_scratch[local_id.x - 1u];
             }
             let key_offset = (local_sum >> (bit_key * 8u)) & 0xffu;
-            
+
             lds_sums[key_offset] = local_key;
             workgroupBarrier();
             local_key = lds_sums[local_id.x];
             workgroupBarrier();
-        
+
             lds_sums[key_offset] = local_value;
             workgroupBarrier();
             local_value = lds_sums[local_id.x];

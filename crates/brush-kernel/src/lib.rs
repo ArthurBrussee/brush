@@ -20,12 +20,26 @@ pub use bytemuck;
 #[wgsl_kernel(source = "src/shaders/wg.wgsl")]
 struct Wg;
 
-pub fn calc_cube_count<const D: usize>(sizes: [u32; D], workgroup_size: [u32; 3]) -> CubeCount {
-    CubeCount::Static(
-        sizes.first().unwrap_or(&1).div_ceil(workgroup_size[0]),
-        sizes.get(1).unwrap_or(&1).div_ceil(workgroup_size[1]),
-        sizes.get(2).unwrap_or(&1).div_ceil(workgroup_size[2]),
-    )
+/// Calculate workgroup count for a 1D dispatch, tiling into 2D if needed.
+/// Use this for kernels processing a 1D array of elements that may exceed 65535 workgroups.
+pub fn calc_cube_count_1d(num_elements: u32, workgroup_size: u32) -> CubeCount {
+    let total_wgs = num_elements.div_ceil(workgroup_size);
+
+    // WebGPU limit is 65535 workgroups per dimension.
+    if total_wgs > 65535 {
+        let wg_y = (total_wgs as f64).sqrt().ceil() as u32;
+        let wg_x = total_wgs.div_ceil(wg_y);
+        CubeCount::Static(wg_x, wg_y, 1)
+    } else {
+        CubeCount::Static(total_wgs, 1, 1)
+    }
+}
+
+pub fn calc_cube_count_3d(sizes: [u32; 3], workgroup_size: [u32; 3]) -> CubeCount {
+    let wg_x = sizes[0].div_ceil(workgroup_size[0]);
+    let wg_y = sizes[1].div_ceil(workgroup_size[1]);
+    let wg_z = sizes[2].div_ceil(workgroup_size[2]);
+    CubeCount::Static(wg_x, wg_y, wg_z)
 }
 
 // Reserve a buffer from the client for the given shape.
@@ -84,22 +98,20 @@ pub fn create_uniform_buffer<R: CubeRuntime, T: NoUninit>(
     )
 }
 
-pub fn create_dispatch_buffer(
-    thread_nums: CubeTensor<WgpuRuntime>,
-    wg_size: [u32; 3],
+/// Create a dynamic dispatch buffer for 1D dispatches.
+/// Returns a buffer with (`wg_x`, `wg_y`, 1) that tiles into 2D if needed.
+pub fn create_dispatch_buffer_1d(
+    thread_count: CubeTensor<WgpuRuntime>,
+    wg_size: u32,
 ) -> CubeTensor<WgpuRuntime> {
     assert!(
-        thread_nums.is_contiguous(),
-        "Thread nums should be contiguous"
+        thread_count.is_contiguous(),
+        "Thread count should be contiguous"
     );
-    let client = thread_nums.client;
-    let ret = create_tensor([3], &thread_nums.device, DType::I32);
+    let client = thread_count.client;
+    let ret = create_tensor([3], &thread_count.device, DType::I32);
 
-    let data = create_meta_binding(wg::Uniforms {
-        wg_size_x: wg_size[0] as i32,
-        wg_size_y: wg_size[1] as i32,
-        wg_size_z: wg_size[2] as i32,
-    });
+    let data = create_meta_binding(wg::Uniforms { wg_size });
 
     // SAFETY: wgsl FFI, kernel checked to have no OOB, bounded loops.
     unsafe {
@@ -109,7 +121,7 @@ pub fn create_dispatch_buffer(
                 CubeCount::Static(1, 1, 1),
                 Bindings::new()
                     .with_buffers(vec![
-                        thread_nums.handle.binding(),
+                        thread_count.handle.binding(),
                         ret.handle.clone().binding(),
                     ])
                     .with_metadata(data),

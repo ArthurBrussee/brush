@@ -3,6 +3,16 @@
 
 const THREADS_PER_GROUP: u32 = 512u;
 
+// Compute linear workgroup ID from 2D dispatch
+fn get_workgroup_id(wid: vec3u, num_wgs: vec3u) -> u32 {
+    return wid.x + wid.y * num_wgs.x;
+}
+
+// Compute linear global invocation ID from 2D dispatch
+fn get_global_id(wid: vec3u, num_wgs: vec3u, lid: u32) -> u32 {
+    return get_workgroup_id(wid, num_wgs) * THREADS_PER_GROUP + lid;
+}
+
 var<workgroup> bucket: array<u32, THREADS_PER_GROUP>;
 
 fn groupScan(id: u32, gi: u32, x: u32) {
@@ -20,4 +30,3 @@ fn groupScan(id: u32, gi: u32, x: u32) {
         output[id] = bucket[gi];
     }
 }
- 

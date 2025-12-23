@@ -289,10 +289,16 @@ fn persp_proj_vjp(
     return v_mean3d;
 }
 
+const WG_SIZE: u32 = 256u;
+
 @compute
-@workgroup_size(256, 1, 1)
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-    let compact_gid = gid.x;
+@workgroup_size(WG_SIZE, 1, 1)
+fn main(
+    @builtin(workgroup_id) wid: vec3u,
+    @builtin(num_workgroups) num_wgs: vec3u,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    let compact_gid = helpers::get_global_id(wid, num_wgs, lid, WG_SIZE);
     if compact_gid >= uniforms.num_visible {
         return;
     }

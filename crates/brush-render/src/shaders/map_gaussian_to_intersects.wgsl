@@ -12,13 +12,19 @@
     @group(0) @binding(5) var<storage, read_write> num_intersections: array<u32>;
 #endif
 
+const WG_SIZE: u32 = 256u;
+
 @compute
-@workgroup_size(256, 1, 1)
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-    let compact_gid = gid.x;
+@workgroup_size(WG_SIZE, 1, 1)
+fn main(
+    @builtin(workgroup_id) wid: vec3u,
+    @builtin(num_workgroups) num_wgs: vec3u,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    let compact_gid = helpers::get_global_id(wid, num_wgs, lid, WG_SIZE);
 
 #ifndef PREPASS
-    if gid.x == 0 {
+    if compact_gid == 0u {
         num_intersections[0] = splat_cum_hit_counts[uniforms.num_visible];
     }
 #endif
