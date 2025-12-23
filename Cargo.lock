@@ -1180,6 +1180,7 @@ dependencies = [
 name = "brush-render-bwd"
 version = "0.3.0"
 dependencies = [
+ "assert_approx_eq",
  "brush-kernel",
  "brush-render",
  "brush-wgsl",
@@ -1187,6 +1188,7 @@ dependencies = [
  "burn-cubecl",
  "burn-fusion",
  "burn-ir",
+ "burn-wgpu",
  "bytemuck",
  "glam",
  "tracing",

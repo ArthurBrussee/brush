@@ -200,4 +200,36 @@ mod tests {
             assert_eq!(*summed, reff);
         }
     }
+
+    #[test]
+    fn test_sum_large() {
+        // Test with 20M elements to verify 2D dispatch works correctly.
+        const NUM_ELEMENTS: usize = 30_000_000;
+
+        // Use small values to avoid overflow in prefix sum
+        let data: Vec<i32> = (0..NUM_ELEMENTS).map(|i| (i % 100) as i32).collect();
+
+        let device = Default::default();
+        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
+        let summed = prefix_sum(keys);
+        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed).to_data();
+
+        // Verify a few samples rather than all 20M elements
+        let summed_slice = summed.as_slice::<i32>().expect("Wrong type");
+        assert_eq!(summed_slice.len(), NUM_ELEMENTS);
+
+        // First element should equal first input
+        assert_eq!(summed_slice[0], data[0]);
+
+        // Check some specific indices
+        let check_indices = [0, 1000, 10_000, 100_000, 1_000_000, 10_000_000, 19_999_999];
+        for &idx in &check_indices {
+            let expected: i32 = data[..=idx].iter().sum();
+            assert_eq!(
+                summed_slice[idx], expected,
+                "Mismatch at index {idx}: got {}, expected {expected}",
+                summed_slice[idx]
+            );
+        }
+    }
 }

@@ -10,7 +10,7 @@ use burn::{
 };
 
 use crate::{
-    GAUSSIANS_UPPER_BOUND, INTERSECTS_UPPER_BOUND,
+    INTERSECTS_UPPER_BOUND,
     render::max_intersections,
     shaders::{self, helpers::TILE_WIDTH},
     validation::validate_tensor_val,
@@ -74,10 +74,6 @@ impl<B: Backend> RenderAux<B> {
         assert!(
             num_visible <= num_points,
             "Something went wrong when calculating the number of visible gaussians. {num_visible} > {num_points}"
-        );
-        assert!(
-            num_visible < GAUSSIANS_UPPER_BOUND,
-            "Brush doesn't support this many gaussians currently. {num_visible} > {GAUSSIANS_UPPER_BOUND}"
         );
 
         // Projected splats is only valid up to num_visible and undefined for other values.

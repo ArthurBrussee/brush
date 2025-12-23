@@ -13,6 +13,9 @@ fn ceil_div(a: i32, b: i32) -> i32 {
     return (a + b - 1) / b;
 }
 
+// Maximum workgroups per dimension (WebGPU limit)
+const MAX_WG_PER_DIM: i32 = 65535;
+
 @compute
 @workgroup_size(1, 1, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3u) {
@@ -35,7 +38,17 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
         cz = thread_counts[2];
     }
 
-    wg_count[0] = ceil_div(cx, uniforms.wg_size_x);
-    wg_count[1] = ceil_div(cy, uniforms.wg_size_y);
-    wg_count[2] = ceil_div(cz, uniforms.wg_size_z);
+    var wg_x = ceil_div(cx, uniforms.wg_size_x);
+    var wg_y = ceil_div(cy, uniforms.wg_size_y);
+    let wg_z = ceil_div(cz, uniforms.wg_size_z);
+
+    // If wg_x exceeds the limit, split into 2D dispatch.
+    if wg_x > MAX_WG_PER_DIM && wg_y == 1 {
+        wg_y = ceil_div(wg_x, MAX_WG_PER_DIM);
+        wg_x = MAX_WG_PER_DIM;
+    }
+
+    wg_count[0] = wg_x;
+    wg_count[1] = wg_y;
+    wg_count[2] = wg_z;
 }

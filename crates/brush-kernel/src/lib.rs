@@ -20,12 +20,21 @@ pub use bytemuck;
 #[wgsl_kernel(source = "src/shaders/wg.wgsl")]
 struct Wg;
 
+// Maximum workgroups per dimension (WebGPU limit)
+const MAX_WG_PER_DIM: u32 = 65535;
+
 pub fn calc_cube_count<const D: usize>(sizes: [u32; D], workgroup_size: [u32; 3]) -> CubeCount {
-    CubeCount::Static(
-        sizes.first().unwrap_or(&1).div_ceil(workgroup_size[0]),
-        sizes.get(1).unwrap_or(&1).div_ceil(workgroup_size[1]),
-        sizes.get(2).unwrap_or(&1).div_ceil(workgroup_size[2]),
-    )
+    let mut wg_x = sizes.first().unwrap_or(&1).div_ceil(workgroup_size[0]);
+    let mut wg_y = sizes.get(1).unwrap_or(&1).div_ceil(workgroup_size[1]);
+    let wg_z = sizes.get(2).unwrap_or(&1).div_ceil(workgroup_size[2]);
+
+    // If wg_x exceeds the limit and wg_y is 1, split into 2D dispatch.
+    if wg_x > MAX_WG_PER_DIM && wg_y == 1 {
+        wg_y = wg_x.div_ceil(MAX_WG_PER_DIM);
+        wg_x = MAX_WG_PER_DIM;
+    }
+
+    CubeCount::Static(wg_x, wg_y, wg_z)
 }
 
 // Reserve a buffer from the client for the given shape.

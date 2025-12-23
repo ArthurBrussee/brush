@@ -13,10 +13,15 @@
 @group(0) @binding(5) var<storage, read_write> global_from_compact_gid: array<u32>;
 @group(0) @binding(6) var<storage, read_write> depths: array<f32>;
 
+const WG_SIZE: u32 = 256u;
+
 @compute
-@workgroup_size(256, 1, 1)
-fn main(@builtin(global_invocation_id) global_id: vec3u) {
-    let global_gid = global_id.x;
+@workgroup_size(WG_SIZE, 1, 1)
+fn main(
+    @builtin(workgroup_id) wid: vec3u,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    let global_gid = helpers::get_global_id(wid, lid, WG_SIZE);
 
     if global_gid >= uniforms.total_splats {
         return;
