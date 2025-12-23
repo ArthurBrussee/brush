@@ -26,7 +26,6 @@ pub fn calc_cube_count_1d(num_elements: u32, workgroup_size: u32) -> CubeCount {
     let total_wgs = num_elements.div_ceil(workgroup_size);
 
     // WebGPU limit is 65535 workgroups per dimension.
-    // Split into 2D using sqrt to minimize total dispatched workgroups.
     if total_wgs > 65535 {
         let wg_y = (total_wgs as f64).sqrt().ceil() as u32;
         let wg_x = total_wgs.div_ceil(wg_y);
@@ -115,9 +114,7 @@ pub fn create_dispatch_buffer_1d(
     let client = thread_count.client;
     let ret = create_tensor([3], &thread_count.device, DType::I32);
 
-    let data = create_meta_binding(wg::Uniforms {
-        wg_size: wg_size as i32,
-    });
+    let data = create_meta_binding(wg::Uniforms { wg_size });
 
     // SAFETY: wgsl FFI, kernel checked to have no OOB, bounded loops.
     unsafe {
