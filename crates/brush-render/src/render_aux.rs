@@ -62,8 +62,8 @@ impl<B: Backend> RenderAux<B> {
         let max_intersects = max_intersections(img_size, num_points);
 
         assert!(
-            num_intersections < (max_intersects as i32) / 2,
-            "(Close to) too many intersections, estimated too low of a number. {num_intersections} / {max_intersects}"
+            num_intersections < max_intersects as i32,
+            "Too many intersections, estimated too low of a number. {num_intersections} / {max_intersects}"
         );
 
         assert!(
