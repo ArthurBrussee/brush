@@ -35,8 +35,6 @@ pub fn calc_cube_count_1d(num_elements: u32, workgroup_size: u32) -> CubeCount {
     }
 }
 
-/// Calculate workgroup count for a general 3D dispatch.
-/// Does not handle tiling - use calc_cube_count_1d for large 1D dispatches.
 pub fn calc_cube_count_3d(sizes: [u32; 3], workgroup_size: [u32; 3]) -> CubeCount {
     let wg_x = sizes[0].div_ceil(workgroup_size[0]);
     let wg_y = sizes[1].div_ceil(workgroup_size[1]);
@@ -101,8 +99,7 @@ pub fn create_uniform_buffer<R: CubeRuntime, T: NoUninit>(
 }
 
 /// Create a dynamic dispatch buffer for 1D dispatches.
-/// Takes a tensor containing the thread count and workgroup size.
-/// Returns a buffer with (wg_x, wg_y, 1) that tiles into 2D if needed.
+/// Returns a buffer with (`wg_x`, `wg_y`, 1) that tiles into 2D if needed.
 pub fn create_dispatch_buffer_1d(
     thread_count: CubeTensor<WgpuRuntime>,
     wg_size: u32,
