@@ -1,16 +1,19 @@
 #import helpers;
 
-@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
-@group(0) @binding(1) var<storage, read> num_visible: u32;
-@group(0) @binding(2) var<storage, read> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(0) var<storage, read> num_visible: u32;
+@group(0) @binding(1) var<storage, read> projected: array<helpers::ProjectedSplat>;
 
 #ifdef PREPASS
-    @group(0) @binding(3) var<storage, read_write> splat_intersect_counts: array<u32>;
+    @group(0) @binding(2) var<storage, read_write> splat_intersect_counts: array<u32>;
+
+    @group(0) @binding(3) var<storage, read> uniforms: helpers::RenderUniforms;
 #else
-    @group(0) @binding(3) var<storage, read> splat_cum_hit_counts: array<u32>;
-    @group(0) @binding(4) var<storage, read_write> tile_id_from_isect: array<u32>;
-    @group(0) @binding(5) var<storage, read_write> compact_gid_from_isect: array<u32>;
-    @group(0) @binding(6) var<storage, read_write> num_intersections: array<u32>;
+    @group(0) @binding(2) var<storage, read> splat_cum_hit_counts: array<u32>;
+    @group(0) @binding(3) var<storage, read_write> tile_id_from_isect: array<u32>;
+    @group(0) @binding(4) var<storage, read_write> compact_gid_from_isect: array<u32>;
+    @group(0) @binding(5) var<storage, read_write> num_intersections: array<u32>;
+
+    @group(0) @binding(6) var<storage, read> uniforms: helpers::RenderUniforms;
 #endif
 
 const WG_SIZE: u32 = 256u;
@@ -46,7 +49,7 @@ fn main(
     // Convert to chunk-relative coordinates for tile computation
     let chunk_offset = vec2f(uniforms.chunk_offset);
     let mean2d_chunk = mean2d - chunk_offset;
-    let tile_bbox = helpers::get_tile_bbox(mean2d_chunk, extent, uniforms.chunk_tile_bounds);
+    let tile_bbox = helpers::get_tile_bbox(mean2d_chunk, extent, uniforms.tile_bounds);
     let tile_bbox_min = tile_bbox.xy;
     let tile_bbox_max = tile_bbox.zw;
 
@@ -72,7 +75,7 @@ fn main(
         let rect = helpers::tile_rect(vec2u(tx, ty));
         if helpers::will_primitive_contribute(rect, mean2d_chunk, conic, power_threshold) {
             // tile_id is relative to this chunk's tile grid
-            let tile_id = tx + ty * uniforms.chunk_tile_bounds.x;
+            let tile_id = tx + ty * uniforms.tile_bounds.x;
 
         #ifndef PREPASS
             let isect_id = base_isect_id + num_tiles_hit;

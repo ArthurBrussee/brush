@@ -1,8 +1,4 @@
-use brush_kernel::CubeCount;
-use brush_kernel::create_dispatch_buffer_1d;
-use brush_kernel::create_tensor;
-use brush_kernel::create_uniform_buffer;
-use brush_wgsl::wgsl_kernel;
+use brush_kernel::{CubeCount, create_dispatch_buffer_1d, create_tensor, wgsl_kernel};
 use burn::tensor::DType;
 use burn::tensor::Int;
 use burn::tensor::Tensor;
@@ -74,9 +70,6 @@ pub fn radix_argsort(
     let mut cur_vals = input_values;
 
     for pass in 0..sorting_bits.div_ceil(4) {
-        let uniforms_buffer: CubeTensor<WgpuRuntime> =
-            create_uniform_buffer(Uniforms { shift: pass * 4 }, device, client);
-
         let count_buf = create_tensor([(max_needed_wgs as usize) * 16], device, DType::I32);
 
         // use safe distpatch as dynamic work count isn't verified.
@@ -84,12 +77,13 @@ pub fn radix_argsort(
             .launch(
                 SortCount::task(),
                 CubeCount::Dynamic(num_wgs.clone().handle.binding()),
-                Bindings::new().with_buffers(vec![
-                    uniforms_buffer.handle.clone().binding(),
-                    n_sort.handle.clone().binding(),
-                    cur_keys.handle.clone().binding(),
-                    count_buf.handle.clone().binding(),
-                ]),
+                Bindings::new()
+                    .with_buffers(vec![
+                        n_sort.handle.clone().binding(),
+                        cur_keys.handle.clone().binding(),
+                        count_buf.handle.clone().binding(),
+                    ])
+                    .with_metadata(Uniforms { shift: pass * 4 }.to_meta_binding()),
             )
             .expect("Failed to run sorting");
 
@@ -142,15 +136,16 @@ pub fn radix_argsort(
             .launch(
                 SortScatter::task(),
                 CubeCount::Dynamic(num_wgs.handle.clone().binding()),
-                Bindings::new().with_buffers(vec![
-                    uniforms_buffer.handle.clone().binding(),
-                    n_sort.handle.clone().binding(),
-                    cur_keys.handle.clone().binding(),
-                    cur_vals.handle.clone().binding(),
-                    count_buf.handle.clone().binding(),
-                    output_keys.handle.clone().binding(),
-                    output_values.handle.clone().binding(),
-                ]),
+                Bindings::new()
+                    .with_buffers(vec![
+                        n_sort.handle.clone().binding(),
+                        cur_keys.handle.clone().binding(),
+                        cur_vals.handle.clone().binding(),
+                        count_buf.handle.clone().binding(),
+                        output_keys.handle.clone().binding(),
+                        output_values.handle.clone().binding(),
+                    ])
+                    .with_metadata(Uniforms { shift: pass * 4 }.to_meta_binding()),
             )
             .expect("Failed to run sorting");
 

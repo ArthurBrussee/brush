@@ -1,6 +1,4 @@
-use brush_kernel::calc_cube_count_1d;
-use brush_kernel::create_tensor;
-use brush_wgsl::wgsl_kernel;
+use brush_kernel::{calc_cube_count_1d, create_tensor, wgsl_kernel};
 use burn::tensor::DType;
 use burn_cubecl::cubecl::server::Bindings;
 use burn_wgpu::CubeTensor;

@@ -167,7 +167,14 @@ mod forward_rendering {
 
         bencher.bench_local(move || {
             for _ in 0..ITERS_PER_SYNC {
-                let _ = render_splats(&splats, &camera, glam::uvec2(1920, 1080), Vec3::ZERO, None);
+                let _ = render_splats(
+                    &splats,
+                    &camera,
+                    glam::uvec2(1920, 1080),
+                    Vec3::ZERO,
+                    None,
+                    false,
+                );
             }
             MainBackend::sync(&device).expect("Failed to sync");
         });
@@ -193,6 +200,7 @@ mod forward_rendering {
                     glam::uvec2(width, height),
                     Vec3::ZERO,
                     None,
+                    false,
                 );
             }
             MainBackend::sync(&device).expect("Failed to sync");
@@ -298,7 +306,14 @@ mod integration_tests {
             glam::vec2(0.5, 0.5),
         );
 
-        let (img, _) = render_splats(&splats, &camera, glam::uvec2(256, 256), Vec3::ZERO, None);
+        let (img, _) = render_splats(
+            &splats,
+            &camera,
+            glam::uvec2(256, 256),
+            Vec3::ZERO,
+            None,
+            true,
+        );
         let dims = img.dims();
         assert_eq!(dims, [256, 256, 3]);
 

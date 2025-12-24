@@ -5,13 +5,9 @@ use crate::{
     gaussian_splats::SplatRenderMode,
     get_tile_offset::{CHECKS_PER_ITER, get_tile_offsets},
     render_aux::RenderAux,
-    sh::sh_degree_from_coeffs,
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
-use brush_kernel::create_dispatch_buffer_1d;
-use brush_kernel::create_tensor;
-use brush_kernel::create_uniform_buffer;
-use brush_kernel::{CubeCount, calc_cube_count_1d};
+use brush_kernel::{CubeCount, calc_cube_count_1d, create_dispatch_buffer_1d, create_tensor};
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::tensor::{DType, IntDType, ops::FloatTensor};
@@ -41,23 +37,33 @@ pub struct ChunkInfo {
     pub tile_bounds: glam::UVec2,
 }
 
+/// Intersection data computed for a chunk, used for rasterization
+pub struct ChunkRenderInfo {
+    /// Per-tile start/end offsets into the intersection list
+    pub tile_offsets: IntTensor<MainBackendBase>,
+    /// Maps intersection index to compact gaussian ID
+    pub compact_gid_from_isect: IntTensor<MainBackendBase>,
+    /// Total number of intersections in this chunk
+    pub num_intersections: IntTensor<MainBackendBase>,
+}
+
 /// Iterate over chunks needed to render an image of the given size.
 /// Each chunk is at most `MAX_CHUNK_SIZE` x `MAX_CHUNK_SIZE` pixels, aligned to tile boundaries.
-pub fn iter_chunks(img_size: glam::UVec2) -> impl Iterator<Item = ChunkInfo> {
+pub fn iter_chunks(img_size: [u32; 2]) -> impl Iterator<Item = ChunkInfo> {
     let tile_width = shaders::helpers::TILE_WIDTH;
     // Align chunk size to tile boundaries
     let chunk_size_tiles = MAX_CHUNK_SIZE / tile_width;
     let chunk_size_pixels = chunk_size_tiles * tile_width;
 
-    let num_chunks_x = img_size.x.div_ceil(chunk_size_pixels);
-    let num_chunks_y = img_size.y.div_ceil(chunk_size_pixels);
+    let num_chunks_x = img_size[0].div_ceil(chunk_size_pixels);
+    let num_chunks_y = img_size[1].div_ceil(chunk_size_pixels);
 
     (0..num_chunks_y).flat_map(move |chunk_y| {
         (0..num_chunks_x).map(move |chunk_x| {
             let offset = uvec2(chunk_x * chunk_size_pixels, chunk_y * chunk_size_pixels);
             let size = uvec2(
-                (img_size.x - offset.x).min(chunk_size_pixels),
-                (img_size.y - offset.y).min(chunk_size_pixels),
+                (img_size[0] - offset.x).min(chunk_size_pixels),
+                (img_size[1] - offset.y).min(chunk_size_pixels),
             );
             let tile_bounds = calc_tile_bounds(size);
             ChunkInfo {
@@ -95,59 +101,21 @@ pub fn max_intersections(img_size: glam::UVec2, num_splats: u32) -> u32 {
 
 use burn::tensor::ops::IntTensor;
 
-/// Create a uniforms buffer for a chunk.
-/// This is shared between forward and backward passes.
-#[allow(clippy::too_many_arguments)]
-pub fn create_chunk_uniforms(
-    client: &ComputeClient<WgpuRuntime>,
-    device: &burn_wgpu::WgpuDevice,
-    chunk: &ChunkInfo,
-    img_size: glam::UVec2,
-    tile_bounds: glam::UVec2,
-    total_splats: u32,
-    // Optional fields for forward pass (not needed in backward)
-    viewmat: Option<[[f32; 4]; 4]>,
-    camera_position: Option<[f32; 4]>,
-    focal: Option<[f32; 2]>,
-    pixel_center: Option<[f32; 2]>,
-    sh_degree: u32,
-    background: Option<[f32; 4]>,
-) -> IntTensor<MainBackendBase> {
-    let chunk_uniforms = shaders::helpers::RenderUniforms {
-        viewmat: viewmat.unwrap_or([[0.0; 4]; 4]),
-        camera_position: camera_position.unwrap_or([0.0; 4]),
-        focal: focal.unwrap_or([0.0; 2]),
-        pixel_center: pixel_center.unwrap_or([0.0; 2]),
-        img_size: img_size.into(),
-        tile_bounds: tile_bounds.into(),
-        sh_degree,
-        total_splats,
-        max_intersects: max_intersections(chunk.size, total_splats),
-        padding: 0,
-        background: background.unwrap_or([0.0; 4]),
-        chunk_offset: chunk.offset.into(),
-        chunk_tile_bounds: chunk.tile_bounds.into(),
-    };
-
-    create_uniform_buffer(chunk_uniforms, device, client)
+pub fn set_chunk_uniforms(uniforms: &mut shaders::helpers::RenderUniforms, chunk: &ChunkInfo) {
+    uniforms.chunk_offset = chunk.offset.into();
+    uniforms.tile_bounds = chunk.tile_bounds.into();
 }
 
 /// Compute intersection buffers for a single chunk.
-/// This is extracted so it can be reused in both forward and backward passes.
-#[allow(clippy::too_many_arguments)]
 pub fn compute_chunk_intersections(
     client: &ComputeClient<WgpuRuntime>,
     device: &burn_wgpu::WgpuDevice,
     chunk: &ChunkInfo,
-    uniforms_buffer: &IntTensor<MainBackendBase>,
+    uniforms: shaders::helpers::RenderUniforms,
     projected_splats: &FloatTensor<MainBackendBase>,
     num_visible: &IntTensor<MainBackendBase>,
     total_splats: usize,
-) -> (
-    IntTensor<MainBackendBase>, // tile_offsets
-    IntTensor<MainBackendBase>, // compact_gid_from_isect
-    IntTensor<MainBackendBase>, // num_intersections
-) {
+) -> ChunkRenderInfo {
     let max_intersects = max_intersections(chunk.size, total_splats as u32);
     let num_tiles = chunk.tile_bounds.x * chunk.tile_bounds.y;
 
@@ -167,12 +135,13 @@ pub fn compute_chunk_intersections(
                 .launch_unchecked(
                     MapGaussiansToIntersect::task(true),
                     CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
-                    Bindings::new().with_buffers(vec![
-                        uniforms_buffer.handle.clone().binding(),
-                        num_visible.handle.clone().binding(),
-                        projected_splats.handle.clone().binding(),
-                        splat_intersect_counts.handle.clone().binding(),
-                    ]),
+                    Bindings::new()
+                        .with_buffers(vec![
+                            num_visible.handle.clone().binding(),
+                            projected_splats.handle.clone().binding(),
+                            splat_intersect_counts.handle.clone().binding(),
+                        ])
+                        .with_metadata(uniforms.to_meta_binding()),
                 )
                 .expect("Failed to render splats");
         }
@@ -195,15 +164,16 @@ pub fn compute_chunk_intersections(
                 .launch_unchecked(
                     MapGaussiansToIntersect::task(false),
                     CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
-                    Bindings::new().with_buffers(vec![
-                        uniforms_buffer.handle.clone().binding(),
-                        num_visible.handle.clone().binding(),
-                        projected_splats.handle.clone().binding(),
-                        cum_tiles_hit.handle.binding(),
-                        tile_id_from_isect.handle.clone().binding(),
-                        compact_gid_from_isect.handle.clone().binding(),
-                        num_intersections.handle.clone().binding(),
-                    ]),
+                    Bindings::new()
+                        .with_buffers(vec![
+                            num_visible.handle.clone().binding(),
+                            projected_splats.handle.clone().binding(),
+                            cum_tiles_hit.handle.binding(),
+                            tile_id_from_isect.handle.clone().binding(),
+                            compact_gid_from_isect.handle.clone().binding(),
+                            num_intersections.handle.clone().binding(),
+                        ])
+                        .with_metadata(uniforms.to_meta_binding()),
                 )
                 .expect("Failed to render splats");
         }
@@ -253,25 +223,49 @@ pub fn compute_chunk_intersections(
         .expect("Failed to render splats");
     }
 
-    (tile_offsets, compact_gid_from_isect, num_intersections)
+    ChunkRenderInfo {
+        tile_offsets,
+        compact_gid_from_isect,
+        num_intersections,
+    }
+}
+
+pub fn create_uniforms(
+    camera: &Camera,
+    img_size: glam::UVec2,
+    sh_degree: u32,
+    background: Vec3,
+) -> shaders::helpers::RenderUniforms {
+    shaders::helpers::RenderUniforms {
+        viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
+        camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
+        focal: camera.focal(img_size).into(),
+        pixel_center: camera.center(img_size).into(),
+        img_size: img_size.into(),
+        tile_bounds: calc_tile_bounds(img_size).into(),
+        sh_degree,
+        // Will be updated per-chunk
+        paddingA: 0,
+        background: [background.x, background.y, background.z, 1.0],
+        // Updated per-chunk
+        chunk_offset: [0, 0],
+    }
 }
 
 // Implement forward functions for the inner wgpu backend.
 impl SplatForward<Self> for MainBackendBase {
     fn render_splats(
-        camera: &Camera,
-        img_size: glam::UVec2,
+        uniforms: shaders::helpers::RenderUniforms,
         means: FloatTensor<Self>,
         log_scales: FloatTensor<Self>,
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
-        background: Vec3,
         bwd_info: bool,
     ) -> (FloatTensor<Self>, RenderAux<Self>) {
         assert!(
-            img_size[0] > 0 && img_size[1] > 0,
+            uniforms.img_size[0] > 0 && uniforms.img_size[1] > 0,
             "Can't render images with 0 size."
         );
 
@@ -283,7 +277,7 @@ impl SplatForward<Self> for MainBackendBase {
         let raw_opacities = into_contiguous(raw_opacities);
 
         let device = &means.device.clone();
-        let client = means.client.clone();
+        let _client = means.client.clone();
 
         let _span = tracing::trace_span!("render_forward").entered();
 
@@ -306,32 +300,7 @@ impl SplatForward<Self> for MainBackendBase {
         // - Sorted by tile per tile intersection depth sorted ID - sorted_tiled_gid
         // Then, various buffers map between these, which are named x_from_y_gid, eg.
         //  global_from_compact_gid.
-
-        // Tile rendering setup for full image (used for global projection).
-        let tile_bounds = calc_tile_bounds(img_size);
-        let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape.dims[1] as u32);
         let total_splats = means.shape.dims[0];
-
-        // Create initial uniforms for global projection (chunk fields will be updated per-chunk).
-        let uniforms = shaders::helpers::RenderUniforms {
-            viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
-            camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
-            focal: camera.focal(img_size).into(),
-            pixel_center: camera.center(img_size).into(),
-            img_size: img_size.into(),
-            tile_bounds: tile_bounds.into(),
-            sh_degree,
-            total_splats: total_splats as u32,
-            // Will be updated per-chunk
-            max_intersects: max_intersections(img_size, total_splats as u32),
-            padding: 0,
-            background: [background.x, background.y, background.z, 1.0],
-            // Will be updated per-chunk
-            chunk_offset: [0, 0],
-            chunk_tile_bounds: tile_bounds.into(),
-        };
-
-        let uniforms_buffer = create_uniform_buffer(uniforms, device, &client);
 
         // Separate buffer for num_visible (written atomically by ProjectSplats)
         let num_visible = Self::int_zeros([1].into(), device, IntDType::U32);
@@ -354,7 +323,6 @@ impl SplatForward<Self> for MainBackendBase {
                 calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
                 Bindings::new().with_buffers(
                 vec![
-                    uniforms_buffer.handle.clone().binding(),
                     means.handle.clone().binding(),
                     quats.handle.clone().binding(),
                     log_scales.handle.clone().binding(),
@@ -362,9 +330,9 @@ impl SplatForward<Self> for MainBackendBase {
                     global_from_presort_gid.handle.clone().binding(),
                     depths.handle.clone().binding(),
                     num_visible.handle.clone().binding(),
-                ]),
+                ]).with_metadata(uniforms.to_meta_binding()),
             ).expect("Failed to render splats");
-        });
+            });
 
             let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort").in_scope(|| {
                 // Interpret the depth as a u32. This is fine for a radix sort, as long as the depth > 0.0,
@@ -390,17 +358,18 @@ impl SplatForward<Self> for MainBackendBase {
                     .launch_unchecked(
                         ProjectVisible::task(mip_splat),
                         CubeCount::Dynamic(num_vis_wg.handle.binding()),
-                        Bindings::new().with_buffers(vec![
-                            uniforms_buffer.clone().handle.binding(),
-                            num_visible.handle.clone().binding(),
-                            means.handle.binding(),
-                            log_scales.handle.binding(),
-                            quats.handle.binding(),
-                            sh_coeffs.handle.binding(),
-                            raw_opacities.handle.binding(),
-                            global_from_compact_gid.handle.clone().binding(),
-                            projected_splats.handle.clone().binding(),
-                        ]),
+                        Bindings::new()
+                            .with_buffers(vec![
+                                num_visible.handle.clone().binding(),
+                                means.handle.binding(),
+                                log_scales.handle.binding(),
+                                quats.handle.binding(),
+                                sh_coeffs.handle.binding(),
+                                raw_opacities.handle.binding(),
+                                global_from_compact_gid.handle.clone().binding(),
+                                projected_splats.handle.clone().binding(),
+                            ])
+                            .with_metadata(uniforms.to_meta_binding()),
                     )
                     .expect("Failed to render splats");
             }
@@ -415,7 +384,11 @@ impl SplatForward<Self> for MainBackendBase {
         };
 
         let out_img = create_tensor(
-            [img_size.y as usize, img_size.x as usize, out_dim],
+            [
+                uniforms.img_size[1] as usize,
+                uniforms.img_size[0] as usize,
+                out_dim,
+            ],
             device,
             DType::F32,
         );
@@ -431,46 +404,38 @@ impl SplatForward<Self> for MainBackendBase {
         let raster_task = Rasterize::task(bwd_info, cfg!(target_family = "wasm"));
 
         // === PER-CHUNK PHASE: Intersection mapping and rasterization ===
-        let chunks: Vec<_> = iter_chunks(img_size).collect();
+        let chunks: Vec<_> = iter_chunks(uniforms.img_size).collect();
+
+        // Use mutable uniforms that we update per-chunk
+        let mut uniforms = uniforms;
 
         for chunk in &chunks {
             let _chunk_span = tracing::trace_span!("RenderChunk").entered();
 
-            // Create per-chunk uniforms buffer using the shared helper
-            let chunk_uniforms_buffer = create_chunk_uniforms(
+            // Update uniforms for this chunk
+            set_chunk_uniforms(&mut uniforms, chunk);
+
+            // Compute intersection buffers for this chunk
+            let chunk_render_info = compute_chunk_intersections(
                 client,
                 device,
                 chunk,
-                img_size,
-                tile_bounds,
-                total_splats as u32,
-                Some(glam::Mat4::from(camera.world_to_local()).to_cols_array_2d()),
-                Some([camera.position.x, camera.position.y, camera.position.z, 0.0]),
-                Some(camera.focal(img_size).into()),
-                Some(camera.center(img_size).into()),
-                sh_degree,
-                Some([background.x, background.y, background.z, 1.0]),
+                uniforms,
+                &projected_splats,
+                &num_visible,
+                total_splats,
             );
-
-            // Compute intersection buffers for this chunk
-            let (chunk_tile_offsets, chunk_compact_gid_from_isect, _chunk_num_intersections) =
-                compute_chunk_intersections(
-                    client,
-                    device,
-                    chunk,
-                    &chunk_uniforms_buffer,
-                    &projected_splats,
-                    &num_visible,
-                    total_splats,
-                );
 
             // Rasterize this chunk
             let _raster_span = tracing::trace_span!("Rasterize").entered();
 
             let mut bindings = Bindings::new().with_buffers(vec![
-                chunk_uniforms_buffer.handle.clone().binding(),
-                chunk_compact_gid_from_isect.handle.clone().binding(),
-                chunk_tile_offsets.handle.clone().binding(),
+                chunk_render_info
+                    .compact_gid_from_isect
+                    .handle
+                    .clone()
+                    .binding(),
+                chunk_render_info.tile_offsets.handle.clone().binding(),
                 projected_splats.handle.clone().binding(),
                 out_img.handle.clone().binding(),
             ]);
@@ -481,6 +446,8 @@ impl SplatForward<Self> for MainBackendBase {
                     visible.handle.clone().binding(),
                 ]);
             }
+
+            bindings = bindings.with_metadata(uniforms.to_meta_binding());
 
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
@@ -496,10 +463,6 @@ impl SplatForward<Self> for MainBackendBase {
 
         // Sanity check the buffers.
         assert!(
-            uniforms_buffer.is_contiguous(),
-            "Uniforms must be contiguous"
-        );
-        assert!(
             global_from_compact_gid.is_contiguous(),
             "Global from compact gid must be contiguous"
         );
@@ -512,12 +475,11 @@ impl SplatForward<Self> for MainBackendBase {
         (
             out_img,
             RenderAux {
-                uniforms_buffer,
+                uniforms,
                 projected_splats,
                 global_from_compact_gid,
                 num_visible,
                 visible,
-                img_size,
             },
         )
     }

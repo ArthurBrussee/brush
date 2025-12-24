@@ -4,11 +4,11 @@ use std::path::Path;
 use anyhow::Result;
 use brush_dataset::scene::{sample_to_tensor_data, view_to_sample_image};
 use brush_render::camera::Camera;
-use brush_render::gaussian_splats::Splats;
+use brush_render::gaussian_splats::{Splats, render_splats};
 use brush_render::render_aux::RenderAux;
 use brush_render::{AlphaMode, SplatForward};
 use burn::prelude::Backend;
-use burn::tensor::{Tensor, TensorPrimitive, s};
+use burn::tensor::{Tensor, s};
 use glam::Vec3;
 use image::DynamicImage;
 
@@ -37,21 +37,7 @@ pub fn eval_stats<B: Backend + SplatForward<B>>(
     let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
 
     // Render on reference black background.
-    let (img, aux) = {
-        let (img, aux) = B::render_splats(
-            gt_cam,
-            res,
-            splats.means.val().into_primitive().tensor(),
-            splats.log_scales.val().into_primitive().tensor(),
-            splats.rotations.val().into_primitive().tensor(),
-            splats.sh_coeffs.val().into_primitive().tensor(),
-            splats.raw_opacities.val().into_primitive().tensor(),
-            splats.render_mode,
-            Vec3::ZERO,
-            true,
-        );
-        (Tensor::from_primitive(TensorPrimitive::Float(img)), aux)
-    };
+    let (img, aux) = render_splats(splats, gt_cam, res, Vec3::ZERO, None, true);
     let render_rgb = img.slice(s![.., .., 0..3]);
 
     // Simulate an 8-bit roundtrip for fair comparison.

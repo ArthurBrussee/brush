@@ -6,34 +6,28 @@ use burn_fusion::{
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use burn_wgpu::WgpuRuntime;
-use glam::Vec3;
 
 use crate::{
-    MainBackendBase, SplatForward, camera::Camera, gaussian_splats::SplatRenderMode,
-    render_aux::RenderAux, shaders,
+    MainBackendBase, SplatForward, gaussian_splats::SplatRenderMode, render_aux::RenderAux, shaders,
 };
 
 impl SplatForward<Self> for Fusion<MainBackendBase> {
     fn render_splats(
-        cam: &Camera,
-        img_size: glam::UVec2,
+        uniforms: shaders::helpers::RenderUniforms,
         means: FloatTensor<Self>,
         log_scales: FloatTensor<Self>,
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         opacity: FloatTensor<Self>,
         render_mode: SplatRenderMode,
-        background: Vec3,
         bwd_info: bool,
     ) -> (FloatTensor<Self>, RenderAux<Self>) {
         #[derive(Debug)]
         struct CustomOp {
-            cam: Camera,
-            img_size: glam::UVec2,
             render_mode: SplatRenderMode,
             bwd_info: bool,
-            background: Vec3,
             desc: CustomOpIr,
+            uniforms: shaders::helpers::RenderUniforms,
         }
 
         impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp {
@@ -49,32 +43,28 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                     out_img,
                     // Aux
                     projected_splats,
-                    uniforms_buffer,
                     global_from_compact_gid,
                     num_visible,
                     visible,
                 ] = outputs;
 
                 let (img, aux) = MainBackendBase::render_splats(
-                    &self.cam,
-                    self.img_size,
+                    self.uniforms,
                     h.get_float_tensor::<MainBackendBase>(means),
                     h.get_float_tensor::<MainBackendBase>(log_scales),
                     h.get_float_tensor::<MainBackendBase>(quats),
                     h.get_float_tensor::<MainBackendBase>(sh_coeffs),
                     h.get_float_tensor::<MainBackendBase>(opacity),
                     self.render_mode,
-                    self.background,
                     self.bwd_info,
                 );
 
-                // Register output.
+                // Register output tensors.
                 h.register_float_tensor::<MainBackendBase>(&out_img.id, img);
                 h.register_float_tensor::<MainBackendBase>(
                     &projected_splats.id,
                     aux.projected_splats,
                 );
-                h.register_int_tensor::<MainBackendBase>(&uniforms_buffer.id, aux.uniforms_buffer);
                 h.register_int_tensor::<MainBackendBase>(
                     &global_from_compact_gid.id,
                     aux.global_from_compact_gid,
@@ -89,7 +79,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
         let num_points = means.shape[0];
 
         let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / 4;
-        let uniforms_size = size_of::<shaders::helpers::RenderUniforms>() / 4;
 
         // If render_u32_buffer is true, we render a packed buffer of u32 values, otherwise
         // render RGBA f32 values.
@@ -97,7 +86,11 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
 
         let out_img = TensorIr::uninit(
             client.create_empty_handle(),
-            Shape::new([img_size.y as usize, img_size.x as usize, channels]),
+            Shape::new([
+                uniforms.img_size[1] as usize,
+                uniforms.img_size[0] as usize,
+                channels,
+            ]),
             if bwd_info { DType::F32 } else { DType::U32 },
         );
 
@@ -111,11 +104,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             client.create_empty_handle(),
             Shape::new([num_points, proj_size]),
             DType::F32,
-        );
-        let uniforms_buffer = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([uniforms_size]),
-            DType::U32,
         );
         let global_from_compact_gid = TensorIr::uninit(
             client.create_empty_handle(),
@@ -134,19 +122,16 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             &[
                 out_img,
                 projected_splats,
-                uniforms_buffer,
                 global_from_compact_gid,
                 num_visible,
                 visible,
             ],
         );
         let op = CustomOp {
-            cam: cam.clone(),
-            img_size,
             bwd_info,
-            background,
             render_mode,
             desc: desc.clone(),
+            uniforms,
         };
 
         let outputs = client
@@ -158,7 +143,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             out_img,
             // Aux
             projected_splats,
-            uniforms_buffer,
             global_from_compact_gid,
             num_visible,
             visible,
@@ -168,11 +152,10 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             out_img,
             RenderAux::<Self> {
                 projected_splats,
-                uniforms_buffer,
+                uniforms,
                 global_from_compact_gid,
                 num_visible,
                 visible,
-                img_size,
             },
         )
     }

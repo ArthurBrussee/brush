@@ -6,7 +6,7 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
-brush-wgsl.path = "../brush-wgsl"
+brush-kernel-proc.path = "../brush-kernel-proc"
 burn.workspace = true
 burn-cubecl.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }

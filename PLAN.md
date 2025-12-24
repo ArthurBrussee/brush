@@ -88,7 +88,6 @@ Add to `RenderUniforms`:
 ```wgsl
 chunk_offset: vec2u,    // Pixel offset of this chunk in full image
 chunk_size: vec2u,      // Size of this chunk in pixels
-chunk_tile_bounds: vec2u, // Tile bounds for this chunk
 ```
 
 #### Step 1.4: Update intersection mapping shader

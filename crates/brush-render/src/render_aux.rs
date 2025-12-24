@@ -7,16 +7,17 @@ use burn::{
     },
 };
 
+use crate::shaders;
 use crate::validation::validate_tensor_val;
 
 #[derive(Debug, Clone)]
 pub struct RenderAux<B: Backend> {
+    pub uniforms: shaders::helpers::RenderUniforms,
+
     pub projected_splats: FloatTensor<B>,
-    pub uniforms_buffer: IntTensor<B>,
     pub global_from_compact_gid: IntTensor<B>,
     pub num_visible: IntTensor<B>,
     pub visible: FloatTensor<B>,
-    pub img_size: glam::UVec2,
 }
 
 impl<B: Backend> RenderAux<B> {

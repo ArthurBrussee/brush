@@ -57,18 +57,14 @@ struct RenderUniforms {
     // Degree of sh coefficients used.
     sh_degree: u32,
 
-    total_splats: u32,
-    max_intersects: u32,
     // Padding for alignment (vec4f needs 16-byte alignment)
-    padding: u32,
-
-    // Nb: Alpha is ignored atm.
-    background: vec4f,
+    paddingA: u32,
 
     // Chunk rendering support: pixel offset of current chunk in full image
     chunk_offset: vec2u,
-    // Tile bounds for the current chunk (number of tiles in x and y)
-    chunk_tile_bounds: vec2u,
+
+    // Nb: Alpha is ignored atm.
+    background: vec4f,
 }
 
 struct ProjectedSplat {

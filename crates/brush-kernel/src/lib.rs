@@ -1,20 +1,34 @@
-use brush_wgsl::wgsl_kernel;
-
+//! Brush kernel infrastructure for WGSL compute shaders.
+//!
+//! This crate provides the infrastructure for integrating WGSL kernels with `cubecl`:
+//!
+//! - `#[wgsl_kernel]` proc macro for generating kernel wrappers from WGSL source files
+//! - Re-exports of `bytemuck` for POD types used in uniform buffers
+//! - Re-exports of cubecl types needed
+//!
+//! # Example
+//!
+//! ```ignore
+//! use brush_kernel::wgsl_kernel;
+//!
+//! #[wgsl_kernel(source = "src/shaders/my_kernel.wgsl")]
+//! pub struct MyKernel;
+//! ```
 use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::tensor::{DType, Shape};
+use burn_cubecl::cubecl::Runtime;
+use burn_cubecl::cubecl::server::Bindings;
+use burn_cubecl::tensor::CubeTensor;
 
-pub use burn_cubecl::cubecl::{CubeCount, CubeDim, client::ComputeClient, server::ComputeServer};
-pub use burn_cubecl::cubecl::{CubeTask, Runtime};
-pub use burn_cubecl::cubecl::{
-    prelude::KernelId,
-    server::{Bindings, MetadataBinding},
-};
-pub use burn_cubecl::{CubeRuntime, tensor::CubeTensor};
+// Re-export the proc macro
+pub use brush_kernel_proc::wgsl_kernel;
 
-use bytemuck::NoUninit;
-
-// Re-export bytemuck for use by brush-wgsl generated code
+// Re-export bytemuck for use by generated code and users
 pub use bytemuck;
+
+// Re-export cubecl types needed for kernel launching
+pub use burn_cubecl::cubecl::CubeCount;
+pub use burn_cubecl::cubecl::server::MetadataBinding;
 
 // Internal kernel for creating dispatch buffers
 #[wgsl_kernel(source = "src/shaders/wg.wgsl")]
@@ -42,7 +56,7 @@ pub fn calc_cube_count_3d(sizes: [u32; 3], workgroup_size: [u32; 3]) -> CubeCoun
     CubeCount::Static(wg_x, wg_y, wg_z)
 }
 
-// Reserve a buffer from the client for the given shape.
+/// Reserve a buffer from the client for the given shape.
 pub fn create_tensor<const D: usize>(
     shape: [usize; D],
     device: &WgpuDevice,
@@ -72,32 +86,6 @@ pub fn create_tensor<const D: usize>(
     CubeTensor::new_contiguous(client, device.clone(), shape, buffer, dtype)
 }
 
-pub fn create_meta_binding<T: NoUninit>(val: T) -> MetadataBinding {
-    // Copy data to u32. If length of T is not % 4, this will correctly
-    // pad with zeros.
-    let data = bytemuck::pod_collect_to_vec(&[val]);
-    MetadataBinding {
-        static_len: data.len(),
-        data,
-    }
-}
-
-/// Create a buffer to use as a shader uniform, from a structure.
-pub fn create_uniform_buffer<R: CubeRuntime, T: NoUninit>(
-    val: T,
-    device: &R::Device,
-    client: &ComputeClient<R>,
-) -> CubeTensor<R> {
-    let binding = create_meta_binding(val);
-    CubeTensor::new_contiguous(
-        client.clone(),
-        device.clone(),
-        Shape::new([binding.data.len()]),
-        client.create_from_slice(bytemuck::cast_slice(&binding.data)),
-        DType::I32,
-    )
-}
-
 /// Create a dynamic dispatch buffer for 1D dispatches.
 /// Returns a buffer with (`wg_x`, `wg_y`, 1) that tiles into 2D if needed.
 pub fn create_dispatch_buffer_1d(
@@ -111,8 +99,6 @@ pub fn create_dispatch_buffer_1d(
     let client = thread_count.client;
     let ret = create_tensor([3], &thread_count.device, DType::I32);
 
-    let data = create_meta_binding(wg::Uniforms { wg_size });
-
     // SAFETY: wgsl FFI, kernel checked to have no OOB, bounded loops.
     unsafe {
         client
@@ -124,7 +110,7 @@ pub fn create_dispatch_buffer_1d(
                         thread_count.handle.binding(),
                         ret.handle.clone().binding(),
                     ])
-                    .with_metadata(data),
+                    .with_metadata(wg::Uniforms { wg_size }.to_meta_binding()),
             )
             .expect("Failed to execute");
     }

@@ -1,4 +1,4 @@
-use brush_wgsl::wgsl_kernel;
+use brush_kernel::wgsl_kernel;
 
 // Define kernels using proc macro
 

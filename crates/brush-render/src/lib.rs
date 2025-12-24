@@ -6,9 +6,7 @@ use burn_cubecl::CubeBackend;
 use burn_fusion::Fusion;
 use burn_wgpu::graphics::{AutoGraphicsApi, GraphicsApi};
 use burn_wgpu::{RuntimeOptions, WgpuDevice, WgpuRuntime};
-use camera::Camera;
 use clap::ValueEnum;
-use glam::Vec3;
 use render_aux::RenderAux;
 use wgpu::{Adapter, Device, Queue};
 
@@ -57,15 +55,13 @@ pub trait SplatForward<B: Backend> {
     /// This function can optionally render a "u32" buffer, which is a packed RGBA (8 bits per channel)
     /// buffer. This is useful when the results need to be displayed immediately.
     fn render_splats(
-        camera: &Camera,
-        img_size: glam::UVec2,
+        uniforms: shaders::helpers::RenderUniforms,
         means: FloatTensor<B>,
         log_scales: FloatTensor<B>,
         quats: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
         render_mode: SplatRenderMode,
-        background: Vec3,
         bwd_info: bool,
     ) -> (FloatTensor<B>, RenderAux<B>);
 }

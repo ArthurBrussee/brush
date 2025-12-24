@@ -1,26 +1,4 @@
 //! Procedural macro for generating WGSL kernel wrappers.
-//!
-//! # Usage
-//!
-//! Imports from the same directory are auto-discovered:
-//!
-//! ```ignore
-//! #[wgsl_kernel(source = "src/shaders/rasterize.wgsl")]
-//! pub struct Rasterize {
-//!     pub bwd_info: bool,
-//!     pub webgpu: bool,
-//! }
-//! ```
-//!
-//! For cross-crate imports, use explicit `includes`:
-//!
-//! ```ignore
-//! #[wgsl_kernel(
-//!     source = "src/shaders/shader.wgsl",
-//!     includes = ["../other-crate/src/shaders/helpers.wgsl"],
-//! )]
-//! pub struct MyKernel;
-//! ```
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -408,11 +386,19 @@ fn generate_code(
         quote! { ::brush_kernel::bytemuck }
     };
 
+    // Determine MetadataBinding path
+    let metadata_binding_path: TokenStream2 = if is_brush_kernel {
+        quote! { crate::MetadataBinding }
+    } else {
+        quote! { ::brush_kernel::MetadataBinding }
+    };
+
     // Type definitions
     let type_defs = info.types.iter().map(|t| {
         let name = format_ident!("{}", t.name);
         let align = proc_macro2::Literal::usize_unsuffixed(t.alignment);
         let bytemuck = &bytemuck_path;
+        let metadata_binding = &metadata_binding_path;
         let fields = t.fields.iter().map(|(fname, ftype)| {
             let fname = format_ident!("{}", fname);
             let ftype: TokenStream2 = ftype.parse().unwrap();
@@ -422,6 +408,17 @@ fn generate_code(
             #[repr(C, align(#align))]
             #[derive(Debug, Clone, Copy, #bytemuck::NoUninit)]
             pub struct #name { #(#fields),* }
+
+            impl #name {
+                /// Convert this struct to a MetadataBinding for use with kernel launches.
+                pub fn to_meta_binding(self) -> #metadata_binding {
+                    let data = #bytemuck::pod_collect_to_vec(&[self]);
+                    #metadata_binding {
+                        static_len: data.len(),
+                        data,
+                    }
+                }
+            }
         }
     });
 

@@ -1,6 +1,7 @@
 use crate::{
     SplatForward,
     camera::Camera,
+    render::create_uniforms,
     render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
@@ -231,12 +232,16 @@ impl<B: Backend> Splats<B> {
 ///
 /// NB: This doesn't work on a differentiable backend. Use
 /// [`brush_render_bwd::render_splats`] for that.
+///
+/// If `float_rgb` is true, the output image will be in unpacked RGBA float format.
+/// If false, the output is packed into a single float per pixel (more efficient for display).
 pub fn render_splats<B: Backend + SplatForward<B>>(
     splats: &Splats<B>,
     camera: &Camera,
     img_size: glam::UVec2,
     background: Vec3,
     splat_scale: Option<f32>,
+    float_rgb: bool,
 ) -> (Tensor<B, 3>, RenderAux<B>) {
     #[cfg(any(feature = "debug-validation", test))]
     splats.validate_values();
@@ -248,17 +253,17 @@ pub fn render_splats<B: Backend + SplatForward<B>>(
         scales = scales + scale.ln();
     };
 
+    let uniforms = create_uniforms(camera, img_size, splats.sh_degree(), background);
+
     let (img, aux) = B::render_splats(
-        camera,
-        img_size,
+        uniforms,
         splats.means.val().into_primitive().tensor(),
         scales.into_primitive().tensor(),
         splats.rotations.val().into_primitive().tensor(),
         splats.sh_coeffs.val().into_primitive().tensor(),
         splats.raw_opacities.val().into_primitive().tensor(),
         splats.render_mode,
-        background,
-        false,
+        float_rgb,
     );
     let img = Tensor::from_primitive(TensorPrimitive::Float(img));
 

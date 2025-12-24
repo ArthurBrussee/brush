@@ -1,5 +1,5 @@
 [package]
-name = "brush-wgsl"
+name = "brush-kernel-proc"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true

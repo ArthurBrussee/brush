@@ -1109,10 +1109,24 @@ dependencies = [
 name = "brush-kernel"
 version = "0.3.0"
 dependencies = [
- "brush-wgsl",
+ "brush-kernel-proc",
  "burn",
  "burn-cubecl",
  "bytemuck",
+]
+
+[[package]]
+name = "brush-kernel-proc"
+version = "0.3.0"
+dependencies = [
+ "data-encoding",
+ "naga_oil",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "regex-syntax",
+ "syn 2.0.111",
+ "wgpu",
 ]
 
 [[package]]
@@ -1120,7 +1134,6 @@ name = "brush-prefix-sum"
 version = "0.3.0"
 dependencies = [
  "brush-kernel",
- "brush-wgsl",
  "burn",
  "burn-cubecl",
  "burn-wgpu",
@@ -1162,7 +1175,6 @@ dependencies = [
  "brush-kernel",
  "brush-prefix-sum",
  "brush-sort",
- "brush-wgsl",
  "burn",
  "burn-cubecl",
  "burn-fusion",
@@ -1183,7 +1195,6 @@ dependencies = [
  "assert_approx_eq",
  "brush-kernel",
  "brush-render",
- "brush-wgsl",
  "burn",
  "burn-cubecl",
  "burn-fusion",
@@ -1243,7 +1254,6 @@ name = "brush-sort"
 version = "0.3.0"
 dependencies = [
  "brush-kernel",
- "brush-wgsl",
  "burn",
  "burn-cubecl",
  "burn-wgpu",
@@ -1330,20 +1340,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
-]
-
-[[package]]
-name = "brush-wgsl"
-version = "0.3.0"
-dependencies = [
- "data-encoding",
- "naga_oil",
- "proc-macro2",
- "quote",
- "regex",
- "regex-syntax",
- "syn 2.0.111",
- "wgpu",
 ]
 
 [[package]]

@@ -1,22 +1,23 @@
 #import helpers;
 
-@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
-@group(0) @binding(1) var<storage, read> num_visible: u32;
+@group(0) @binding(0) var<storage, read> num_visible: u32;
 
-@group(0) @binding(2) var<storage, read> means: array<helpers::PackedVec3>;
-@group(0) @binding(3) var<storage, read> log_scales: array<helpers::PackedVec3>;
-@group(0) @binding(4) var<storage, read> quats: array<vec4f>;
-@group(0) @binding(5) var<storage, read> raw_opac: array<f32>;
+@group(0) @binding(1) var<storage, read> means: array<helpers::PackedVec3>;
+@group(0) @binding(2) var<storage, read> log_scales: array<helpers::PackedVec3>;
+@group(0) @binding(3) var<storage, read> quats: array<vec4f>;
+@group(0) @binding(4) var<storage, read> raw_opac: array<f32>;
 
-@group(0) @binding(6) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(5) var<storage, read> global_from_compact_gid: array<u32>;
 
-@group(0) @binding(7) var<storage, read> v_grads: array<vec4f>;
+@group(0) @binding(6) var<storage, read> v_grads: array<vec4f>;
 
-@group(0) @binding(8) var<storage, read_write> v_means: array<helpers::PackedVec3>;
-@group(0) @binding(9) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
-@group(0) @binding(10) var<storage, read_write> v_quats: array<vec4f>;
-@group(0) @binding(11) var<storage, read_write> v_coeffs: array<f32>;
-@group(0) @binding(12) var<storage, read_write> v_opacs: array<f32>;
+@group(0) @binding(7) var<storage, read_write> v_means: array<helpers::PackedVec3>;
+@group(0) @binding(8) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
+@group(0) @binding(9) var<storage, read_write> v_quats: array<vec4f>;
+@group(0) @binding(10) var<storage, read_write> v_coeffs: array<f32>;
+@group(0) @binding(11) var<storage, read_write> v_opacs: array<f32>;
+
+@group(0) @binding(12) var<storage, read> uniforms: helpers::RenderUniforms;
 
 const SH_C0: f32 = 0.2820947917738781f;
 

@@ -336,6 +336,7 @@ impl ScenePanel {
                     pixel_size,
                     settings.background.unwrap_or(Vec3::ZERO),
                     settings.splat_scale,
+                    false,
                 );
 
                 if let Some(backbuffer) = &mut self.backbuffer {

@@ -1,8 +1,6 @@
-use brush_kernel::{CubeCount, calc_cube_count_1d};
+use brush_kernel::{CubeCount, calc_cube_count_1d, wgsl_kernel};
 use brush_render::gaussian_splats::SplatRenderMode;
-use brush_render::render::{compute_chunk_intersections, create_chunk_uniforms, iter_chunks};
-use brush_render::shaders;
-use brush_wgsl::wgsl_kernel;
+use brush_render::render::{compute_chunk_intersections, iter_chunks, set_chunk_uniforms};
 
 use brush_render::MainBackendBase;
 use brush_render::sh::sh_coeffs_for_degree;
@@ -13,7 +11,6 @@ use burn_cubecl::cubecl::features::TypeUsage;
 use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType};
 use burn_cubecl::cubecl::server::Bindings;
 use burn_cubecl::kernel::into_contiguous;
-use glam::uvec2;
 
 use crate::burn_glue::{GaussianBackwardState, SplatBackwardOps};
 
@@ -61,15 +58,14 @@ impl SplatBackwardOps<Self> for MainBackendBase {
 
         // We're in charge of these, SHOULD be contiguous but might as well.
         let projected_splats = into_contiguous(state.projected_splats);
-        let uniforms_buffer = into_contiguous(state.uniforms_buffer);
         let global_from_compact_gid = into_contiguous(state.global_from_compact_gid);
         let num_visible = into_contiguous(state.num_visible);
-
-        let device = &state.out_img.device;
-        let img_size = state.img_size;
-
         let num_points = means.shape.dims[0];
 
+        let mut uniforms = state.uniforms;
+        let img_size = state.uniforms.img_size;
+
+        let device = &state.out_img.device;
         let client = &means.client;
 
         // Setup gradient tensors.
@@ -80,7 +76,7 @@ impl SplatBackwardOps<Self> for MainBackendBase {
         let v_coeffs = Self::float_zeros(
             [
                 num_points,
-                sh_coeffs_for_degree(state.sh_degree) as usize,
+                sh_coeffs_for_degree(uniforms.sh_degree) as usize,
                 3,
             ]
             .into(),
@@ -90,12 +86,6 @@ impl SplatBackwardOps<Self> for MainBackendBase {
         let v_raw_opac = Self::float_zeros([num_points].into(), device, FloatDType::F32);
         let v_grads = Self::float_zeros([num_points, 8].into(), device, FloatDType::F32);
         let v_refine_weight = Self::float_zeros([num_points].into(), device, FloatDType::F32);
-
-        // Full image tile bounds (for global uniforms)
-        let tile_bounds = uvec2(
-            img_size.x.div_ceil(shaders::helpers::TILE_WIDTH),
-            img_size.y.div_ceil(shaders::helpers::TILE_WIDTH),
-        );
 
         let hard_floats = client
             .properties()
@@ -114,34 +104,17 @@ impl SplatBackwardOps<Self> for MainBackendBase {
         for chunk in &chunks {
             let _chunk_span = tracing::trace_span!("RenderChunkBackward").entered();
 
-            // Create per-chunk uniforms buffer using the shared helper
-            // (backward pass doesn't need viewmat, camera_position, focal, pixel_center, background)
-            let chunk_uniforms_buffer = create_chunk_uniforms(
+            set_chunk_uniforms(&mut uniforms, chunk);
+
+            let chunk_render_info = compute_chunk_intersections(
                 client,
                 device,
                 chunk,
-                img_size,
-                tile_bounds,
-                num_points as u32,
-                None, // viewmat
-                None, // camera_position
-                None, // focal
-                None, // pixel_center
-                state.sh_degree,
-                None, // background
+                uniforms,
+                &projected_splats,
+                &num_visible,
+                num_points,
             );
-
-            // Recompute intersection buffers for this chunk
-            let (chunk_tile_offsets, chunk_compact_gid_from_isect, _chunk_num_intersections) =
-                compute_chunk_intersections(
-                    client,
-                    device,
-                    chunk,
-                    &chunk_uniforms_buffer,
-                    &projected_splats,
-                    &num_visible,
-                    num_points,
-                );
 
             // Run RasterizeBackwards for this chunk
             tracing::trace_span!("RasterizeBackwards").in_scope(|| {
@@ -151,18 +124,19 @@ impl SplatBackwardOps<Self> for MainBackendBase {
                         .launch_unchecked(
                             raster_bwd_task.clone(),
                             CubeCount::Static(chunk.tile_bounds.x * chunk.tile_bounds.y, 1, 1),
-                            Bindings::new().with_buffers(vec![
-                                chunk_uniforms_buffer.handle.clone().binding(),
-                                chunk_compact_gid_from_isect.handle.binding(),
-                                global_from_compact_gid.handle.clone().binding(),
-                                chunk_tile_offsets.handle.binding(),
-                                projected_splats.handle.clone().binding(),
-                                state.out_img.handle.clone().binding(),
-                                v_output.handle.clone().binding(),
-                                v_grads.handle.clone().binding(),
-                                v_raw_opac.handle.clone().binding(),
-                                v_refine_weight.handle.clone().binding(),
-                            ]),
+                            Bindings::new()
+                                .with_buffers(vec![
+                                    chunk_render_info.compact_gid_from_isect.handle.binding(),
+                                    global_from_compact_gid.handle.clone().binding(),
+                                    chunk_render_info.tile_offsets.handle.binding(),
+                                    projected_splats.handle.clone().binding(),
+                                    state.out_img.handle.clone().binding(),
+                                    v_output.handle.clone().binding(),
+                                    v_grads.handle.clone().binding(),
+                                    v_raw_opac.handle.clone().binding(),
+                                    v_refine_weight.handle.clone().binding(),
+                                ])
+                                .with_metadata(uniforms.to_meta_binding()),
                         )
                         .expect("Failed to bwd-diff splats");
                 }
@@ -178,7 +152,6 @@ impl SplatBackwardOps<Self> for MainBackendBase {
             calc_cube_count_1d(num_points as u32, ProjectBackwards::WORKGROUP_SIZE[0]),
             Bindings::new().with_buffers(
             vec![
-                uniforms_buffer.handle.binding(),
                 num_visible.handle.binding(),
                 means.handle.binding(),
                 log_scales.handle.binding(),
@@ -191,7 +164,7 @@ impl SplatBackwardOps<Self> for MainBackendBase {
                 v_quats.handle.clone().binding(),
                 v_coeffs.handle.clone().binding(),
                 v_raw_opac.handle.clone().binding(),
-            ]),
+            ]).with_metadata(uniforms.to_meta_binding()),
         ).expect("Failed to bwd-diff splats");
     });
 
