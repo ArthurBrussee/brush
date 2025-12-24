@@ -151,7 +151,7 @@ pub struct CameraSettings {
     pub clamping: CameraClamping,
 }
 
-const TREE_STORAGE_KEY: &str = "brush_tile_tree_v2";
+const TREE_STORAGE_KEY: &str = "brush_tile_tree_v3";
 
 pub struct App {
     tree: egui_tiles::Tree<PaneRef>,
