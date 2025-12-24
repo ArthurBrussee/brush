@@ -8,6 +8,10 @@ use burn_cubecl::cubecl::server::Bindings;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
 
+// Generate shared types and constants from sorting helpers (no entry point)
+#[wgsl_kernel(source = "src/shaders/sorting.wgsl")]
+pub struct Sorting;
+
 // Kernel definitions using proc macro
 #[wgsl_kernel(source = "src/shaders/sort_count.wgsl")]
 pub struct SortCount;
@@ -27,7 +31,7 @@ pub struct SortScatter;
 // Import types from the generated modules
 use sort_count::Uniforms;
 
-const BLOCK_SIZE: u32 = SortCount::WG * SortCount::ELEMENTS_PER_THREAD;
+const BLOCK_SIZE: u32 = sorting::WG * sorting::ELEMENTS_PER_THREAD;
 
 pub fn radix_argsort(
     input_keys: CubeTensor<WgpuRuntime>,
@@ -63,7 +67,7 @@ pub fn radix_argsort(
     let num_wgs = create_dispatch_buffer_1d(n_sort.clone(), BLOCK_SIZE);
     let num_reduce_wgs: Tensor<CubeBackend<WgpuRuntime, f32, i32, u32>, 1, Int> =
         Tensor::from_primitive(create_dispatch_buffer_1d(num_wgs.clone(), BLOCK_SIZE))
-            * Tensor::from_ints([SortCount::BIN_COUNT, 1, 1], device);
+            * Tensor::from_ints([sorting::BIN_COUNT, 1, 1], device);
     let num_reduce_wgs: CubeTensor<WgpuRuntime> = num_reduce_wgs.into_primitive();
 
     let mut cur_keys = input_keys;

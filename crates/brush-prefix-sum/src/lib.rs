@@ -4,6 +4,10 @@ use burn_cubecl::cubecl::server::Bindings;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
 
+// Generate shared types and constants from helpers (no entry point)
+#[wgsl_kernel(source = "src/shaders/prefix_sum_helpers.wgsl")]
+pub struct PrefixSumHelpers;
+
 // Kernel definitions using proc macro
 #[wgsl_kernel(source = "src/shaders/prefix_sum_scan.wgsl")]
 pub struct PrefixSumScan;
@@ -17,7 +21,7 @@ pub struct PrefixSumAddScannedSums;
 pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     assert!(input.is_contiguous(), "Please ensure input is contiguous");
 
-    let threads_per_group = PrefixSumScan::THREADS_PER_GROUP as usize;
+    let threads_per_group = prefix_sum_helpers::THREADS_PER_GROUP as usize;
     let num = input.shape.dims[0];
     let client = &input.client;
     let outputs = create_tensor(input.shape.dims::<1>(), &input.device, DType::I32);
