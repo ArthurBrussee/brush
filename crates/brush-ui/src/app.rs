@@ -151,7 +151,7 @@ pub struct CameraSettings {
     pub clamping: CameraClamping,
 }
 
-const TREE_STORAGE_KEY: &str = "brush_tile_tree_v2";
+const TREE_STORAGE_KEY: &str = "brush_tile_tree_v3";
 
 pub struct App {
     tree: egui_tiles::Tree<PaneRef>,
@@ -159,6 +159,56 @@ pub struct App {
 }
 
 impl App {
+    fn create_default_tree() -> egui_tiles::Tree<PaneRef> {
+        let mut tiles: Tiles<PaneRef> = Tiles::default();
+        let scene_pane = tiles.insert_pane(Pane::scene());
+
+        #[cfg(feature = "training")]
+        let root_id = {
+            let stats_pane = tiles.insert_pane(Pane::stats());
+            let dataset_pane = tiles.insert_pane(Pane::dataset());
+            let training_pane = tiles.insert_pane(Pane::training());
+            Self::build_default_layout(
+                &mut tiles,
+                scene_pane,
+                stats_pane,
+                dataset_pane,
+                training_pane,
+            )
+        };
+
+        #[cfg(not(feature = "training"))]
+        let root_id = scene_pane;
+
+        egui_tiles::Tree::new("brush_tree", root_id, tiles)
+    }
+
+    /// Check if the loaded tree has all the required panels.
+    fn is_tree_valid(tree: &egui_tiles::Tree<PaneRef>) -> bool {
+        let has_scene = tree.tiles.iter().any(|(_, tile)| {
+            matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Scene(_)))
+        });
+
+        #[cfg(feature = "training")]
+        {
+            let has_stats = tree.tiles.iter().any(|(_, tile)| {
+                matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Stats(_)))
+            });
+            let has_dataset = tree.tiles.iter().any(|(_, tile)| {
+                matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Dataset(_)))
+            });
+            let has_training = tree.tiles.iter().any(|(_, tile)| {
+                matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Training(_)))
+            });
+            has_scene && has_stats && has_dataset && has_training
+        }
+
+        #[cfg(not(feature = "training"))]
+        {
+            has_scene
+        }
+    }
+
     pub fn new(cc: &eframe::CreationContext, context: Arc<UiProcess>) -> Self {
         let state = cc
             .wgpu_render_state
@@ -177,33 +227,12 @@ impl App {
         cc.egui_ctx
             .options_mut(|opt| opt.theme_preference = ThemePreference::Dark);
 
-        // Try to restore saved tree, or create default
+        // Try to restore saved tree, validate it has all required panels, or create default
         let mut tree = cc
             .storage
             .and_then(|s| eframe::get_value::<egui_tiles::Tree<PaneRef>>(s, TREE_STORAGE_KEY))
-            .unwrap_or_else(|| {
-                let mut tiles: Tiles<PaneRef> = Tiles::default();
-                let scene_pane = tiles.insert_pane(Pane::scene());
-
-                #[cfg(feature = "training")]
-                let root_id = {
-                    let stats_pane = tiles.insert_pane(Pane::stats());
-                    let dataset_pane = tiles.insert_pane(Pane::dataset());
-                    let training_pane = tiles.insert_pane(Pane::training());
-                    Self::build_default_layout(
-                        &mut tiles,
-                        scene_pane,
-                        stats_pane,
-                        dataset_pane,
-                        training_pane,
-                    )
-                };
-
-                #[cfg(not(feature = "training"))]
-                let root_id = scene_pane;
-
-                egui_tiles::Tree::new("brush_tree", root_id, tiles)
-            });
+            .filter(Self::is_tree_valid)
+            .unwrap_or_else(Self::create_default_tree);
 
         // Initialize all panels with runtime state
         for (_, tile) in tree.tiles.iter_mut() {
