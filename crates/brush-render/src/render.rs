@@ -8,7 +8,7 @@ use crate::{
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
 use brush_kernel::{CubeCount, calc_cube_count_1d, create_dispatch_buffer_1d, create_tensor};
-use brush_prefix_sum::prefix_sum;
+use brush_prefix_sum::prefix_sum_with_length;
 use brush_sort::radix_argsort;
 use burn::tensor::{DType, IntDType, ops::FloatTensor};
 use burn::tensor::{
@@ -38,7 +38,6 @@ pub struct ChunkInfo {
 pub struct ChunkRenderInfo {
     pub tile_offsets: IntTensor<MainBackendBase>,
     pub compact_gid_from_isect: IntTensor<MainBackendBase>,
-    pub num_intersections: IntTensor<MainBackendBase>,
 }
 
 /// Iterate over chunks needed to render an image of the given size.
@@ -112,14 +111,14 @@ pub fn compute_chunk_intersections(
     let num_tiles = chunk.tile_bounds.x * chunk.tile_bounds.y;
 
     let splat_intersect_counts =
-        MainBackendBase::int_zeros([total_splats + 1].into(), device, IntDType::U32);
+        MainBackendBase::int_zeros([total_splats].into(), device, IntDType::U32);
 
     let num_vis_map_wg = create_dispatch_buffer_1d(
         num_visible.clone(),
         MapGaussiansToIntersect::WORKGROUP_SIZE[0],
     );
 
-    // First do a prepass to compute the tile counts, then fill in intersection counts.
+    // First do a prepass to compute the tile counts per gaussian, and total intersection count.
     tracing::trace_span!("MapGaussiansToIntersectPrepass").in_scope(|| {
         client
             .launch(
@@ -136,15 +135,15 @@ pub fn compute_chunk_intersections(
             .expect("Failed to render splats");
     });
 
-    // TODO: Only need to do this up to num_visible gaussians really.
-    let cum_tiles_hit =
-        tracing::trace_span!("PrefixSumGaussHits").in_scope(|| prefix_sum(splat_intersect_counts));
+    // The prefix sum only needs to cover indices 0..num_visible.
+    let cum_tiles_hit = tracing::trace_span!("PrefixSumGaussHits").in_scope(|| {
+        prefix_sum_with_length(splat_intersect_counts, num_visible.clone(), total_splats)
+    });
 
     let tile_id_from_isect = create_tensor([max_intersects as usize], device, DType::U32);
     let compact_gid_from_isect = create_tensor([max_intersects as usize], device, DType::U32);
-
-    // Zero this out, as the kernel _might_ not run at all if no gaussians are visible.
-    let num_intersections = MainBackendBase::int_zeros([1].into(), device, IntDType::U32);
+    // This will be filled by thread 0 in the main pass from cum_tiles_hit[num_visible - 1].
+    let num_intersections = create_tensor([1], device, DType::U32);
 
     tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
         client
@@ -212,7 +211,6 @@ pub fn compute_chunk_intersections(
     ChunkRenderInfo {
         tile_offsets,
         compact_gid_from_isect,
-        num_intersections,
     }
 }
 

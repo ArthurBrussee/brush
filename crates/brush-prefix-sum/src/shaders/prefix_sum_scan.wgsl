@@ -8,11 +8,12 @@ fn main(
     @builtin(local_invocation_index) lid: u32,
 ) {
     let id = helpers::get_global_id(wid, num_wgs, lid);
+    let len = helpers::get_length();
 
     var x = 0u;
-    if (id < arrayLength(&helpers::input)) {
+    if (id < len) {
         x = helpers::input[id];
     }
 
-    helpers::groupScan(id, lid, x);
+    helpers::groupScan(id, lid, x, len);
 }

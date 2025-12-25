@@ -36,7 +36,6 @@ pub type MainBackend = Fusion<MainBackendBase>;
 #[derive(Debug, Clone)]
 pub struct RenderStats {
     pub num_visible: u32,
-    pub num_intersections: u32,
 }
 
 // The maximum number of intersections that can be rendered.

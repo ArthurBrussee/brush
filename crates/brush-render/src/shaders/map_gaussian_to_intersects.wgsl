@@ -5,7 +5,6 @@
 
 #ifdef PREPASS
     @group(0) @binding(2) var<storage, read_write> splat_intersect_counts: array<u32>;
-
     @group(0) @binding(3) var<storage, read> uniforms: helpers::RenderUniforms;
 #else
     @group(0) @binding(2) var<storage, read> splat_cum_hit_counts: array<u32>;
@@ -28,8 +27,9 @@ fn main(
     let compact_gid = helpers::get_global_id(wid, num_wgs, lid, WG_SIZE);
 
 #ifndef PREPASS
+    // Thread 0 writes the total intersection count from the last element of the prefix sum.
     if compact_gid == 0u {
-        num_intersections[0] = splat_cum_hit_counts[num_visible];
+        num_intersections[0] = splat_cum_hit_counts[num_visible - 1u];
     }
 #endif
 
@@ -57,7 +57,8 @@ fn main(
     var num_tiles_hit = 0u;
 
     #ifndef PREPASS
-        let base_isect_id = splat_cum_hit_counts[compact_gid];
+        // Exclusive read from inclusive prefix sum: offset for gid is sum of counts[0..gid]
+        let base_isect_id = select(splat_cum_hit_counts[compact_gid - 1u], 0u, compact_gid == 0u);
     #endif
 
     // Nb: It's really really important here the two dispatches
@@ -93,6 +94,6 @@ fn main(
     }
 
     #ifdef PREPASS
-        splat_intersect_counts[compact_gid + 1u] = num_tiles_hit;
+        splat_intersect_counts[compact_gid] = num_tiles_hit;
     #endif
 }
