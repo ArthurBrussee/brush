@@ -141,7 +141,7 @@ pub fn prefix_sum_with_length(
                 Bindings::new().with_buffers(vec![
                     group_buffer[0].handle.clone().binding(),
                     outputs.handle.clone().binding(),
-                    length.handle.clone().binding(),
+                    length.handle.binding(),
                 ]),
             )
             .expect("Failed to run prefix sums");
