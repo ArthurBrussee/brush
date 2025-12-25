@@ -1,26 +1,4 @@
 //! Procedural macro for generating WGSL kernel wrappers.
-//!
-//! # Usage
-//!
-//! Imports from the same directory are auto-discovered:
-//!
-//! ```ignore
-//! #[wgsl_kernel(source = "src/shaders/rasterize.wgsl")]
-//! pub struct Rasterize {
-//!     pub bwd_info: bool,
-//!     pub webgpu: bool,
-//! }
-//! ```
-//!
-//! For cross-crate imports, use explicit `includes`:
-//!
-//! ```ignore
-//! #[wgsl_kernel(
-//!     source = "src/shaders/shader.wgsl",
-//!     includes = ["../other-crate/src/shaders/helpers.wgsl"],
-//! )]
-//! pub struct MyKernel;
-//! ```
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -131,20 +109,20 @@ fn decode_base32(s: &str) -> String {
     String::from_utf8(data_encoding::BASE32_NOPAD.decode(s.as_bytes()).unwrap()).unwrap()
 }
 
-fn demangle_name(mangled: &str) -> String {
-    let demangled = undecorate_regex().replace_all(mangled, |caps: &regex::Captures| {
-        format!(
-            "{}{}::{}",
-            caps.get(1).map_or("", |m| m.as_str()),
-            file_stem(&decode_base32(caps.get(3).unwrap().as_str())),
-            caps.get(2).unwrap().as_str()
-        )
-    });
-    demangled
-        .split("::")
-        .last()
-        .unwrap_or(&demangled)
-        .to_owned()
+/// Demangle a naga-oil mangled name and extract the origin module.
+/// Returns (clean_name, Some(module_name)) for imported items,
+/// or (clean_name, None) for items defined in the main shader.
+fn demangle_name_with_origin(mangled: &str) -> (String, Option<String>) {
+    let re = undecorate_regex();
+    if let Some(caps) = re.captures(mangled) {
+        let module_path = decode_base32(caps.get(3).unwrap().as_str());
+        let module_name = file_stem(&module_path);
+        let item_name = caps.get(2).unwrap().as_str().to_owned();
+        (item_name, Some(module_name))
+    } else {
+        // No decoration found - this is from the main shader
+        (mangled.to_owned(), None)
+    }
 }
 
 fn wgsl_to_rust_type(ty: Handle<Type>, ctx: &GlobalCtx) -> String {
@@ -214,16 +192,19 @@ struct ExtractedType {
     name: String,
     alignment: usize,
     fields: Vec<(String, String)>,
+    source_path: String,
 }
 
 struct ExtractedConst {
     name: String,
     ty: &'static str,
     value: String,
+    source_path: String,
 }
 
 struct ShaderInfo {
-    workgroup_size: [u32; 3],
+    /// Workgroup size, None for types_only modules
+    workgroup_size: Option<[u32; 3]>,
     types: Vec<ExtractedType>,
     constants: Vec<ExtractedConst>,
     variants: Vec<(String, String)>, // (suffix, wgsl_source)
@@ -244,21 +225,32 @@ fn extract_shader_info(
         })
         .map_err(|e| e.emit_to_string(&composer))?;
 
-    if module.entry_points.len() != 1 {
-        return Err(format!(
-            "Expected exactly 1 entry point in '{}', found {}",
-            source_path,
-            module.entry_points.len()
-        ));
-    }
-    let workgroup_size = module.entry_points[0].workgroup_size;
+    // Entry point is optional - if none, this is a types/constants-only module
+    let workgroup_size = match module.entry_points.len() {
+        0 => None,
+        1 => Some(module.entry_points[0].workgroup_size),
+        n => {
+            return Err(format!(
+                "Expected 0 or 1 entry points in '{}', found {}",
+                source_path, n
+            ));
+        }
+    };
     let ctx = module.to_ctx();
 
     // Extract constants
+    // Skip constants from includes to avoid duplication - they should be
+    // accessed from the dedicated include module instead.
     let constants: Vec<_> = module
         .constants
         .iter()
         .filter_map(|(_, c)| {
+            let mangled_name = c.name.as_ref()?;
+            let (name, origin) = demangle_name_with_origin(mangled_name);
+            // Skip constants from included modules
+            if origin.is_some() {
+                return None;
+            }
             let (ty, value) = match module.global_expressions[c.init] {
                 naga::Expression::Literal(lit) => match lit {
                     naga::Literal::F32(v) => ("f32", format!("{v}f32")),
@@ -273,14 +265,17 @@ fn extract_shader_info(
                 _ => return None,
             };
             Some(ExtractedConst {
-                name: demangle_name(c.name.as_ref()?),
+                name,
                 ty,
                 value,
+                source_path: source_path.to_owned(),
             })
         })
         .collect();
 
     // Extract struct types
+    // Skip types from includes to avoid duplication - they should be
+    // accessed from the dedicated include module instead.
     let types: Vec<_> = module
         .types
         .iter()
@@ -291,12 +286,17 @@ fn extract_shader_info(
             if members.is_empty() {
                 return None;
             }
-            let name = ty.name.as_ref()?;
-            if name.contains("__atomic_compare_exchange_result") {
+            let mangled_name = ty.name.as_ref()?;
+            if mangled_name.contains("__atomic_compare_exchange_result") {
+                return None;
+            }
+            let (name, origin) = demangle_name_with_origin(mangled_name);
+            // Skip types from included modules
+            if origin.is_some() {
                 return None;
             }
             Some(ExtractedType {
-                name: demangle_name(name),
+                name,
                 alignment: members
                     .iter()
                     .map(|m| wgsl_type_alignment(m.ty, &ctx))
@@ -306,6 +306,7 @@ fn extract_shader_info(
                     .iter()
                     .map(|m| (m.name.clone().unwrap(), wgsl_to_rust_type(m.ty, &ctx)))
                     .collect(),
+                source_path: source_path.to_owned(),
             })
         })
         .collect();
@@ -390,7 +391,8 @@ fn generate_code(
 ) -> TokenStream2 {
     let mod_ident = format_ident!("{}", to_snake_case(&struct_name.to_string()));
     let struct_name_str = struct_name.to_string();
-    let [wg_x, wg_y, wg_z] = info.workgroup_size;
+    let has_entry_point = info.workgroup_size.is_some();
+    let [wg_x, wg_y, wg_z] = info.workgroup_size.unwrap_or([1, 1, 1]);
 
     let field_idents: Vec<_> = defines
         .iter()
@@ -408,20 +410,41 @@ fn generate_code(
         quote! { ::brush_kernel::bytemuck }
     };
 
+    // Determine MetadataBinding path
+    let metadata_binding_path: TokenStream2 = if is_brush_kernel {
+        quote! { crate::MetadataBinding }
+    } else {
+        quote! { ::brush_kernel::MetadataBinding }
+    };
+
     // Type definitions
     let type_defs = info.types.iter().map(|t| {
         let name = format_ident!("{}", t.name);
         let align = proc_macro2::Literal::usize_unsuffixed(t.alignment);
         let bytemuck = &bytemuck_path;
+        let metadata_binding = &metadata_binding_path;
+        let doc = format!("Generated from WGSL: `{}`", t.source_path);
         let fields = t.fields.iter().map(|(fname, ftype)| {
             let fname = format_ident!("{}", fname);
             let ftype: TokenStream2 = ftype.parse().unwrap();
             quote! { pub #fname: #ftype }
         });
         quote! {
+            #[doc = #doc]
             #[repr(C, align(#align))]
             #[derive(Debug, Clone, Copy, #bytemuck::NoUninit)]
             pub struct #name { #(#fields),* }
+
+            impl #name {
+                /// Convert this struct to a MetadataBinding for use with kernel launches.
+                pub fn to_meta_binding(self) -> #metadata_binding {
+                    let data = #bytemuck::pod_collect_to_vec(&[self]);
+                    #metadata_binding {
+                        static_len: data.len(),
+                        data,
+                    }
+                }
+            }
         }
     });
 
@@ -430,7 +453,11 @@ fn generate_code(
         let name = format_ident!("{}", c.name);
         let ty: TokenStream2 = c.ty.parse().unwrap();
         let value: TokenStream2 = c.value.parse().unwrap();
-        quote! { pub const #name: #ty = #value; }
+        let doc = format!("Generated from WGSL: `{}`", c.source_path);
+        quote! {
+            #[doc = #doc]
+            pub const #name: #ty = #value;
+        }
     });
 
     // Shader source constants
@@ -487,7 +514,18 @@ fn generate_code(
         .chain(include_paths.iter().cloned())
         .map(|p| quote! { const _: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/", #p)); });
 
-    // CubeTask compile implementation
+    // For modules without entry points (types/constants only), generate a simpler module
+    if !has_entry_point {
+        return quote! {
+            #vis mod #mod_ident {
+                #(#track_files)*
+                #(#type_defs)*
+                #(#const_defs)*
+            }
+        };
+    }
+
+    // CubeTask compile implementation (only for modules with entry points)
     let get_source_call = if defines.is_empty() {
         quote! { get_shader_source() }
     } else {

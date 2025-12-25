@@ -1,8 +1,4 @@
-use brush_kernel::CubeCount;
-use brush_kernel::create_dispatch_buffer_1d;
-use brush_kernel::create_tensor;
-use brush_kernel::create_uniform_buffer;
-use brush_wgsl::wgsl_kernel;
+use brush_kernel::{CubeCount, create_dispatch_buffer_1d, create_tensor, wgsl_kernel};
 use burn::tensor::DType;
 use burn::tensor::Int;
 use burn::tensor::Tensor;
@@ -11,6 +7,10 @@ use burn_cubecl::CubeBackend;
 use burn_cubecl::cubecl::server::Bindings;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
+
+// Generate shared types and constants from sorting helpers (no entry point)
+#[wgsl_kernel(source = "src/shaders/sorting.wgsl")]
+pub struct Sorting;
 
 // Kernel definitions using proc macro
 #[wgsl_kernel(source = "src/shaders/sort_count.wgsl")]
@@ -31,7 +31,7 @@ pub struct SortScatter;
 // Import types from the generated modules
 use sort_count::Uniforms;
 
-const BLOCK_SIZE: u32 = SortCount::WG * SortCount::ELEMENTS_PER_THREAD;
+const BLOCK_SIZE: u32 = sorting::WG * sorting::ELEMENTS_PER_THREAD;
 
 pub fn radix_argsort(
     input_keys: CubeTensor<WgpuRuntime>,
@@ -67,16 +67,13 @@ pub fn radix_argsort(
     let num_wgs = create_dispatch_buffer_1d(n_sort.clone(), BLOCK_SIZE);
     let num_reduce_wgs: Tensor<CubeBackend<WgpuRuntime, f32, i32, u32>, 1, Int> =
         Tensor::from_primitive(create_dispatch_buffer_1d(num_wgs.clone(), BLOCK_SIZE))
-            * Tensor::from_ints([SortCount::BIN_COUNT, 1, 1], device);
+            * Tensor::from_ints([sorting::BIN_COUNT, 1, 1], device);
     let num_reduce_wgs: CubeTensor<WgpuRuntime> = num_reduce_wgs.into_primitive();
 
     let mut cur_keys = input_keys;
     let mut cur_vals = input_values;
 
     for pass in 0..sorting_bits.div_ceil(4) {
-        let uniforms_buffer: CubeTensor<WgpuRuntime> =
-            create_uniform_buffer(Uniforms { shift: pass * 4 }, device, client);
-
         let count_buf = create_tensor([(max_needed_wgs as usize) * 16], device, DType::I32);
 
         // use safe distpatch as dynamic work count isn't verified.
@@ -84,12 +81,13 @@ pub fn radix_argsort(
             .launch(
                 SortCount::task(),
                 CubeCount::Dynamic(num_wgs.clone().handle.binding()),
-                Bindings::new().with_buffers(vec![
-                    uniforms_buffer.handle.clone().binding(),
-                    n_sort.handle.clone().binding(),
-                    cur_keys.handle.clone().binding(),
-                    count_buf.handle.clone().binding(),
-                ]),
+                Bindings::new()
+                    .with_buffers(vec![
+                        n_sort.handle.clone().binding(),
+                        cur_keys.handle.clone().binding(),
+                        count_buf.handle.clone().binding(),
+                    ])
+                    .with_metadata(Uniforms { shift: pass * 4 }.to_meta_binding()),
             )
             .expect("Failed to run sorting");
 
@@ -142,15 +140,16 @@ pub fn radix_argsort(
             .launch(
                 SortScatter::task(),
                 CubeCount::Dynamic(num_wgs.handle.clone().binding()),
-                Bindings::new().with_buffers(vec![
-                    uniforms_buffer.handle.clone().binding(),
-                    n_sort.handle.clone().binding(),
-                    cur_keys.handle.clone().binding(),
-                    cur_vals.handle.clone().binding(),
-                    count_buf.handle.clone().binding(),
-                    output_keys.handle.clone().binding(),
-                    output_values.handle.clone().binding(),
-                ]),
+                Bindings::new()
+                    .with_buffers(vec![
+                        n_sort.handle.clone().binding(),
+                        cur_keys.handle.clone().binding(),
+                        cur_vals.handle.clone().binding(),
+                        count_buf.handle.clone().binding(),
+                        output_keys.handle.clone().binding(),
+                        output_values.handle.clone().binding(),
+                    ])
+                    .with_metadata(Uniforms { shift: pass * 4 }.to_meta_binding()),
             )
             .expect("Failed to run sorting");
 

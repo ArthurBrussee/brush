@@ -8,10 +8,10 @@ license.workspace = true
 [features]
 debug-validation = ["brush-render/debug-validation"]
 
+
 [dependencies]
 brush-kernel.path = "../brush-kernel"
 brush-render = { path = "../brush-render" }
-brush-wgsl.path = "../brush-wgsl"
 bytemuck = { workspace = true, features = ["derive"] }
 
 burn = { workspace = true, features = [

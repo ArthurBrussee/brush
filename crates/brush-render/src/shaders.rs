@@ -1,7 +1,10 @@
-use brush_wgsl::wgsl_kernel;
+use brush_kernel::wgsl_kernel;
+
+// Generate shared types and constants from helpers.wgsl (no entry point)
+#[wgsl_kernel(source = "src/shaders/helpers.wgsl")]
+pub struct Helpers;
 
 // Define kernels using proc macro
-
 #[wgsl_kernel(source = "src/shaders/project_forward.wgsl")]
 pub struct ProjectSplats {
     mip_splatting: bool,
@@ -21,19 +24,6 @@ pub struct MapGaussiansToIntersect {
 pub struct Rasterize {
     pub bwd_info: bool,
     pub webgpu: bool,
-}
-
-// Re-export helper types and constants from the kernel modules that use them
-pub mod helpers {
-    // Types used by multiple shaders - available from project_visible
-    pub use super::project_visible::PackedVec3;
-    pub use super::project_visible::ProjectedSplat;
-    pub use super::project_visible::RenderUniforms;
-
-    // Constants are now associated with the kernel structs
-    pub const COV_BLUR: f32 = super::ProjectVisible::COV_BLUR;
-    pub const TILE_SIZE: u32 = super::Rasterize::TILE_SIZE;
-    pub const TILE_WIDTH: u32 = super::Rasterize::TILE_WIDTH;
 }
 
 // Re-export module-specific constants

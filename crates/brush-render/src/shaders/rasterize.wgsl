@@ -1,16 +1,17 @@
 #import helpers
 
-@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
-@group(0) @binding(1) var<storage, read> compact_gid_from_isect: array<u32>;
-@group(0) @binding(2) var<storage, read> tile_offsets: array<u32>;
-@group(0) @binding(3) var<storage, read> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(0) var<storage, read> compact_gid_from_isect: array<u32>;
+@group(0) @binding(1) var<storage, read> tile_offsets: array<u32>;
+@group(0) @binding(2) var<storage, read> projected: array<helpers::ProjectedSplat>;
 
 #ifdef BWD_INFO
-    @group(0) @binding(4) var<storage, read_write> out_img: array<vec4f>;
-    @group(0) @binding(5) var<storage, read> global_from_compact_gid: array<u32>;
-    @group(0) @binding(6) var<storage, read_write> visible: array<f32>;
+    @group(0) @binding(3) var<storage, read_write> out_img: array<vec4f>;
+    @group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
+    @group(0) @binding(5) var<storage, read_write> visible: array<f32>;
+    @group(0) @binding(6) var<storage, read> uniforms: helpers::RenderUniforms;
 #else
-    @group(0) @binding(4) var<storage, read_write> out_img: array<u32>;
+    @group(0) @binding(3) var<storage, read_write> out_img: array<u32>;
+    @group(0) @binding(4) var<storage, read> uniforms: helpers::RenderUniforms;
 #endif
 
 var<workgroup> range_uniform: vec2u;
@@ -30,12 +31,18 @@ fn main(
     @builtin(global_invocation_id) global_id: vec3u,
     @builtin(local_invocation_index) local_idx: u32,
 ) {
-    let pix_loc = helpers::map_1d_to_2d(global_id.x, uniforms.tile_bounds.x);
+    // pix_loc is chunk-relative (within this chunk's coordinate system)
+    let pix_loc_chunk = helpers::map_1d_to_2d(global_id.x, uniforms.tile_bounds.x);
+    // Convert to full image coordinates for output
+    let pix_loc = pix_loc_chunk + uniforms.chunk_offset;
     let pix_id = pix_loc.x + pix_loc.y * uniforms.img_size.x;
+    // pixel_coord uses full image coordinates for gaussian intersection
     let pixel_coord = vec2f(pix_loc) + 0.5f;
-    let tile_loc = vec2u(pix_loc.x / helpers::TILE_WIDTH, pix_loc.y / helpers::TILE_WIDTH);
+    // tile_loc is chunk-relative for tile_offsets lookup
+    let tile_loc = vec2u(pix_loc_chunk.x / helpers::TILE_WIDTH, pix_loc_chunk.y / helpers::TILE_WIDTH);
 
     let tile_id = tile_loc.x + tile_loc.y * uniforms.tile_bounds.x;
+    // Check against full image bounds
     let inside = pix_loc.x < uniforms.img_size.x && pix_loc.y < uniforms.img_size.y;
 
     // have all threads in tile process the same gaussians in batches

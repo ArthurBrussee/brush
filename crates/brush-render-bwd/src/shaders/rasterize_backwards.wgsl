@@ -1,17 +1,17 @@
 #import helpers;
 
-@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
-@group(0) @binding(1) var<storage, read> compact_gid_from_isect: array<u32>;
-@group(0) @binding(2) var<storage, read> global_from_compact_gid: array<u32>;
-@group(0) @binding(3) var<storage, read> tile_offsets: array<u32>;
-@group(0) @binding(4) var<storage, read> projected: array<helpers::ProjectedSplat>;
-@group(0) @binding(5) var<storage, read> output: array<vec4f>;
-@group(0) @binding(6) var<storage, read> v_output: array<vec4f>;
+@group(0) @binding(0) var<storage, read> compact_gid_from_isect: array<u32>;
+@group(0) @binding(1) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(2) var<storage, read> tile_offsets: array<u32>;
+@group(0) @binding(3) var<storage, read> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(4) var<storage, read> output: array<vec4f>;
+@group(0) @binding(5) var<storage, read> v_output: array<vec4f>;
 
 #ifdef HARD_FLOAT
-    @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<f32>>;
-    @group(0) @binding(8) var<storage, read_write> v_opacs: array<atomic<f32>>;
-    @group(0) @binding(9) var<storage, read_write> v_refines: array<atomic<f32>>;
+    @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<f32>>;
+    @group(0) @binding(7) var<storage, read_write> v_opacs: array<atomic<f32>>;
+    @group(0) @binding(8) var<storage, read_write> v_refines: array<atomic<f32>>;
+    @group(0) @binding(9) var<storage, read> uniforms: helpers::RenderUniforms;
 
     fn write_grads_atomic(id: u32, grads: f32) {
         atomicAdd(&v_splats[id], grads);
@@ -23,9 +23,10 @@
         atomicAdd(&v_opacs[id], grads);
     }
 #else
-    @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<u32>>;
-    @group(0) @binding(8) var<storage, read_write> v_opacs: array<atomic<u32>>;
-    @group(0) @binding(9) var<storage, read_write> v_refines: array<atomic<u32>>;
+    @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<u32>>;
+    @group(0) @binding(7) var<storage, read_write> v_opacs: array<atomic<u32>>;
+    @group(0) @binding(8) var<storage, read_write> v_refines: array<atomic<u32>>;
+    @group(0) @binding(9) var<storage, read> uniforms: helpers::RenderUniforms;
 
     fn add_bitcast(cur: u32, add: f32) -> u32 {
         return bitcast<u32>(bitcast<f32>(cur) + add);
@@ -80,7 +81,10 @@ fn main(
     for (var i = 0u; i < PIXELS_PER_THREAD; i++) {
         // Process 4 consecutive pixels in the original linear order
         let thread_id = global_id.x * PIXELS_PER_THREAD + i;
-        pix_locs[i] = helpers::map_1d_to_2d(thread_id, uniforms.tile_bounds.x);
+        // pix_loc_chunk is chunk-relative
+        let pix_loc_chunk = helpers::map_1d_to_2d(thread_id, uniforms.tile_bounds.x);
+        // Convert to full image coordinates
+        pix_locs[i] = pix_loc_chunk + uniforms.chunk_offset;
         let pix_id = pix_locs[i].x + pix_locs[i].y * uniforms.img_size.x;
         pix_ids[i] = pix_id;
 
@@ -98,7 +102,9 @@ fn main(
         pix_outs[i] = vec4f(0.0, 0.0, 0.0, 1.0);
     }
 
-    let tile_loc = vec2u(pix_locs[0].x / helpers::TILE_WIDTH, pix_locs[0].y / helpers::TILE_WIDTH);
+    // Compute chunk-relative tile location for tile_offsets lookup
+    let pix_loc_chunk_0 = pix_locs[0] - uniforms.chunk_offset;
+    let tile_loc = vec2u(pix_loc_chunk_0.x / helpers::TILE_WIDTH, pix_loc_chunk_0.y / helpers::TILE_WIDTH);
     let tile_id = tile_loc.x + tile_loc.y * uniforms.tile_bounds.x;
 
     // have all threads in tile process the same gaussians in batches

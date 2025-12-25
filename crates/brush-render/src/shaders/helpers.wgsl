@@ -57,18 +57,11 @@ struct RenderUniforms {
     // Degree of sh coefficients used.
     sh_degree: u32,
 
-#ifdef UNIFORM_WRITE
-    // Number of visible gaussians, written by project_forward.
-    // This needs to be non-atomic for other kernels as you can't have
-    // read-only atomic data.
-    num_visible: atomic<u32>,
-#else
-    // Number of visible gaussians.
-    num_visible: u32,
-#endif
+    // Padding for alignment (vec4f needs 16-byte alignment)
+    paddingA: u32,
 
-    total_splats: u32,
-    max_intersects: u32,
+    // Chunk rendering support: pixel offset of current chunk in full image
+    chunk_offset: vec2u,
 
     // Nb: Alpha is ignored atm.
     background: vec4f,

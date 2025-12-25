@@ -1,6 +1,9 @@
-use crate::burn_glue::SplatForwardDiff;
+use crate::burn_glue::render_splats;
 use assert_approx_eq::assert_approx_eq;
-use brush_render::{camera::Camera, gaussian_splats::SplatRenderMode};
+use brush_render::{
+    camera::Camera,
+    gaussian_splats::{SplatRenderMode, Splats},
+};
 use burn::{
     backend::Autodiff,
     tensor::{Distribution, Tensor, TensorPrimitive},
@@ -35,17 +38,15 @@ fn diffs_at_all() {
     let sh_coeffs = Tensor::<TestBackend, 3>::ones([num_points, 1, 3], &device);
     let raw_opacity = Tensor::<TestBackend, 1>::zeros([num_points], &device);
 
-    let result = <TestBackend as SplatForwardDiff<TestBackend>>::render_splats(
-        &cam,
-        img_size,
-        means.into_primitive().tensor(),
-        log_scales.into_primitive().tensor(),
-        quats.into_primitive().tensor(),
-        sh_coeffs.into_primitive().tensor(),
-        raw_opacity.into_primitive().tensor(),
+    let splats = Splats::from_tensor_data(
+        means,
+        quats,
+        log_scales,
+        sh_coeffs,
+        raw_opacity,
         SplatRenderMode::Default,
-        Vec3::ZERO,
     );
+    let result = render_splats(&splats, &cam, img_size, Vec3::ZERO);
     result.aux.validate_values();
 
     let output: Tensor<TestBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(result.img));
@@ -104,16 +105,14 @@ fn diffs_many_splats() {
     let raw_opacity =
         Tensor::<TestBackend, 1>::random([num_points], Distribution::Uniform(-2.0, 2.0), &device);
 
-    let result = <TestBackend as SplatForwardDiff<TestBackend>>::render_splats(
-        &cam,
-        img_size,
-        means.into_primitive().tensor(),
-        log_scales.into_primitive().tensor(),
-        quats.into_primitive().tensor(),
-        sh_coeffs.into_primitive().tensor(),
-        raw_opacity.into_primitive().tensor(),
+    let splats = Splats::from_tensor_data(
+        means,
+        quats,
+        log_scales,
+        sh_coeffs,
+        raw_opacity,
         SplatRenderMode::Default,
-        Vec3::ZERO,
     );
+    let result = render_splats(&splats, &cam, img_size, Vec3::ZERO);
     result.aux.validate_values();
 }

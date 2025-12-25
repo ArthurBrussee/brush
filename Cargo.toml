@@ -17,7 +17,7 @@ members = [
     "crates/brush-train",
     "crates/brush-ui",
     "crates/brush-vfs",
-    "crates/brush-wgsl",
+    "crates/brush-kernel-proc",
     "crates/colmap-reader",
     "crates/lpips",
     "crates/lpips-convert",

@@ -8,12 +8,16 @@ fn main(
     @builtin(local_invocation_index) lid: u32,
 ) {
     let id = helpers::get_global_id(wid, num_wgs, lid);
+    let len = helpers::get_length();
     let idx = id * helpers::THREADS_PER_GROUP - 1u;
 
+    // Number of groups needed for `len` elements
+    let num_groups = (len + helpers::THREADS_PER_GROUP - 1u) / helpers::THREADS_PER_GROUP;
+
     var x = 0u;
-    if (idx >= 0u && idx < arrayLength(&helpers::input)) {
+    if (idx >= 0u && idx < len) {
         x = helpers::input[idx];
     }
 
-    helpers::groupScan(id, lid, x);
+    helpers::groupScan(id, lid, x, num_groups);
 }

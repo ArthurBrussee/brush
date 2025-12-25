@@ -2,8 +2,9 @@ use brush_render::{
     MainBackendBase, SplatForward,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
+    render::create_uniforms,
     render_aux::RenderAux,
-    sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
+    sh::sh_coeffs_for_degree,
 };
 use burn::{
     backend::{
@@ -32,6 +33,8 @@ use glam::Vec3;
 
 use crate::render_bwd::SplatGrads;
 
+use brush_render::shaders::helpers::RenderUniforms;
+
 /// Like [`SplatForward`], but for backends that support differentiation.
 ///
 /// This shouldn't be a separate trait, but atm is needed because of orphan trait rules.
@@ -42,15 +45,13 @@ pub trait SplatForwardDiff<B: Backend> {
     /// differentiable way.
     #[allow(clippy::too_many_arguments)]
     fn render_splats(
-        camera: &Camera,
-        img_size: glam::UVec2,
+        uniforms: RenderUniforms,
         means: FloatTensor<B>,
         log_scales: FloatTensor<B>,
         quats: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacity: FloatTensor<B>,
         render_mode: SplatRenderMode,
-        background: Vec3,
     ) -> SplatOutputDiff<B>;
 }
 
@@ -67,18 +68,17 @@ pub trait SplatBackwardOps<B: Backend> {
 
 #[derive(Debug, Clone)]
 pub struct GaussianBackwardState<B: Backend> {
+    pub(crate) uniforms: brush_render::shaders::helpers::RenderUniforms,
+    pub(crate) render_mode: SplatRenderMode,
+
     pub(crate) means: FloatTensor<B>,
     pub(crate) quats: FloatTensor<B>,
     pub(crate) log_scales: FloatTensor<B>,
     pub(crate) raw_opac: FloatTensor<B>,
     pub(crate) out_img: FloatTensor<B>,
     pub(crate) projected_splats: FloatTensor<B>,
-    pub(crate) uniforms_buffer: IntTensor<B>,
-    pub(crate) compact_gid_from_isect: IntTensor<B>,
     pub(crate) global_from_compact_gid: IntTensor<B>,
-    pub(crate) tile_offsets: IntTensor<B>,
-    pub(crate) render_mode: SplatRenderMode,
-    pub(crate) sh_degree: u32,
+    pub(crate) num_visible: IntTensor<B>,
 }
 
 #[derive(Debug)]
@@ -153,15 +153,13 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
     SplatForwardDiff<Self> for Autodiff<B, C>
 {
     fn render_splats(
-        camera: &Camera,
-        img_size: glam::UVec2,
+        uniforms: RenderUniforms,
         means: FloatTensor<Self>,
         log_scales: FloatTensor<Self>,
         quats: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacity: FloatTensor<Self>,
         render_mode: SplatRenderMode,
-        background: Vec3,
     ) -> SplatOutputDiff<Self> {
         // Get backend tensors & dequantize if needed. Could try and support quantized inputs
         // in the future.
@@ -184,27 +182,22 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
 
         // Render complete forward pass.
         let (out_img, aux) = <B as SplatForward<B>>::render_splats(
-            camera,
-            img_size,
+            uniforms,
             means.clone().into_primitive(),
             log_scales.clone().into_primitive(),
             quats.clone().into_primitive(),
-            sh_coeffs.clone().into_primitive(),
+            sh_coeffs.into_primitive(),
             raw_opacity.clone().into_primitive(),
             render_mode,
-            background,
             true,
         );
 
         let wrapped_aux = RenderAux::<Self> {
             projected_splats: <Self as AutodiffBackend>::from_inner(aux.projected_splats.clone()),
-            num_intersections: aux.num_intersections,
-            tile_offsets: aux.tile_offsets.clone(),
-            compact_gid_from_isect: aux.compact_gid_from_isect.clone(),
             global_from_compact_gid: aux.global_from_compact_gid.clone(),
-            uniforms_buffer: aux.uniforms_buffer.clone(),
+            num_visible: aux.num_visible.clone(),
+            uniforms: aux.uniforms,
             visible: <Self as AutodiffBackend>::from_inner(aux.visible),
-            img_size: aux.img_size,
         };
 
         match prep_nodes {
@@ -215,17 +208,12 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
                     log_scales: log_scales.into_primitive(),
                     quats: quats.into_primitive(),
                     raw_opac: raw_opacity.into_primitive(),
-                    sh_degree: sh_degree_from_coeffs(
-                        Tensor::<Self, 3>::from_primitive(TensorPrimitive::Float(sh_coeffs)).dims()
-                            [1] as u32,
-                    ),
                     out_img: out_img.clone(),
                     projected_splats: aux.projected_splats,
-                    uniforms_buffer: aux.uniforms_buffer,
-                    tile_offsets: aux.tile_offsets,
-                    compact_gid_from_isect: aux.compact_gid_from_isect,
+                    uniforms: aux.uniforms,
                     render_mode,
                     global_from_compact_gid: aux.global_from_compact_gid,
+                    num_visible: aux.num_visible,
                 };
 
                 let out_img = prep.finish(state, out_img);
@@ -256,9 +244,9 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
     ) -> SplatGrads<Self> {
         #[derive(Debug)]
         struct CustomOp {
+            uniforms: brush_render::shaders::helpers::RenderUniforms,
             desc: CustomOpIr,
             render_mode: SplatRenderMode,
-            sh_degree: u32,
         }
 
         impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp {
@@ -276,28 +264,23 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                     raw_opac,
                     out_img,
                     projected_splats,
-                    uniforms_buffer,
-                    tile_offsets,
-                    compact_gid_from_isect,
                     global_from_compact_gid,
+                    num_visible,
                 ] = inputs;
 
                 let [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine] = outputs;
 
                 let inner_state = GaussianBackwardState {
+                    uniforms: self.uniforms,
                     means: h.get_float_tensor::<MainBackendBase>(means),
                     log_scales: h.get_float_tensor::<MainBackendBase>(log_scales),
                     quats: h.get_float_tensor::<MainBackendBase>(quats),
                     raw_opac: h.get_float_tensor::<MainBackendBase>(raw_opac),
                     out_img: h.get_float_tensor::<MainBackendBase>(out_img),
                     projected_splats: h.get_float_tensor::<MainBackendBase>(projected_splats),
-                    uniforms_buffer: h.get_int_tensor::<MainBackendBase>(uniforms_buffer),
-                    tile_offsets: h.get_int_tensor::<MainBackendBase>(tile_offsets),
-                    compact_gid_from_isect: h
-                        .get_int_tensor::<MainBackendBase>(compact_gid_from_isect),
                     global_from_compact_gid: h
                         .get_int_tensor::<MainBackendBase>(global_from_compact_gid),
-                    sh_degree: self.sh_degree,
+                    num_visible: h.get_int_tensor::<MainBackendBase>(num_visible),
                     render_mode: self.render_mode,
                 };
 
@@ -319,7 +302,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
 
         let client = v_output.client.clone();
         let num_points = state.means.shape[0];
-        let coeffs = sh_coeffs_for_degree(state.sh_degree) as usize;
+        let coeffs = sh_coeffs_for_degree(state.uniforms.sh_degree) as usize;
 
         let v_means = TensorIr::uninit(
             client.create_empty_handle(),
@@ -360,10 +343,8 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             state.raw_opac,
             state.out_img,
             state.projected_splats,
-            state.uniforms_buffer,
-            state.tile_offsets,
-            state.compact_gid_from_isect,
             state.global_from_compact_gid,
+            state.num_visible,
         ];
 
         let stream = OperationStreams::with_inputs(&input_tensors);
@@ -385,9 +366,8 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                 stream,
                 OperationIr::Custom(desc.clone()),
                 CustomOp {
-                    // state,
                     desc,
-                    sh_degree: state.sh_degree,
+                    uniforms: state.uniforms,
                     render_mode: state.render_mode,
                 },
             )
@@ -426,16 +406,15 @@ where
     #[cfg(any(feature = "debug-validation", test))]
     splats.validate_values();
 
+    let uniforms = create_uniforms(camera, img_size, splats.sh_degree(), background);
     let result = B::render_splats(
-        camera,
-        img_size,
+        uniforms,
         splats.means.val().into_primitive().tensor(),
         splats.log_scales.val().into_primitive().tensor(),
         splats.rotations.val().into_primitive().tensor(),
         splats.sh_coeffs.val().into_primitive().tensor(),
         splats.raw_opacities.val().into_primitive().tensor(),
         splats.render_mode,
-        background,
     );
 
     #[cfg(any(feature = "debug-validation", test))]

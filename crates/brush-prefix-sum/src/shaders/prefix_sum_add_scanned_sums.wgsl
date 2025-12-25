@@ -9,8 +9,9 @@ fn main(
 ) {
     let id = helpers::get_global_id(wid, num_wgs, lid);
     let workgroup_id = helpers::get_workgroup_id(wid, num_wgs);
+    let len = helpers::get_length();
 
-    if (id < arrayLength(&helpers::output)) {
+    if (id < len) {
         helpers::output[id] += helpers::input[workgroup_id];
     }
 }
