@@ -23,27 +23,21 @@ use burn_wgpu::CubeDim;
 use burn_wgpu::WgpuRuntime;
 use glam::{Vec3, uvec2};
 
-/// Maximum chunk size in pixels (1024x1024)
-pub const MAX_CHUNK_SIZE: u32 = 1024;
+/// Number of tiles per side in a chunk.
+pub const TILES_PER_SIDE: u32 = 64;
 
 /// Information about a rendering chunk
 #[derive(Debug, Clone, Copy)]
 pub struct ChunkInfo {
-    /// Pixel offset of this chunk in the full image
     pub offset: glam::UVec2,
-    /// Size of this chunk in pixels
     pub size: glam::UVec2,
-    /// Tile bounds for this chunk (number of tiles in x and y)
     pub tile_bounds: glam::UVec2,
 }
 
 /// Intersection data computed for a chunk, used for rasterization
 pub struct ChunkRenderInfo {
-    /// Per-tile start/end offsets into the intersection list
     pub tile_offsets: IntTensor<MainBackendBase>,
-    /// Maps intersection index to compact gaussian ID
     pub compact_gid_from_isect: IntTensor<MainBackendBase>,
-    /// Total number of intersections in this chunk
     pub num_intersections: IntTensor<MainBackendBase>,
 }
 
@@ -51,9 +45,7 @@ pub struct ChunkRenderInfo {
 /// Each chunk is at most `MAX_CHUNK_SIZE` x `MAX_CHUNK_SIZE` pixels, aligned to tile boundaries.
 pub fn iter_chunks(img_size: [u32; 2]) -> impl Iterator<Item = ChunkInfo> {
     let tile_width = shaders::helpers::TILE_WIDTH;
-    // Align chunk size to tile boundaries
-    let chunk_size_tiles = MAX_CHUNK_SIZE / tile_width;
-    let chunk_size_pixels = chunk_size_tiles * tile_width;
+    let chunk_size_pixels = TILES_PER_SIDE * tile_width;
 
     let num_chunks_x = img_size[0].div_ceil(chunk_size_pixels);
     let num_chunks_y = img_size[1].div_ceil(chunk_size_pixels);
