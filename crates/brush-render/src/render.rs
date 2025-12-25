@@ -121,22 +121,19 @@ pub fn compute_chunk_intersections(
 
     // First do a prepass to compute the tile counts, then fill in intersection counts.
     tracing::trace_span!("MapGaussiansToIntersectPrepass").in_scope(|| {
-        // SAFETY: Kernel checked to have no OOB, bounded loops.
-        unsafe {
-            client
-                .launch_unchecked(
-                    MapGaussiansToIntersect::task(true),
-                    CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
-                    Bindings::new()
-                        .with_buffers(vec![
-                            num_visible.handle.clone().binding(),
-                            projected_splats.handle.clone().binding(),
-                            splat_intersect_counts.handle.clone().binding(),
-                        ])
-                        .with_metadata(uniforms.to_meta_binding()),
-                )
-                .expect("Failed to render splats");
-        }
+        client
+            .launch(
+                MapGaussiansToIntersect::task(true),
+                CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
+                Bindings::new()
+                    .with_buffers(vec![
+                        num_visible.handle.clone().binding(),
+                        projected_splats.handle.clone().binding(),
+                        splat_intersect_counts.handle.clone().binding(),
+                    ])
+                    .with_metadata(uniforms.to_meta_binding()),
+            )
+            .expect("Failed to render splats");
     });
 
     // TODO: Only need to do this up to num_visible gaussians really.
@@ -150,25 +147,22 @@ pub fn compute_chunk_intersections(
     let num_intersections = MainBackendBase::int_zeros([1].into(), device, IntDType::U32);
 
     tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
-        // SAFETY: Kernel checked to have no OOB, bounded loops.
-        unsafe {
-            client
-                .launch_unchecked(
-                    MapGaussiansToIntersect::task(false),
-                    CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
-                    Bindings::new()
-                        .with_buffers(vec![
-                            num_visible.handle.clone().binding(),
-                            projected_splats.handle.clone().binding(),
-                            cum_tiles_hit.handle.binding(),
-                            tile_id_from_isect.handle.clone().binding(),
-                            compact_gid_from_isect.handle.clone().binding(),
-                            num_intersections.handle.clone().binding(),
-                        ])
-                        .with_metadata(uniforms.to_meta_binding()),
-                )
-                .expect("Failed to render splats");
-        }
+        client
+            .launch(
+                MapGaussiansToIntersect::task(false),
+                CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
+                Bindings::new()
+                    .with_buffers(vec![
+                        num_visible.handle.clone().binding(),
+                        projected_splats.handle.clone().binding(),
+                        cum_tiles_hit.handle.binding(),
+                        tile_id_from_isect.handle.clone().binding(),
+                        compact_gid_from_isect.handle.clone().binding(),
+                        num_intersections.handle.clone().binding(),
+                    ])
+                    .with_metadata(uniforms.to_meta_binding()),
+            )
+            .expect("Failed to render splats");
     });
 
     // We're sorting by tile ID, but we know beforehand what the maximum value

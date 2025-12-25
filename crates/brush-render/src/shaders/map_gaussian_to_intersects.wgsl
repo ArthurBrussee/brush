@@ -38,6 +38,7 @@ fn main(
     }
 
     let projected = projected[compact_gid];
+
     let mean2d = vec2f(projected.xy_x, projected.xy_y);
     let conic = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
     let opac = projected.color_a;
@@ -79,6 +80,7 @@ fn main(
 
         #ifndef PREPASS
             let isect_id = base_isect_id + num_tiles_hit;
+
             // Nb: isect_id MIGHT be out of bounds here for degenerate cases.
             // These kernels should be launched with bounds checking, so that these
             // writes are ignored. This will skip these intersections.
