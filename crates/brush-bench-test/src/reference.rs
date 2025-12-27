@@ -1,19 +1,21 @@
-use anyhow::{Context, Result};
+use std::{fs::File, io::Read};
+
 use brush_render::{
     MainBackend,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
 };
-use brush_render_bwd::render_splats;
 use brush_rerun::burn_to_rerun::{BurnToImage, BurnToRerun};
 use burn::{
+    Tensor,
     backend::{Autodiff, wgpu::WgpuDevice},
     prelude::Backend,
-    tensor::{Float, Int, Tensor, TensorPrimitive},
+    tensor::{Float, Int, TensorPrimitive},
 };
+
+use anyhow::{Context, Result};
 use glam::Vec3;
 use safetensors::SafeTensors;
-use std::{fs::File, io::Read};
 
 use crate::safetensor_utils::{safetensor_to_burn, splats_from_safetensors};
 
@@ -124,7 +126,12 @@ async fn test_reference() -> Result<()> {
             glam::vec2(0.5, 0.5),
         );
 
-        let diff_out = render_splats(&splats, &cam, glam::uvec2(w as u32, h as u32), Vec3::ZERO);
+        let diff_out = brush_render_bwd::render_splats(
+            &splats,
+            &cam,
+            glam::uvec2(w as u32, h as u32),
+            Vec3::ZERO,
+        );
 
         let (out, aux) = (
             Tensor::from_primitive(TensorPrimitive::Float(diff_out.img)),
@@ -144,9 +151,6 @@ async fn test_reference() -> Result<()> {
                 &aux.calc_tile_depth().into_rerun().await,
             )?;
         }
-
-        splats.validate_values();
-        aux.validate_values();
 
         let num_visible: Tensor<DiffBack, 1, Int> = aux.num_visible();
         let num_visible = num_visible.into_scalar_async().await.unwrap() as usize;

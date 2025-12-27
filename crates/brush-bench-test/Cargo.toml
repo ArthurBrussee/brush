@@ -20,7 +20,6 @@ burn-cubecl.workspace = true
 bytemuck.workspace = true
 rand.workspace = true
 
-[dev-dependencies]
 divan = "0.1.17"
 safetensors.workspace = true
 brush-rerun.path = "../brush-rerun"
