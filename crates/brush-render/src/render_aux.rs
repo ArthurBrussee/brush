@@ -1,20 +1,16 @@
 use std::mem::offset_of;
 
 use burn::{
+    Tensor,
     prelude::Backend,
     tensor::{
-        ElementConversion, Int, Tensor, TensorPrimitive,
+        Int,
         ops::{FloatTensor, IntTensor},
         s,
     },
 };
 
-use crate::{
-    INTERSECTS_UPPER_BOUND,
-    render::max_intersections,
-    shaders::{self, helpers::TILE_WIDTH},
-    validation::validate_tensor_val,
-};
+use crate::shaders::{self, helpers::TILE_WIDTH};
 
 #[derive(Debug, Clone)]
 pub struct RenderAux<B: Backend> {
@@ -51,6 +47,12 @@ impl<B: Backend> RenderAux<B> {
     pub fn validate_values(&self) {
         #[cfg(any(test, feature = "debug-validation"))]
         {
+            use burn::tensor::{ElementConversion, TensorPrimitive};
+
+            use crate::{
+                INTERSECTS_UPPER_BOUND, render::max_intersections, validation::validate_tensor_val,
+            };
+
             if std::env::args().any(|a| a == "--bench") {
                 return;
             }
@@ -84,6 +86,8 @@ impl<B: Backend> RenderAux<B> {
 
             // Projected splats is only valid up to num_visible and undefined for other values.
             if num_visible > 0 {
+                use crate::validation::validate_tensor_val;
+
                 let projected_splats: Tensor<B, 2> =
                     Tensor::from_primitive(TensorPrimitive::Float(self.projected_splats.clone()));
                 let projected_splats = projected_splats.slice(s![0..num_visible]);

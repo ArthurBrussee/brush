@@ -1,17 +1,19 @@
+use burn::{
+    Tensor,
+    module::{Module, Param, ParamId},
+    prelude::Backend,
+    tensor::{TensorData, TensorPrimitive, activation::sigmoid, s},
+};
+use clap::ValueEnum;
+use glam::Vec3;
+use tracing::trace_span;
+
 use crate::{
     SplatForward,
     camera::Camera,
     render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
-use burn::{
-    module::{Module, Param, ParamId},
-    prelude::Backend,
-    tensor::{Tensor, TensorData, TensorPrimitive, activation::sigmoid, s},
-};
-use clap::ValueEnum;
-use glam::Vec3;
-use tracing::trace_span;
 
 #[derive(Module, Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum SplatRenderMode {
