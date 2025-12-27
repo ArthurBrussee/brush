@@ -423,9 +423,7 @@ pub fn render_splats<B>(
 where
     B: Backend + SplatForwardDiff<B>,
 {
-    #[cfg(any(feature = "debug-validation", test))]
     splats.validate_values();
-
     let result = B::render_splats(
         camera,
         img_size,
@@ -437,9 +435,6 @@ where
         splats.render_mode,
         background,
     );
-
-    #[cfg(any(feature = "debug-validation", test))]
     result.aux.validate_values();
-
     result
 }

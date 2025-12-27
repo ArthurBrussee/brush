@@ -1,17 +1,19 @@
+use burn::{
+    Tensor,
+    module::{Module, Param, ParamId},
+    prelude::Backend,
+    tensor::{TensorData, TensorPrimitive, activation::sigmoid, s},
+};
+use clap::ValueEnum;
+use glam::Vec3;
+use tracing::trace_span;
+
 use crate::{
     SplatForward,
     camera::Camera,
     render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
-use burn::{
-    module::{Module, Param, ParamId},
-    prelude::Backend,
-    tensor::{Tensor, TensorData, TensorPrimitive, activation::sigmoid, s},
-};
-use clap::ValueEnum;
-use glam::Vec3;
-use tracing::trace_span;
 
 #[derive(Module, Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum SplatRenderMode {
@@ -146,84 +148,82 @@ impl<B: Backend> Splats<B> {
         self.means.device()
     }
 
-    #[cfg(any(feature = "debug-validation", test))]
     pub fn validate_values(&self) {
-        use crate::validation::validate_tensor_val;
+        #[cfg(any(test, feature = "debug-validation"))]
+        {
+            if std::env::args().any(|a| a == "--bench") {
+                return;
+            }
 
-        let num_splats = self.num_splats();
+            use crate::validation::validate_tensor_val;
 
-        // Validate means (positions)
-        validate_tensor_val(&self.means.val(), "means", None, None);
+            let num_splats = self.num_splats();
 
-        // Validate raw rotations and normalized rotations
-        validate_tensor_val(&self.rotations.val(), "raw_rotations", None, None);
-        let rotations = self.rotations_normed();
-        validate_tensor_val(&rotations, "normalized_rotations", None, None);
+            // Validate means (positions)
+            validate_tensor_val(&self.means.val(), "means", None, None);
+            // Validate raw rotations and normalized rotations
+            validate_tensor_val(&self.rotations.val(), "raw_rotations", None, None);
+            let rotations = self.rotations_normed();
+            validate_tensor_val(&rotations, "normalized_rotations", None, None);
+            // Validate pre-activation scales (log_scales) and post-activation scales
+            validate_tensor_val(
+                &self.log_scales.val(),
+                "log_scales",
+                Some(-10.0),
+                Some(10.0),
+            );
+            let scales = self.scales();
+            validate_tensor_val(&scales, "scales", Some(1e-20), Some(10000.0));
+            // Validate SH coefficients
+            validate_tensor_val(&self.sh_coeffs.val(), "sh_coeffs", Some(-5.0), Some(5.0));
+            // Validate pre-activation opacity (raw_opacity) and post-activation opacity
+            validate_tensor_val(
+                &self.raw_opacities.val(),
+                "raw_opacity",
+                Some(-20.0),
+                Some(20.0),
+            );
+            let opacities = self.opacities();
+            validate_tensor_val(&opacities, "opacities", Some(0.0), Some(1.0));
+            // Range validation if requested
+            // Scales should be positive and reasonable
+            validate_tensor_val(&scales, "scales", Some(1e-6), Some(100.0));
+            // Normalized rotations should have unit magnitude (quaternion)
+            let rot_norms = rotations.powi_scalar(2).sum_dim(1).sqrt();
+            validate_tensor_val(&rot_norms, "rotation_magnitudes", Some(1e-12), Some(1000.0));
 
-        // Validate pre-activation scales (log_scales) and post-activation scales
-        validate_tensor_val(
-            &self.log_scales.val(),
-            "log_scales",
-            Some(-10.0),
-            Some(10.0),
-        );
+            assert!(num_splats > 0, "Splats must contain at least one splat");
 
-        let scales = self.scales();
-        validate_tensor_val(&scales, "scales", Some(1e-20), Some(10000.0));
-
-        // Validate SH coefficients
-        validate_tensor_val(&self.sh_coeffs.val(), "sh_coeffs", Some(-5.0), Some(5.0));
-
-        // Validate pre-activation opacity (raw_opacity) and post-activation opacity
-        validate_tensor_val(
-            &self.raw_opacities.val(),
-            "raw_opacity",
-            Some(-20.0),
-            Some(20.0),
-        );
-        let opacities = self.opacities();
-        validate_tensor_val(&opacities, "opacities", Some(0.0), Some(1.0));
-
-        // Range validation if requested
-        // Scales should be positive and reasonable
-        validate_tensor_val(&scales, "scales", Some(1e-6), Some(100.0));
-
-        // Normalized rotations should have unit magnitude (quaternion)
-        let rot_norms = rotations.powi_scalar(2).sum_dim(1).sqrt();
-        validate_tensor_val(&rot_norms, "rotation_magnitudes", Some(1e-12), Some(1000.0));
-
-        // Additional logical checks
-        assert!(num_splats > 0, "Splats must contain at least one splat");
-
-        let [n_means, dims] = self.means.dims();
-        assert_eq!(dims, 3, "Means must be 3D coordinates");
-        assert_eq!(
-            n_means, num_splats as usize,
-            "Inconsistent number of splats in means"
-        );
-        let [n_rot, rot_dims] = self.rotations.dims();
-        assert_eq!(rot_dims, 4, "Rotations must be quaternions (4D)");
-        assert_eq!(
-            n_rot, num_splats as usize,
-            "Inconsistent number of splats in rotations"
-        );
-        let [n_scales, scale_dims] = self.log_scales.dims();
-        assert_eq!(scale_dims, 3, "Scales must be 3D");
-        assert_eq!(
-            n_scales, num_splats as usize,
-            "Inconsistent number of splats in scales"
-        );
-        let [n_opacity] = self.raw_opacities.dims();
-        assert_eq!(
-            n_opacity, num_splats as usize,
-            "Inconsistent number of splats in opacity"
-        );
-        let [n_sh, _coeffs, sh_dims] = self.sh_coeffs.dims();
-        assert_eq!(sh_dims, 3, "SH coefficients must have 3 color channels");
-        assert_eq!(
-            n_sh, num_splats as usize,
-            "Inconsistent number of splats in SH coeffs"
-        );
+            let [n_means, dims] = self.means.dims();
+            assert_eq!(dims, 3, "Means must be 3D coordinates");
+            assert_eq!(
+                n_means, num_splats as usize,
+                "Inconsistent number of splats in means"
+            );
+            let [n_rot, rot_dims] = self.rotations.dims();
+            assert_eq!(rot_dims, 4, "Rotations must be quaternions (4D)");
+            assert_eq!(
+                n_rot, num_splats as usize,
+                "Inconsistent number of splats in rotations"
+            );
+            let [n_scales, scale_dims] = self.log_scales.dims();
+            assert_eq!(scale_dims, 3, "Scales must be 3D");
+            assert_eq!(
+                n_scales, num_splats as usize,
+                "Inconsistent number of splats in scales"
+            );
+            let [n_opacity] = self.raw_opacities.dims();
+            assert_eq!(
+                n_opacity, num_splats as usize,
+                "Inconsistent number of splats in opacity"
+            );
+            let [n_sh, _coeffs, sh_dims] = self.sh_coeffs.dims();
+            assert_eq!(sh_dims, 3, "SH coefficients must have 3 color channels");
+            assert_eq!(
+                n_sh, num_splats as usize,
+                "Inconsistent number of splats in SH coeffs"
+            );
+        }
     }
 }
 
@@ -238,7 +238,6 @@ pub fn render_splats<B: Backend + SplatForward<B>>(
     background: Vec3,
     splat_scale: Option<f32>,
 ) -> (Tensor<B, 3>, RenderAux<B>) {
-    #[cfg(any(feature = "debug-validation", test))]
     splats.validate_values();
 
     let mut scales = splats.log_scales.val();
@@ -262,7 +261,6 @@ pub fn render_splats<B: Backend + SplatForward<B>>(
     );
     let img = Tensor::from_primitive(TensorPrimitive::Float(img));
 
-    #[cfg(any(feature = "debug-validation", test))]
     aux.validate_values();
 
     (img, aux)

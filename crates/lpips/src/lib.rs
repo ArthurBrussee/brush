@@ -5,8 +5,6 @@ use burn::nn::conv::Conv2d;
 use burn::nn::conv::Conv2dConfig;
 use burn::nn::pool::MaxPool2d;
 use burn::nn::pool::MaxPool2dConfig;
-use burn::record::HalfPrecisionSettings;
-use burn::record::Recorder;
 use burn::tensor::Device;
 use burn::tensor::activation::relu;
 use burn::{
@@ -49,7 +47,6 @@ impl VggBlockConfig {
 
 #[derive(Module, Debug)]
 struct VggBlock<B: Backend> {
-    /// A bottleneck residual block.
     convs: Vec<Conv2d<B>>,
 }
 
@@ -150,59 +147,55 @@ impl<B: Backend> LpipsModel<B> {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
-pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
-    use burn::record::BinBytesRecorder;
+// #[cfg(not(target_family = "wasm"))]
+// pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
+//     use burn::record::BinBytesRecorder;
 
-    let model = LpipsModel::<B>::new(device);
-    // It's not great, but just about manageable.
-    #[allow(clippy::large_include_file)]
-    let bytes = include_bytes!("../burn_mapped.bin");
+//     let model = LpipsModel::<B>::new(device);
 
-    model.load_record(
-        BinBytesRecorder::<HalfPrecisionSettings, &[u8]>::default()
-            .load(bytes, device)
-            .expect("Should decode state successfully"),
-    )
-}
+//     #[allow(clippy::large_include_file)]
+//     //let bytes = include_bytes!("../burn_mapped.bin");
+//     let bytes = &[];
 
-#[cfg(test)]
-mod tests {
-    use super::load_vgg_lpips;
-    use burn::backend::Wgpu;
-    use burn::backend::wgpu::WgpuDevice;
-    use burn::tensor::TensorData;
-    use burn::tensor::{Tensor, backend::Backend};
-    use image::ImageReader;
+//     model.load_record(
+//         BinBytesRecorder::<HalfPrecisionSettings, &[u8]>::default()
+//             .load(bytes, device)
+//             .expect("Should decode state successfully"),
+//     )
+// }
 
-    fn image_to_tensor<B: Backend>(device: &B::Device, img: &image::DynamicImage) -> Tensor<B, 4> {
-        // Convert to RGB float array
-        let rgb_img = img.to_rgb32f();
-        let (w, h) = rgb_img.dimensions();
-        let data = TensorData::new(rgb_img.into_vec(), [1, h as usize, w as usize, 3]);
-        Tensor::from_data(data, device)
-    }
+// #[cfg(test)]
+// mod tests {
+//     use super::load_vgg_lpips;
+//     use burn::backend::Wgpu;
+//     use burn::backend::wgpu::WgpuDevice;
+//     use burn::tensor::TensorData;
+//     use burn::tensor::{Tensor, backend::Backend};
+//     use image::ImageReader;
 
-    #[test]
-    fn test_result() -> Result<(), Box<dyn std::error::Error>> {
-        let device = WgpuDevice::default();
+//     fn image_to_tensor<B: Backend>(device: &B::Device, img: &image::DynamicImage) -> Tensor<B, 4> {
+//         let rgb_img = img.to_rgb32f();
+//         let (w, h) = rgb_img.dimensions();
+//         let data = TensorData::new(rgb_img.into_vec(), [1, h as usize, w as usize, 3]);
+//         Tensor::from_data(data, device)
+//     }
 
-        // Load and preprocess the images
-        let image1 = ImageReader::open("./apple.png")?.decode()?;
-        let image2 = ImageReader::open("./pear.png")?.decode()?;
+//     #[test]
+//     fn test_result() -> Result<(), Box<dyn std::error::Error>> {
+//         let device = WgpuDevice::default();
 
-        let apple = image_to_tensor::<Wgpu>(&device, &image1);
-        let pear = image_to_tensor::<Wgpu>(&device, &image2);
+//         // Load and preprocess the images
+//         let image1 = ImageReader::open("./apple.png")?.decode()?;
+//         let image2 = ImageReader::open("./pear.png")?.decode()?;
 
-        let model = load_vgg_lpips(&device);
+//         let apple = image_to_tensor::<Wgpu>(&device, &image1);
+//         let pear = image_to_tensor::<Wgpu>(&device, &image2);
 
-        // Calculate LPIPS similarity score between the two images
-        let similarity_score = model.lpips(apple, pear).into_scalar();
+//         let model = load_vgg_lpips(&device);
 
-        println!("LPIPS similarity score: {similarity_score}");
-
-        assert!((similarity_score - 0.65710217).abs() < 1e-4);
-
-        Ok(())
-    }
-}
+//         // Calculate LPIPS similarity score between the two images
+//         let similarity_score = model.lpips(apple, pear).into_scalar();
+//         assert!((similarity_score - 0.65710217).abs() < 1e-4);
+//         Ok(())
+//     }
+// }

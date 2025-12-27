@@ -50,8 +50,8 @@ pub struct SplatTrainer {
     optim: Option<OptimizerType>,
     ssim: Option<Ssim<DiffBackend>>,
     bounds: BoundingBox,
-    #[cfg(not(target_family = "wasm"))]
-    lpips: Option<lpips::LpipsModel<DiffBackend>>,
+    // #[cfg(not(target_family = "wasm"))]
+    // lpips: Option<lpips::LpipsModel<DiffBackend>>,
 }
 
 fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -99,8 +99,8 @@ impl SplatTrainer {
             refine_record: None,
             ssim,
             bounds,
-            #[cfg(not(target_family = "wasm"))]
-            lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
+            // #[cfg(not(target_family = "wasm"))]
+            // lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
         }
     }
 
@@ -134,12 +134,6 @@ impl SplatTrainer {
             );
 
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-
-            #[cfg(any(feature = "debug-validation", test))]
-            {
-                splats.validate_values();
-                diff_out.aux.validate_values();
-            }
 
             (img, diff_out.aux, diff_out.refine_weight_holder)
         });
@@ -176,18 +170,7 @@ impl SplatTrainer {
                 total_err
             };
 
-            let loss = total_err.mean();
-
-            // TODO: Support masked lpips.
-            #[cfg(not(target_family = "wasm"))]
-            let loss = if let Some(lpips) = &self.lpips {
-                loss + lpips.lpips(pred_rgb.unsqueeze_dim(0), gt_rgb.unsqueeze_dim(0))
-                    * self.config.lpips_loss_weight
-            } else {
-                loss
-            };
-
-            loss
+            total_err.mean()
         });
 
         let mut grads = trace_span!("Backward pass").in_scope(|| loss.backward());

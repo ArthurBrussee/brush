@@ -1269,7 +1269,6 @@ dependencies = [
  "hashbrown 0.16.1",
  "image",
  "log",
- "lpips",
  "rand 0.9.2",
  "rayon",
  "tokio",
@@ -5655,7 +5654,6 @@ name = "lpips"
 version = "0.3.0"
 dependencies = [
  "burn",
- "image",
 ]
 
 [[package]]
