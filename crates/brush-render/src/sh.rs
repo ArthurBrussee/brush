@@ -29,3 +29,26 @@ pub fn rgb_to_sh(rgb: Vec3) -> Vec3 {
         channel_to_sh(rgb.z),
     )
 }
+
+// For linear RGB input, the SH coefficients work the same way
+// The centering at 0.5 is appropriate for both sRGB [0,1] and linear RGB [0,1]
+// The SH basis is color-space independent; it's just a linear representation
+
+/// Convert linear RGB to sRGB for display
+/// Used when rendering linear RGB values for display on standard monitors
+pub fn linear_to_srgb(linear: f32) -> f32 {
+    if linear <= 0.0031308 {
+        linear * 12.92
+    } else {
+        1.055 * linear.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// Convert a linear RGB color to sRGB
+pub fn linear_color_to_srgb(rgb: Vec3) -> Vec3 {
+    glam::vec3(
+        linear_to_srgb(rgb.x),
+        linear_to_srgb(rgb.y),
+        linear_to_srgb(rgb.z),
+    )
+}

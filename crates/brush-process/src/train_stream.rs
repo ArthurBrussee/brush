@@ -284,6 +284,7 @@ async fn run_eval(
             eval_img,
             view.image.alpha_mode(),
             device,
+            view.image.is_linear_rgb(),
         )
         .context("Failed to run eval for sample.")?;
 

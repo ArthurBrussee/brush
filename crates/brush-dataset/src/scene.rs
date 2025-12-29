@@ -238,7 +238,8 @@ pub fn sample_to_tensor_data_with_color_space(sample: DynamicImage, is_linear: b
     let (w, h) = (sample.width(), sample.height());
     tracing::trace_span!("Img to vec").in_scope(|| {
         if is_linear {
-            // For linear RGB (e.g., EXR files), convert directly without sRGB interpretation
+            // For linear RGB (e.g., EXR files), convert directly without any gamma conversion
+            // Keep as linear RGB for SH coefficient training
             if sample.color().has_alpha() {
                 let rgba = sample.into_rgba8();
                 let vec: Vec<f32> = rgba
