@@ -1,12 +1,19 @@
-use crate::{MainBackend, SplatForward, camera::Camera, gaussian_splats::SplatRenderMode};
+use crate::burn_glue::SplatForwardDiff;
 use assert_approx_eq::assert_approx_eq;
-use burn::tensor::{Distribution, Tensor, TensorPrimitive};
-use burn_wgpu::WgpuDevice;
+use brush_render::{camera::Camera, gaussian_splats::SplatRenderMode};
+use burn::{
+    backend::Autodiff,
+    tensor::{Distribution, Tensor, TensorPrimitive},
+};
+use burn_wgpu::{CubeBackend, WgpuDevice, WgpuRuntime};
 use glam::Vec3;
 
+type InnerBackend = CubeBackend<WgpuRuntime, f32, i32, u32>;
+type TestBackend = Autodiff<InnerBackend>;
+
 #[test]
-fn renders_at_all() {
-    // Check if rendering doesn't hard crash or anything.
+fn diffs_at_all() {
+    // Check if backward pass doesn't hard crash or anything.
     // These are some zero-sized gaussians, so we know
     // what the result should look like.
     let cam = Camera::new(
@@ -19,15 +26,16 @@ fn renders_at_all() {
     let img_size = glam::uvec2(32, 32);
     let device = WgpuDevice::DefaultDevice;
     let num_points = 8;
-    let means = Tensor::<MainBackend, 2>::zeros([num_points, 3], &device);
-    let log_scales = Tensor::<MainBackend, 2>::ones([num_points, 3], &device) * 2.0;
-    let quats: Tensor<MainBackend, 2> =
-        Tensor::<MainBackend, 1>::from_floats(glam::Quat::IDENTITY.to_array(), &device)
+    let means = Tensor::<TestBackend, 2>::zeros([num_points, 3], &device);
+    let log_scales = Tensor::<TestBackend, 2>::ones([num_points, 3], &device) * 2.0;
+    let quats: Tensor<TestBackend, 2> =
+        Tensor::<TestBackend, 1>::from_floats(glam::Quat::IDENTITY.to_array(), &device)
             .unsqueeze_dim(0)
             .repeat_dim(0, num_points);
-    let sh_coeffs = Tensor::<MainBackend, 3>::ones([num_points, 1, 3], &device);
-    let raw_opacity = Tensor::<MainBackend, 1>::zeros([num_points], &device);
-    let (output, aux) = <MainBackend as SplatForward<MainBackend>>::render_splats(
+    let sh_coeffs = Tensor::<TestBackend, 3>::ones([num_points, 1, 3], &device);
+    let raw_opacity = Tensor::<TestBackend, 1>::zeros([num_points], &device);
+
+    let result = <TestBackend as SplatForwardDiff<TestBackend>>::render_splats(
         &cam,
         img_size,
         means.into_primitive().tensor(),
@@ -37,11 +45,10 @@ fn renders_at_all() {
         raw_opacity.into_primitive().tensor(),
         SplatRenderMode::Default,
         Vec3::ZERO,
-        true,
     );
-    aux.validate_values();
+    result.aux.validate_values();
 
-    let output: Tensor<MainBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(output));
+    let output: Tensor<TestBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(result.img));
     let rgb = output.clone().slice([0..32, 0..32, 0..3]);
     let alpha = output.slice([0..32, 0..32, 3..4]);
     let rgb_mean = rgb.mean().to_data().as_slice::<f32>().expect("Wrong type")[0];
@@ -55,10 +62,10 @@ fn renders_at_all() {
 }
 
 #[test]
-fn renders_many_splats() {
-    // Test rendering with a ton of gaussians to verify 2D dispatch works correctly.
+fn diffs_many_splats() {
+    // Test backward pass with a ton of splats to verify 2D dispatch works correctly.
     // This exceeds the 1D 65535 * 256 = 16.7M limit.
-    let num_splats = 30_000_000;
+    let num_points = 30_000_000;
     let cam = Camera::new(
         glam::vec3(0.0, 0.0, -5.0),
         glam::Quat::IDENTITY,
@@ -70,34 +77,34 @@ fn renders_many_splats() {
     let device = WgpuDevice::DefaultDevice;
 
     // Create random gaussians spread in front of the camera
-    let means = Tensor::<MainBackend, 2>::random(
-        [num_splats, 3],
+    let means = Tensor::<TestBackend, 2>::random(
+        [num_points, 3],
         Distribution::Uniform(-2.0, 2.0),
         &device,
     );
     // Small scales so they don't cover everything
-    let log_scales = Tensor::<MainBackend, 2>::random(
-        [num_splats, 3],
+    let log_scales = Tensor::<TestBackend, 2>::random(
+        [num_points, 3],
         Distribution::Uniform(-4.0, -2.0),
         &device,
     );
     // Random rotations (will be normalized)
-    let quats = Tensor::<MainBackend, 2>::random(
-        [num_splats, 4],
+    let quats = Tensor::<TestBackend, 2>::random(
+        [num_points, 4],
         Distribution::Uniform(-1.0, 1.0),
         &device,
     );
     // Simple SH coefficients (just base color)
-    let sh_coeffs = Tensor::<MainBackend, 3>::random(
-        [num_splats, 1, 3],
+    let sh_coeffs = Tensor::<TestBackend, 3>::random(
+        [num_points, 1, 3],
         Distribution::Uniform(0.0, 1.0),
         &device,
     );
     // Some visible, some not
     let raw_opacity =
-        Tensor::<MainBackend, 1>::random([num_splats], Distribution::Uniform(-2.0, 2.0), &device);
+        Tensor::<TestBackend, 1>::random([num_points], Distribution::Uniform(-2.0, 2.0), &device);
 
-    let (_output, aux) = <MainBackend as SplatForward<MainBackend>>::render_splats(
+    let result = <TestBackend as SplatForwardDiff<TestBackend>>::render_splats(
         &cam,
         img_size,
         means.into_primitive().tensor(),
@@ -107,7 +114,6 @@ fn renders_many_splats() {
         raw_opacity.into_primitive().tensor(),
         SplatRenderMode::Default,
         Vec3::ZERO,
-        true,
     );
-    aux.validate_values();
+    result.aux.validate_values();
 }

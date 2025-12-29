@@ -15,13 +15,14 @@ var<workgroup> histogram: array<atomic<u32>, sorting::BIN_COUNT>;
 @workgroup_size(sorting::WG, 1, 1)
 fn main(
     @builtin(local_invocation_id) local_id: vec3<u32>,
-    @builtin(workgroup_id) gid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) num_workgroups: vec3<u32>,
 ) {
     let num_keys = num_keys_arr[0];
 
     // let num_keys = num_keys_arr[0];
     let num_wgs = sorting::div_ceil(num_keys, sorting::BLOCK_SIZE);
-    let group_id = gid.x;
+    let group_id = sorting::get_workgroup_id(wid, num_workgroups);
 
     if group_id >= num_wgs {
         return;

@@ -4,7 +4,7 @@ use brush_render::{
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
 };
-use brush_render_bwd::burn_glue::SplatForwardDiff;
+use brush_render_bwd::render_splats;
 use brush_rerun::burn_to_rerun::{BurnToImage, BurnToRerun};
 use burn::{
     backend::{Autodiff, wgpu::WgpuDevice},
@@ -124,16 +124,7 @@ async fn test_reference() -> Result<()> {
             glam::vec2(0.5, 0.5),
         );
 
-        let diff_out = DiffBack::render_splats(
-            &cam,
-            glam::uvec2(w as u32, h as u32),
-            splats.means.val().into_primitive().tensor(),
-            splats.log_scales.val().into_primitive().tensor(),
-            splats.rotations.val().into_primitive().tensor(),
-            splats.sh_coeffs.val().into_primitive().tensor(),
-            splats.raw_opacities.val().into_primitive().tensor(),
-            Vec3::ZERO,
-        );
+        let diff_out = render_splats(&splats, &cam, glam::uvec2(w as u32, h as u32), Vec3::ZERO);
 
         let (out, aux) = (
             Tensor::from_primitive(TensorPrimitive::Float(diff_out.img)),

@@ -13,10 +13,16 @@
 @group(0) @binding(5) var<storage, read_write> global_from_compact_gid: array<u32>;
 @group(0) @binding(6) var<storage, read_write> depths: array<f32>;
 
+const WG_SIZE: u32 = 256u;
+
 @compute
-@workgroup_size(256, 1, 1)
-fn main(@builtin(global_invocation_id) global_id: vec3u) {
-    let global_gid = global_id.x;
+@workgroup_size(WG_SIZE, 1, 1)
+fn main(
+    @builtin(workgroup_id) wid: vec3u,
+    @builtin(num_workgroups) num_wgs: vec3u,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    let global_gid = helpers::get_global_id(wid, num_wgs, lid, WG_SIZE);
 
     if global_gid >= uniforms.total_splats {
         return;
@@ -49,17 +55,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3u) {
 
     quat *= inverseSqrt(quat_norm_sqr);
 
+    var opac = helpers::sigmoid(raw_opacities[global_gid]);
     let cov3d = helpers::calc_cov3d(scale, quat);
-    let cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
-
-    if abs(determinant(cov2d)) < 1e-24 {
-        return;
-    }
+    var cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
+    opac *= helpers::compensate_cov2d(&cov2d);
 
     // compute the projected mean
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
-
-    let opac = helpers::sigmoid(raw_opacities[global_gid]);
 
     if opac < 1.0 / 255.0 {
         return;

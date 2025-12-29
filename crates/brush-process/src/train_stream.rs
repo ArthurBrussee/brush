@@ -4,14 +4,17 @@ use crate::{
 };
 use anyhow::Context;
 use async_fn_stream::TryStreamEmitter;
-use brush_dataset::{load_dataset, scene::Scene, scene_loader::SceneLoader, splat_data_to_splats};
-use brush_render::{MainBackend, gaussian_splats::Splats};
+use brush_dataset::{load_dataset, scene::Scene, scene_loader::SceneLoader};
+use brush_render::{
+    MainBackend,
+    gaussian_splats::{SplatRenderMode, Splats},
+};
 use brush_rerun::{RerunConfig, visualize_tools::VisualizeTools};
 use brush_train::{
     RandomSplatsConfig, create_random_splats,
     eval::eval_stats,
     msg::{RefineStats, TrainStepStats},
-    splats_into_autodiff,
+    splats_into_autodiff, to_init_splats,
     train::SplatTrainer,
 };
 use brush_vfs::BrushVfs;
@@ -55,11 +58,12 @@ pub(crate) async fn train_stream(
 
     let process_config = &train_stream_args.process_config;
     log::info!("Using seed {}", process_config.seed);
+
     <MainBackend as Backend>::seed(&device, process_config.seed);
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     log::info!("Loading dataset");
-    let (initial_splats, dataset) = load_dataset(vfs.clone(), &train_stream_args.load_config)
+    let (init_splats, dataset) = load_dataset(vfs.clone(), &train_stream_args.load_config)
         .instrument(trace_span!("Load dataset"))
         .await?;
 
@@ -85,28 +89,45 @@ pub(crate) async fn train_stream(
         }))
         .await;
 
-    let estimated_up = dataset.estimate_up();
     log::info!("Loading initial splats if any.");
+    let estimated_up = dataset.estimate_up();
 
     // Convert SplatData to Splats using KNN initialization
-    let initial_splats = initial_splats.map(|msg| {
-        let splats = splat_data_to_splats(msg.data, &device);
-        (msg.meta, splats)
-    });
+    let (up_axis, init_splats) = if let Some(msg) = init_splats {
+        // Use loaded splats with KNN init
+        let render_mode = train_stream_args
+            .train_config
+            .render_mode
+            .or(msg.meta.render_mode)
+            .unwrap_or(SplatRenderMode::Default);
+        let splats = to_init_splats(msg.data, render_mode, &device);
+        (msg.meta.up_axis, splats)
+    } else {
+        // Default: just use random splats
+        let render_mode = train_stream_args
+            .train_config
+            .render_mode
+            .unwrap_or(SplatRenderMode::Default);
+        log::info!("Starting with random splat config.");
+        // Create a bounding box the size of all the cameras plus a bit.
+        let mut bounds = dataset.train.bounds();
+        bounds.extent *= 1.25;
+        let config = RandomSplatsConfig::new();
+        let splats = create_random_splats(&config, bounds, &mut rng, render_mode, &device);
+        (None, splats)
+    };
 
-    if let Some((meta, splats)) = &initial_splats {
-        emitter
-            .emit(ProcessMessage::ViewSplats {
-                // If the metadata has an up axis prefer that, otherwise estimate
-                // the up direction.
-                up_axis: meta.up_axis.or(Some(estimated_up)),
-                splats: Box::new(splats.clone()),
-                frame: 0,
-                total_frames: 0,
-                progress: meta.progress,
-            })
-            .await;
-    }
+    emitter
+        .emit(ProcessMessage::ViewSplats {
+            // If the metadata has an up axis prefer that, otherwise estimate
+            // the up direction.
+            up_axis: up_axis.or(Some(estimated_up)),
+            splats: Box::new(init_splats.clone()),
+            frame: 0,
+            total_frames: 0,
+            progress: 1.0,
+        })
+        .await;
 
     emitter.emit(ProcessMessage::DoneLoading).await;
 
@@ -114,24 +135,12 @@ pub(crate) async fn train_stream(
     let client = WgpuRuntime::client(&device);
     client.memory_cleanup();
 
-    let splats = if let Some((_, splats)) = initial_splats {
-        splats
-    } else {
-        log::info!("Starting with random splat config.");
-        // Create a bounding box the size of all the cameras plus a bit.
-        let mut bounds = dataset.train.bounds();
-        bounds.extent *= 1.25;
-        let config = RandomSplatsConfig::new();
-        create_random_splats(&config, bounds, &mut rng, &device)
-    };
-
-    let splats = splats.with_sh_degree(train_stream_args.model_config.sh_degree);
-    let mut splats = splats_into_autodiff(splats);
-
     let mut eval_scene = dataset.eval;
 
     let mut train_duration = Duration::from_secs(0);
     let mut dataloader = SceneLoader::new(&dataset.train, 42);
+    let mut splats =
+        splats_into_autodiff(init_splats.with_sh_degree(train_stream_args.model_config.sh_degree));
     let mut trainer =
         SplatTrainer::new(&train_stream_args.train_config, &device, splats.clone()).await;
 

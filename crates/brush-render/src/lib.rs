@@ -12,6 +12,9 @@ use glam::Vec3;
 use render_aux::RenderAux;
 use wgpu::{Adapter, Device, Queue};
 
+use crate::gaussian_splats::SplatRenderMode;
+pub use crate::gaussian_splats::render_splats;
+
 mod burn_glue;
 mod dim_check;
 pub mod render_aux;
@@ -40,10 +43,9 @@ pub struct RenderStats {
 
 // The maximum number of intersections that can be rendered.
 //
-// Bounded by max nr. of dispatches for the intersection kernel.
-const INTERSECTS_UPPER_BOUND: u32 = 512 * 65535;
-// The maximum number of gaussians that can be rendered.
-const GAUSSIANS_UPPER_BOUND: u32 = 256 * 65535;
+// With 2D dispatch support, we can now handle more than the original 65535 workgroup limit.
+// Doubled from the original 512 * 65535 to allow higher resolution rendering.
+const INTERSECTS_UPPER_BOUND: u32 = 2 * 512 * 65535;
 
 pub trait SplatForward<B: Backend> {
     /// Render splats to a buffer.
@@ -62,6 +64,7 @@ pub trait SplatForward<B: Backend> {
         quats: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
+        render_mode: SplatRenderMode,
         background: Vec3,
         bwd_info: bool,
     ) -> (FloatTensor<B>, RenderAux<B>);

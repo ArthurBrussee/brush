@@ -3,10 +3,14 @@ use brush_wgsl::wgsl_kernel;
 // Define kernels using proc macro
 
 #[wgsl_kernel(source = "src/shaders/project_forward.wgsl")]
-pub struct ProjectSplats;
+pub struct ProjectSplats {
+    mip_splatting: bool,
+}
 
 #[wgsl_kernel(source = "src/shaders/project_visible.wgsl")]
-pub struct ProjectVisible;
+pub struct ProjectVisible {
+    mip_splatting: bool,
+}
 
 #[wgsl_kernel(source = "src/shaders/map_gaussian_to_intersects.wgsl")]
 pub struct MapGaussiansToIntersect {

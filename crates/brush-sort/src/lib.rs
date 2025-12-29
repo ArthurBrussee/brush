@@ -1,5 +1,5 @@
 use brush_kernel::CubeCount;
-use brush_kernel::create_dispatch_buffer;
+use brush_kernel::create_dispatch_buffer_1d;
 use brush_kernel::create_tensor;
 use brush_kernel::create_uniform_buffer;
 use brush_wgsl::wgsl_kernel;
@@ -64,9 +64,9 @@ pub fn radix_argsort(
 
     let max_needed_wgs = max_n.div_ceil(BLOCK_SIZE);
 
-    let num_wgs = create_dispatch_buffer(n_sort.clone(), [BLOCK_SIZE, 1, 1]);
+    let num_wgs = create_dispatch_buffer_1d(n_sort.clone(), BLOCK_SIZE);
     let num_reduce_wgs: Tensor<CubeBackend<WgpuRuntime, f32, i32, u32>, 1, Int> =
-        Tensor::from_primitive(create_dispatch_buffer(num_wgs.clone(), [BLOCK_SIZE, 1, 1]))
+        Tensor::from_primitive(create_dispatch_buffer_1d(num_wgs.clone(), BLOCK_SIZE))
             * Tensor::from_ints([SortCount::BIN_COUNT, 1, 1], device);
     let num_reduce_wgs: CubeTensor<WgpuRuntime> = num_reduce_wgs.into_primitive();
 
@@ -275,6 +275,61 @@ mod tests {
         {
             assert_eq!(*key, ref_key as i32);
             assert_eq!(*val, ref_val as i32);
+        }
+    }
+
+    #[test]
+    fn test_sorting_large() {
+        // Test with a ton of elements to verify 2D dispatch works correctly.
+        const NUM_ELEMENTS: usize = 30_000_000;
+
+        let mut rng = rand::rng();
+
+        // Generate random keys with limited range to allow verification
+        let keys_inp: Vec<u32> = (0..NUM_ELEMENTS)
+            .map(|_| rng.random_range(0..1_000_000))
+            .collect();
+        let values_inp: Vec<u32> = (0..NUM_ELEMENTS).map(|i| i as u32).collect();
+
+        let device = Default::default();
+        let keys =
+            Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
+        let values =
+            Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
+        let num_points =
+            Tensor::<Backend, 1, Int>::from_ints([NUM_ELEMENTS as i32], &device).into_primitive();
+
+        let (ret_keys, ret_values) = radix_argsort(keys, values, &num_points, 32);
+
+        let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys).to_data();
+        let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values).to_data();
+
+        let ret_keys_slice = ret_keys.as_slice::<i32>().expect("Wrong type");
+        let ret_values_slice = ret_values.as_slice::<i32>().expect("Wrong type");
+
+        assert_eq!(ret_keys_slice.len(), NUM_ELEMENTS);
+        assert_eq!(ret_values_slice.len(), NUM_ELEMENTS);
+
+        // Verify the output is sorted
+        for i in 1..NUM_ELEMENTS {
+            assert!(
+                ret_keys_slice[i - 1] <= ret_keys_slice[i],
+                "Keys not sorted at index {i}: {} > {}",
+                ret_keys_slice[i - 1],
+                ret_keys_slice[i]
+            );
+        }
+
+        // Verify that values correspond to original indices that had those keys
+        // Check a sample of indices to avoid O(n^2) verification
+        let check_indices = [0, 1000, 10_000, 100_000, 1_000_000, 10_000_000, 19_999_999];
+        for &idx in &check_indices {
+            let sorted_key = ret_keys_slice[idx] as u32;
+            let original_idx = ret_values_slice[idx] as usize;
+            assert_eq!(
+                keys_inp[original_idx], sorted_key,
+                "Value at index {idx} points to wrong original index"
+            );
         }
     }
 }

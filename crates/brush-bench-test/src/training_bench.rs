@@ -1,8 +1,13 @@
 #![recursion_limit = "256"]
 
 use brush_dataset::scene::SceneBatch;
-use brush_render::{AlphaMode, MainBackend, camera::Camera, gaussian_splats::Splats};
-use brush_render_bwd::burn_glue::SplatForwardDiff;
+use brush_render::{
+    AlphaMode, MainBackend,
+    camera::Camera,
+    gaussian_splats::{SplatRenderMode, Splats},
+    render_splats,
+};
+use brush_render_bwd::render_splats as render_splats_diff;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
     backend::{Autodiff, wgpu::WgpuDevice},
@@ -20,11 +25,10 @@ fn main() {
 type DiffBackend = Autodiff<MainBackend>;
 
 const SEED: u64 = 42;
-const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1536, 1024), (1920, 1080), (2048, 2048)];
+const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
 const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
 const ITERS_PER_SYNC: u32 = 10;
 
-/// Generate realistic scene-distributed splats
 fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(SEED);
 
@@ -93,8 +97,16 @@ fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
     // Realistic opacity distribution (mostly opaque with some variation)
     let opacities: Vec<f32> = (0..count).map(|_| rng.random_range(0.05..1.0)).collect();
 
-    Splats::<DiffBackend>::from_raw(means, rotations, log_scales, sh_coeffs, opacities, device)
-        .with_sh_degree(0)
+    Splats::<DiffBackend>::from_raw(
+        means,
+        rotations,
+        log_scales,
+        sh_coeffs,
+        opacities,
+        SplatRenderMode::Default,
+        device,
+    )
+    .with_sh_degree(0)
 }
 
 fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBatch {
@@ -138,7 +150,7 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
 mod forward_rendering {
     use crate::{
         AutodiffModule, Backend, Camera, ITERS_PER_SYNC, MainBackend, Quat, RESOLUTIONS,
-        SPLAT_COUNTS, Vec3, WgpuDevice, gen_splats,
+        SPLAT_COUNTS, Vec3, WgpuDevice, gen_splats, render_splats,
     };
 
     #[divan::bench(args = SPLAT_COUNTS)]
@@ -155,7 +167,7 @@ mod forward_rendering {
 
         bencher.bench_local(move || {
             for _ in 0..ITERS_PER_SYNC {
-                let _ = splats.render(&camera, glam::uvec2(1920, 1080), Vec3::ZERO, None);
+                let _ = render_splats(&splats, &camera, glam::uvec2(1920, 1080), Vec3::ZERO, None);
             }
             MainBackend::sync(&device).expect("Failed to sync");
         });
@@ -175,7 +187,13 @@ mod forward_rendering {
 
         bencher.bench_local(move || {
             for _ in 0..ITERS_PER_SYNC {
-                let _ = splats.render(&camera, glam::uvec2(width, height), Vec3::ZERO, None);
+                let _ = render_splats(
+                    &splats,
+                    &camera,
+                    glam::uvec2(width, height),
+                    Vec3::ZERO,
+                    None,
+                );
             }
             MainBackend::sync(&device).expect("Failed to sync");
         });
@@ -185,8 +203,8 @@ mod forward_rendering {
 #[divan::bench_group(max_time = 2)]
 mod backward_rendering {
     use crate::{
-        Backend, Camera, DiffBackend, ITERS_PER_SYNC, MainBackend, Quat, RESOLUTIONS,
-        SplatForwardDiff, Tensor, TensorPrimitive, Vec3, WgpuDevice, gen_splats,
+        Backend, Camera, DiffBackend, ITERS_PER_SYNC, MainBackend, Quat, RESOLUTIONS, Tensor,
+        TensorPrimitive, Vec3, WgpuDevice, gen_splats, render_splats_diff,
     };
 
     #[divan::bench(args = [1_000_000, 2_000_000, 5_000_000])]
@@ -203,16 +221,8 @@ mod backward_rendering {
 
         bencher.bench_local(move || {
             for _ in 0..ITERS_PER_SYNC {
-                let diff_out = DiffBackend::render_splats(
-                    &camera,
-                    glam::uvec2(1920, 1080),
-                    splats.means.val().into_primitive().tensor(),
-                    splats.log_scales.val().into_primitive().tensor(),
-                    splats.rotations.val().into_primitive().tensor(),
-                    splats.sh_coeffs.val().into_primitive().tensor(),
-                    splats.raw_opacities.val().into_primitive().tensor(),
-                    Vec3::ZERO,
-                );
+                let diff_out =
+                    render_splats_diff(&splats, &camera, glam::uvec2(1920, 1080), Vec3::ZERO);
                 let img: Tensor<DiffBackend, 3> =
                     Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
                 let _ = img.mean().backward();
@@ -234,16 +244,8 @@ mod backward_rendering {
         );
         bencher.bench_local(move || {
             for _ in 0..ITERS_PER_SYNC {
-                let diff_out = DiffBackend::render_splats(
-                    &camera,
-                    glam::uvec2(width, height),
-                    splats.means.val().into_primitive().tensor(),
-                    splats.log_scales.val().into_primitive().tensor(),
-                    splats.rotations.val().into_primitive().tensor(),
-                    splats.sh_coeffs.val().into_primitive().tensor(),
-                    splats.raw_opacities.val().into_primitive().tensor(),
-                    Vec3::ZERO,
-                );
+                let diff_out =
+                    render_splats_diff(&splats, &camera, glam::uvec2(width, height), Vec3::ZERO);
                 let img: Tensor<DiffBackend, 3> =
                     Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
                 let _ = img.mean().backward();
@@ -296,7 +298,7 @@ mod integration_tests {
             glam::vec2(0.5, 0.5),
         );
 
-        let (img, _) = splats.render(&camera, glam::uvec2(256, 256), Vec3::ZERO, None);
+        let (img, _) = render_splats(&splats, &camera, glam::uvec2(256, 256), Vec3::ZERO, None);
         let dims = img.dims();
         assert_eq!(dims, [256, 256, 3]);
 

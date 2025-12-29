@@ -2,17 +2,18 @@
 
 pub mod config;
 pub mod eval;
-pub mod init_splats;
 pub mod msg;
 pub mod train;
-
-pub use init_splats::{RandomSplatsConfig, create_random_splats};
 
 mod adam_scaled;
 mod multinomial;
 mod quat_vec;
 mod ssim;
 mod stats;
+
+mod splat_init;
+
+pub use splat_init::{RandomSplatsConfig, create_random_splats, to_init_splats};
 
 use brush_render::gaussian_splats::Splats;
 use burn::{
@@ -25,6 +26,7 @@ use burn::{
 pub fn splats_into_autodiff<B: Backend, BDiff: AutodiffBackend<InnerBackend = B>>(
     splats: Splats<B>,
 ) -> Splats<BDiff> {
+    let mode = splats.render_mode;
     let (means_id, means, _) = splats.means.consume();
     let (rotation_id, rotation, _) = splats.rotations.consume();
     let (log_scales_id, log_scales, _) = splats.log_scales.consume();
@@ -43,5 +45,6 @@ pub fn splats_into_autodiff<B: Backend, BDiff: AutodiffBackend<InnerBackend = B>
             raw_opacity_id,
             Tensor::from_inner(raw_opacity).require_grad(),
         ),
+        render_mode: mode,
     }
 }

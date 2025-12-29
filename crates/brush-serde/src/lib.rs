@@ -26,7 +26,7 @@ pub use serde_ply::SerializeError;
 #[allow(unused)]
 mod test_utils {
     use brush_render::MainBackend;
-    use brush_render::gaussian_splats::Splats;
+    use brush_render::gaussian_splats::{SplatRenderMode, Splats};
     use brush_render::sh::sh_coeffs_for_degree;
     use burn::backend::wgpu::WgpuDevice;
 
@@ -65,7 +65,15 @@ mod test_utils {
             opacities.push(0.8 - offset * 0.1);
         }
 
-        Splats::<MainBackend>::from_raw(means, rotations, log_scales, sh_coeffs, opacities, &device)
-            .with_sh_degree(sh_degree)
+        Splats::<MainBackend>::from_raw(
+            means,
+            rotations,
+            log_scales,
+            sh_coeffs,
+            opacities,
+            SplatRenderMode::Default,
+            &device,
+        )
+        .with_sh_degree(sh_degree)
     }
 }

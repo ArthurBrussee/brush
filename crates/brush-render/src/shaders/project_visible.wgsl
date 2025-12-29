@@ -160,10 +160,16 @@ fn read_coeffs(base_id: ptr<function, u32>) -> vec3f {
     return ret;
 }
 
+const WG_SIZE: u32 = 256u;
+
 @compute
-@workgroup_size(256, 1, 1)
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-    let compact_gid = gid.x;
+@workgroup_size(WG_SIZE, 1, 1)
+fn main(
+    @builtin(workgroup_id) wid: vec3u,
+    @builtin(num_workgroups) num_wgs: vec3u,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    let compact_gid = helpers::get_global_id(wid, num_wgs, lid, WG_SIZE);
 
     if compact_gid >= uniforms.num_visible {
         return;
@@ -177,14 +183,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // Safe to normalize, splats with length(quat) == 0 are invisible.
     let quat = normalize(quats[global_gid]);
-    let opac = helpers::sigmoid(raw_opacities[global_gid]);
+    var opac = helpers::sigmoid(raw_opacities[global_gid]);
 
     let viewmat = uniforms.viewmat;
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let mean_c = R * mean + viewmat[3].xyz;
 
     let covar = helpers::calc_cov3d(scale, quat);
-    let cov2d = helpers::calc_cov2d(covar, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
+    var cov2d = helpers::calc_cov2d(covar, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
+    opac *= helpers::compensate_cov2d(&cov2d);
+
     let conic = helpers::inverse(cov2d);
 
     // compute the projected mean
