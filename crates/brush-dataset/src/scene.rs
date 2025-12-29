@@ -23,6 +23,7 @@ pub struct LoadImage {
     mask_path: Option<PathBuf>,
     max_resolution: u32,
     alpha_mode: AlphaMode,
+    is_linear_rgb: bool,
 }
 
 impl PartialEq for LoadImage {
@@ -34,6 +35,14 @@ impl PartialEq for LoadImage {
 }
 
 impl LoadImage {
+    fn is_linear_format(path: &Path) -> bool {
+        // EXR files are typically in linear color space
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("exr"))
+            .unwrap_or(false)
+    }
+
     pub fn new(
         vfs: Arc<BrushVfs>,
         path: PathBuf,
@@ -49,12 +58,15 @@ impl LoadImage {
             }
         });
 
+        let is_linear_rgb = Self::is_linear_format(&path);
+
         Self {
             vfs,
             path,
             mask_path,
             max_resolution,
             alpha_mode,
+            is_linear_rgb,
         }
     }
 
@@ -115,6 +127,10 @@ impl LoadImage {
 
     pub fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
+    }
+
+    pub fn is_linear_rgb(&self) -> bool {
+        self.is_linear_rgb
     }
 
     pub fn img_name(&self) -> String {
@@ -213,17 +229,43 @@ pub fn view_to_sample_image(image: DynamicImage, alpha_mode: AlphaMode) -> Dynam
 }
 
 pub fn sample_to_tensor_data(sample: DynamicImage) -> TensorData {
+    sample_to_tensor_data_with_color_space(sample, false)
+}
+
+pub fn sample_to_tensor_data_with_color_space(sample: DynamicImage, is_linear: bool) -> TensorData {
     let _span = tracing::trace_span!("sample_to_tensor").entered();
 
     let (w, h) = (sample.width(), sample.height());
     tracing::trace_span!("Img to vec").in_scope(|| {
-        if sample.color().has_alpha() {
-            TensorData::new(
-                sample.into_rgba32f().into_vec(),
-                [h as usize, w as usize, 4],
-            )
+        if is_linear {
+            // For linear RGB (e.g., EXR files), convert directly without sRGB interpretation
+            if sample.color().has_alpha() {
+                let rgba = sample.into_rgba8();
+                let vec: Vec<f32> = rgba
+                    .as_raw()
+                    .iter()
+                    .map(|&v| v as f32 / 255.0)
+                    .collect();
+                TensorData::new(vec, [h as usize, w as usize, 4])
+            } else {
+                let rgb = sample.into_rgb8();
+                let vec: Vec<f32> = rgb
+                    .as_raw()
+                    .iter()
+                    .map(|&v| v as f32 / 255.0)
+                    .collect();
+                TensorData::new(vec, [h as usize, w as usize, 3])
+            }
         } else {
-            TensorData::new(sample.into_rgb32f().into_vec(), [h as usize, w as usize, 3])
+            // For sRGB (standard images), use the automatic sRGB-to-linear conversion
+            if sample.color().has_alpha() {
+                TensorData::new(
+                    sample.into_rgba32f().into_vec(),
+                    [h as usize, w as usize, 4],
+                )
+            } else {
+                TensorData::new(sample.into_rgb32f().into_vec(), [h as usize, w as usize, 3])
+            }
         }
     })
 }
