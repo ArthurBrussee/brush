@@ -1037,6 +1037,7 @@ dependencies = [
  "tracing-subscriber",
  "tracing-tracy",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-logger",
  "web-sys",
  "winapi",

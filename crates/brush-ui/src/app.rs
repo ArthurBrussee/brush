@@ -159,10 +159,16 @@ pub struct App {
     tree: egui_tiles::Tree<PaneRef>,
     tree_ctx: AppTree,
 
+    #[cfg(not(target_family = "wasm"))]
     rt: tokio::runtime::Runtime,
 }
 
 impl App {
+    /// Returns a reference to the UI process context.
+    pub fn context(&self) -> &Arc<UiProcess> {
+        &self.tree_ctx.process
+    }
+
     fn create_default_tree() -> egui_tiles::Tree<PaneRef> {
         let mut tiles: Tiles<PaneRef> = Tiles::default();
         let scene_pane = tiles.insert_pane(Pane::scene());
@@ -269,13 +275,8 @@ impl App {
             .build()
             .unwrap();
 
-        #[cfg(target_family = "wasm")]
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
         Self {
+            #[cfg(not(target_family = "wasm"))]
             rt,
             tree,
             tree_ctx: AppTree { process: context },
@@ -324,11 +325,17 @@ impl App {
 }
 
 impl eframe::App for App {
+    #[cfg(target_arch = "wasm32")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, TREE_STORAGE_KEY, &self.tree);
     }
 
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        #[cfg(not(target_family = "wasm"))]
         let _guard = self.rt.enter();
 
         let _span = trace_span!("Update UI").entered();

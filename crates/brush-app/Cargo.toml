@@ -70,6 +70,7 @@ glam.workspace = true
 tokio_with_wasm = { workspace = true, features = ["rt"] }
 tokio = { workspace = true, features = ["io-util", "rt"] }
 wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
 web-sys = { workspace = true, features = [
     "HtmlCanvasElement",
     "Document",
