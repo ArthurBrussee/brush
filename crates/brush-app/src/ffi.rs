@@ -113,11 +113,6 @@ pub unsafe extern "C" fn train_and_save(
         return TrainExitCode::Error;
     }
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create tokio runtime");
-
     startup();
 
     let dataset_path_str =
@@ -133,20 +128,24 @@ pub unsafe extern "C" fn train_and_save(
     let process_args = unsafe { train_options.into_train_stream_config() };
     let mut process = create_process(source, async move || process_args, device, Slot::default());
 
-    rt.block_on(async {
-        while let Some(message_result) = process.stream.next().await {
-            match message_result {
-                Ok(message) => {
-                    if let Ok(progress_message) = message.try_into() {
-                        progress_callback(progress_message, user_data);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create tokio runtime")
+        .block_on(async {
+            while let Some(message_result) = process.stream.next().await {
+                match message_result {
+                    Ok(message) => {
+                        if let Ok(progress_message) = message.try_into() {
+                            progress_callback(progress_message, user_data);
+                        }
+                    }
+                    Err(_) => {
+                        return TrainExitCode::Error;
                     }
                 }
-                Err(_) => {
-                    return TrainExitCode::Error;
-                }
             }
-        }
 
-        TrainExitCode::Success
-    })
+            TrainExitCode::Success
+        })
 }
