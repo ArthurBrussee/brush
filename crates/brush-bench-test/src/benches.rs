@@ -251,6 +251,8 @@ mod backward_rendering {
 
 #[divan::bench_group(max_time = 4)]
 mod training {
+    use brush_render::bounding_box::BoundingBox;
+
     use super::{
         Backend, MainBackend, SPLAT_COUNTS, SplatTrainer, TrainConfig, Vec3, WgpuDevice,
         gen_splats, generate_training_batch,
@@ -265,7 +267,11 @@ mod training {
             let batches = [batch1, batch2];
             let config = TrainConfig::default();
             let mut splats = gen_splats(&device, splat_count);
-            let mut trainer = SplatTrainer::new(&config, &device, splats.clone()).await;
+            let mut trainer = SplatTrainer::new(
+                &config,
+                &device,
+                BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+            );
 
             for step in 0..20 {
                 let batch = batches[step % batches.len()].clone();

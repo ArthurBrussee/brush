@@ -149,6 +149,6 @@ pub(crate) async fn update_splat_state(
     splat_state: &Slot<SplatView>,
     view: SplatView,
 ) {
-    splat_state.put(view);
+    splat_state.put(view).await;
     emitter.emit(ProcessMessage::SplatsUpdated).await;
 }

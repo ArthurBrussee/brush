@@ -14,7 +14,8 @@ use glam::{Affine3A, Quat, Vec3};
 use std::sync::RwLock;
 use tokio::sync::{mpsc, oneshot::Receiver};
 use tokio_stream::StreamExt;
-use tokio_with_wasm::alias as tokio_wasm;
+use tokio_wasm::task;
+use tokio_with_wasm::alias::{self as tokio_wasm};
 
 #[derive(Debug, Clone)]
 enum ControlMessage {
@@ -93,7 +94,7 @@ impl UiProcess {
         self.read()
             .process_handle
             .as_ref()
-            .and_then(|handle| handle.splat_view.borrow().as_ref().cloned())
+            .and_then(|handle| handle.splat_view.block_cloned())
     }
 
     pub fn current_camera(&self) -> Camera {
@@ -178,6 +179,14 @@ impl UiProcess {
         inner.repaint();
     }
 
+    pub fn spawn<F>(&self, fut: F) -> task::JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.read().rt.spawn(fut)
+    }
+
     pub fn start_new_process(&self, source: DataSource, args: Receiver<TrainStreamConfig>) {
         let mut inner = self.write();
         let reset = UiProcessInner::new(inner.burn_device.clone(), inner.ui_ctx.clone());
@@ -197,7 +206,7 @@ impl UiProcess {
 
         let egui_ctx = inner.ui_ctx.clone();
 
-        tokio_with_wasm::alias::task::spawn(async move {
+        inner.rt.spawn(async move {
             while let Some(msg) = process.stream.next().await {
                 // Mark egui as needing a repaint.
                 egui_ctx.request_repaint();
@@ -220,7 +229,7 @@ impl UiProcess {
                 // This only really matters in the browser:
                 // on native, receiving also yields. In the browser that doesn't yield
                 // back control fully though whereas yield_now() does.
-                tokio_wasm::task::yield_now().await;
+                task::yield_now().await;
             }
         });
 
@@ -307,6 +316,8 @@ struct UiProcessInner {
     reset_layout_requested: bool,
     session_reset_requested: bool,
 
+    rt: tokio::runtime::Runtime,
+
     ui_ctx: egui::Context,
     burn_device: WgpuDevice,
 }
@@ -318,6 +329,11 @@ impl UiProcessInner {
 
         let controls = CameraController::new(position, rotation, CameraSettings::default());
         let camera = Camera::new(Vec3::ZERO, Quat::IDENTITY, 0.8, 0.8, glam::vec2(0.5, 0.5));
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
 
         Self {
             camera,
@@ -333,6 +349,7 @@ impl UiProcessInner {
             session_reset_requested: false,
             burn_device,
             ui_ctx,
+            rt,
         }
     }
 

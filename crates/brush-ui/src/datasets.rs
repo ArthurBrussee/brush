@@ -14,6 +14,7 @@ use brush_render::AlphaMode;
 use egui::{Color32, Rect, Slider, TextureOptions, pos2};
 
 use tokio::sync::watch::Sender;
+use tokio_wasm::task;
 use tokio_with_wasm::alias as tokio_wasm;
 
 #[derive(Clone)]
@@ -40,7 +41,7 @@ pub struct DatasetPanel {
     cur_dataset: Dataset,
     selected_view: Option<SelectedView>,
     sender: Option<Sender<Option<TexHandle>>>,
-    loading_task: Option<tokio_wasm::task::JoinHandle<()>>,
+    loading_task: Option<task::JoinHandle<()>>,
     current_view_index: Cell<Option<usize>>,
     loading_start: Option<web_time::Instant>,
 }
@@ -62,7 +63,12 @@ impl Default for DatasetPanel {
 }
 
 impl DatasetPanel {
-    pub fn set_selected_view(&mut self, view: &SceneView, ctx: &egui::Context) {
+    pub fn set_selected_view(
+        &mut self,
+        view: &SceneView,
+        ctx: &egui::Context,
+        process: &UiProcess,
+    ) {
         let Some(sender) = self.sender.clone() else {
             return;
         };
@@ -76,7 +82,7 @@ impl DatasetPanel {
         self.loading_start = Some(web_time::Instant::now());
         let ctx = ctx.clone();
 
-        self.loading_task = Some(tokio_with_wasm::alias::spawn(async move {
+        self.loading_task = Some(process.spawn(async move {
             let image = view_send
                 .image
                 .load()
@@ -88,7 +94,7 @@ impl DatasetPanel {
             }
 
             // Yield in case we're cancelled.
-            tokio_wasm::task::yield_now().await;
+            task::yield_now().await;
 
             let has_alpha = image.color().has_alpha();
             let img_size = [image.width() as usize, image.height() as usize];
@@ -104,7 +110,7 @@ impl DatasetPanel {
                 egui::ColorImage::from_rgb(blurred_size, &blurred.into_rgb8().into_vec());
 
             // Yield in case we're cancelled.
-            tokio_wasm::task::yield_now().await;
+            task::yield_now().await;
 
             let color_img = if has_alpha {
                 let data = image.into_rgba8().into_vec();
@@ -122,7 +128,7 @@ impl DatasetPanel {
             );
 
             // Yield in case we're cancelled.
-            tokio_wasm::task::yield_now().await;
+            task::yield_now().await;
 
             // If channel is gone, that's fine.
             let _ = sender.send(Some(TexHandle {
@@ -220,14 +226,6 @@ impl AppPane for DatasetPanel {
                 }
                 self.cur_dataset = dataset.clone();
             }
-            ProcessMessage::SplatsUpdated => {
-                // Handle up_axis from splat view for training
-                if process.is_training()
-                    && let Some(view) = self.cur_dataset.train.views.first()
-                {
-                    process.focus_view(&view.camera);
-                }
-            }
             _ => {}
         }
     }
@@ -257,7 +255,7 @@ impl AppPane for DatasetPanel {
                 .is_none_or(|view| view.image != pick_scene.views[*nearest].image);
 
             if dirty {
-                self.set_selected_view(&pick_scene.views[*nearest], ui.ctx());
+                self.set_selected_view(&pick_scene.views[*nearest], ui.ctx(), process);
             }
 
             let Some(selected_view_state) = &self.selected_view else {

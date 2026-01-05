@@ -17,10 +17,10 @@ use brush_train::{
     eval::eval_stats,
     msg::{RefineStats, TrainStepStats},
     splats_into_autodiff, to_init_splats,
-    train::SplatTrainer,
+    train::{BOUND_PERCENTILE, SplatTrainer, get_splat_bounds},
 };
 use brush_vfs::BrushVfs;
-use burn::{backend::Autodiff, module::AutodiffModule, prelude::Backend};
+use burn::{module::AutodiffModule, prelude::Backend};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
@@ -38,7 +38,7 @@ pub(crate) async fn train_stream(
     train_stream_config: TrainStreamConfig,
     device: WgpuDevice,
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
-    splat_view: Slot<SplatView>,
+    splat_slot: Slot<SplatView>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
@@ -112,12 +112,14 @@ pub(crate) async fn train_stream(
         (None, splats)
     };
 
+    let init_splats = init_splats.with_sh_degree(train_stream_config.model_config.sh_degree);
+
     // If the metadata has an up axis prefer that, otherwise estimate the up direction.
     let up_axis = up_axis.or(Some(estimated_up));
 
     update_splat_state(
         &emitter,
-        &splat_view,
+        &splat_slot,
         SplatView::new(init_splats.clone(), up_axis, 0, 1),
     )
     .await;
@@ -132,11 +134,8 @@ pub(crate) async fn train_stream(
 
     let mut train_duration = Duration::from_secs(0);
     let mut dataloader = SceneLoader::new(&dataset.train, 42);
-    let mut splats = splats_into_autodiff(
-        init_splats.with_sh_degree(train_stream_config.model_config.sh_degree),
-    );
-    let mut trainer =
-        SplatTrainer::new(&train_stream_config.train_config, &device, splats.clone()).await;
+    let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
+    let mut trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
 
     let export_path = if let Some(base_path) = vfs.base_path() {
         base_path.join("exports")
@@ -155,19 +154,56 @@ pub(crate) async fn train_stream(
     {
         let step_time = Instant::now();
 
-        let batch = dataloader
-            .next_batch()
-            .instrument(trace_span!("Wait for next data batch"))
-            .await;
-        let (new_splats, stats) = trainer.step(batch, splats);
-        splats = new_splats;
+        // Scope so we're sure we're sharing memory for the splat.
+        let stats = {
+            let batch = dataloader
+                .next_batch()
+                .instrument(trace_span!("Wait for next data batch"))
+                .await;
 
-        let (new_splats, refine) = trainer
-            .refine_if_needed(iter, splats)
-            .instrument(trace_span!("Refine splats"))
-            .await;
+            // Don't hold this over await point.
+            let splat_view = splat_slot.lock().await.clone().unwrap();
 
-        splats = new_splats;
+            // Take the splats from th
+            let splats = splats_into_autodiff(splat_view.splats);
+            let (new_splats, stats) = trainer.step(batch, splats);
+
+            *splat_slot.lock().await = Some(SplatView::new(
+                new_splats.valid(),
+                splat_view.up_axis,
+                splat_view.frame,
+                splat_view.total_frames,
+            ));
+
+            stats
+        };
+
+        let train_t =
+            (iter as f32 / train_stream_config.train_config.total_steps as f32).clamp(0.0, 1.0);
+
+        let refine = if iter > 0
+            && iter.is_multiple_of(train_stream_config.train_config.refine_every)
+            && train_t <= 0.95
+        {
+            let mut splat_slot_handle = splat_slot.lock().await;
+            let splat_view = splat_slot_handle.take().unwrap();
+
+            let (new_splats, refine) = trainer
+                .refine(iter, splat_view.splats)
+                .instrument(trace_span!("Refine splats"))
+                .await;
+            *splat_slot_handle = Some(SplatView::new(
+                new_splats,
+                splat_view.up_axis,
+                splat_view.frame,
+                splat_view.total_frames,
+            ));
+            Some(refine)
+        } else {
+            None
+        };
+
+        let splats = splat_slot.lock().await.as_ref().unwrap().splats.clone();
 
         // We just finished iter 'iter', now starting iter + 1.
         let iter = iter + 1;
@@ -190,7 +226,7 @@ pub(crate) async fn train_stream(
                 &device,
                 &emitter,
                 &visualize,
-                splats.valid(),
+                splats.clone(),
                 iter,
                 eval_scene,
                 save_path,
@@ -206,7 +242,7 @@ pub(crate) async fn train_stream(
         #[cfg(not(target_family = "wasm"))]
         if iter % process_config.export_every == 0 || is_last_step {
             let res = export_checkpoint(
-                splats.valid(),
+                splats.clone(),
                 &export_path,
                 &process_config.export_name,
                 iter,
@@ -249,12 +285,7 @@ pub(crate) async fn train_stream(
         // How frequently to update the UI after a training step.
         const UPDATE_EVERY: u32 = 5;
         if iter % UPDATE_EVERY == 0 || is_last_step {
-            update_splat_state(
-                &emitter,
-                &splat_view,
-                SplatView::new(splats.valid(), up_axis, 0, 1),
-            )
-            .await;
+            emitter.emit(ProcessMessage::SplatsUpdated).await;
 
             // Send lightweight message with training progress.
             emitter
@@ -359,7 +390,7 @@ async fn export_checkpoint(
 async fn rerun_log(
     rerun_config: &RerunConfig,
     visualize: &VisualizeTools,
-    splats: Splats<Autodiff<MainBackend>>,
+    splats: Splats<MainBackend>,
     stats: &TrainStepStats<MainBackend>,
     iter: u32,
     is_last_step: bool,
@@ -371,12 +402,14 @@ async fn rerun_log(
     if let Some(every) = rerun_config.rerun_log_splats_every
         && (iter.is_multiple_of(every) || is_last_step)
     {
-        visualize.log_splats(iter, splats.valid()).await?;
+        visualize.log_splats(iter, splats.clone()).await?;
     }
+
     // Log out train stats.
     if iter.is_multiple_of(rerun_config.rerun_log_train_stats_every) || is_last_step {
         visualize.log_train_stats(iter, stats.clone()).await?;
     }
+
     let client = WgpuRuntime::client(device);
     visualize.log_memory(iter, &client.memory_usage())?;
     // Emit some messages. Important to not count these in the training time (as this might pause).
