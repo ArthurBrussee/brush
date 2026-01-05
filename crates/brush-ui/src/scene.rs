@@ -7,7 +7,7 @@ use brush_process::message::ProcessMessage;
 use brush_vfs::DataSource;
 use core::f32;
 use egui::{
-    Align2, Area, Button, Frame, Pos2, RichText, Ui, containers::Popup,
+    Align2, Button, Frame, Pos2, RichText, Ui, containers::Popup,
     epaint::mutex::RwLock as EguiRwLock,
 };
 use std::sync::Arc;
@@ -40,7 +40,6 @@ use crate::{
 struct RenderState {
     size: UVec2,
     cam: Camera,
-    frame: f32,
     settings: CameraSettings,
     grid_opacity: f32,
 }
@@ -104,19 +103,7 @@ pub struct ScenePanel {
     #[serde(skip)]
     pub(crate) last_draw: Option<Instant>,
     #[serde(skip)]
-    view_splats: Vec<Splats<MainBackend>>,
-    #[serde(skip)]
-    fully_loaded: bool,
-    #[serde(skip)]
-    frame_count: u32,
-    #[serde(skip)]
-    frame: f32,
-    #[serde(skip)]
-    num_splats: u32,
-    #[serde(skip)]
-    sh_degree: u32,
-    #[serde(skip)]
-    paused: bool,
+    has_splats: bool,
     #[serde(skip)]
     err: Option<ErrorDisplay>,
     #[serde(skip)]
@@ -134,8 +121,10 @@ pub struct ScenePanel {
     url: String,
     #[serde(skip)]
     show_url_dialog: bool,
+    /// When true, don't re-render when splats change.
+    /// The view still shows the CURRENT splat, just doesn't re-render live.
     #[serde(skip)]
-    skip_update: bool,
+    skip_render_update: bool,
     #[cfg(feature = "training")]
     #[serde(skip)]
     settings_popup: Option<SettingsPopup>,
@@ -251,6 +240,7 @@ impl ScenePanel {
     fn draw_settings_popup(&mut self, ui: &egui::Ui, process: &UiProcess, scene_rect: egui::Rect) {
         if let Some(popup) = &mut self.settings_popup
             && process.is_loading()
+            && process.is_training()
         {
             popup.ui(ui, scene_rect.center());
 
@@ -308,7 +298,6 @@ impl ScenePanel {
         let state = RenderState {
             size,
             cam: camera.clone(),
-            frame: self.frame,
             settings: settings.clone(),
             grid_opacity,
         };
@@ -387,40 +376,6 @@ impl ScenePanel {
         rect
     }
 
-    fn draw_play_pause(&mut self, ui: &egui::Ui, rect: Rect) {
-        if self.view_splats.len() > 1 && self.view_splats.len() as u32 == self.frame_count {
-            let id = ui.auto_id_with("play_pause_button");
-            Area::new(id)
-                .order(egui::Order::Foreground)
-                .fixed_pos(egui::pos2(rect.max.x - 40.0, rect.min.y + 6.0))
-                .show(ui.ctx(), |ui| {
-                    let bg_color = if self.paused {
-                        egui::Color32::from_rgba_premultiplied(0, 0, 0, 64)
-                    } else {
-                        egui::Color32::from_rgba_premultiplied(30, 80, 200, 120)
-                    };
-
-                    Frame::new()
-                        .fill(bg_color)
-                        .corner_radius(egui::CornerRadius::same(16))
-                        .inner_margin(egui::Margin::same(4))
-                        .show(ui, |ui| {
-                            let icon = if self.paused { "⏵" } else { "⏸" };
-                            let mut button =
-                                Button::new(RichText::new(icon).size(18.0).color(Color32::WHITE));
-
-                            if !self.paused {
-                                button = button.fill(egui::Color32::from_rgb(60, 120, 220));
-                            }
-
-                            if ui.add(button).clicked() {
-                                self.paused = !self.paused;
-                            }
-                        });
-                });
-        }
-    }
-
     fn draw_warnings(&mut self, ui: &egui::Ui, pos: Pos2) {
         if self.warnings.is_empty() {
             return;
@@ -468,14 +423,10 @@ impl ScenePanel {
 }
 
 impl ScenePanel {
-    fn reset_splats(&mut self) {
+    fn reset(&mut self) {
         self.last_draw = None;
         self.last_state = None;
-        self.view_splats = vec![];
-        self.frame_count = 0;
-        self.frame = 0.0;
-        self.num_splats = 0;
-        self.sh_degree = 0;
+        self.has_splats = false;
     }
 
     fn draw_controls_help(ui: &mut egui::Ui, min_width: Option<f32>) {
@@ -638,7 +589,7 @@ impl AppPane for ScenePanel {
 
     fn top_bar_right_ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         // Only show reset button if we have content loaded
-        let has_content = !self.view_splats.is_empty() || process.is_training();
+        let has_content = self.has_splats || process.is_training();
 
         if has_content {
             // New button - stands out with red background
@@ -703,13 +654,13 @@ impl AppPane for ScenePanel {
 
         if process.is_training() {
             ui.add_space(6.0);
-            let text = if !self.skip_update {
+            let text = if !self.skip_render_update {
                 "🔴 Live"
             } else {
                 "⚫ Live"
             };
 
-            let (bg_color, text_color) = if !self.skip_update {
+            let (bg_color, text_color) = if !self.skip_render_update {
                 (
                     Color32::from_rgb(60, 40, 40),
                     Color32::from_rgb(220, 60, 60),
@@ -721,10 +672,10 @@ impl AppPane for ScenePanel {
                 )
             };
 
-            let hover_text = if !self.skip_update {
-                "Live view enabled - updates scene during training"
+            let hover_text = if !self.skip_render_update {
+                "Live rendering enabled - re-renders during training"
             } else {
-                "Live view disabled - click to enable"
+                "Live rendering disabled - click to enable"
             };
 
             let button = Button::new(RichText::new(text).size(11.0).color(text_color))
@@ -733,39 +684,13 @@ impl AppPane for ScenePanel {
                 .min_size(egui::vec2(52.0, 18.0));
 
             if ui.add(button).on_hover_text(hover_text).clicked() {
-                self.skip_update = !self.skip_update;
+                self.skip_render_update = !self.skip_render_update;
+                // If re-enabling live render, force a redraw
+                if !self.skip_render_update {
+                    self.last_state = None;
+                }
             }
         }
-
-        // if self.num_splats > 0 {
-        //     ui.add_space(6.0);
-        //     ui.separator();
-        //     ui.add_space(6.0);
-
-        //     let value_color = Color32::from_rgb(200, 200, 200);
-        //     let label_color = Color32::from_rgb(140, 140, 140);
-
-        //     let mut job = egui::text::LayoutJob::default();
-        //     job.append(
-        //         &format!("{}", self.num_splats),
-        //         0.0,
-        //         egui::TextFormat {
-        //             font_id: egui::FontId::proportional(11.0),
-        //             color: value_color,
-        //             ..Default::default()
-        //         },
-        //     );
-        //     job.append(
-        //         &format!(" splats  |  SH {}", self.sh_degree),
-        //         0.0,
-        //         egui::TextFormat {
-        //             font_id: egui::FontId::proportional(11.0),
-        //             color: label_color,
-        //             ..Default::default()
-        //         },
-        //     );
-        //     ui.label(job);
-        // }
     }
 
     fn init(
@@ -786,72 +711,41 @@ impl AppPane for ScenePanel {
                 self.err = None;
                 self.source_name = None;
                 self.source_type = None;
-                self.reset_splats();
-                self.fully_loaded = false;
+                self.reset();
             }
-            ProcessMessage::NewSource { name, source } => {
+
+            ProcessMessage::StartLoading {
+                name,
+                source,
+                training,
+            } => {
+                // If training reset. Otherwise, keep existing state until new splats are loaded.
+                if *training {
+                    self.reset();
+                }
                 self.source_name = Some(name.clone());
                 self.source_type = Some(source.clone());
             }
-            ProcessMessage::StartLoading { training } => {
-                // If training reset. Otherwise, keep existing splats until new ones are fully loaded.
-                if *training {
-                    self.reset_splats();
-                }
-            }
-            ProcessMessage::ViewSplats {
-                up_axis,
-                splats,
-                frame,
-                total_frames,
-                progress,
-            } => {
+            ProcessMessage::SplatsUpdated => {
+                self.has_splats = true;
+
+                // Handle up axis from splat view
                 if !process.is_training()
-                    && let Some(up_axis) = up_axis
+                    && let Some(splat_view) = process.splat_view()
+                    && let Some(up_axis) = splat_view.up_axis
                 {
-                    process.set_model_up(*up_axis);
+                    process.set_model_up(up_axis);
                 }
 
-                self.frame_count = *total_frames;
-                let done_loading = *progress >= 1.0;
-
-                // For animated splats (total_frames > 1), always show streaming
-                if *total_frames > 1 {
-                    // Clear existing splats for animations to show streaming
-                    if *frame == 0 {
-                        self.view_splats.clear();
-                    }
-                    self.view_splats
-                        .resize(*frame as usize + 1, splats.as_ref().clone());
-                } else {
-                    // Static splat - only replace when fully loaded (progress = 1.0) or if we haven't fully loaded a splat
-                    // yet.
-                    if done_loading || !self.fully_loaded {
-                        self.view_splats = vec![splats.as_ref().clone()];
-                    }
-                }
-
-                if done_loading {
-                    self.fully_loaded = true;
-                }
-
-                // Track splat info
-                self.num_splats = splats.num_splats();
-                self.sh_degree = splats.sh_degree();
-
-                // Mark redraw as dirty if we're live updating.
-                if !self.skip_update {
+                // Mark redraw as dirty if we're live rendering.
+                if !self.skip_render_update {
                     self.last_state = None;
                 }
             }
             #[cfg(feature = "training")]
-            ProcessMessage::TrainMessage(TrainMessage::TrainStep { splats, .. }) => {
-                let splats = *splats.clone();
-                self.num_splats = splats.num_splats();
-                self.sh_degree = splats.sh_degree();
-                self.view_splats = vec![splats];
-                // Mark redraw as dirty if we're live updating.
-                if !self.skip_update {
+            ProcessMessage::TrainMessage(TrainMessage::TrainStep { .. }) => {
+                // Splats are in the watch channel, just need to trigger redraw if live.
+                if !self.skip_render_update {
                     self.last_state = None;
                 }
             }
@@ -885,13 +779,11 @@ impl AppPane for ScenePanel {
         }
 
         let cur_time = Instant::now();
-
-        let delta_time = self.last_draw.map_or(0.0, |x| x.elapsed().as_secs_f32());
         self.last_draw = Some(cur_time);
 
         // Empty scene, nothing to show - show load buttons
         let show_welcome = !process.is_training()
-            && self.view_splats.is_empty()
+            && !self.has_splats
             && process.ui_mode() != UiMode::EmbeddedViewer;
 
         if show_welcome {
@@ -954,30 +846,12 @@ impl AppPane for ScenePanel {
                 self.start_loading(source, process);
             }
         } else {
-            const FPS: f32 = 24.0;
-
-            if !self.paused {
-                self.frame += delta_time;
-
-                if self.view_splats.len() as u32 != self.frame_count {
-                    let max_t = (self.view_splats.len() - 1) as f32 / FPS;
-                    self.frame = self.frame.min(max_t);
-                }
-            }
-
-            let frame = (self.frame * FPS)
-                .rem_euclid(self.frame_count as f32)
-                .floor() as usize;
-
-            let splats = self.view_splats.get(frame).cloned();
+            let splats = process.splat_view().map(|sv| sv.splats);
             let interactive =
                 matches!(process.ui_mode(), UiMode::Default | UiMode::FullScreenSplat);
             let rect = self.draw_splats(ui, process, splats, interactive);
 
             if interactive {
-                // Floating play/pause button if needed.
-                self.draw_play_pause(ui, rect);
-
                 let pos = egui::pos2(ui.available_rect_before_wrap().max.x, rect.min.y);
                 self.draw_warnings(ui, pos);
             }
@@ -1032,6 +906,7 @@ impl AppPane for ScenePanel {
                 });
         }
     }
+
     fn inner_margin(&self) -> f32 {
         0.0
     }

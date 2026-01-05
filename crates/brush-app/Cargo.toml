@@ -30,6 +30,7 @@ brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
 brush-process = { path = "../brush-process" }
 
+burn-cubecl.workspace = true
 burn-wgpu.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true

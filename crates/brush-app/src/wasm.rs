@@ -9,6 +9,8 @@ use std::sync::Arc;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
+use crate::shared::startup;
+
 // THREE.js Vector3 bindings.
 #[wasm_bindgen]
 extern "C" {
@@ -31,8 +33,10 @@ impl ThreeVector3 {
     }
 }
 
+// TODO: Make sure some startup bits here only happen once.
 pub fn wasm_app(canvas_name: &str) -> anyhow::Result<Arc<UiProcess>> {
-    // TODO: Make sure some startup bits here only happen once.
+    startup();
+
     #[cfg(debug_assertions)]
     wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
 

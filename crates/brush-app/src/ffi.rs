@@ -1,12 +1,14 @@
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::TrainMessage;
+use brush_process::slot::Slot;
 use brush_process::{message::ProcessMessage, process::create_process};
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use std::convert::TryFrom;
 use std::ffi::{CStr, c_char, c_void};
-use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
+
+use crate::shared::startup;
 
 #[repr(C)]
 pub enum TrainExitCode {
@@ -116,24 +118,23 @@ pub unsafe extern "C" fn train_and_save(
         .build()
         .expect("Failed to create tokio runtime");
 
+    startup();
+
+    let dataset_path_str =
+        // SAFETY: Checked if dataset_path is not null, caller guarantees the string is a valid C-string.
+        unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
+
+    let source = DataSource::Path(dataset_path_str);
+    let device = WgpuDevice::default();
+
+    // SAFETY: Option is checked to not be null before the future.
+    let train_options = unsafe { *options };
+    // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
+    let process_args = unsafe { train_options.into_train_stream_config() };
+    let mut process = create_process(source, async move || process_args, device, Slot::default());
+
     rt.block_on(async {
-        let dataset_path_str =
-            // SAFETY: Checked if dataset_path is not null, caller guarantees the string is a valid C-string.
-            unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
-
-        let source = DataSource::Path(dataset_path_str);
-
-        let device = WgpuDevice::default();
-
-        // SAFETY: Option is checked to not be null before the future.
-        let train_options = unsafe { *options };
-        // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
-        let process_args = unsafe { train_options.into_train_stream_config() };
-        let (tx, rx) = oneshot::channel::<TrainStreamConfig>();
-        let _ = tx.send(process_args.clone());
-        let mut stream = std::pin::pin!(create_process(source, rx, device));
-
-        while let Some(message_result) = stream.next().await {
+        while let Some(message_result) = process.stream.next().await {
             match message_result {
                 Ok(message) => {
                     if let Ok(progress_message) = message.try_into() {

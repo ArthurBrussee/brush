@@ -19,7 +19,6 @@ pub enum TrainMessage {
     /// Some number of training steps are done.
     #[allow(unused)]
     TrainStep {
-        splats: Box<Splats<MainBackend>>,
         iter: u32,
         total_steps: u32,
         total_elapsed: web_time::Duration,
@@ -40,36 +39,46 @@ pub enum TrainMessage {
     DoneTraining,
 }
 
+/// The current shared splat state.
+#[derive(Clone)]
+pub struct SplatView {
+    pub splats: Splats<MainBackend>,
+    pub up_axis: Option<Vec3>,
+    pub frame: u32,
+    pub total_frames: u32,
+}
+
+impl SplatView {
+    pub(crate) fn new(
+        splats: Splats<MainBackend>,
+        up_axis: Option<Vec3>,
+        frame: u32,
+        total_frames: u32,
+    ) -> Self {
+        Self {
+            splats,
+            up_axis,
+            frame,
+            total_frames,
+        }
+    }
+}
+
 pub enum ProcessMessage {
     /// A new process is starting (before we know what type)
     NewProcess,
     /// Source has been loaded, contains the display name and type
-    NewSource {
+    StartLoading {
         name: String,
         source: DataSource,
-    },
-    StartLoading {
         training: bool,
     },
-    /// Loaded a splat from a ply file.
-    ///
-    /// Nb: This includes all the intermediately loaded splats.
-    /// Nb: Animated splats will have the 'frame' number set.
-    ViewSplats {
-        up_axis: Option<Vec3>,
-        splats: Box<Splats<MainBackend>>,
-        frame: u32,
-        total_frames: u32,
-        progress: f32,
-    },
-
+    /// Notification that splats have been updated.
+    SplatsUpdated,
     #[cfg(feature = "training")]
     TrainMessage(TrainMessage),
-
     /// Some warning occurred during the process, but the process can continue.
-    Warning {
-        error: anyhow::Error,
-    },
+    Warning { error: anyhow::Error },
     /// Splat, or dataset and initial splat, are done loading.
     #[allow(unused)]
     DoneLoading,

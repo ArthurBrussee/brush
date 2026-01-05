@@ -1018,6 +1018,7 @@ dependencies = [
  "brush-render",
  "brush-ui",
  "brush-vfs",
+ "burn-cubecl",
  "burn-wgpu",
  "clap",
  "eframe",
@@ -1071,6 +1072,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "brush-process",
+ "brush-render",
  "brush-vfs",
  "burn-wgpu",
  "clap",

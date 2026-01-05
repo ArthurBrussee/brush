@@ -10,6 +10,7 @@ training = ["brush-process/training"]
 
 [dependencies]
 brush-process.path = "../brush-process"
+brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
 
 indicatif.workspace = true

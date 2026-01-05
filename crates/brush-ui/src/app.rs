@@ -8,7 +8,9 @@ use crate::stats::StatsPanel;
 use crate::training_panel::TrainingPanel;
 use crate::ui_process::UiProcess;
 use crate::{camera_controls::CameraClamping, scene::ScenePanel};
+use brush_process::config::TrainStreamConfig;
 use brush_process::message::ProcessMessage;
+use brush_vfs::DataSource;
 use eframe::egui;
 use egui::{ThemePreference, Ui};
 use egui_tiles::{SimplificationOptions, Tabs, TileId, Tiles};
@@ -209,7 +211,11 @@ impl App {
         }
     }
 
-    pub fn new(cc: &eframe::CreationContext, context: Arc<UiProcess>) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext,
+        init_args: Option<TrainStreamConfig>,
+        init_source: Option<DataSource>,
+    ) -> Self {
         let state = cc
             .wgpu_render_state
             .as_ref()
@@ -222,7 +228,15 @@ impl App {
         );
 
         log::info!("Connecting context to Burn device & GUI context.");
-        context.connect_device(burn_device.clone(), cc.egui_ctx.clone());
+        let context = std::sync::Arc::new(UiProcess::new(burn_device.clone(), cc.egui_ctx.clone()));
+
+        if let Some(args) = init_args
+            && let Some(source) = init_source
+        {
+            let (sender, args_receiver) = tokio::sync::oneshot::channel();
+            let _ = sender.send(args);
+            context.start_new_process(source, args_receiver);
+        }
 
         cc.egui_ctx
             .options_mut(|opt| opt.theme_preference = ThemePreference::Dark);

@@ -1,3 +1,4 @@
+use crate::shared::startup;
 use brush_ui::app::App;
 use brush_ui::ui_process::UiProcess;
 use std::os::raw::c_void;
@@ -19,9 +20,9 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         .build()
         .unwrap();
 
-    runtime.block_on(async {
-        let context = Arc::new(UiProcess::new());
+    startup();
 
+    runtime.block_on(async {
         android_logger::init_once(
             android_logger::Config::default().with_max_level(log::LevelFilter::Info),
         );
@@ -35,7 +36,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
                 wgpu_options,
                 ..Default::default()
             },
-            Box::new(|cc| Ok(Box::new(App::new(cc, context)))),
+            Box::new(|cc| Ok(Box::new(App::new(cc, None, None)))),
         )
         .unwrap();
     });

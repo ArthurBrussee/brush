@@ -14,7 +14,6 @@ pub struct TrainingPanel {
     iter_per_s_samples: u32,
     train_config: Option<TrainStreamConfig>,
     manual_export_iters: Vec<u32>,
-    current_splats: Option<Splats<MainBackend>>,
     export_channel: (UnboundedSender<Error>, UnboundedReceiver<Error>),
 }
 
@@ -27,7 +26,6 @@ impl Default for TrainingPanel {
             iter_per_s_samples: 0,
             train_config: None,
             manual_export_iters: Vec::new(),
-            current_splats: None,
             export_channel: tokio::sync::mpsc::unbounded_channel(),
         }
     }
@@ -41,7 +39,6 @@ impl TrainingPanel {
         self.iter_per_s_samples = 0;
         self.train_config = None;
         self.manual_export_iters.clear();
-        self.current_splats = None;
     }
 
     fn on_train_message(&mut self, message: &TrainMessage) {
@@ -53,11 +50,9 @@ impl TrainingPanel {
                 iter,
                 total_steps,
                 total_elapsed,
-                splats,
                 ..
             } => {
                 self.train_progress = Some((*iter, *total_steps));
-                self.current_splats = Some(splats.as_ref().clone());
 
                 if let Some((last_elapsed, last_iter)) = self.last_train_step
                     && let Some(elapsed_diff) = total_elapsed.checked_sub(last_elapsed)
@@ -250,11 +245,9 @@ impl AppPane for TrainingPanel {
                     ui.add_space(6.0);
                 }
 
-                let export_button_width = if self.current_splats.is_some() {
-                    65.0
-                } else {
-                    0.0
-                };
+                let current_splats = process.splat_view().map(|sv| sv.splats);
+
+                let export_button_width = if current_splats.is_some() { 65.0 } else { 0.0 };
                 let progress_width = ui.available_width()
                     - export_button_width
                     - if export_button_width > 0.0 { 6.0 } else { 0.0 };
@@ -272,7 +265,7 @@ impl AppPane for TrainingPanel {
 
                 let bar_rect = bar_response.rect;
 
-                if let Some(splats) = self.current_splats.clone() {
+                if let Some(splats) = current_splats {
                     ui.add_space(6.0);
                     // Make export button more prominent when training is complete
                     let (button_text, button_color) = if is_complete {

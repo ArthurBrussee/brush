@@ -14,8 +14,6 @@ use wgpu::AdapterInfo;
 pub struct StatsPanel {
     device: Option<WgpuDevice>,
     last_eval: Option<String>,
-    cur_sh_degree: u32,
-    num_splats: u32,
     frames: u32,
     adapter_info: Option<AdapterInfo>,
     last_train_step: (Duration, u32),
@@ -68,32 +66,21 @@ impl AppPane for StatsPanel {
         match message {
             ProcessMessage::NewProcess => {
                 self.last_eval = None;
-                self.cur_sh_degree = 0;
-                self.num_splats = 0;
                 self.frames = 0;
                 self.last_train_step = (Duration::from_secs(0), 0);
                 self.train_eval_views = (0, 0);
                 self.training_complete = false;
             }
             ProcessMessage::StartLoading { .. } => {
-                self.num_splats = 0;
-                self.cur_sh_degree = 0;
                 self.last_eval = None;
             }
-            ProcessMessage::ViewSplats { splats, frame, .. } => {
-                self.num_splats = splats.num_splats();
-                self.frames = *frame;
-                self.cur_sh_degree = splats.sh_degree();
-            }
+            ProcessMessage::SplatsUpdated => {}
             ProcessMessage::TrainMessage(train) => match train {
                 TrainMessage::TrainStep {
-                    splats,
                     iter,
                     total_elapsed,
                     ..
                 } => {
-                    self.cur_sh_degree = splats.sh_degree();
-                    self.num_splats = splats.num_splats();
                     self.last_train_step = (*total_elapsed, *iter);
                 }
                 TrainMessage::Dataset { dataset } => {
@@ -133,6 +120,10 @@ impl AppPane for StatsPanel {
             });
             ui.separator();
 
+            let (num_splats, sh_degree) = process
+                .splat_view()
+                .map_or((0, 0), |sv| (sv.splats.num_splats(), sv.splats.sh_degree()));
+
             let first_col_width = ui.available_width() * 0.4;
             egui::Grid::new("model_stats_grid")
                 .num_columns(2)
@@ -142,11 +133,11 @@ impl AppPane for StatsPanel {
                 .max_col_width(first_col_width)
                 .show(ui, |ui| {
                     ui.label("Splats");
-                    ui.label(format!("{}", self.num_splats));
+                    ui.label(format!("{num_splats}"));
                     ui.end_row();
 
                     ui.label("SH Degree");
-                    ui.label(format!("{}", self.cur_sh_degree));
+                    ui.label(format!("{sh_degree}"));
                     ui.end_row();
 
                     if self.frames > 0 {
