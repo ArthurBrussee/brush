@@ -3,6 +3,7 @@ use std::sync::Once;
 
 static STARTUP: Once = Once::new();
 
+#[allow(unused)]
 pub(crate) fn startup() {
     STARTUP.call_once(|| {
         // Set the global config once on startup.

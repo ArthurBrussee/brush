@@ -74,9 +74,9 @@ pub struct EmbeddedApp {
 }
 
 #[wasm_bindgen]
+#[allow(clippy::needless_pass_by_value)] // wasm_bindgen FFI types need pass by value
 impl EmbeddedApp {
     /// Installs a panic hook, then returns.
-    #[expect(clippy::new_without_default)]
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         #[cfg(debug_assertions)]
@@ -103,7 +103,7 @@ impl EmbeddedApp {
                 JsValue::from_str(&format!("Failed to find canvas with id: {canvas_name}"))
             })?
             .dyn_into::<web_sys::HtmlCanvasElement>()
-            .map_err(|_| {
+            .map_err(|_e| {
                 JsValue::from_str(&format!(
                     "Found canvas {canvas_name} was in fact not a canvas"
                 ))
