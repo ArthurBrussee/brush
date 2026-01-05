@@ -26,6 +26,38 @@ use web_time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+/// Controls how often the viewport re-renders during training.
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RenderUpdateMode {
+    /// Don't re-render during training
+    Off,
+    /// Re-render every 100 iterations
+    Low,
+    /// Re-render every 5 iterations (default)
+    #[default]
+    Live,
+}
+
+impl RenderUpdateMode {
+    /// Returns the iteration interval for this mode, or None if rendering is disabled.
+    #[cfg(feature = "training")]
+    fn update_interval(&self) -> Option<u32> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some(100),
+            Self::Live => Some(5),
+        }
+    }
+
+    fn to_index(self) -> usize {
+        match self {
+            Self::Off => 0,
+            Self::Low => 1,
+            Self::Live => 2,
+        }
+    }
+}
+
 use crate::{
     UiMode,
     app::CameraSettings,
@@ -121,10 +153,12 @@ pub struct ScenePanel {
     url: String,
     #[serde(skip)]
     show_url_dialog: bool,
-    /// When true, don't re-render when splats change.
-    /// The view still shows the CURRENT splat, just doesn't re-render live.
+    /// Controls how often the viewport re-renders during training.
     #[serde(skip)]
-    skip_render_update: bool,
+    render_update_mode: RenderUpdateMode,
+    /// Tracks the last iteration we rendered at, for Low mode.
+    #[serde(skip)]
+    last_rendered_iter: u32,
     #[cfg(feature = "training")]
     #[serde(skip)]
     settings_popup: Option<SettingsPopup>,
@@ -427,6 +461,7 @@ impl ScenePanel {
         self.last_draw = None;
         self.last_state = None;
         self.has_splats = false;
+        self.last_rendered_iter = 0;
     }
 
     fn draw_controls_help(ui: &mut egui::Ui, min_width: Option<f32>) {
@@ -654,39 +689,64 @@ impl AppPane for ScenePanel {
 
         if process.is_training() {
             ui.add_space(6.0);
-            let text = if !self.skip_render_update {
-                "🔴 Live"
-            } else {
-                "⚫ Live"
-            };
 
-            let (bg_color, text_color) = if !self.skip_render_update {
-                (
-                    Color32::from_rgb(60, 40, 40),
-                    Color32::from_rgb(220, 60, 60),
-                )
-            } else {
-                (
-                    Color32::from_rgb(50, 50, 55),
-                    Color32::from_rgb(140, 140, 140),
-                )
-            };
+            // Render update mode slider
+            let mut idx = self.render_update_mode.to_index() as f32;
+            let old_idx = idx as usize;
+            let is_live = self.render_update_mode == RenderUpdateMode::Live;
 
-            let hover_text = if !self.skip_render_update {
-                "Live rendering enabled - re-renders during training"
-            } else {
-                "Live rendering disabled - click to enable"
-            };
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
 
-            let button = Button::new(RichText::new(text).size(11.0).color(text_color))
-                .fill(bg_color)
-                .corner_radius(4.0)
-                .min_size(egui::vec2(52.0, 18.0));
+                ui.label(
+                    RichText::new("View update")
+                        .size(10.0)
+                        .color(Color32::from_rgb(140, 140, 140)),
+                );
 
-            if ui.add(button).on_hover_text(hover_text).clicked() {
-                self.skip_render_update = !self.skip_render_update;
-                // If re-enabling live render, force a redraw
-                if !self.skip_render_update {
+                // Style the slider with red color
+                ui.style_mut().visuals.widgets.inactive.fg_stroke.color =
+                    Color32::from_rgb(180, 60, 60);
+                ui.style_mut().visuals.widgets.hovered.fg_stroke.color =
+                    Color32::from_rgb(220, 80, 80);
+                ui.style_mut().visuals.widgets.active.fg_stroke.color =
+                    Color32::from_rgb(220, 60, 60);
+                ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(180, 60, 60);
+
+                ui.add(
+                    Slider::new(&mut idx, 0.0..=2.0)
+                        .step_by(1.0)
+                        .show_value(false)
+                        .trailing_fill(true),
+                );
+
+                // Current mode label with recording icon when live
+                let mode_label = match self.render_update_mode {
+                    RenderUpdateMode::Off => "Off",
+                    RenderUpdateMode::Low => "Low",
+                    RenderUpdateMode::Live => "Live",
+                };
+                let label_color = if is_live {
+                    Color32::from_rgb(220, 60, 60)
+                } else {
+                    Color32::from_rgb(140, 140, 140)
+                };
+                if is_live {
+                    ui.label(RichText::new("⏺").size(10.0).color(label_color));
+                }
+                ui.label(RichText::new(mode_label).size(10.0).color(label_color));
+            });
+
+            let new_idx = idx.round() as usize;
+            if new_idx != old_idx {
+                let old_mode = self.render_update_mode;
+                self.render_update_mode = match new_idx {
+                    0 => RenderUpdateMode::Off,
+                    1 => RenderUpdateMode::Low,
+                    _ => RenderUpdateMode::Live,
+                };
+                // If enabling rendering from Off, force a redraw
+                if old_mode == RenderUpdateMode::Off {
                     self.last_state = None;
                 }
             }
@@ -737,16 +797,20 @@ impl AppPane for ScenePanel {
                     process.set_model_up(up_axis);
                 }
 
-                // Mark redraw as dirty if we're live rendering.
-                if !self.skip_render_update {
+                // For non-training updates (e.g., loading), always redraw
+                if !process.is_training() {
                     self.last_state = None;
                 }
             }
             #[cfg(feature = "training")]
-            ProcessMessage::TrainMessage(TrainMessage::TrainStep { .. }) => {
-                // Splats are in the watch channel, just need to trigger redraw if live.
-                if !self.skip_render_update {
-                    self.last_state = None;
+            ProcessMessage::TrainMessage(TrainMessage::TrainStep { iter, .. }) => {
+                // Check if we should redraw based on render update mode
+                if let Some(interval) = self.render_update_mode.update_interval() {
+                    // Check if enough iterations have passed since last render
+                    if *iter >= self.last_rendered_iter + interval || self.last_rendered_iter == 0 {
+                        self.last_rendered_iter = *iter;
+                        self.last_state = None;
+                    }
                 }
             }
             ProcessMessage::Warning { error } => {
