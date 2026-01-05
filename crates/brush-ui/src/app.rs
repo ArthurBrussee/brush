@@ -158,6 +158,8 @@ const TREE_STORAGE_KEY: &str = "brush_tile_tree_v3";
 pub struct App {
     tree: egui_tiles::Tree<PaneRef>,
     tree_ctx: AppTree,
+
+    rt: tokio::runtime::Runtime,
 }
 
 impl App {
@@ -261,7 +263,20 @@ impl App {
             }
         }
 
+        #[cfg(not(target_family = "wasm"))]
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        #[cfg(target_family = "wasm")]
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
         Self {
+            rt,
             tree,
             tree_ctx: AppTree { process: context },
         }
@@ -314,6 +329,8 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        let _guard = self.rt.enter();
+
         let _span = trace_span!("Update UI").entered();
         self.receive_messages();
 

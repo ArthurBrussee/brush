@@ -63,12 +63,7 @@ impl Default for DatasetPanel {
 }
 
 impl DatasetPanel {
-    pub fn set_selected_view(
-        &mut self,
-        view: &SceneView,
-        ctx: &egui::Context,
-        process: &UiProcess,
-    ) {
+    pub fn set_selected_view(&mut self, view: &SceneView, ctx: &egui::Context) {
         let Some(sender) = self.sender.clone() else {
             return;
         };
@@ -82,7 +77,7 @@ impl DatasetPanel {
         self.loading_start = Some(web_time::Instant::now());
         let ctx = ctx.clone();
 
-        self.loading_task = Some(process.spawn(async move {
+        self.loading_task = Some(task::spawn(async move {
             let image = view_send
                 .image
                 .load()
@@ -255,7 +250,7 @@ impl AppPane for DatasetPanel {
                 .is_none_or(|view| view.image != pick_scene.views[*nearest].image);
 
             if dirty {
-                self.set_selected_view(&pick_scene.views[*nearest], ui.ctx(), process);
+                self.set_selected_view(&pick_scene.views[*nearest], ui.ctx());
             }
 
             let Some(selected_view_state) = &self.selected_view else {

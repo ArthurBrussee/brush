@@ -1,8 +1,9 @@
 use std::pin::{Pin, pin};
 
+use anyhow::Error;
 use async_fn_stream::{TryStreamEmitter, try_fn_stream};
 use brush_render::gaussian_splats::SplatRenderMode;
-use brush_vfs::DataSource;
+use brush_vfs::{DataSource, SendNotWasm};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 
@@ -17,8 +18,11 @@ use crate::{
 
 use crate::config::TrainStreamConfig;
 
+pub trait ProcessStream: Stream<Item = Result<ProcessMessage, Error>> + SendNotWasm {}
+impl<T> ProcessStream for T where T: Stream<Item = Result<ProcessMessage, Error>> + SendNotWasm {}
+
 pub struct RunningProcess {
-    pub stream: Pin<Box<dyn Stream<Item = Result<ProcessMessage, anyhow::Error>> + Send>>,
+    pub stream: Pin<Box<dyn ProcessStream>>,
     pub splat_view: Slot<SplatView>,
 }
 
@@ -145,7 +149,7 @@ where
 }
 
 pub(crate) async fn update_splat_state(
-    emitter: &TryStreamEmitter<ProcessMessage, anyhow::Error>,
+    emitter: &TryStreamEmitter<ProcessMessage, Error>,
     splat_state: &Slot<SplatView>,
     view: SplatView,
 ) {

@@ -34,13 +34,11 @@ impl ThreeVector3 {
 }
 
 // TODO: Make sure some startup bits here only happen once.
-pub fn wasm_app(canvas_name: &str) -> anyhow::Result<Arc<UiProcess>> {
+pub async fn wasm_app(canvas_name: &str) -> anyhow::Result<Arc<UiProcess>> {
     startup();
 
     #[cfg(debug_assertions)]
     wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
-
-    let context = Arc::new(UiProcess::new());
 
     let wgpu_options = brush_ui::create_egui_options();
     let document = web_sys::window()
@@ -53,8 +51,6 @@ pub fn wasm_app(canvas_name: &str) -> anyhow::Result<Arc<UiProcess>> {
         .dyn_into::<web_sys::HtmlCanvasElement>()
         .unwrap_or_else(|_| panic!("Found canvas {canvas_name} was in fact not a canvas"));
 
-    // On wasm, run as a local task.
-    let context_cl = context.clone();
     tokio_with_wasm::task::spawn(async {
         eframe::WebRunner::new()
             .start(
@@ -68,6 +64,7 @@ pub fn wasm_app(canvas_name: &str) -> anyhow::Result<Arc<UiProcess>> {
             .await
             .expect("failed to start eframe");
     });
+
     Ok(context)
 }
 

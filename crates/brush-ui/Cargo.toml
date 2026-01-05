@@ -29,7 +29,7 @@ egui_tiles.workspace = true
 eframe.workspace = true
 wgpu.workspace = true
 tokio_with_wasm = { workspace = true, features = ["rt"] }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 web-time.workspace = true
 humantime.workspace = true
