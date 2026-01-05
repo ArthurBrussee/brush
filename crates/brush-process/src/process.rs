@@ -29,7 +29,7 @@ pub struct RunningProcess {
 /// Create a running process from a datasource and args.
 pub fn create_process<CF, CFut>(
     source: DataSource,
-    config: CF,
+    #[allow(unused)] config: CF,
     device: WgpuDevice,
     splat_view: Slot<SplatView>,
 ) -> RunningProcess
