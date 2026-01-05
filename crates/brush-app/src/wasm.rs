@@ -33,46 +33,6 @@ impl ThreeVector3 {
     }
 }
 
-// TODO: Make sure some startup bits here only happen once.
-pub async fn wasm_app(canvas_name: &str) -> anyhow::Result<Arc<UiProcess>> {
-    startup();
-
-    #[cfg(debug_assertions)]
-    wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
-
-    let wgpu_options = brush_ui::create_egui_options();
-    let document = web_sys::window()
-        .context("Failed to get winow")?
-        .document()
-        .context("Failed to get document")?;
-    let canvas = document
-        .get_element_by_id(canvas_name)
-        .with_context(|| format!("Failed to find canvas with id: {canvas_name}"))?
-        .dyn_into::<web_sys::HtmlCanvasElement>()
-        .unwrap_or_else(|_| panic!("Found canvas {canvas_name} was in fact not a canvas"));
-
-    tokio_with_wasm::task::spawn(async {
-        eframe::WebRunner::new()
-            .start(
-                canvas,
-                eframe::WebOptions {
-                    wgpu_options,
-                    ..Default::default()
-                },
-                Box::new(|cc| Ok(Box::new(App::new(cc, context_cl)))),
-            )
-            .await
-            .expect("failed to start eframe");
-    });
-
-    Ok(context)
-}
-
-#[wasm_bindgen]
-pub struct EmbeddedApp {
-    context: Arc<UiProcess>,
-}
-
 // Wrapper for interop.
 #[wasm_bindgen]
 pub struct CameraSettings(brush_ui::app::CameraSettings);
@@ -110,20 +70,63 @@ impl CameraSettings {
     }
 }
 
+#[derive(Clone)]
+#[wasm_bindgen]
+pub struct EmbeddedApp {
+    runner: eframe::WebRunner,
+}
+
 #[wasm_bindgen]
 impl EmbeddedApp {
+    /// Installs a panic hook, then returns.
+    #[expect(clippy::new_without_default)]
     #[wasm_bindgen(constructor)]
-    pub fn new(canvas_name: &str) -> Result<Self, JsError> {
-        let context = wasm_app(canvas_name).map_err(|e| JsError::from(&*e))?;
-        Ok(Self { context })
+    pub fn new() -> Self {
+        #[cfg(debug_assertions)]
+        wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
+
+        startup();
+
+        Self {
+            runner: eframe::WebRunner::new(),
+        }
+    }
+
+    /// Call this once from JavaScript to start your app.
+    #[wasm_bindgen]
+    pub async fn start(&self, canvas_name: &str) -> Result<(), wasm_bindgen::JsValue> {
+        let wgpu_options = brush_ui::create_egui_options();
+        let document = web_sys::window()
+            .context("Failed to get winow")?
+            .document()
+            .context("Failed to get document")?;
+        let canvas = document
+            .get_element_by_id(canvas_name)
+            .with_context(|| format!("Failed to find canvas with id: {canvas_name}"))?
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .unwrap_or_else(|_| panic!("Found canvas {canvas_name} was in fact not a canvas"));
+
+        self.runner
+            .start(
+                canvas,
+                eframe::WebOptions {
+                    wgpu_options,
+                    ..Default::default()
+                },
+                Box::new(|cc| Ok(Box::new(App::new(cc, context_cl)))),
+            )
+            .await
+            .expect("failed to start eframe");
     }
 
     #[wasm_bindgen]
     pub fn load_url(&self, url: &str) {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let _ = sender.send(TrainStreamConfig::default());
-        self.context
-            .start_new_process(DataSource::Url(url.to_owned()), receiver);
+        if let Some(app) = self.runner.app_mut::<MyEguiApp>() {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let _ = sender.send(TrainStreamConfig::default());
+            app.context()
+                .start_new_process(DataSource::Url(url.to_owned()), receiver);
+        }
     }
 
     #[wasm_bindgen]
