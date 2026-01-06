@@ -792,6 +792,11 @@ impl AppPane for ScenePanel {
                 // For non-training updates (e.g., loading), always redraw
                 if !process.is_training() {
                     self.last_state = None;
+
+                    // When training, datasets handle ths.
+                    if let Some(up_axis) = up_axis {
+                        process.set_model_up(*up_axis);
+                    }
                 }
             }
             #[cfg(feature = "training")]
