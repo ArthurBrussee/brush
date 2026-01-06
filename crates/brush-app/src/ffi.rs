@@ -1,6 +1,5 @@
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::TrainMessage;
-use brush_process::slot::Slot;
 use brush_process::{message::ProcessMessage, process::create_process};
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
@@ -126,7 +125,7 @@ pub unsafe extern "C" fn train_and_save(
     let train_options = unsafe { *options };
     // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
     let process_args = unsafe { train_options.into_train_stream_config() };
-    let mut process = create_process(source, async { process_args }, device, Slot::default());
+    let mut process = create_process(source, async { process_args }, device);
 
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

@@ -1032,7 +1032,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
- "tokio_with_wasm",
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
@@ -1073,14 +1072,12 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "brush-process",
- "brush-render",
  "brush-vfs",
  "burn-wgpu",
  "clap",
  "humantime",
  "indicatif",
  "log",
- "tokio",
  "tokio-stream",
  "tracing",
 ]

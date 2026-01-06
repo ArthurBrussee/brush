@@ -186,11 +186,8 @@ impl UiProcess {
 
         let (sender, receiver) = mpsc::unbounded_channel();
         let (train_sender, mut train_receiver) = mpsc::unbounded_channel();
-        let splat_state = Slot::default();
-        let splat_state_clone = splat_state.clone();
 
-        let mut process =
-            create_process(source, args, self.read().burn_device.clone(), splat_state);
+        let mut process = create_process(source, args, self.read().burn_device.clone());
 
         let egui_ctx = self.read().ui_ctx.clone();
 
@@ -225,7 +222,7 @@ impl UiProcess {
         self.write().process_handle = Some(ProcessHandle {
             messages: receiver,
             control: train_sender,
-            splat_view: splat_state_clone,
+            splat_view: process.splat_view,
         });
     }
 

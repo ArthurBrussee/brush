@@ -67,7 +67,6 @@ jni = "0.21.1"
 # On WASM
 [target.'cfg(target_family = "wasm")'.dependencies]
 glam.workspace = true
-tokio_with_wasm = { workspace = true, features = ["rt"] }
 tokio = { workspace = true, features = ["io-util", "rt"] }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
@@ -95,7 +94,7 @@ wasm-opt = [
 ]
 
 [package.metadata.cargo-shear]
-ignored = ["getrandom"]
+ignored = ["getrandom", "wasm-bindgen-futures"]
 
 [lints]
 workspace = true

@@ -1,8 +1,8 @@
 #![recursion_limit = "256"]
 
+use brush_process::message::ProcessMessage;
 #[cfg(feature = "training")]
 use brush_process::message::TrainMessage;
-use brush_process::{message::ProcessMessage, slot::Slot};
 
 use brush_process::{config::TrainStreamConfig, process::create_process};
 use brush_vfs::DataSource;
@@ -61,7 +61,7 @@ pub async fn run_cli_ui(
     // }
 
     let cfg = train_stream_config.clone();
-    let mut process = create_process(source, async { cfg }, device, Slot::default());
+    let mut process = create_process(source, async { cfg }, device);
 
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")

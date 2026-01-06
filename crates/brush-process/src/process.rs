@@ -29,8 +29,8 @@ pub fn create_process(
     source: DataSource,
     #[allow(unused)] config: impl Future<Output = TrainStreamConfig> + Send + 'static,
     device: WgpuDevice,
-    splat_view: Slot<Splats<MainBackend>>,
 ) -> RunningProcess {
+    let splat_view = Slot::default();
     let splat_state_cl = splat_view.clone();
 
     let stream = try_fn_stream(|emitter| async move {
