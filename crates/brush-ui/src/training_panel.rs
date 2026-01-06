@@ -5,6 +5,7 @@ use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::{MainBackend, gaussian_splats::Splats};
 use egui::RichText;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio_with_wasm::alias::task;
 use web_time::Duration;
 
 pub struct TrainingPanel {
@@ -297,7 +298,7 @@ impl AppPane for TrainingPanel {
                         let sender = self.export_channel.0.clone();
                         let ctx = ui.ctx().clone();
 
-                        tokio_with_wasm::alias::task::spawn(async move {
+                        task::spawn(async move {
                             let splats = slot.lock().clone().unwrap();
 
                             if let Err(e) = export(splats).await {

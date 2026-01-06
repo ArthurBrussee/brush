@@ -196,9 +196,6 @@ impl UiProcess {
 
         task::spawn(async move {
             while let Some(msg) = process.stream.next().await {
-                // Mark egui as needing a repaint.
-                egui_ctx.request_repaint();
-
                 // Stop the process if no one is listening anymore.
                 if sender.send(msg).is_err() {
                     break;
@@ -213,6 +210,10 @@ impl UiProcess {
                         Some(ControlMessage::Paused(false))
                     ) {}
                 }
+
+                // Mark egui as needing a repaint.
+                egui_ctx.request_repaint();
+
                 // Give back control to the runtime.
                 // This only really matters in the browser:
                 // on native, receiving also yields. In the browser that doesn't yield
