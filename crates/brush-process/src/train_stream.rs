@@ -116,7 +116,7 @@ pub(crate) async fn train_stream(
     // If the metadata has an up axis prefer that, otherwise estimate the up direction.
     let up_axis = up_axis.or(Some(estimated_up));
 
-    *splat_slot.lock() = Some(init_splats.clone());
+    splat_slot.set(init_splats.clone());
     emitter
         .emit(ProcessMessage::SplatsUpdated {
             up_axis,
@@ -163,11 +163,10 @@ pub(crate) async fn train_stream(
                 .await;
 
             // Don't hold this over await point.
-            let mut splat_view = splat_slot.lock();
-            // Take the splats from th
-            let splats = splats_into_autodiff(splat_view.take().unwrap());
+            let splats = splat_slot.last().unwrap();
+            let splats = splats_into_autodiff(splats);
             let (new_splats, stats) = trainer.step(batch, splats);
-            *splat_view = Some(new_splats.valid());
+            splat_slot.set(new_splats.valid());
             stats
         };
 
@@ -178,18 +177,18 @@ pub(crate) async fn train_stream(
             && iter.is_multiple_of(train_stream_config.train_config.refine_every)
             && train_t <= 0.95
         {
-            let splat_view = splat_slot.lock().clone().unwrap();
+            let splats = splat_slot.last().unwrap();
             let (new_splats, refine) = trainer
-                .refine(iter, splat_view)
+                .refine(iter, splats)
                 .instrument(trace_span!("Refine splats"))
                 .await;
-            *splat_slot.lock() = Some(new_splats);
+            splat_slot.set(new_splats);
             Some(refine)
         } else {
             None
         };
 
-        let splats = splat_slot.lock().clone().unwrap();
+        let splats = splat_slot.last().unwrap();
 
         // We just finished iter 'iter', now starting iter + 1.
         let iter = iter + 1;

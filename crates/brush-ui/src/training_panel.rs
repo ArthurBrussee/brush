@@ -299,7 +299,9 @@ impl AppPane for TrainingPanel {
                         let ctx = ui.ctx().clone();
 
                         task::spawn(async move {
-                            let splats = slot.lock().clone().unwrap();
+                            let Some(splats) = slot.last() else {
+                                return;
+                            };
 
                             if let Err(e) = export(splats).await {
                                 let _ = sender.send(e);

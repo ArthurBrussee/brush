@@ -122,12 +122,8 @@ impl AppPane for StatsPanel {
 
             let (num_splats, sh_degree) = process
                 .current_splats()
-                .and_then(|sv| {
-                    sv.lock()
-                        .as_ref()
-                        .map(|spl| (spl.num_splats(), spl.sh_degree()))
-                })
-                .unwrap_or((0, 0));
+                .and_then(|sv| sv.last())
+                .map_or((0, 0), |spl| (spl.num_splats(), spl.sh_degree()));
 
             let first_col_width = ui.available_width() * 0.4;
             egui::Grid::new("model_stats_grid")

@@ -74,6 +74,7 @@ struct RenderState {
     cam: Camera,
     settings: CameraSettings,
     grid_opacity: f32,
+    frame: u32,
 }
 
 struct ErrorDisplay {
@@ -136,6 +137,15 @@ pub struct ScenePanel {
     pub(crate) last_draw: Option<Instant>,
     #[serde(skip)]
     has_splats: bool,
+    /// Current frame for animated sequences (as float for smooth interpolation).
+    #[serde(skip)]
+    frame: f32,
+    /// Total number of frames in the current sequence.
+    #[serde(skip)]
+    frame_count: u32,
+    /// Whether animation playback is paused.
+    #[serde(skip)]
+    paused: bool,
     #[serde(skip)]
     err: Option<ErrorDisplay>,
     #[serde(skip)]
@@ -334,6 +344,7 @@ impl ScenePanel {
             cam: camera.clone(),
             settings: settings.clone(),
             grid_opacity,
+            frame: self.frame as u32,
         };
 
         let dirty = self.last_state != Some(state.clone());
@@ -410,6 +421,41 @@ impl ScenePanel {
         rect
     }
 
+    fn draw_play_pause(&mut self, ui: &egui::Ui, rect: Rect) {
+        // Only show play/pause if we have a multi-frame sequence that's fully loaded
+        if self.frame_count > 1 {
+            let id = ui.auto_id_with("play_pause_button");
+            egui::Area::new(id)
+                .order(egui::Order::Foreground)
+                .fixed_pos(egui::pos2(rect.max.x - 40.0, rect.min.y + 6.0))
+                .show(ui.ctx(), |ui| {
+                    let bg_color = if self.paused {
+                        egui::Color32::from_rgba_premultiplied(0, 0, 0, 64)
+                    } else {
+                        egui::Color32::from_rgba_premultiplied(30, 80, 200, 120)
+                    };
+
+                    Frame::new()
+                        .fill(bg_color)
+                        .corner_radius(egui::CornerRadius::same(16))
+                        .inner_margin(egui::Margin::same(4))
+                        .show(ui, |ui| {
+                            let icon = if self.paused { "\u{25B6}" } else { "\u{23F8}" };
+                            let mut button =
+                                Button::new(RichText::new(icon).size(18.0).color(Color32::WHITE));
+
+                            if !self.paused {
+                                button = button.fill(egui::Color32::from_rgb(60, 120, 220));
+                            }
+
+                            if ui.add(button).clicked() {
+                                self.paused = !self.paused;
+                            }
+                        });
+                });
+        }
+    }
+
     fn draw_warnings(&mut self, ui: &egui::Ui, pos: Pos2) {
         if self.warnings.is_empty() {
             return;
@@ -461,6 +507,9 @@ impl ScenePanel {
         self.last_draw = None;
         self.last_state = None;
         self.has_splats = false;
+        self.frame = 0.0;
+        self.frame_count = 0;
+        self.paused = false;
         self.last_rendered_iter = 0;
     }
 
@@ -786,16 +835,26 @@ impl AppPane for ScenePanel {
                 self.source_name = Some(name.clone());
                 self.source_type = Some(source.clone());
             }
-            ProcessMessage::SplatsUpdated { up_axis, .. } => {
+            ProcessMessage::SplatsUpdated {
+                up_axis,
+                frame,
+                total_frames,
+            } => {
                 self.has_splats = true;
+                self.frame_count = *total_frames;
 
                 // For non-training updates (e.g., loading), always redraw
                 if !process.is_training() {
                     self.last_state = None;
 
-                    // When training, datasets handle ths.
+                    // When training, datasets handle this.
                     if let Some(up_axis) = up_axis {
                         process.set_model_up(*up_axis);
+                    }
+
+                    // For single-frame or still loading, keep frame at current loaded frame
+                    if *total_frames <= 1 || *frame < *total_frames - 1 {
+                        self.frame = *frame as f32;
                     }
                 }
             }
@@ -840,6 +899,7 @@ impl AppPane for ScenePanel {
         }
 
         let cur_time = Instant::now();
+        let delta_time = self.last_draw.map_or(0.0, |t| t.elapsed().as_secs_f32());
         self.last_draw = Some(cur_time);
 
         // Empty scene, nothing to show - show load buttons
@@ -907,7 +967,24 @@ impl AppPane for ScenePanel {
                 self.start_loading(source, process);
             }
         } else {
-            let splats = process.current_splats().and_then(|sv| sv.lock().clone());
+            // Animate frame if we have a multi-frame sequence and not paused
+            if self.frame_count > 1 && !self.paused {
+                // Advance frame by deltatime (30 fps playback)
+                self.frame += delta_time * 30.0;
+                // Loop back to start
+                if self.frame >= self.frame_count as f32 {
+                    self.frame = 0.0;
+                }
+                // Keep animating
+                ui.ctx().request_repaint();
+            }
+
+            // Get the splat for the current frame
+            let splats = process.current_splats().and_then(|sv| {
+                let frame_idx = self.frame as usize;
+                sv.get(frame_idx).or_else(|| sv.last())
+            });
+
             let interactive =
                 matches!(process.ui_mode(), UiMode::Default | UiMode::FullScreenSplat);
             let rect = self.draw_splats(ui, process, splats, interactive);
@@ -915,6 +992,7 @@ impl AppPane for ScenePanel {
             if interactive {
                 let pos = egui::pos2(ui.available_rect_before_wrap().max.x, rect.min.y);
                 self.draw_warnings(ui, pos);
+                self.draw_play_pause(ui, rect);
             }
         }
 

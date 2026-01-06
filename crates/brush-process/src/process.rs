@@ -116,10 +116,23 @@ where
                     // over time. Clear out memory after each step to prevent this buildup.
                     client.memory_cleanup();
 
-                    *splat_view.lock() = Some(splats);
+                    // For the first frame of a new file, clear existing frames
+                    if frame == 0 {
+                        splat_view.clear();
+                    }
+
+                    // Ensure we have space up to this frame index and set it
+                    {
+                        let mut guard = splat_view.lock();
+                        if guard.len() <= frame as usize {
+                            guard.resize(frame as usize + 1, splats.clone());
+                        }
+                        guard[frame as usize] = splats;
+                    }
+
                     emitter
                         .emit(ProcessMessage::SplatsUpdated {
-                            up_axis: None,
+                            up_axis: message.meta.up_axis,
                             frame,
                             total_frames,
                         })
