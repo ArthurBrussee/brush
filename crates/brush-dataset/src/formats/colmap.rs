@@ -116,6 +116,15 @@ async fn load_dataset_inner(
                 let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
 
                 let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
+
+                if !camera.is_valid() {
+                    log::warn!(
+                        "Skipping camera for image '{}': contains nan or inf values",
+                        img_info.name
+                    );
+                    return None;
+                }
+
                 let image = LoadImage::new(
                     vfs.clone(),
                     path.to_path_buf(),

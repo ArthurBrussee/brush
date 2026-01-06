@@ -26,6 +26,15 @@ impl Camera {
         }
     }
 
+    /// Check if the camera has valid (non-nan/inf) settings.
+    pub fn is_valid(&self) -> bool {
+        self.fov_x.is_finite()
+            && self.fov_y.is_finite()
+            && self.center_uv.is_finite()
+            && self.position.is_finite()
+            && self.rotation.is_finite()
+    }
+
     pub fn focal(&self, img_size: glam::UVec2) -> glam::Vec2 {
         glam::vec2(
             fov_to_focal(self.fov_x, img_size.x) as f32,

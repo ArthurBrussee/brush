@@ -189,10 +189,17 @@ async fn read_transforms_file(
             (cy.map_or(0.5, |v| v / h as f64)) as f32,
         );
 
-        let view = SceneView {
-            image,
-            camera: Camera::new(translation, rotation, fovx, fovy, cuv),
-        };
+        let camera = Camera::new(translation, rotation, fovx, fovy, cuv);
+
+        if !camera.is_valid() {
+            log::warn!(
+                "Skipping camera for image '{}': contains nan or inf values",
+                frame.file_path
+            );
+            continue;
+        }
+
+        let view = SceneView { image, camera };
         results.push(view);
     }
     Ok(results)
