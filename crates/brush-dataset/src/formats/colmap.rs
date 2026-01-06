@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use super::FormatError;
+use super::{DatasetLoadResult, FormatError};
 use crate::{
     Dataset,
     config::LoadDataseConfig,
@@ -34,7 +34,7 @@ fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
 pub(crate) async fn load_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-) -> Option<Result<(Option<SplatMessage>, Dataset), FormatError>> {
+) -> Option<Result<DatasetLoadResult, FormatError>> {
     log::info!("Loading colmap dataset");
 
     let (cam_path, img_path) = if let Some(path) = vfs.files_ending_in("cameras.bin").next() {
@@ -54,7 +54,7 @@ async fn load_dataset_inner(
     load_args: &LoadDataseConfig,
     cam_path: PathBuf,
     img_path: PathBuf,
-) -> Result<(Option<SplatMessage>, Dataset), FormatError> {
+) -> Result<DatasetLoadResult, FormatError> {
     let is_binary = cam_path.ends_with("cameras.bin");
 
     log::info!("Parsing colmap camera info");
@@ -79,63 +79,64 @@ async fn load_dataset_inner(
 
         log::info!("Loading {} images for colmap dataset", img_info_list.len());
 
-        let views: Vec<_> = img_info_list
+        let mut views = Vec::new();
+        let mut warnings = Vec::new();
+
+        for img_info in img_info_list
             .iter()
             .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
             .take(load_args.max_frames.unwrap_or(usize::MAX))
-            .filter_map(|img_info| {
-                let cam_data = cam_model_data
-                    .get(&img_info.camera_id)
-                    .ok_or_else(|| {
-                        FormatError::InvalidFormat(format!(
-                            "Image '{}' references camera ID {} which doesn't exist in camera data",
-                            img_info.name, img_info.camera_id
-                        ))
-                    })
-                    .unwrap()
-                    .clone();
+        {
+            let cam_data = cam_model_data
+                .get(&img_info.camera_id)
+                .ok_or_else(|| {
+                    FormatError::InvalidFormat(format!(
+                        "Image '{}' references camera ID {} which doesn't exist in camera data",
+                        img_info.name, img_info.camera_id
+                    ))
+                })?
+                .clone();
 
-                // Create a future to handle loading the image.
-                let focal = cam_data.focal();
-                let fovx = camera::focal_to_fov(focal.0, cam_data.width as u32);
-                let fovy = camera::focal_to_fov(focal.1, cam_data.height as u32);
-                let center = cam_data.principal_point();
-                let center_uv = center / glam::vec2(cam_data.width as f32, cam_data.height as f32);
+            // Create a future to handle loading the image.
+            let focal = cam_data.focal();
+            let fovx = camera::focal_to_fov(focal.0, cam_data.width as u32);
+            let fovy = camera::focal_to_fov(focal.1, cam_data.height as u32);
+            let center = cam_data.principal_point();
+            let center_uv = center / glam::vec2(cam_data.width as f32, cam_data.height as f32);
 
-                let Some(path) = find_img(&vfs, &img_info.name) else {
-                    log::warn!("Image not found: {}", img_info.name);
-                    return None;
-                };
+            let Some(path) = find_img(&vfs, &img_info.name) else {
+                warnings.push(format!("Skipped '{}': image file not found", img_info.name));
+                continue;
+            };
 
-                let mask_path = find_mask_path(&vfs, path);
+            let mask_path = find_mask_path(&vfs, path);
 
-                // Convert w2c to c2w.
-                let world_to_cam =
-                    glam::Affine3A::from_rotation_translation(img_info.quat, img_info.tvec);
-                let cam_to_world = world_to_cam.inverse();
-                let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
+            // Convert w2c to c2w.
+            let world_to_cam =
+                glam::Affine3A::from_rotation_translation(img_info.quat, img_info.tvec);
+            let cam_to_world = world_to_cam.inverse();
+            let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
 
-                let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
+            let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
 
-                if !camera.is_valid() {
-                    log::warn!(
-                        "Skipping camera for image '{}': contains nan or inf values",
-                        img_info.name
-                    );
-                    return None;
-                }
+            if !camera.is_valid() {
+                warnings.push(format!(
+                    "Skipped '{}': camera contains nan or inf values",
+                    img_info.name
+                ));
+                continue;
+            }
 
-                let image = LoadImage::new(
-                    vfs.clone(),
-                    path.to_path_buf(),
-                    mask_path.map(|p| p.to_path_buf()),
-                    load_args.max_resolution,
-                    load_args.alpha_mode,
-                );
+            let image = LoadImage::new(
+                vfs.clone(),
+                path.to_path_buf(),
+                mask_path.map(|p| p.to_path_buf()),
+                load_args.max_resolution,
+                load_args.alpha_mode,
+            );
 
-                Some(SceneView { camera, image })
-            })
-            .collect();
+            views.push(SceneView { camera, image });
+        }
 
         let (train_views, eval_views) = views.into_iter().enumerate().partition_map(|(i, v)| {
             if let Some(split) = load_args.eval_split_every
@@ -147,7 +148,7 @@ async fn load_dataset_inner(
             }
         });
 
-        Result::<_, FormatError>::Ok(Dataset::from_views(train_views, eval_views))
+        Result::<_, FormatError>::Ok((Dataset::from_views(train_views, eval_views), warnings))
     });
 
     let load_args = load_args.clone();
@@ -215,7 +216,12 @@ async fn load_dataset_inner(
 
     // Wait for all tasks and get results
     let (dataset, init) = tokio::join!(dataset, init);
-    let (dataset, init) = (dataset.expect("Join failed")?, init.expect("Join failed"));
+    let ((dataset, warnings), init_splat) =
+        (dataset.expect("Join failed")?, init.expect("Join failed"));
 
-    Ok((init, dataset))
+    Ok(DatasetLoadResult {
+        init_splat,
+        dataset,
+        warnings,
+    })
 }

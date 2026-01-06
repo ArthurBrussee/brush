@@ -7,8 +7,7 @@ use brush_process::message::ProcessMessage;
 use brush_vfs::DataSource;
 use core::f32;
 use egui::{
-    Align2, Button, Frame, Pos2, RichText, Ui, containers::Popup,
-    epaint::mutex::RwLock as EguiRwLock,
+    Align2, Button, Frame, RichText, containers::Popup, epaint::mutex::RwLock as EguiRwLock,
 };
 use std::sync::Arc;
 
@@ -104,31 +103,6 @@ impl ErrorDisplay {
     }
 }
 
-fn box_ui<R>(
-    id: &str,
-    ui: &egui::Ui,
-    pivot: Align2,
-    pos: Pos2,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) {
-    // Controls window in bottom right
-    let id = ui.id().with(id);
-    egui::Area::new(id)
-        .kind(egui::UiKind::Window)
-        .pivot(pivot)
-        .current_pos(pos)
-        .movable(false)
-        .show(ui.ctx(), |ui| {
-            let style = ui.style_mut();
-            let fill = style.visuals.window_fill;
-            style.visuals.window_fill =
-                Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 200);
-            let frame = Frame::window(style);
-
-            frame.show(ui, add_contents);
-        });
-}
-
 #[derive(Default, Serialize, Deserialize)]
 pub struct ScenePanel {
     #[serde(skip)]
@@ -150,6 +124,9 @@ pub struct ScenePanel {
     err: Option<ErrorDisplay>,
     #[serde(skip)]
     warnings: Vec<ErrorDisplay>,
+    /// Number of warnings that have been seen by the user.
+    #[serde(skip)]
+    seen_warning_count: usize,
     #[serde(skip)]
     last_state: Option<RenderState>,
     #[serde(skip)]
@@ -458,49 +435,74 @@ impl ScenePanel {
         }
     }
 
-    fn draw_warnings(&mut self, ui: &egui::Ui, pos: Pos2) {
-        if self.warnings.is_empty() {
-            return;
-        }
+    fn draw_warnings_popup(&mut self, ui: &mut egui::Ui, popup_id: egui::Id) {
+        ui.set_min_width(280.0);
+        ui.set_max_width(400.0);
+        ui.set_max_height(300.0);
 
-        let inner = |ui: &mut egui::Ui| {
-            ui.set_max_width(300.0);
-            ui.set_max_height(200.0);
+        // Warning header
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("⚠").size(16.0).color(Color32::YELLOW));
+            ui.label(
+                RichText::new(format!("Warnings ({})", self.warnings.len()))
+                    .strong()
+                    .color(Color32::YELLOW),
+            );
 
-            // Warning header with icon
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("⚠").size(16.0).color(Color32::YELLOW));
-                ui.label(RichText::new("Warnings").strong().color(Color32::YELLOW));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let clear_button = Button::new(
+                    RichText::new("Clear")
+                        .size(11.0)
+                        .color(Color32::from_rgb(180, 180, 180)),
+                )
+                .fill(Color32::from_rgb(60, 60, 65))
+                .corner_radius(4.0);
 
-                ui.add_space(10.0);
-
-                if ui.button("clear").clicked() {
+                if ui.add(clear_button).clicked() {
                     self.warnings.clear();
+                    self.seen_warning_count = 0;
+                    // Close the popup to prevent click from hitting other UI elements
+                    Popup::close_id(ui.ctx(), popup_id);
                 }
             });
+        });
 
-            ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(6.0);
+        ui.add_space(6.0);
+        ui.separator();
+        ui.add_space(6.0);
 
+        if self.warnings.is_empty() {
+            ui.label(
+                RichText::new("No warnings")
+                    .italics()
+                    .color(Color32::from_rgb(140, 140, 140)),
+            );
+        } else {
+            let has_new = self.warnings.len() > self.seen_warning_count;
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
-                .stick_to_bottom(true)
+                .max_height(250.0)
+                .stick_to_bottom(has_new)
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 8.0;
 
-                    for warning in &self.warnings {
-                        ui.scope(|ui| {
-                            ui.visuals_mut().override_text_color =
-                                Some(Color32::from_rgb(255, 220, 120));
-                            warning.draw(ui);
+                    for (i, warning) in self.warnings.iter().enumerate() {
+                        let is_new = i >= self.seen_warning_count;
+                        let color = if is_new {
+                            Color32::from_rgb(255, 200, 80)
+                        } else {
+                            Color32::from_rgb(200, 180, 120)
+                        };
+
+                        ui.horizontal(|ui| {
+                            if is_new {
+                                ui.label(RichText::new("•").color(Color32::YELLOW));
+                            }
+                            ui.label(RichText::new(&warning.headline).color(color));
                         });
-                        ui.add_space(4.0);
                     }
                 });
-        };
-
-        box_ui("warnings_box", ui, Align2::RIGHT_TOP, pos, inner);
+        }
     }
 }
 
@@ -513,6 +515,8 @@ impl ScenePanel {
         self.frame_count = 0;
         self.paused = false;
         self.last_rendered_iter = 0;
+        self.warnings.clear();
+        self.seen_warning_count = 0;
     }
 
     fn draw_controls_help(ui: &mut egui::Ui, min_width: Option<f32>) {
@@ -737,6 +741,59 @@ impl AppPane for ScenePanel {
                 ui.set_min_width(220.0);
                 Self::draw_controls_content(ui, process);
             });
+
+        if !self.warnings.is_empty() {
+            ui.add_space(6.0);
+
+            let unseen_count = self.warnings.len().saturating_sub(self.seen_warning_count);
+            let has_unseen = unseen_count > 0;
+
+            let button_color = if has_unseen {
+                egui::Color32::from_rgb(220, 160, 40) // Brighter yellow/orange for new warnings
+            } else {
+                egui::Color32::from_rgb(90, 85, 70) // Subtle for seen warnings
+            };
+
+            let label = format!("⚠ {}", self.warnings.len());
+
+            let warnings_button = Button::new(RichText::new(label).size(12.0).strong().color(
+                if has_unseen {
+                    Color32::BLACK
+                } else {
+                    Color32::from_rgb(180, 170, 130)
+                },
+            ))
+            .fill(button_color)
+            .corner_radius(6.0)
+            .min_size(egui::vec2(44.0, 18.0));
+
+            let response = ui.add(warnings_button).on_hover_text(if has_unseen {
+                format!("{unseen_count} new warning(s)")
+            } else {
+                "View warnings".into()
+            });
+
+            // Auto-open popup when there are new warnings
+            let popup_id = response.id.with("popup");
+            if has_unseen {
+                Popup::open_id(ui.ctx(), popup_id);
+            }
+
+            let was_open = Popup::is_id_open(ui.ctx(), popup_id);
+
+            let popup = Popup::from_toggle_button_response(&response)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+
+            popup.show(|ui| {
+                self.draw_warnings_popup(ui, popup_id);
+            });
+
+            // Check if popup just closed
+            let is_open = Popup::is_id_open(ui.ctx(), popup_id);
+            if was_open && !is_open {
+                self.seen_warning_count = self.warnings.len();
+            }
+        }
 
         if process.is_training() {
             ui.add_space(6.0);
@@ -992,8 +1049,6 @@ impl AppPane for ScenePanel {
             let rect = self.draw_splats(ui, process, splats, interactive);
 
             if interactive {
-                let pos = egui::pos2(ui.available_rect_before_wrap().max.x, rect.min.y);
-                self.draw_warnings(ui, pos);
                 self.draw_play_pause(ui, rect);
             }
         }

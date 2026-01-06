@@ -57,9 +57,20 @@ pub(crate) async fn train_stream(
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     log::info!("Loading dataset");
-    let (init_splats, dataset) = load_dataset(vfs.clone(), &train_stream_config.load_config)
+    let load_result = load_dataset(vfs.clone(), &train_stream_config.load_config)
         .instrument(trace_span!("Load dataset"))
         .await?;
+
+    // Emit any warnings from dataset loading.
+    for warning in load_result.warnings {
+        emitter
+            .emit(ProcessMessage::Warning {
+                error: anyhow::anyhow!("{warning}"),
+            })
+            .await;
+    }
+
+    let dataset = load_result.dataset;
 
     log::info!("Log scene to rerun");
     if let Err(error) = visualize.log_scene(
@@ -87,7 +98,7 @@ pub(crate) async fn train_stream(
     let estimated_up = dataset.estimate_up();
 
     // Convert SplatData to Splats using KNN initialization
-    let (up_axis, init_splats) = if let Some(msg) = init_splats {
+    let (up_axis, init_splats) = if let Some(msg) = load_result.init_splat {
         // Use loaded splats with KNN init
         let render_mode = train_stream_config
             .train_config

@@ -1,5 +1,6 @@
 use crate::{Dataset, config::LoadDataseConfig};
 use brush_serde::{DeserializeError, SplatMessage, load_splat_from_ply};
+
 use brush_vfs::BrushVfs;
 use image::ImageError;
 use std::{path::Path, sync::Arc};
@@ -8,6 +9,12 @@ pub mod colmap;
 pub mod nerfstudio;
 
 use thiserror::Error;
+
+pub struct DatasetLoadResult {
+    pub init_splat: Option<SplatMessage>,
+    pub dataset: Dataset,
+    pub warnings: Vec<String>,
+}
 
 #[derive(Error, Debug)]
 pub enum FormatError {
@@ -45,7 +52,7 @@ pub enum DatasetError {
 pub async fn load_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-) -> Result<(Option<SplatMessage>, Dataset), DatasetError> {
+) -> Result<DatasetLoadResult, DatasetError> {
     let mut dataset = colmap::load_dataset(vfs.clone(), load_args).await;
 
     if dataset.is_none() {
@@ -56,7 +63,7 @@ pub async fn load_dataset(
         return Err(DatasetError::FormatNotSupported);
     };
 
-    let (data_splat_init, dataset) = dataset?;
+    let result = dataset?;
 
     // If there's an initial ply file, override the init stream with that.
     let mut ply_paths: Vec<_> = vfs.files_with_extension("ply").collect();
@@ -75,10 +82,14 @@ pub async fn load_dataset(
             .map_err(DeserializeError)?;
         Some(load_splat_from_ply(reader, load_args.subsample_points).await?)
     } else {
-        data_splat_init
+        result.init_splat
     };
 
-    Ok((init_splat, dataset))
+    Ok(DatasetLoadResult {
+        init_splat,
+        dataset: result.dataset,
+        warnings: result.warnings,
+    })
 }
 
 fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {

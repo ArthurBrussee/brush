@@ -1,5 +1,5 @@
-use super::FormatError;
 use super::find_mask_path;
+use super::{DatasetLoadResult, FormatError};
 use crate::{
     Dataset,
     config::LoadDataseConfig,
@@ -7,7 +7,7 @@ use crate::{
 };
 use brush_render::camera::fov_to_focal;
 use brush_render::camera::{Camera, focal_to_fov};
-use brush_serde::{SplatMessage, load_splat_from_ply};
+use brush_serde::load_splat_from_ply;
 use brush_vfs::BrushVfs;
 use image::GenericImageView;
 use std::path::Path;
@@ -103,6 +103,7 @@ async fn read_transforms_file(
     transforms_path: &Path,
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
+    warnings: &mut Vec<String>,
 ) -> Result<Vec<SceneView>, FormatError> {
     let mut results = vec![];
     for frame in scene
@@ -128,7 +129,10 @@ async fn read_transforms_file(
 
         // Check if path exists.
         if vfs.reader_at_path(&path).await.is_err() {
-            log::warn!("Image not found: {path:?}");
+            warnings.push(format!(
+                "Skipped '{}': image file not found",
+                frame.file_path
+            ));
             continue;
         }
 
@@ -192,10 +196,11 @@ async fn read_transforms_file(
         let camera = Camera::new(translation, rotation, fovx, fovy, cuv);
 
         if !camera.is_valid() {
-            log::warn!(
-                "Skipping camera for image '{}': contains nan or inf values",
+            let msg = format!(
+                "Skipped '{}': camera contains nan or inf values",
                 frame.file_path
             );
+            warnings.push(msg);
             continue;
         }
 
@@ -208,7 +213,7 @@ async fn read_transforms_file(
 pub async fn read_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
-) -> Option<Result<(Option<SplatMessage>, Dataset), FormatError>> {
+) -> Option<Result<DatasetLoadResult, FormatError>> {
     log::info!("Loading nerfstudio dataset");
 
     let json_files: Vec<_> = vfs.files_with_extension("json").collect();
@@ -231,7 +236,9 @@ async fn read_dataset_inner(
     load_args: &LoadDataseConfig,
     json_files: Vec<std::path::PathBuf>,
     transforms_path: std::path::PathBuf,
-) -> Result<(Option<SplatMessage>, Dataset), FormatError> {
+) -> Result<DatasetLoadResult, FormatError> {
+    let mut warnings = Vec::new();
+
     let mut buf = String::new();
     vfs.reader_at_path(&transforms_path)
         .await?
@@ -243,6 +250,7 @@ async fn read_dataset_inner(
         &transforms_path,
         vfs.clone(),
         load_args,
+        &mut warnings,
     )
     .await?;
 
@@ -263,7 +271,16 @@ async fn read_dataset_inner(
             .read_to_string(&mut json_str)
             .await?;
         let val_scene = serde_json::from_str(&json_str)?;
-        Some(read_transforms_file(val_scene, eval_trans_path, vfs.clone(), load_args).await?)
+        Some(
+            read_transforms_file(
+                val_scene,
+                eval_trans_path,
+                vfs.clone(),
+                load_args,
+                &mut warnings,
+            )
+            .await?,
+        )
     } else {
         None
     };
@@ -306,5 +323,9 @@ async fn read_dataset_inner(
         }
     }
 
-    Ok((init_splat, dataset))
+    Ok(DatasetLoadResult {
+        init_splat,
+        dataset,
+        warnings,
+    })
 }
