@@ -1,11 +1,9 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
-/// A thread-safe slot for sharing data between the process and UI.
-/// For sequences (like animated splats), stores a Vec of frames.
 #[derive(Clone)]
 pub struct Slot<T>(Arc<Mutex<Vec<T>>>);
 
-impl<T> Slot<T> {
+impl<T: Clone> Slot<T> {
     pub fn lock(&self) -> MutexGuard<'_, Vec<T>> {
         self.0.lock().unwrap()
     }
@@ -28,25 +26,6 @@ impl<T> Slot<T> {
     /// Check if empty.
     pub fn is_empty(&self) -> bool {
         self.0.lock().unwrap().is_empty()
-    }
-}
-
-impl<T: Clone> Slot<T> {
-    /// Get a clone of the frame at the given index.
-    pub fn get(&self, index: usize) -> Option<T> {
-        self.0.lock().unwrap().get(index).cloned()
-    }
-
-    /// Get the last frame (for single-splat usage during training).
-    pub fn last(&self) -> Option<T> {
-        self.0.lock().unwrap().last().cloned()
-    }
-
-    /// Set a single value, clearing any existing frames.
-    pub fn set(&self, value: T) {
-        let mut guard = self.0.lock().unwrap();
-        guard.clear();
-        guard.push(value);
     }
 }
 

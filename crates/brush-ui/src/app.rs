@@ -238,9 +238,7 @@ impl App {
         if let Some(args) = init_args
             && let Some(source) = init_source
         {
-            let (sender, args_receiver) = tokio::sync::oneshot::channel();
-            let _ = sender.send(args);
-            context.start_new_process(source, args_receiver);
+            context.start_new_process(source, async { args });
         }
 
         cc.egui_ctx

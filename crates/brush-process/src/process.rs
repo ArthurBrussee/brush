@@ -25,15 +25,12 @@ pub struct RunningProcess {
 }
 
 /// Create a running process from a datasource and args.
-pub fn create_process<CFut>(
+pub fn create_process(
     source: DataSource,
-    #[allow(unused)] config: CFut,
+    #[allow(unused)] config: impl Future<Output = TrainStreamConfig> + Send + 'static,
     device: WgpuDevice,
     splat_view: Slot<Splats<MainBackend>>,
-) -> RunningProcess
-where
-    CFut: Future<Output = TrainStreamConfig> + Send + 'static,
-{
+) -> RunningProcess {
     let splat_state_cl = splat_view.clone();
 
     let stream = try_fn_stream(|emitter| async move {

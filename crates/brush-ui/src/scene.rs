@@ -277,7 +277,9 @@ impl ScenePanel {
         {
             self.settings_popup = Some(SettingsPopup::new(_sender));
         }
-        process.start_new_process(source, receiver);
+        process.start_new_process(source, async {
+            receiver.await.unwrap_or(Default::default())
+        });
     }
 
     #[cfg(feature = "training")]
@@ -982,7 +984,7 @@ impl AppPane for ScenePanel {
             // Get the splat for the current frame
             let splats = process.current_splats().and_then(|sv| {
                 let frame_idx = self.frame as usize;
-                sv.get(frame_idx).or_else(|| sv.last())
+                sv.lock().get(frame_idx).cloned()
             });
 
             let interactive =

@@ -9,7 +9,7 @@ use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
 use glam::{Affine3A, Quat, Vec3};
 use std::sync::RwLock;
-use tokio::sync::{mpsc, oneshot::Receiver};
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tokio_with_wasm::alias::task;
 
@@ -173,7 +173,11 @@ impl UiProcess {
         inner.repaint();
     }
 
-    pub fn start_new_process(&self, source: DataSource, args: Receiver<TrainStreamConfig>) {
+    pub fn start_new_process(
+        &self,
+        source: DataSource,
+        args: impl Future<Output = TrainStreamConfig> + Send + 'static,
+    ) {
         {
             let mut inner = self.write();
             let reset = UiProcessInner::new(inner.burn_device.clone(), inner.ui_ctx.clone());
@@ -185,12 +189,8 @@ impl UiProcess {
         let splat_state = Slot::default();
         let splat_state_clone = splat_state.clone();
 
-        let mut process = create_process(
-            source,
-            async { args.await.unwrap() },
-            self.read().burn_device.clone(),
-            splat_state,
-        );
+        let mut process =
+            create_process(source, args, self.read().burn_device.clone(), splat_state);
 
         let egui_ctx = self.read().ui_ctx.clone();
 

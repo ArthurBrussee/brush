@@ -299,7 +299,7 @@ impl AppPane for TrainingPanel {
                         let ctx = ui.ctx().clone();
 
                         task::spawn(async move {
-                            let Some(splats) = slot.last() else {
+                            let Some(splats) = slot.lock().last().cloned() else {
                                 return;
                             };
 
