@@ -245,9 +245,7 @@ impl AppPane for TrainingPanel {
                     ui.add_space(6.0);
                 }
 
-                let current_splats = process.splat_view().map(|sv| sv.splats);
-
-                let export_button_width = if current_splats.is_some() { 65.0 } else { 0.0 };
+                let export_button_width = if process.is_training() { 65.0 } else { 0.0 };
                 let progress_width = ui.available_width()
                     - export_button_width
                     - if export_button_width > 0.0 { 6.0 } else { 0.0 };
@@ -265,7 +263,9 @@ impl AppPane for TrainingPanel {
 
                 let bar_rect = bar_response.rect;
 
-                if let Some(splats) = current_splats {
+                if let Some(slot) = process.current_splats()
+                    && process.is_training()
+                {
                     ui.add_space(6.0);
                     // Make export button more prominent when training is complete
                     let (button_text, button_color) = if is_complete {
@@ -296,7 +296,10 @@ impl AppPane for TrainingPanel {
                         }
                         let sender = self.export_channel.0.clone();
                         let ctx = ui.ctx().clone();
+
                         tokio_with_wasm::alias::task::spawn(async move {
+                            let splats = slot.lock().clone().unwrap();
+
                             if let Err(e) = export(splats).await {
                                 let _ = sender.send(e);
                                 ctx.request_repaint();

@@ -167,7 +167,7 @@ pub async fn run_cli_ui(
                 log::info!("Loading: {name}");
                 main_spinner.set_message(format!("Loading {name}..."));
             }
-            ProcessMessage::SplatsUpdated => {}
+            ProcessMessage::SplatsUpdated { .. } => {}
             #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(train) => match train {
                 TrainMessage::TrainConfig { .. } => {}

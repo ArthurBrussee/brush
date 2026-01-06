@@ -1,5 +1,3 @@
-use brush_render::MainBackend;
-use brush_render::gaussian_splats::Splats;
 use brush_vfs::DataSource;
 use glam::Vec3;
 
@@ -39,31 +37,6 @@ pub enum TrainMessage {
     DoneTraining,
 }
 
-/// The current shared splat state.
-#[derive(Clone)]
-pub struct SplatView {
-    pub splats: Splats<MainBackend>,
-    pub up_axis: Option<Vec3>,
-    pub frame: u32,
-    pub total_frames: u32,
-}
-
-impl SplatView {
-    pub(crate) fn new(
-        splats: Splats<MainBackend>,
-        up_axis: Option<Vec3>,
-        frame: u32,
-        total_frames: u32,
-    ) -> Self {
-        Self {
-            splats,
-            up_axis,
-            frame,
-            total_frames,
-        }
-    }
-}
-
 pub enum ProcessMessage {
     /// A new process is starting (before we know what type)
     NewProcess,
@@ -74,7 +47,11 @@ pub enum ProcessMessage {
         training: bool,
     },
     /// Notification that splats have been updated.
-    SplatsUpdated,
+    SplatsUpdated {
+        up_axis: Option<Vec3>,
+        frame: u32,
+        total_frames: u32,
+    },
     #[cfg(feature = "training")]
     TrainMessage(TrainMessage),
     /// Some warning occurred during the process, but the process can continue.

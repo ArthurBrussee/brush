@@ -50,46 +50,51 @@ fn main() -> Result<(), anyhow::Error> {
         .target(env_logger::Target::Stdout)
         .init();
 
-    if args.with_viewer {
-        let icon = eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon-256.png")[..])
-            .expect("Failed to load icon");
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to initialize tokio runtime")
+        .block_on(async move {
+            if args.with_viewer {
+                let icon = eframe::icon_data::from_png_bytes(
+                    &include_bytes!("../assets/icon-256.png")[..],
+                )
+                .expect("Failed to load icon");
 
-        let native_options = eframe::NativeOptions {
-            // Build app display.
-            viewport: egui::ViewportBuilder::default()
-                .with_inner_size(egui::Vec2::new(1450.0, 1200.0))
-                .with_active(true)
-                .with_icon(std::sync::Arc::new(icon)),
-            wgpu_options: brush_ui::create_egui_options(),
-            persist_window: true,
-            ..Default::default()
-        };
+                let native_options = eframe::NativeOptions {
+                    // Build app display.
+                    viewport: egui::ViewportBuilder::default()
+                        .with_inner_size(egui::Vec2::new(1450.0, 1200.0))
+                        .with_active(true)
+                        .with_icon(std::sync::Arc::new(icon)),
+                    wgpu_options: brush_ui::create_egui_options(),
+                    persist_window: true,
+                    ..Default::default()
+                };
 
-        let title = if cfg!(debug_assertions) {
-            "Brush  -  Debug"
-        } else {
-            "Brush"
-        };
+                let title = if cfg!(debug_assertions) {
+                    "Brush  -  Debug"
+                } else {
+                    "Brush"
+                };
 
-        eframe::run_native(
-            title,
-            native_options,
-            Box::new(move |cc| Ok(Box::new(App::new(cc, Some(args.train_stream), args.source)))),
-        )?;
-    } else {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to initialize tokio runtime")
-            .block_on(async move {
+                eframe::run_native(
+                    title,
+                    native_options,
+                    Box::new(move |cc| {
+                        Ok(Box::new(App::new(cc, Some(args.train_stream), args.source)))
+                    }),
+                )?;
+            } else {
                 let Some(source) = args.source else {
                     panic!("Validation of args failed?");
                 };
                 let device = brush_render::burn_init_setup().await;
                 brush_cli::run_cli_ui(source, args.train_stream, device).await?;
-                anyhow::Result::<(), anyhow::Error>::Ok(())
-            })?;
-    }
+            }
+
+            anyhow::Result::<(), anyhow::Error>::Ok(())
+        })?;
 
     Ok(())
 }

@@ -15,29 +15,29 @@ pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _: *mut c_void) -> jni::sys::
 #[unsafe(no_mangle)]
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
     let wgpu_options = brush_ui::create_egui_options();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
 
     startup();
 
-    runtime.block_on(async {
-        android_logger::init_once(
-            android_logger::Config::default().with_max_level(log::LevelFilter::Info),
-        );
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            android_logger::init_once(
+                android_logger::Config::default().with_max_level(log::LevelFilter::Info),
+            );
 
-        eframe::run_native(
-            "Brush",
-            eframe::NativeOptions {
-                // Build app display.
-                viewport: egui::ViewportBuilder::default(),
-                android_app: Some(app),
-                wgpu_options,
-                ..Default::default()
-            },
-            Box::new(|cc| Ok(Box::new(App::new(cc, None, None)))),
-        )
-        .unwrap();
-    });
+            eframe::run_native(
+                "Brush",
+                eframe::NativeOptions {
+                    // Build app display.
+                    viewport: egui::ViewportBuilder::default(),
+                    android_app: Some(app),
+                    wgpu_options,
+                    ..Default::default()
+                },
+                Box::new(|cc| Ok(Box::new(App::new(cc, None, None)))),
+            )
+            .unwrap();
+        });
 }

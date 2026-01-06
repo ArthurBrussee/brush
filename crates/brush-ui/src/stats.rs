@@ -74,7 +74,7 @@ impl AppPane for StatsPanel {
             ProcessMessage::StartLoading { .. } => {
                 self.last_eval = None;
             }
-            ProcessMessage::SplatsUpdated => {}
+            ProcessMessage::SplatsUpdated { .. } => {}
             ProcessMessage::TrainMessage(train) => match train {
                 TrainMessage::TrainStep {
                     iter,
@@ -121,8 +121,13 @@ impl AppPane for StatsPanel {
             ui.separator();
 
             let (num_splats, sh_degree) = process
-                .splat_view()
-                .map_or((0, 0), |sv| (sv.splats.num_splats(), sv.splats.sh_degree()));
+                .current_splats()
+                .and_then(|sv| {
+                    sv.lock()
+                        .as_ref()
+                        .map(|spl| (spl.num_splats(), spl.sh_degree()))
+                })
+                .unwrap_or((0, 0));
 
             let first_col_width = ui.available_width() * 0.4;
             egui::Grid::new("model_stats_grid")

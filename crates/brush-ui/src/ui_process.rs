@@ -1,12 +1,9 @@
 use crate::{UiMode, app::CameraSettings, camera_controls::CameraController};
 use anyhow::Result;
 use brush_process::{
-    config::TrainStreamConfig,
-    message::{ProcessMessage, SplatView},
-    process::create_process,
-    slot::Slot,
+    config::TrainStreamConfig, message::ProcessMessage, process::create_process, slot::Slot,
 };
-use brush_render::camera::Camera;
+use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
@@ -24,7 +21,7 @@ enum ControlMessage {
 struct ProcessHandle {
     messages: mpsc::Receiver<Result<ProcessMessage, anyhow::Error>>,
     control: mpsc::UnboundedSender<ControlMessage>,
-    splat_view: Slot<SplatView>,
+    splat_view: Slot<Splats<MainBackend>>,
 }
 
 /// A thread-safe wrapper around the UI process.
@@ -39,21 +36,6 @@ pub struct UiProcess(RwLock<UiProcessInner>);
 pub enum BackgroundStyle {
     Black,
     Checkerboard,
-}
-
-impl UiProcess {
-    pub fn new(dev: WgpuDevice, ui_ctx: egui::Context) -> Self {
-        Self(RwLock::new(UiProcessInner::new(dev, ui_ctx)))
-    }
-
-    pub(crate) fn background_style(&self) -> BackgroundStyle {
-        self.read().background_style
-    }
-
-    #[allow(unused)]
-    pub(crate) fn set_background_style(&self, style: BackgroundStyle) {
-        self.write().background_style = style;
-    }
 }
 
 impl UiProcess {
@@ -73,6 +55,26 @@ pub struct TexHandle {
 }
 
 impl UiProcess {
+    pub fn new(dev: WgpuDevice, ui_ctx: egui::Context) -> Self {
+        Self(RwLock::new(UiProcessInner::new(dev, ui_ctx)))
+    }
+
+    pub(crate) fn background_style(&self) -> BackgroundStyle {
+        self.read().background_style
+    }
+
+    #[allow(unused)]
+    pub(crate) fn set_background_style(&self, style: BackgroundStyle) {
+        self.write().background_style = style;
+    }
+
+    pub(crate) fn current_splats(&self) -> Option<Slot<Splats<MainBackend>>> {
+        self.read()
+            .process_handle
+            .as_ref()
+            .map(|s| s.splat_view.clone())
+    }
+
     pub fn is_loading(&self) -> bool {
         self.read().is_loading
     }
@@ -87,13 +89,6 @@ impl UiProcess {
 
     pub fn model_local_to_world(&self) -> glam::Affine3A {
         self.read().controls.model_local_to_world
-    }
-
-    pub fn splat_view(&self) -> Option<SplatView> {
-        self.read()
-            .process_handle
-            .as_ref()
-            .and_then(|handle| handle.splat_view.block_cloned())
     }
 
     pub fn current_camera(&self) -> Camera {

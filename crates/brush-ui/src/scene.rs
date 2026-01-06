@@ -786,16 +786,8 @@ impl AppPane for ScenePanel {
                 self.source_name = Some(name.clone());
                 self.source_type = Some(source.clone());
             }
-            ProcessMessage::SplatsUpdated => {
+            ProcessMessage::SplatsUpdated { up_axis, .. } => {
                 self.has_splats = true;
-
-                // Handle up axis from splat view
-                if !process.is_training()
-                    && let Some(splat_view) = process.splat_view()
-                    && let Some(up_axis) = splat_view.up_axis
-                {
-                    process.set_model_up(up_axis);
-                }
 
                 // For non-training updates (e.g., loading), always redraw
                 if !process.is_training() {
@@ -910,7 +902,7 @@ impl AppPane for ScenePanel {
                 self.start_loading(source, process);
             }
         } else {
-            let splats = process.splat_view().map(|sv| sv.splats);
+            let splats = process.current_splats().and_then(|sv| sv.lock().clone());
             let interactive =
                 matches!(process.ui_mode(), UiMode::Default | UiMode::FullScreenSplat);
             let rect = self.draw_splats(ui, process, splats, interactive);

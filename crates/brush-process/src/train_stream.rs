@@ -1,7 +1,6 @@
 use crate::{
     config::TrainStreamConfig,
-    message::{ProcessMessage, SplatView, TrainMessage},
-    process::update_splat_state,
+    message::{ProcessMessage, TrainMessage},
     slot::Slot,
 };
 use anyhow::Context;
@@ -38,7 +37,7 @@ pub(crate) async fn train_stream(
     train_stream_config: TrainStreamConfig,
     device: WgpuDevice,
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
-    splat_slot: Slot<SplatView>,
+    splat_slot: Slot<Splats<MainBackend>>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
@@ -117,12 +116,14 @@ pub(crate) async fn train_stream(
     // If the metadata has an up axis prefer that, otherwise estimate the up direction.
     let up_axis = up_axis.or(Some(estimated_up));
 
-    update_splat_state(
-        &emitter,
-        &splat_slot,
-        SplatView::new(init_splats.clone(), up_axis, 0, 1),
-    )
-    .await;
+    *splat_slot.lock() = Some(init_splats.clone());
+    emitter
+        .emit(ProcessMessage::SplatsUpdated {
+            up_axis,
+            frame: 0,
+            total_frames: 1,
+        })
+        .await;
 
     emitter.emit(ProcessMessage::DoneLoading).await;
 
@@ -162,19 +163,11 @@ pub(crate) async fn train_stream(
                 .await;
 
             // Don't hold this over await point.
-            let splat_view = splat_slot.lock().await.clone().unwrap();
-
+            let mut splat_view = splat_slot.lock();
             // Take the splats from th
-            let splats = splats_into_autodiff(splat_view.splats);
+            let splats = splats_into_autodiff(splat_view.take().unwrap());
             let (new_splats, stats) = trainer.step(batch, splats);
-
-            *splat_slot.lock().await = Some(SplatView::new(
-                new_splats.valid(),
-                splat_view.up_axis,
-                splat_view.frame,
-                splat_view.total_frames,
-            ));
-
+            *splat_view = Some(new_splats.valid());
             stats
         };
 
@@ -185,25 +178,18 @@ pub(crate) async fn train_stream(
             && iter.is_multiple_of(train_stream_config.train_config.refine_every)
             && train_t <= 0.95
         {
-            let mut splat_slot_handle = splat_slot.lock().await;
-            let splat_view = splat_slot_handle.take().unwrap();
-
+            let splat_view = splat_slot.lock().clone().unwrap();
             let (new_splats, refine) = trainer
-                .refine(iter, splat_view.splats)
+                .refine(iter, splat_view)
                 .instrument(trace_span!("Refine splats"))
                 .await;
-            *splat_slot_handle = Some(SplatView::new(
-                new_splats,
-                splat_view.up_axis,
-                splat_view.frame,
-                splat_view.total_frames,
-            ));
+            *splat_slot.lock() = Some(new_splats);
             Some(refine)
         } else {
             None
         };
 
-        let splats = splat_slot.lock().await.as_ref().unwrap().splats.clone();
+        let splats = splat_slot.lock().clone().unwrap();
 
         // We just finished iter 'iter', now starting iter + 1.
         let iter = iter + 1;
@@ -285,7 +271,13 @@ pub(crate) async fn train_stream(
         // How frequently to update the UI after a training step.
         const UPDATE_EVERY: u32 = 5;
         if iter % UPDATE_EVERY == 0 || is_last_step {
-            emitter.emit(ProcessMessage::SplatsUpdated).await;
+            emitter
+                .emit(ProcessMessage::SplatsUpdated {
+                    up_axis: None,
+                    frame: 0,
+                    total_frames: 1,
+                })
+                .await;
 
             // Send lightweight message with training progress.
             emitter

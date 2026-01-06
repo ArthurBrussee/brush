@@ -1,8 +1,9 @@
 use std::pin::{Pin, pin};
 
 use anyhow::Error;
-use async_fn_stream::{TryStreamEmitter, try_fn_stream};
-use brush_render::gaussian_splats::SplatRenderMode;
+use async_fn_stream::try_fn_stream;
+use brush_render::MainBackend;
+use brush_render::gaussian_splats::{SplatRenderMode, Splats};
 use brush_vfs::{DataSource, SendNotWasm};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
@@ -11,10 +12,7 @@ use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use brush_serde;
 use tokio_stream::{Stream, StreamExt};
 
-use crate::{
-    message::{ProcessMessage, SplatView},
-    slot::Slot,
-};
+use crate::{message::ProcessMessage, slot::Slot};
 
 use crate::config::TrainStreamConfig;
 
@@ -23,7 +21,7 @@ impl<T> ProcessStream for T where T: Stream<Item = Result<ProcessMessage, Error>
 
 pub struct RunningProcess {
     pub stream: Pin<Box<dyn ProcessStream>>,
-    pub splat_view: Slot<SplatView>,
+    pub splat_view: Slot<Splats<MainBackend>>,
 }
 
 /// Create a running process from a datasource and args.
@@ -31,7 +29,7 @@ pub fn create_process<CF, CFut>(
     source: DataSource,
     #[allow(unused)] config: CF,
     device: WgpuDevice,
-    splat_view: Slot<SplatView>,
+    splat_view: Slot<Splats<MainBackend>>,
 ) -> RunningProcess
 where
     CF: FnOnce() -> CFut + Send + 'static,
@@ -118,12 +116,14 @@ where
                     // over time. Clear out memory after each step to prevent this buildup.
                     client.memory_cleanup();
 
-                    update_splat_state(
-                        &emitter,
-                        &splat_view,
-                        SplatView::new(splats, message.meta.up_axis, frame, total_frames),
-                    )
-                    .await;
+                    *splat_view.lock() = Some(splats);
+                    emitter
+                        .emit(ProcessMessage::SplatsUpdated {
+                            up_axis: None,
+                            frame,
+                            total_frames,
+                        })
+                        .await;
                 }
             }
 
@@ -146,13 +146,4 @@ where
         stream: Box::pin(stream),
         splat_view: splat_state_cl,
     }
-}
-
-pub(crate) async fn update_splat_state(
-    emitter: &TryStreamEmitter<ProcessMessage, Error>,
-    splat_state: &Slot<SplatView>,
-    view: SplatView,
-) {
-    splat_state.put(view).await;
-    emitter.emit(ProcessMessage::SplatsUpdated).await;
 }
