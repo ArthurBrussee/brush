@@ -19,7 +19,7 @@ enum ControlMessage {
 }
 
 struct ProcessHandle {
-    messages: mpsc::Receiver<Result<ProcessMessage, anyhow::Error>>,
+    messages: mpsc::UnboundedReceiver<anyhow::Result<ProcessMessage>>,
     control: mpsc::UnboundedSender<ControlMessage>,
     splat_view: Slot<Splats<MainBackend>>,
 }
@@ -180,7 +180,7 @@ impl UiProcess {
             *inner = reset;
         }
 
-        let (sender, receiver) = mpsc::channel(8);
+        let (sender, receiver) = mpsc::unbounded_channel();
         let (train_sender, mut train_receiver) = mpsc::unbounded_channel();
         let splat_state = Slot::default();
         let splat_state_clone = splat_state.clone();
@@ -200,7 +200,7 @@ impl UiProcess {
                 egui_ctx.request_repaint();
 
                 // Stop the process if no one is listening anymore.
-                if sender.send(msg).await.is_err() {
+                if sender.send(msg).is_err() {
                     break;
                 }
 
