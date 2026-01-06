@@ -126,7 +126,7 @@ pub unsafe extern "C" fn train_and_save(
     let train_options = unsafe { *options };
     // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
     let process_args = unsafe { train_options.into_train_stream_config() };
-    let mut process = create_process(source, async move || process_args, device, Slot::default());
+    let mut process = create_process(source, async { process_args }, device, Slot::default());
 
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

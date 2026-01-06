@@ -61,7 +61,7 @@ pub async fn run_cli_ui(
     // }
 
     let cfg = train_stream_config.clone();
-    let mut process = create_process(source, async move || cfg, device, Slot::default());
+    let mut process = create_process(source, async { cfg }, device, Slot::default());
 
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
@@ -164,7 +164,6 @@ pub async fn run_cli_ui(
                     let _ = sp.println("❌ Only training is supported in the CLI (try passing --with-viewer to view a splat)");
                     break;
                 }
-                log::info!("Loading: {name}");
                 main_spinner.set_message(format!("Loading {name}..."));
             }
             ProcessMessage::SplatsUpdated { .. } => {}

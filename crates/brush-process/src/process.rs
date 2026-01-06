@@ -25,15 +25,14 @@ pub struct RunningProcess {
 }
 
 /// Create a running process from a datasource and args.
-pub fn create_process<CF, CFut>(
+pub fn create_process<CFut>(
     source: DataSource,
-    #[allow(unused)] config: CF,
+    #[allow(unused)] config: CFut,
     device: WgpuDevice,
     splat_view: Slot<Splats<MainBackend>>,
 ) -> RunningProcess
 where
-    CF: FnOnce() -> CFut + Send + 'static,
-    CFut: Future<Output = TrainStreamConfig> + Send,
+    CFut: Future<Output = TrainStreamConfig> + Send + 'static,
 {
     let splat_state_cl = splat_view.clone();
 
@@ -88,8 +87,9 @@ where
             let mut paths: Vec<_> = vfs.file_paths().collect();
             alphanumeric_sort::sort_path_slice(&mut paths);
             let client = WgpuRuntime::client(&device);
+            let total_frames = paths.len() as u32;
 
-            for (i, path) in paths.iter().enumerate() {
+            for (frame, path) in paths.iter().enumerate() {
                 log::info!("Loading single ply file");
 
                 let mut splat_stream = pin!(brush_serde::stream_splat_from_ply(
@@ -104,14 +104,6 @@ where
                     let mode = message.meta.render_mode.unwrap_or(SplatRenderMode::Default);
                     let splats = message.data.into_splats(&device, mode);
 
-                    // If there's multiple ply files in a zip, don't support animated plys, that would
-                    // get rather mind bending.
-                    let (frame, total_frames) = if paths.len() == 1 {
-                        (message.meta.current_frame, message.meta.frame_count)
-                    } else {
-                        (i as u32, paths.len() as u32)
-                    };
-
                     // As loading concatenates splats each time, memory usage tends to accumulate a lot
                     // over time. Clear out memory after each step to prevent this buildup.
                     client.memory_cleanup();
@@ -124,16 +116,16 @@ where
                     // Ensure we have space up to this frame index and set it
                     {
                         let mut guard = splat_view.lock();
-                        if guard.len() <= frame as usize {
-                            guard.resize(frame as usize + 1, splats.clone());
+                        if guard.len() <= frame {
+                            guard.resize(frame + 1, splats.clone());
                         }
-                        guard[frame as usize] = splats;
+                        guard[frame] = splats;
                     }
 
                     emitter
                         .emit(ProcessMessage::SplatsUpdated {
                             up_axis: message.meta.up_axis,
-                            frame,
+                            frame: frame as u32,
                             total_frames,
                         })
                         .await;
@@ -144,7 +136,7 @@ where
         } else {
             #[cfg(feature = "training")]
             {
-                let config = config().await;
+                let config = config.await;
                 crate::train_stream::train_stream(vfs, config, device, emitter, splat_view).await?;
             }
 

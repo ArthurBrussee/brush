@@ -187,7 +187,7 @@ impl UiProcess {
 
         let mut process = create_process(
             source,
-            async move || args.await.unwrap(),
+            async { args.await.unwrap() },
             self.read().burn_device.clone(),
             splat_state,
         );
