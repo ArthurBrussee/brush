@@ -5,8 +5,9 @@ use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use std::convert::TryFrom;
 use std::ffi::{CStr, c_char, c_void};
-use tokio::sync::oneshot;
 use tokio_stream::StreamExt;
+
+use crate::shared::startup;
 
 #[repr(C)]
 pub enum TrainExitCode {
@@ -111,41 +112,39 @@ pub unsafe extern "C" fn train_and_save(
         return TrainExitCode::Error;
     }
 
-    let rt = tokio::runtime::Builder::new_current_thread()
+    startup();
+
+    let dataset_path_str =
+        // SAFETY: Checked if dataset_path is not null, caller guarantees the string is a valid C-string.
+        unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
+
+    let source = DataSource::Path(dataset_path_str);
+    let device = WgpuDevice::default();
+
+    // SAFETY: Option is checked to not be null before the future.
+    let train_options = unsafe { *options };
+    // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
+    let process_args = unsafe { train_options.into_train_stream_config() };
+    let mut process = create_process(source, async { process_args }, device);
+
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .expect("Failed to create tokio runtime");
-
-    rt.block_on(async {
-        let dataset_path_str =
-            // SAFETY: Checked if dataset_path is not null, caller guarantees the string is a valid C-string.
-            unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
-
-        let source = DataSource::Path(dataset_path_str);
-
-        let device = WgpuDevice::default();
-
-        // SAFETY: Option is checked to not be null before the future.
-        let train_options = unsafe { *options };
-        // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
-        let process_args = unsafe { train_options.into_train_stream_config() };
-        let (tx, rx) = oneshot::channel::<TrainStreamConfig>();
-        let _ = tx.send(process_args.clone());
-        let mut stream = std::pin::pin!(create_process(source, rx, device));
-
-        while let Some(message_result) = stream.next().await {
-            match message_result {
-                Ok(message) => {
-                    if let Ok(progress_message) = message.try_into() {
-                        progress_callback(progress_message, user_data);
+        .expect("Failed to create tokio runtime")
+        .block_on(async {
+            while let Some(message_result) = process.stream.next().await {
+                match message_result {
+                    Ok(message) => {
+                        if let Ok(progress_message) = message.try_into() {
+                            progress_callback(progress_message, user_data);
+                        }
+                    }
+                    Err(_) => {
+                        return TrainExitCode::Error;
                     }
                 }
-                Err(_) => {
-                    return TrainExitCode::Error;
-                }
             }
-        }
 
-        TrainExitCode::Success
-    })
+            TrainExitCode::Success
+        })
 }

@@ -10,7 +10,8 @@ use brush_render::{
     render_splats,
 };
 use brush_train::{
-    RandomSplatsConfig, config::TrainConfig, create_random_splats, train::SplatTrainer,
+    RandomSplatsConfig, config::TrainConfig, create_random_splats, splats_into_autodiff,
+    train::SplatTrainer,
 };
 use brush_ui::burn_texture::BurnTexture;
 use burn::{backend::wgpu::WgpuDevice, module::AutodiffModule, prelude::Backend};
@@ -50,7 +51,11 @@ fn spawn_train_loop(
             &device,
         );
 
-        let mut trainer = SplatTrainer::new(&config, &device, splats.clone()).await;
+        let mut trainer = SplatTrainer::new(
+            &config,
+            &device,
+            BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+        );
 
         // One batch of training data, it's the same every step so can just construct it once.
         let batch = SceneBatch {
@@ -63,9 +68,8 @@ fn spawn_train_loop(
 
         loop {
             let (new_splats, _) = trainer.step(batch.clone(), splats);
-            let (new_splats, _) = trainer.refine_if_needed(iter, new_splats).await;
-
-            splats = new_splats;
+            let (new_splats, _) = trainer.refine(iter, new_splats.valid()).await;
+            splats = splats_into_autodiff(new_splats);
             iter += 1;
             ctx.request_repaint();
 

@@ -198,8 +198,6 @@ async fn load_dataset_inner(
                 up_axis: None,
                 render_mode: None,
                 total_splats: n_splats as u32,
-                frame_count: 1,
-                current_frame: 0,
                 progress: 1.0,
             },
             data,

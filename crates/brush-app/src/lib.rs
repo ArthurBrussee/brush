@@ -10,3 +10,5 @@ pub mod wasm;
 #[cfg(feature = "training")]
 #[cfg(not(target_family = "wasm"))]
 pub mod ffi;
+
+mod shared;

@@ -21,10 +21,7 @@ type StreamEmitter = TryStreamEmitter<SplatMessage, DeserializeError>;
 pub struct ParseMetadata {
     pub up_axis: Option<Vec3>,
     pub render_mode: Option<SplatRenderMode>,
-
     pub total_splats: u32,
-    pub frame_count: u32,
-    pub current_frame: u32,
     pub progress: f32,
 }
 
@@ -348,8 +345,6 @@ async fn parse_ply<T: AsyncRead + Unpin>(
                 total_splats: max_splats as u32,
                 up_axis,
                 progress: progress(row_index, total_splats),
-                frame_count: 0,
-                current_frame: 0,
                 render_mode,
             };
 
@@ -494,8 +489,6 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
             let meta = ParseMetadata {
                 total_splats: max_splats as u32,
                 up_axis,
-                frame_count: 0,
-                current_frame: 0,
                 progress,
                 render_mode,
             };
@@ -546,8 +539,6 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
         let meta = ParseMetadata {
             total_splats: (means.len() / 3) as u32,
             up_axis,
-            frame_count: 0,
-            current_frame: 0,
             progress: 1.0,
             render_mode,
         };

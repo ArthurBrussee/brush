@@ -1,3 +1,4 @@
+use crate::shared::startup;
 use brush_ui::app::App;
 use brush_ui::ui_process::UiProcess;
 use std::os::raw::c_void;
@@ -14,29 +15,29 @@ pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _: *mut c_void) -> jni::sys::
 #[unsafe(no_mangle)]
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
     let wgpu_options = brush_ui::create_egui_options();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+
+    startup();
+
+    tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .unwrap();
+        .unwrap()
+        .block_on(async {
+            android_logger::init_once(
+                android_logger::Config::default().with_max_level(log::LevelFilter::Info),
+            );
 
-    runtime.block_on(async {
-        let context = Arc::new(UiProcess::new());
-
-        android_logger::init_once(
-            android_logger::Config::default().with_max_level(log::LevelFilter::Info),
-        );
-
-        eframe::run_native(
-            "Brush",
-            eframe::NativeOptions {
-                // Build app display.
-                viewport: egui::ViewportBuilder::default(),
-                android_app: Some(app),
-                wgpu_options,
-                ..Default::default()
-            },
-            Box::new(|cc| Ok(Box::new(App::new(cc, context)))),
-        )
-        .unwrap();
-    });
+            eframe::run_native(
+                "Brush",
+                eframe::NativeOptions {
+                    // Build app display.
+                    viewport: egui::ViewportBuilder::default(),
+                    android_app: Some(app),
+                    wgpu_options,
+                    ..Default::default()
+                },
+                Box::new(|cc| Ok(Box::new(App::new(cc, None, None)))),
+            )
+            .unwrap();
+        });
 }

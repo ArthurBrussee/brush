@@ -1,13 +1,12 @@
-use anyhow::Context;
 use brush_process::config::TrainStreamConfig;
 use brush_ui::UiMode;
 use brush_ui::app::App;
-use brush_ui::ui_process::UiProcess;
 use brush_vfs::DataSource;
 use glam::{EulerRot, Quat, Vec3};
-use std::sync::Arc;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
+
+use crate::shared::startup;
 
 // THREE.js Vector3 bindings.
 #[wasm_bindgen]
@@ -29,47 +28,6 @@ impl ThreeVector3 {
     fn to_glam(&self) -> Vec3 {
         Vec3::new(self.x() as f32, self.y() as f32, self.z() as f32)
     }
-}
-
-pub fn wasm_app(canvas_name: &str) -> anyhow::Result<Arc<UiProcess>> {
-    // TODO: Make sure some startup bits here only happen once.
-    #[cfg(debug_assertions)]
-    wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
-
-    let context = Arc::new(UiProcess::new());
-
-    let wgpu_options = brush_ui::create_egui_options();
-    let document = web_sys::window()
-        .context("Failed to get winow")?
-        .document()
-        .context("Failed to get document")?;
-    let canvas = document
-        .get_element_by_id(canvas_name)
-        .with_context(|| format!("Failed to find canvas with id: {canvas_name}"))?
-        .dyn_into::<web_sys::HtmlCanvasElement>()
-        .unwrap_or_else(|_| panic!("Found canvas {canvas_name} was in fact not a canvas"));
-
-    // On wasm, run as a local task.
-    let context_cl = context.clone();
-    tokio_with_wasm::task::spawn(async {
-        eframe::WebRunner::new()
-            .start(
-                canvas,
-                eframe::WebOptions {
-                    wgpu_options,
-                    ..Default::default()
-                },
-                Box::new(|cc| Ok(Box::new(App::new(cc, context_cl)))),
-            )
-            .await
-            .expect("failed to start eframe");
-    });
-    Ok(context)
-}
-
-#[wasm_bindgen]
-pub struct EmbeddedApp {
-    context: Arc<UiProcess>,
 }
 
 // Wrapper for interop.
@@ -109,43 +67,100 @@ impl CameraSettings {
     }
 }
 
+#[derive(Clone)]
 #[wasm_bindgen]
+pub struct EmbeddedApp {
+    runner: eframe::WebRunner,
+}
+
+#[wasm_bindgen]
+#[allow(clippy::needless_pass_by_value)] // wasm_bindgen FFI types need pass by value
 impl EmbeddedApp {
+    /// Installs a panic hook, then returns.
     #[wasm_bindgen(constructor)]
-    pub fn new(canvas_name: &str) -> Result<Self, JsError> {
-        let context = wasm_app(canvas_name).map_err(|e| JsError::from(&*e))?;
-        Ok(Self { context })
+    pub fn new() -> Self {
+        #[cfg(debug_assertions)]
+        wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
+
+        startup();
+
+        Self {
+            runner: eframe::WebRunner::new(),
+        }
+    }
+
+    /// Call this once from JavaScript to start your app.
+    #[wasm_bindgen]
+    pub async fn start(&self, canvas_name: &str) -> Result<(), wasm_bindgen::JsValue> {
+        let wgpu_options = brush_ui::create_egui_options();
+        let document = web_sys::window()
+            .ok_or_else(|| JsValue::from_str("Failed to get window"))?
+            .document()
+            .ok_or_else(|| JsValue::from_str("Failed to get document"))?;
+        let canvas = document
+            .get_element_by_id(canvas_name)
+            .ok_or_else(|| {
+                JsValue::from_str(&format!("Failed to find canvas with id: {canvas_name}"))
+            })?
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .map_err(|_e| {
+                JsValue::from_str(&format!(
+                    "Found canvas {canvas_name} was in fact not a canvas"
+                ))
+            })?;
+
+        self.runner
+            .start(
+                canvas,
+                eframe::WebOptions {
+                    wgpu_options,
+                    ..Default::default()
+                },
+                Box::new(|cc| Ok(Box::new(App::new(cc, None, None)))),
+            )
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to start eframe: {e:?}")))?;
+
+        Ok(())
     }
 
     #[wasm_bindgen]
     pub fn load_url(&self, url: &str) {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let _ = sender.send(TrainStreamConfig::default());
-        self.context
-            .start_new_process(DataSource::Url(url.to_owned()), receiver);
+        if let Some(app) = self.runner.app_mut::<App>() {
+            app.context()
+                .start_new_process(DataSource::Url(url.to_owned()), async {
+                    TrainStreamConfig::default()
+                });
+        }
     }
 
     #[wasm_bindgen]
     pub fn set_cam_settings(&self, settings: CameraSettings) {
-        self.context.set_cam_settings(&settings.0);
+        if let Some(app) = self.runner.app_mut::<App>() {
+            app.context().set_cam_settings(&settings.0);
+        }
     }
 
     #[wasm_bindgen]
     pub fn set_cam_fov(&self, fov: f64) {
-        self.context.set_cam_fov(fov);
+        if let Some(app) = self.runner.app_mut::<App>() {
+            app.context().set_cam_fov(fov);
+        }
     }
 
     #[wasm_bindgen]
     pub fn set_cam_transform(&self, position: ThreeVector3, rotation_euler: ThreeVector3) {
-        let position = position.to_glam();
-        // 'XYZ' matches the THREE.js default order.
-        let rotation = Quat::from_euler(
-            EulerRot::XYZ,
-            rotation_euler.x() as f32,
-            rotation_euler.y() as f32,
-            rotation_euler.z() as f32,
-        );
-        self.context.set_cam_transform(position, rotation);
+        if let Some(app) = self.runner.app_mut::<App>() {
+            let position = position.to_glam();
+            // 'XYZ' matches the THREE.js default order.
+            let rotation = Quat::from_euler(
+                EulerRot::XYZ,
+                rotation_euler.x() as f32,
+                rotation_euler.y() as f32,
+                rotation_euler.z() as f32,
+            );
+            app.context().set_cam_transform(position, rotation);
+        }
     }
 
     #[wasm_bindgen]
@@ -155,20 +170,24 @@ impl EmbeddedApp {
         focus_distance: f32,
         rotation_euler: ThreeVector3,
     ) {
-        // 'XYZ' matches the THREE.js default order.
-        let rotation = Quat::from_euler(
-            EulerRot::XYZ,
-            rotation_euler.x() as f32,
-            rotation_euler.y() as f32,
-            rotation_euler.z() as f32,
-        );
-        let focal_point = focal_point.to_glam();
-        self.context
-            .set_focal_point(focal_point, focus_distance, rotation);
+        if let Some(app) = self.runner.app_mut::<App>() {
+            // 'XYZ' matches the THREE.js default order.
+            let rotation = Quat::from_euler(
+                EulerRot::XYZ,
+                rotation_euler.x() as f32,
+                rotation_euler.y() as f32,
+                rotation_euler.z() as f32,
+            );
+            let focal_point = focal_point.to_glam();
+            app.context()
+                .set_focal_point(focal_point, focus_distance, rotation);
+        }
     }
 
     #[wasm_bindgen]
     pub fn set_ui_mode(&self, mode: UiMode) {
-        self.context.set_ui_mode(mode);
+        if let Some(app) = self.runner.app_mut::<App>() {
+            app.context().set_ui_mode(mode);
+        }
     }
 }

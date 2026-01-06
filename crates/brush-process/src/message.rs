@@ -1,5 +1,3 @@
-use brush_render::MainBackend;
-use brush_render::gaussian_splats::Splats;
 use brush_vfs::DataSource;
 use glam::Vec3;
 
@@ -19,7 +17,6 @@ pub enum TrainMessage {
     /// Some number of training steps are done.
     #[allow(unused)]
     TrainStep {
-        splats: Box<Splats<MainBackend>>,
         iter: u32,
         total_steps: u32,
         total_elapsed: web_time::Duration,
@@ -44,32 +41,21 @@ pub enum ProcessMessage {
     /// A new process is starting (before we know what type)
     NewProcess,
     /// Source has been loaded, contains the display name and type
-    NewSource {
+    StartLoading {
         name: String,
         source: DataSource,
-    },
-    StartLoading {
         training: bool,
     },
-    /// Loaded a splat from a ply file.
-    ///
-    /// Nb: This includes all the intermediately loaded splats.
-    /// Nb: Animated splats will have the 'frame' number set.
-    ViewSplats {
+    /// Notification that splats have been updated.
+    SplatsUpdated {
         up_axis: Option<Vec3>,
-        splats: Box<Splats<MainBackend>>,
         frame: u32,
         total_frames: u32,
-        progress: f32,
     },
-
     #[cfg(feature = "training")]
     TrainMessage(TrainMessage),
-
     /// Some warning occurred during the process, but the process can continue.
-    Warning {
-        error: anyhow::Error,
-    },
+    Warning { error: anyhow::Error },
     /// Splat, or dataset and initial splat, are done loading.
     #[allow(unused)]
     DoneLoading,

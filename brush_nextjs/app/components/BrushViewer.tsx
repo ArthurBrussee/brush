@@ -26,12 +26,17 @@ export default function BrushViewer(props: BrushViewerProps) {
     const canvasId = `brush-canvas-${Date.now()}`;
     canvasRef.current.id = canvasId;
 
-    try {
-      const brushApp = new EmbeddedApp(canvasId);
-      setApp(brushApp);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    }
+    const initApp = async () => {
+      try {
+        const brushApp = new EmbeddedApp();
+        await brushApp.start(canvasId);
+        setApp(brushApp);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+      }
+    };
+
+    initApp();
   }, []);
 
   useEffect(() => {

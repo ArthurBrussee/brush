@@ -20,7 +20,6 @@ tokio-stream.workspace = true
 humantime.workspace = true
 log.workspace = true
 anyhow.workspace = true
-tokio.workspace = true
 
 [lints]
 workspace = true

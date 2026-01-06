@@ -60,11 +60,8 @@ pub async fn run_cli_ui(
     //     let _ = msg?;
     // }
 
-    let (tx, rx) = tokio::sync::oneshot::channel::<TrainStreamConfig>();
-    let _ = tx.send(train_stream_config.clone());
-
-    let stream = create_process(source, rx, device);
-    let mut stream = std::pin::pin!(stream);
+    let cfg = train_stream_config.clone();
+    let mut process = create_process(source, async { cfg }, device);
 
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
@@ -145,7 +142,7 @@ pub async fn run_cli_ui(
     #[allow(unused_mut)]
     let mut duration = Duration::from_secs(0);
 
-    while let Some(msg) = stream.next().await {
+    while let Some(msg) = process.stream.next().await {
         let _span = trace_span!("CLI UI").entered();
 
         let msg = match msg {
@@ -161,19 +158,15 @@ pub async fn run_cli_ui(
             ProcessMessage::NewProcess => {
                 main_spinner.set_message("Starting process...");
             }
-            ProcessMessage::NewSource { name, .. } => {
-                log::info!("Loading: {name}");
-                main_spinner.set_message(format!("Loading {name}..."));
-            }
-            ProcessMessage::StartLoading { training } => {
+            ProcessMessage::StartLoading { name, training, .. } => {
                 if !training {
                     // Display a big warning saying viewing splats from the CLI doesn't make sense.
                     let _ = sp.println("❌ Only training is supported in the CLI (try passing --with-viewer to view a splat)");
                     break;
                 }
-                main_spinner.set_message("Loading data...");
+                main_spinner.set_message(format!("Loading {name}..."));
             }
-            ProcessMessage::ViewSplats { .. } => {}
+            ProcessMessage::SplatsUpdated { .. } => {}
             #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(train) => match train {
                 TrainMessage::TrainConfig { .. } => {}

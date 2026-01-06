@@ -1,9 +1,13 @@
 #![recursion_limit = "256"]
 
+mod shared;
+
 use brush_ui::app::App;
 
 use brush_cli::Cli;
 use clap::Parser;
+
+use crate::shared::startup;
 
 #[cfg(target_family = "windows")]
 fn is_console() -> bool {
@@ -20,6 +24,8 @@ fn is_console() -> bool {
 #[allow(clippy::unnecessary_wraps)] // Error isn't need on wasm but that's ok.
 fn main() -> Result<(), anyhow::Error> {
     let args = Cli::parse().validate()?;
+
+    startup();
 
     #[cfg(target_family = "windows")]
     if args.with_viewer && !is_console() {
@@ -40,20 +46,15 @@ fn main() -> Result<(), anyhow::Error> {
         .expect("Failed to set tracing subscriber");
     }
 
+    env_logger::builder()
+        .target(env_logger::Target::Stdout)
+        .init();
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("Failed to initialize tokio runtime")
         .block_on(async move {
-            let context = std::sync::Arc::new(brush_ui::ui_process::UiProcess::new());
-
-            env_logger::builder()
-                .target(env_logger::Target::Stdout)
-                .init();
-
-            let (sender, args_receiver) = tokio::sync::oneshot::channel();
-            let _ = sender.send(args.train_stream.clone());
-
             if args.with_viewer {
                 let icon = eframe::icon_data::from_png_bytes(
                     &include_bytes!("../assets/icon-256.png")[..],
@@ -71,10 +72,6 @@ fn main() -> Result<(), anyhow::Error> {
                     ..Default::default()
                 };
 
-                if let Some(source) = args.source {
-                    context.start_new_process(source, args_receiver);
-                }
-
                 let title = if cfg!(debug_assertions) {
                     "Brush  -  Debug"
                 } else {
@@ -84,7 +81,9 @@ fn main() -> Result<(), anyhow::Error> {
                 eframe::run_native(
                     title,
                     native_options,
-                    Box::new(move |cc| Ok(Box::new(App::new(cc, context)))),
+                    Box::new(move |cc| {
+                        Ok(Box::new(App::new(cc, Some(args.train_stream), args.source)))
+                    }),
                 )?;
             } else {
                 let Some(source) = args.source else {

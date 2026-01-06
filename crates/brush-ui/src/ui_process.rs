@@ -1,32 +1,27 @@
 use crate::{UiMode, app::CameraSettings, camera_controls::CameraController};
 use anyhow::Result;
-use brush_process::{config::TrainStreamConfig, message::ProcessMessage, process::create_process};
-use brush_render::camera::Camera;
+use brush_process::{
+    config::TrainStreamConfig, message::ProcessMessage, process::create_process, slot::Slot,
+};
+use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
 use brush_vfs::DataSource;
-use burn_cubecl::cubecl::config::{GlobalConfig, streaming::StreamingConfig};
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
 use glam::{Affine3A, Quat, Vec3};
 use std::sync::RwLock;
-use tokio::sync::{self, oneshot::Receiver};
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
-use tokio_with_wasm::alias as tokio_wasm;
+use tokio_with_wasm::alias::task;
 
 #[derive(Debug, Clone)]
 enum ControlMessage {
     Paused(bool),
 }
 
-#[derive(Debug, Clone)]
-struct DeviceContext {
-    pub device: WgpuDevice,
-    pub ctx: egui::Context,
-}
-
-struct RunningProcess {
-    messages: sync::mpsc::Receiver<Result<ProcessMessage, anyhow::Error>>,
-    control: sync::mpsc::UnboundedSender<ControlMessage>,
-    send_device: Option<sync::oneshot::Sender<DeviceContext>>,
+struct ProcessHandle {
+    messages: mpsc::UnboundedReceiver<anyhow::Result<ProcessMessage>>,
+    control: mpsc::UnboundedSender<ControlMessage>,
+    splat_view: Slot<Splats<MainBackend>>,
 }
 
 /// A thread-safe wrapper around the UI process.
@@ -37,40 +32,10 @@ struct RunningProcess {
 /// over an await point, things shouldn't be able to deadlock.
 pub struct UiProcess(RwLock<UiProcessInner>);
 
-impl Default for UiProcess {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum BackgroundStyle {
     Black,
     Checkerboard,
-}
-
-impl UiProcess {
-    pub fn new() -> Self {
-        // Set the global config once on startup.
-        GlobalConfig::set(GlobalConfig {
-            streaming: StreamingConfig {
-                max_streams: 1,
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        Self(RwLock::new(UiProcessInner::new()))
-    }
-
-    pub(crate) fn background_style(&self) -> BackgroundStyle {
-        self.read().background_style
-    }
-
-    #[allow(unused)]
-    pub(crate) fn set_background_style(&self, style: BackgroundStyle) {
-        self.write().background_style = style;
-    }
 }
 
 impl UiProcess {
@@ -90,6 +55,26 @@ pub struct TexHandle {
 }
 
 impl UiProcess {
+    pub fn new(dev: WgpuDevice, ui_ctx: egui::Context) -> Self {
+        Self(RwLock::new(UiProcessInner::new(dev, ui_ctx)))
+    }
+
+    pub(crate) fn background_style(&self) -> BackgroundStyle {
+        self.read().background_style
+    }
+
+    #[allow(unused)]
+    pub(crate) fn set_background_style(&self, style: BackgroundStyle) {
+        self.write().background_style = style;
+    }
+
+    pub(crate) fn current_splats(&self) -> Option<Slot<Splats<MainBackend>>> {
+        self.read()
+            .process_handle
+            .as_ref()
+            .map(|s| s.splat_view.clone())
+    }
+
     pub fn is_loading(&self) -> bool {
         self.read().is_loading
     }
@@ -117,7 +102,7 @@ impl UiProcess {
 
     pub fn set_train_paused(&self, paused: bool) {
         self.write().train_paused = paused;
-        if let Some(process) = self.read().running_process.as_ref() {
+        if let Some(process) = self.read().process_handle.as_ref() {
             let _ = process.control.send(ControlMessage::Paused(paused));
         }
     }
@@ -188,43 +173,28 @@ impl UiProcess {
         inner.repaint();
     }
 
-    pub fn connect_device(&self, device: WgpuDevice, ctx: egui::Context) {
-        let mut inner = self.write();
-        let ctx = DeviceContext { device, ctx };
-        inner.cur_device_ctx = Some(ctx.clone());
-        if let Some(process) = &mut inner.running_process
-            && let Some(send) = process.send_device.take()
+    pub fn start_new_process(
+        &self,
+        source: DataSource,
+        args: impl Future<Output = TrainStreamConfig> + Send + 'static,
+    ) {
         {
-            send.send(ctx).expect("Failed to send device");
+            let mut inner = self.write();
+            let reset = UiProcessInner::new(inner.burn_device.clone(), inner.ui_ctx.clone());
+            *inner = reset;
         }
-    }
 
-    pub fn start_new_process(&self, source: DataSource, args: Receiver<TrainStreamConfig>) {
-        let mut inner = self.write();
-        let mut reset = UiProcessInner::new();
-        reset.cur_device_ctx = inner.cur_device_ctx.clone();
-        *inner = reset;
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let (train_sender, mut train_receiver) = mpsc::unbounded_channel();
 
-        let (sender, receiver) = sync::mpsc::channel(1);
-        let (train_sender, mut train_receiver) = sync::mpsc::unbounded_channel();
-        let (send_dev, rec_rev) = sync::oneshot::channel::<DeviceContext>();
+        let mut process = create_process(source, args, self.read().burn_device.clone());
 
-        tokio_with_wasm::alias::task::spawn(async move {
-            // Wait for device & gui ctx to be available.
-            let Ok(device_ctx) = rec_rev.await else {
-                // Closed before we could start the process
-                return;
-            };
+        let egui_ctx = self.read().ui_ctx.clone();
 
-            let stream = create_process(source, args, device_ctx.device);
-            let mut stream = std::pin::pin!(stream);
-
-            while let Some(msg) = stream.next().await {
-                // Mark egui as needing a repaint.
-                device_ctx.ctx.request_repaint();
-
-                // // Stop the process if noone is listening anymore.
-                if sender.send(msg).await.is_err() {
+        task::spawn(async move {
+            while let Some(msg) = process.stream.next().await {
+                // Stop the process if no one is listening anymore.
+                if sender.send(msg).is_err() {
                     break;
                 }
 
@@ -237,36 +207,29 @@ impl UiProcess {
                         Some(ControlMessage::Paused(false))
                     ) {}
                 }
+
+                // Mark egui as needing a repaint.
+                egui_ctx.request_repaint();
+
                 // Give back control to the runtime.
                 // This only really matters in the browser:
                 // on native, receiving also yields. In the browser that doesn't yield
                 // back control fully though whereas yield_now() does.
-                tokio_wasm::task::yield_now().await;
+                task::yield_now().await;
             }
         });
 
-        if let Some(ctx) = &inner.cur_device_ctx {
-            send_dev
-                .send(ctx.clone())
-                .expect("Failed to send device context");
-            inner.running_process = Some(RunningProcess {
-                messages: receiver,
-                control: train_sender,
-                send_device: None,
-            });
-        } else {
-            inner.running_process = Some(RunningProcess {
-                messages: receiver,
-                control: train_sender,
-                send_device: Some(send_dev),
-            });
-        }
+        self.write().process_handle = Some(ProcessHandle {
+            messages: receiver,
+            control: train_sender,
+            splat_view: process.splat_view,
+        });
     }
 
     pub fn message_queue(&self) -> Vec<Result<ProcessMessage>> {
         let mut ret = vec![];
         let mut inner = self.write();
-        if let Some(process) = inner.running_process.as_mut() {
+        if let Some(process) = inner.process_handle.as_mut() {
             while let Ok(msg) = process.messages.try_recv() {
                 ret.push(msg);
             }
@@ -275,7 +238,7 @@ impl UiProcess {
         for msg in &ret {
             // Keep track of things the ui process needs.
             match msg {
-                Ok(ProcessMessage::StartLoading { training }) => {
+                Ok(ProcessMessage::StartLoading { training, .. }) => {
                     inner.is_training = *training;
                     inner.is_loading = true;
                 }
@@ -314,9 +277,7 @@ impl UiProcess {
 
     pub fn reset_session(&self) {
         let mut inner = self.write();
-        let device_ctx = inner.cur_device_ctx.clone();
-        *inner = UiProcessInner::new();
-        inner.cur_device_ctx = device_ctx;
+        *inner = UiProcessInner::new(inner.burn_device.clone(), inner.ui_ctx.clone());
         inner.session_reset_requested = true;
     }
 
@@ -334,17 +295,18 @@ struct UiProcessInner {
     camera: Camera,
     splat_scale: Option<f32>,
     controls: CameraController,
-    running_process: Option<RunningProcess>,
-    cur_device_ctx: Option<DeviceContext>,
+    process_handle: Option<ProcessHandle>,
     ui_mode: UiMode,
     background_style: BackgroundStyle,
     train_paused: bool,
     reset_layout_requested: bool,
     session_reset_requested: bool,
+    ui_ctx: egui::Context,
+    burn_device: WgpuDevice,
 }
 
 impl UiProcessInner {
-    pub fn new() -> Self {
+    pub fn new(burn_device: WgpuDevice, ui_ctx: egui::Context) -> Self {
         let position = -Vec3::Z * 2.5;
         let rotation = Quat::IDENTITY;
 
@@ -357,20 +319,19 @@ impl UiProcessInner {
             splat_scale: None,
             is_loading: false,
             is_training: false,
-            running_process: None,
-            cur_device_ctx: None,
+            process_handle: None,
             ui_mode: UiMode::Default,
             background_style: BackgroundStyle::Black,
             train_paused: false,
             reset_layout_requested: false,
             session_reset_requested: false,
+            burn_device,
+            ui_ctx,
         }
     }
 
     fn repaint(&self) {
-        if let Some(ctx) = &self.cur_device_ctx {
-            ctx.ctx.request_repaint();
-        }
+        self.ui_ctx.request_repaint();
     }
 
     fn set_camera_transform(&mut self, position: Vec3, rotation: Quat) {

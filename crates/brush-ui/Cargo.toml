@@ -29,7 +29,7 @@ egui_tiles.workspace = true
 eframe.workspace = true
 wgpu.workspace = true
 tokio_with_wasm = { workspace = true, features = ["rt"] }
-tokio = { workspace = true }
+tokio.workspace = true
 tracing.workspace = true
 web-time.workspace = true
 humantime.workspace = true
@@ -40,6 +40,8 @@ bytemuck = { version = "1.14", features = ["derive"] }
 brush-dataset = { path = "../brush-dataset", optional = true }
 image = { workspace = true, optional = true }
 
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [lints]
 workspace = true

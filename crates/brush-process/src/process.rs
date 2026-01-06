@@ -1,20 +1,39 @@
+use std::pin::{Pin, pin};
+
+use anyhow::Error;
 use async_fn_stream::try_fn_stream;
-use brush_vfs::DataSource;
-use burn_wgpu::WgpuDevice;
-use tokio::sync::oneshot::Receiver;
-use tokio_stream::Stream;
+use brush_render::MainBackend;
+use brush_render::gaussian_splats::{SplatRenderMode, Splats};
+use brush_vfs::{DataSource, SendNotWasm};
+use burn_cubecl::cubecl::Runtime;
+use burn_wgpu::{WgpuDevice, WgpuRuntime};
 
 #[allow(unused)]
 use brush_serde;
+use tokio_stream::{Stream, StreamExt};
 
-use crate::{config::TrainStreamConfig, message::ProcessMessage, view_stream::view_stream};
+use crate::{message::ProcessMessage, slot::Slot};
 
+use crate::config::TrainStreamConfig;
+
+pub trait ProcessStream: Stream<Item = Result<ProcessMessage, Error>> + SendNotWasm {}
+impl<T> ProcessStream for T where T: Stream<Item = Result<ProcessMessage, Error>> + SendNotWasm {}
+
+pub struct RunningProcess {
+    pub stream: Pin<Box<dyn ProcessStream>>,
+    pub splat_view: Slot<Splats<MainBackend>>,
+}
+
+/// Create a running process from a datasource and args.
 pub fn create_process(
     source: DataSource,
-    process_args: Receiver<TrainStreamConfig>,
+    #[allow(unused)] config: impl Future<Output = TrainStreamConfig> + Send + 'static,
     device: WgpuDevice,
-) -> impl Stream<Item = Result<ProcessMessage, anyhow::Error>> + 'static {
-    try_fn_stream(|emitter| async move {
+) -> RunningProcess {
+    let splat_view = Slot::default();
+    let splat_state_cl = splat_view.clone();
+
+    let stream = try_fn_stream(|emitter| async move {
         log::info!("Starting process with source {source:?}");
         emitter.emit(ProcessMessage::NewProcess).await;
 
@@ -52,23 +71,81 @@ pub fn create_process(
         } else {
             format!("{} files", paths.len())
         };
+
         emitter
-            .emit(ProcessMessage::NewSource {
+            .emit(ProcessMessage::StartLoading {
                 name: source_name,
                 source,
+                training: is_training,
             })
             .await;
 
         if !is_training {
-            drop(process_args);
-            view_stream(vfs, device, emitter).await?;
+            let mut paths: Vec<_> = vfs.file_paths().collect();
+            alphanumeric_sort::sort_path_slice(&mut paths);
+            let client = WgpuRuntime::client(&device);
+            let total_frames = paths.len() as u32;
+
+            for (frame, path) in paths.iter().enumerate() {
+                log::info!("Loading single ply file");
+
+                let mut splat_stream = pin!(brush_serde::stream_splat_from_ply(
+                    vfs.reader_at_path(path).await?,
+                    None,
+                    true,
+                ));
+
+                while let Some(message) = splat_stream.next().await {
+                    let message = message?;
+
+                    let mode = message.meta.render_mode.unwrap_or(SplatRenderMode::Default);
+                    let splats = message.data.into_splats(&device, mode);
+
+                    // As loading concatenates splats each time, memory usage tends to accumulate a lot
+                    // over time. Clear out memory after each step to prevent this buildup.
+                    client.memory_cleanup();
+
+                    // For the first frame of a new file, clear existing frames
+                    if frame == 0 {
+                        splat_view.clear();
+                    }
+
+                    // Ensure we have space up to this frame index and set it
+                    {
+                        let mut guard = splat_view.write();
+                        if guard.len() <= frame {
+                            guard.resize(frame + 1, splats.clone());
+                        }
+                        guard[frame] = splats;
+                    }
+
+                    emitter
+                        .emit(ProcessMessage::SplatsUpdated {
+                            up_axis: message.meta.up_axis,
+                            frame: frame as u32,
+                            total_frames,
+                        })
+                        .await;
+                }
+            }
+
+            emitter.emit(ProcessMessage::DoneLoading).await;
         } else {
             #[cfg(feature = "training")]
-            crate::train_stream::train_stream(vfs, process_args, device, emitter).await?;
+            {
+                let config = config.await;
+                crate::train_stream::train_stream(vfs, config, device, emitter, splat_view).await?;
+            }
+
             #[cfg(not(feature = "training"))]
             anyhow::bail!("Training is not enabled in Brush, cannot load dataset.");
         };
 
         Ok(())
-    })
+    });
+
+    RunningProcess {
+        stream: Box::pin(stream),
+        splat_view: splat_state_cl,
+    }
 }

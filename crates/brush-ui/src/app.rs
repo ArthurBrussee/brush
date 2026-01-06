@@ -8,7 +8,9 @@ use crate::stats::StatsPanel;
 use crate::training_panel::TrainingPanel;
 use crate::ui_process::UiProcess;
 use crate::{camera_controls::CameraClamping, scene::ScenePanel};
+use brush_process::config::TrainStreamConfig;
 use brush_process::message::ProcessMessage;
+use brush_vfs::DataSource;
 use eframe::egui;
 use egui::{ThemePreference, Ui};
 use egui_tiles::{SimplificationOptions, Tabs, TileId, Tiles};
@@ -159,6 +161,11 @@ pub struct App {
 }
 
 impl App {
+    /// Returns a reference to the UI process context.
+    pub fn context(&self) -> &Arc<UiProcess> {
+        &self.tree_ctx.process
+    }
+
     fn create_default_tree() -> egui_tiles::Tree<PaneRef> {
         let mut tiles: Tiles<PaneRef> = Tiles::default();
         let scene_pane = tiles.insert_pane(Pane::scene());
@@ -209,7 +216,11 @@ impl App {
         }
     }
 
-    pub fn new(cc: &eframe::CreationContext, context: Arc<UiProcess>) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext,
+        init_args: Option<TrainStreamConfig>,
+        init_source: Option<DataSource>,
+    ) -> Self {
         let state = cc
             .wgpu_render_state
             .as_ref()
@@ -222,7 +233,13 @@ impl App {
         );
 
         log::info!("Connecting context to Burn device & GUI context.");
-        context.connect_device(burn_device.clone(), cc.egui_ctx.clone());
+        let context = std::sync::Arc::new(UiProcess::new(burn_device.clone(), cc.egui_ctx.clone()));
+
+        if let Some(args) = init_args
+            && let Some(source) = init_source
+        {
+            context.start_new_process(source, async { args });
+        }
 
         cc.egui_ctx
             .options_mut(|opt| opt.theme_preference = ThemePreference::Dark);
@@ -295,6 +312,11 @@ impl App {
 }
 
 impl eframe::App for App {
+    #[cfg(target_arch = "wasm32")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, TREE_STORAGE_KEY, &self.tree);
     }
