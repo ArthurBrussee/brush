@@ -46,7 +46,7 @@ While training, additional data can be visualized with the excellent [rerun](htt
 First install rust 1.88+. You can run tests with `cargo test --all`. Brush uses the wonderful [rerun](https://rerun.io/) for additional visualizations while training, run `cargo install rerun-cli` if you want to use it.
 
 ### Windows/macOS/Linux
-Simply `cargo run` or `cargo run --release` from the workspace root. Brush can also be used as a CLI, run `cargo run --release -- --help` to use the CLI directly from source. See the notes about the CLI in the features section.
+Use `cargo run --release` from the workspace root to make an optimized build. Use `cargo run` to run a debug build. 
 
 ### Web
 Brush can be compiled to WASM. Run `npm run dev` to start the demo website using Next.js, see the brush_nextjs directory.
