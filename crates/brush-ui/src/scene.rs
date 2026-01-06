@@ -984,7 +984,7 @@ impl AppPane for ScenePanel {
             // Get the splat for the current frame
             let splats = process.current_splats().and_then(|sv| {
                 let frame_idx = self.frame as usize;
-                sv.lock().get(frame_idx).cloned()
+                sv.get(frame_idx)
             });
 
             let interactive =

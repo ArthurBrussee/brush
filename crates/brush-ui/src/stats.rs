@@ -122,7 +122,7 @@ impl AppPane for StatsPanel {
 
             let (num_splats, sh_degree) = process
                 .current_splats()
-                .and_then(|sv| sv.lock().last().cloned())
+                .and_then(|sv| sv.get_main())
                 .map_or((0, 0), |spl| (spl.num_splats(), spl.sh_degree()));
 
             let first_col_width = ui.available_width() * 0.4;

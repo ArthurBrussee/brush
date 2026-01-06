@@ -112,7 +112,7 @@ pub fn create_process(
 
                     // Ensure we have space up to this frame index and set it
                     {
-                        let mut guard = splat_view.lock();
+                        let mut guard = splat_view.write();
                         if guard.len() <= frame {
                             guard.resize(frame + 1, splats.clone());
                         }
