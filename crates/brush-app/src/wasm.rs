@@ -127,10 +127,10 @@ impl EmbeddedApp {
     #[wasm_bindgen]
     pub fn load_url(&self, url: &str) {
         if let Some(app) = self.runner.app_mut::<App>() {
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            let _ = sender.send(TrainStreamConfig::default());
             app.context()
-                .start_new_process(DataSource::Url(url.to_owned()), receiver);
+                .start_new_process(DataSource::Url(url.to_owned()), async {
+                    TrainStreamConfig::default()
+                });
         }
     }
 
