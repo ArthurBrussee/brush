@@ -21,7 +21,6 @@ struct ImageCache {
 }
 
 // Cache at most some nr. of gigs of data.
-// TODO: Not sure if this should be configurable or not.
 #[cfg(not(target_family = "wasm"))]
 const MAX_CACHE_MB: usize = 6 * 1024;
 

@@ -46,16 +46,15 @@ fn main() -> Result<(), anyhow::Error> {
         .expect("Failed to set tracing subscriber");
     }
 
-    env_logger::builder()
-        .target(env_logger::Target::Stdout)
-        .init();
-
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("Failed to initialize tokio runtime")
         .block_on(async move {
             if args.with_viewer {
+                env_logger::builder()
+                    .target(env_logger::Target::Stdout)
+                    .init();
                 let icon = eframe::icon_data::from_png_bytes(
                     &include_bytes!("../assets/icon-256.png")[..],
                 )

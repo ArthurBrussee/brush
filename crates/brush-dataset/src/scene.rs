@@ -68,7 +68,6 @@ impl LoadImage {
         let mut img = image::load_from_memory(&img_bytes)?;
 
         // Copy over mask.
-        // TODO: Interleave this work better & speed things up here.
         if let Some(mask_path) = &self.mask_path {
             // Add in alpha channel if needed to the image to copy the mask into.
             let mut masked_img = img.into_rgba8();

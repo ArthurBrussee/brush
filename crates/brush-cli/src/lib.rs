@@ -8,7 +8,8 @@ use brush_process::{config::TrainStreamConfig, process::create_process};
 use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif_log_bridge::LogWrapper;
 use std::time::Duration;
 use tokio_stream::StreamExt;
 use tracing::trace_span;
@@ -54,12 +55,22 @@ pub async fn run_cli_ui(
     train_stream_config: TrainStreamConfig,
     device: WgpuDevice,
 ) -> Result<(), anyhow::Error> {
-    // TODO: Find a way to make logging and indicatif to play nicely with eachother.
-    // let mut stream = std::pin::pin!(stream);
-    // while let Some(msg) = stream.next().await {
-    //     let _ = msg?;
-    // }
+    // Initialize the logger with indicatif integration to prevent
+    // progress bars from clobbering log output.
+    let sp = {
+        let mut builder = env_logger::builder();
+        builder.target(env_logger::Target::Stdout);
+        let logger = builder.build();
+        let level = logger.filter();
+        let multi = MultiProgress::new();
 
+        LogWrapper::new(multi.clone(), logger)
+            .try_init()
+            .expect("Failed to initialize logger");
+        log::set_max_level(level);
+
+        multi
+    };
     let cfg = train_stream_config.clone();
     let mut process = create_process(source, async { cfg }, device);
 
@@ -96,8 +107,6 @@ pub async fn run_cli_ui(
             .expect("Invalid indicatif config")
             .tick_strings(&["ℹ️", "ℹ️"]),
     );
-
-    let sp = indicatif::MultiProgress::new();
 
     #[cfg(feature = "training")]
     let train_progress = {
