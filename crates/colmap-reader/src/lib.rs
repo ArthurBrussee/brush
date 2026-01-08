@@ -259,70 +259,76 @@ async fn read_images_text<R: AsyncBufRead + Unpin>(
     reader: R,
     with_points: bool,
 ) -> io::Result<Vec<Image>> {
-    let mut images = vec![];
+    let mut images: Vec<Image> = vec![];
     let mut lines = reader.lines();
 
+    // Parse images by checking element count per line:
+    // - Image lines have exactly 10 elements (id, qw, qx, qy, qz, tx, ty, tz, camera_id, name)
+    // - Points lines have 3*k elements (x, y, point3d_id per point)
+    // Some apps incorrectly skip the points line when there are 0 points,
+    // so we can't assume strict alternation.
     while let Some(line) = lines.next_line().await? {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
 
-        let mut elems = line.split_ascii_whitespace();
-        let mut try_next = || {
-            elems.next().ok_or(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Missing element",
-            ))
-        };
+        let elems: Vec<&str> = line.split_ascii_whitespace().collect();
 
-        let id: i32 = parse(try_next()?)?;
+        if elems.len() == 10 {
+            // This is an image line
+            let id: i32 = parse(elems[0])?;
+            let [w, x, y, z] = [
+                parse(elems[1])?,
+                parse(elems[2])?,
+                parse(elems[3])?,
+                parse(elems[4])?,
+            ];
+            let quat = glam::quat(x, y, z, w);
+            let tvec = glam::vec3(parse(elems[5])?, parse(elems[6])?, parse(elems[7])?);
+            let camera_id: i32 = parse(elems[8])?;
+            let name = elems[9].to_owned();
 
-        let [w, x, y, z] = [
-            parse(try_next()?)?,
-            parse(try_next()?)?,
-            parse(try_next()?)?,
-            parse(try_next()?)?,
-        ];
-        let quat = glam::quat(x, y, z, w);
-        let tvec = glam::vec3(
-            parse(try_next()?)?,
-            parse(try_next()?)?,
-            parse(try_next()?)?,
-        );
-        let camera_id: i32 = parse(try_next()?)?;
-        let name = try_next()?.to_owned();
+            images.push(Image {
+                id,
+                quat,
+                tvec,
+                camera_id,
+                name,
+                points: if with_points {
+                    Some(ImagePointData {
+                        xys: Vec::new(),
+                        point3d_ids: Vec::new(),
+                    })
+                } else {
+                    None
+                },
+            });
+        } else if elems.len().is_multiple_of(3) {
+            // This is a points line (0 or more points, each with 3 values)
+            if with_points {
+                let current_image = images.last_mut().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Points line found before any image",
+                    )
+                })?;
+                let point_data = current_image.points.as_mut().unwrap();
 
-        let next_line = lines
-            .next_line()
-            .await?
-            .ok_or(io::Error::new(io::ErrorKind::InvalidData, "Missing line"))?;
-
-        let point_data = if with_points {
-            let elems: Vec<&str> = next_line.split_whitespace().collect();
-            let mut xys = Vec::new();
-            let mut point3d_ids = Vec::new();
-
-            for chunk in elems.chunks(3) {
-                xys.push(glam::vec2(parse(chunk[0])?, parse(chunk[1])?));
-                point3d_ids.push(parse(chunk[2])?);
+                for chunk in elems.chunks(3) {
+                    point_data
+                        .xys
+                        .push(glam::vec2(parse(chunk[0])?, parse(chunk[1])?));
+                    point_data.point3d_ids.push(parse(chunk[2])?);
+                }
             }
-
-            Some(ImagePointData { xys, point3d_ids })
         } else {
-            None
-        };
-
-        images.push(Image {
-            id,
-            quat,
-            tvec,
-            camera_id,
-            name,
-            points: point_data,
-        });
-
-        if images.len() % 1000 == 0 {
-            log::info!("Read {} image infos", images.len());
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Invalid line: expected 10 elements (image) or 3*k elements (points), got {}",
+                    elems.len()
+                ),
+            ));
         }
     }
 
@@ -671,6 +677,29 @@ mod tests {
         assert_eq!(img1.points.as_ref().unwrap().point3d_ids[2], -1); // Invalid point3d id
         let img2 = &images[1];
         assert_eq!(img2.points.as_ref().unwrap().xys.len(), 0); // No 2D points
+    }
+
+    #[tokio::test]
+    async fn test_images_missing_points_line() {
+        // Some apps incorrectly skip the points line when there are 0 points.
+        // This test verifies we handle that case correctly by detecting image
+        // lines (10 elements) vs points lines (3*k elements).
+        let image_data = "# Image list - some apps skip empty points lines\n\
+                         1 0.7071 0.0 0.0 0.7071 1.0 2.0 3.0 1 image1.jpg\n\
+                         2 1.0 0.0 0.0 0.0 0.0 0.0 0.0 1 image2.jpg\n\
+                         3 0.5 0.5 0.5 0.5 5.0 6.0 7.0 2 image3.jpg\n";
+
+        let reader = Cursor::new(image_data.as_bytes());
+        let images = read_images_text(reader, true).await.unwrap();
+
+        // All 3 images should be parsed correctly even without points lines
+        assert_eq!(images.len(), 3);
+        assert_eq!(images[0].name, "image1.jpg");
+        assert_eq!(images[0].points.as_ref().unwrap().xys.len(), 0);
+        assert_eq!(images[1].name, "image2.jpg");
+        assert_eq!(images[1].points.as_ref().unwrap().xys.len(), 0);
+        assert_eq!(images[2].name, "image3.jpg");
+        assert_eq!(images[2].camera_id, 2);
     }
 
     #[tokio::test]
