@@ -5,6 +5,7 @@ use brush_process::{create_process, message::ProcessMessage};
 use brush_vfs::DataSource;
 use std::convert::TryFrom;
 use std::ffi::{CStr, c_char, c_void};
+use tokio::sync::OnceCell;
 use tokio_stream::StreamExt;
 
 use crate::shared::startup;
@@ -74,6 +75,8 @@ impl TrainOptions {
 pub type ProgressCallback =
     extern "C" fn(progress_message: ProgressMessage, user_data: *mut c_void);
 
+static SETUP: OnceCell<()> = OnceCell::const_new();
+
 /// Trains a model from a dataset and saves the result.
 ///
 /// This function is designed to be called from other languages via FFI. It will
@@ -112,8 +115,6 @@ pub unsafe extern "C" fn train_and_save(
         return TrainExitCode::Error;
     }
 
-    startup();
-
     let dataset_path_str =
         // SAFETY: Checked if dataset_path is not null, caller guarantees the string is a valid C-string.
         unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
@@ -131,7 +132,12 @@ pub unsafe extern "C" fn train_and_save(
         .build()
         .expect("Failed to create tokio runtime")
         .block_on(async {
-            burn_init_setup().await;
+            SETUP
+                .get_or_init(async move || {
+                    startup();
+                    burn_init_setup().await;
+                })
+                .await;
 
             while let Some(message_result) = process.stream.next().await {
                 match message_result {
