@@ -1,3 +1,4 @@
+use brush_process::create_process;
 use brush_ui::UiMode;
 use brush_ui::app::App;
 use brush_vfs::DataSource;
@@ -123,10 +124,10 @@ impl EmbeddedApp {
     #[wasm_bindgen]
     pub fn load_url(&self, url: &str) {
         if let Some(app) = self.runner.app_mut::<App>() {
-            app.context()
-                .start_new_process(DataSource::Url(url.to_owned()), |initial_config| async {
-                    initial_config
-                });
+            app.context().connect_to_process(create_process(
+                DataSource::Url(url.to_owned()),
+                async move |init| init,
+            ));
         }
     }
 

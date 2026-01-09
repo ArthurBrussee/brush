@@ -1,6 +1,4 @@
 use std::ops::RangeInclusive;
-#[cfg(feature = "training")]
-use std::path::Path;
 use std::path::PathBuf;
 
 use brush_process::config::TrainStreamConfig;
@@ -58,7 +56,6 @@ impl SettingsPopup {
         }
 
         // Show save confirmation popup
-        #[cfg(not(target_family = "wasm"))]
         if let Some((msg, time)) = &self.save_status
             && time.elapsed().as_secs() < 2
         {
@@ -74,17 +71,7 @@ impl SettingsPopup {
                 });
         }
 
-        // Determine the title based on whether we can save
-        #[cfg(not(target_family = "wasm"))]
-        let title = if self.base_path.is_some() {
-            "Settings                      💾"
-        } else {
-            "Settings"
-        };
-        #[cfg(target_family = "wasm")]
-        let title = "Settings";
-
-        egui::Window::new(title)
+        egui::Window::new("Settings")
         .id(self.window_id)
         .resizable(true)
         .collapsible(false)
@@ -96,32 +83,33 @@ impl SettingsPopup {
             // Custom title bar with save button
             ui.horizontal(|ui| {
                 ui.heading("Settings");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    #[cfg(not(target_family = "wasm"))]
-                    if let Some(save_dir) = &self.base_path
-                        && ui.small_button("💾 Save").clicked()
-                    {
-                        let args_path = save_dir.join("args.txt");
-                        let path: &Path = &args_path;
-                        let config: &TrainStreamConfig = &self.args;
-                        let args = brush_process::args_file::config_to_args(config);
 
-                        match std::fs::write(path, args.join(" ")) {
-                            Ok(()) => {
-                                self.save_status = Some((
-                                    format!("Saved to {}", args_path.display()),
-                                    web_time::Instant::now(),
-                                ));
-                            }
-                            Err(e) => {
-                                self.save_status = Some((
-                                    format!("Failed: {e}"),
-                                    web_time::Instant::now(),
-                                ));
+                if !cfg!(target_family = "wasm") {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if let Some(save_dir) = &self.base_path
+                            && ui.small_button("💾 Save").clicked()
+                        {
+                            let args_path = save_dir.join("args.txt");
+                            let config: &TrainStreamConfig = &self.args;
+                            let args = brush_process::args_file::config_to_args(config);
+
+                            match std::fs::write(&args_path, args.join(" ")) {
+                                Ok(()) => {
+                                    self.save_status = Some((
+                                        format!("Saved to {}", args_path.display()),
+                                        web_time::Instant::now(),
+                                    ));
+                                }
+                                Err(e) => {
+                                    self.save_status = Some((
+                                        format!("Failed: {e}"),
+                                        web_time::Instant::now(),
+                                    ));
+                                }
                             }
                         }
-                    }
-                });
+                    });
+                }
             });
 
             ui.separator();
