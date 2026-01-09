@@ -251,12 +251,17 @@ impl ScenePanel {
     }
 
     fn start_loading(&self, source: DataSource, process: &UiProcess) {
-        let settings = self.settings_popup.clone().unwrap();
-
-        process.connect_to_process(create_process(source, async move |initial| {
-            let fut = settings.lock().unwrap().start_pick(initial);
-            fut.await
-        }));
+        process.connect_to_process(create_process(
+            source,
+            #[cfg(feature = "training")]
+            {
+                let settings = self.settings_popup.clone().unwrap();
+                async move |initial| {
+                    let fut = settings.lock().unwrap().start_pick(initial);
+                    fut.await
+                }
+            },
+        ));
     }
 
     pub(crate) fn draw_splats(
@@ -886,12 +891,17 @@ impl AppPane for ScenePanel {
                 }
                 self.source_name = Some(name.clone());
                 self.source_type = Some(source.clone());
-                self.settings_popup
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .base_path = base_path.clone();
+
+                #[cfg(feature = "training")]
+                {
+                    self.settings_popup
+                        .as_ref()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .base_path = base_path.clone();
+                }
+                let _ = base_path;
             }
             ProcessMessage::SplatsUpdated {
                 up_axis,

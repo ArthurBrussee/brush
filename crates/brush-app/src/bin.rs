@@ -3,7 +3,7 @@
 mod shared;
 
 use brush_cli::Cli;
-use brush_process::{args_file::merge_configs, create_process};
+use brush_process::create_process;
 use brush_ui::app::App;
 use clap::Parser;
 
@@ -53,8 +53,16 @@ fn main() -> Result<(), anyhow::Error> {
         .block_on(async move {
             // Create initial process if source is provided
             let init_process = args.source.map(|source| {
-                let cli_config = args.train_stream.clone();
-                create_process(source, async move |init| merge_configs(&init, &cli_config))
+                create_process(
+                    source,
+                    #[cfg(feature = "training")]
+                    {
+                        let cli_config = args.train_stream.clone();
+                        async move |init| {
+                            brush_process::args_file::merge_configs(&init, &cli_config)
+                        }
+                    },
+                )
             });
 
             if args.with_viewer {

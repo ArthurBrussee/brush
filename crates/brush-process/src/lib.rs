@@ -17,7 +17,6 @@ pub mod args_file;
 
 pub mod slot;
 
-use std::future::Future;
 use std::pin::{Pin, pin};
 
 use anyhow::Error;
@@ -56,7 +55,6 @@ pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuD
     burn
 }
 
-use crate::config::TrainStreamConfig;
 use crate::{message::ProcessMessage, slot::Slot};
 
 pub trait ProcessStream: Stream<Item = Result<ProcessMessage, Error>> + SendNotWasm {}
@@ -80,11 +78,13 @@ pub(crate) fn connect_device(device: WgpuDevice) {
 /// The `config_fn` callback receives the initial config (loaded from args.txt if present,
 /// otherwise defaults) and returns the final config to use. This allows the caller to
 /// modify or override settings as needed.
-pub fn create_process<F, Fut>(source: DataSource, #[allow(unused)] config_fn: F) -> RunningProcess
-where
-    F: FnOnce(TrainStreamConfig) -> Fut + Send + 'static,
-    Fut: Future<Output = TrainStreamConfig> + Send,
-{
+pub fn create_process<
+    #[cfg(feature = "training")] Fun: FnOnce(crate::config::TrainStreamConfig) -> Fut + Send + 'static,
+    #[cfg(feature = "training")] Fut: std::future::Future<Output = crate::config::TrainStreamConfig> + Send,
+>(
+    source: DataSource,
+    #[cfg(feature = "training")] config_fn: Fun,
+) -> RunningProcess {
     let splat_view = Slot::default();
     let splat_state_cl = splat_view.clone();
 
