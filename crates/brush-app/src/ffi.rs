@@ -1,8 +1,8 @@
+use brush_process::burn_init_setup;
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::TrainMessage;
-use brush_process::{message::ProcessMessage, process::create_process};
+use brush_process::{create_process, message::ProcessMessage};
 use brush_vfs::DataSource;
-use burn_wgpu::WgpuDevice;
 use std::convert::TryFrom;
 use std::ffi::{CStr, c_char, c_void};
 use tokio_stream::StreamExt;
@@ -119,19 +119,20 @@ pub unsafe extern "C" fn train_and_save(
         unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
 
     let source = DataSource::Path(dataset_path_str);
-    let device = WgpuDevice::default();
 
     // SAFETY: Option is checked to not be null before the future.
     let train_options = unsafe { *options };
     // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
     let process_args = unsafe { train_options.into_train_stream_config() };
-    let mut process = create_process(source, async { process_args }, device);
+    let mut process = create_process(source, async move |_| process_args);
 
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("Failed to create tokio runtime")
         .block_on(async {
+            burn_init_setup().await;
+
             while let Some(message_result) = process.stream.next().await {
                 match message_result {
                     Ok(message) => {

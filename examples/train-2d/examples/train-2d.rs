@@ -102,7 +102,7 @@ impl App {
             .wgpu_render_state
             .as_ref()
             .expect("No wgpu renderer enabled in egui");
-        let device = brush_render::burn_init_device(
+        let device = brush_process::burn_init_device(
             state.adapter.clone(),
             state.device.clone(),
             state.queue.clone(),

@@ -8,9 +8,7 @@ use crate::stats::StatsPanel;
 use crate::training_panel::TrainingPanel;
 use crate::ui_process::UiProcess;
 use crate::{camera_controls::CameraClamping, scene::ScenePanel};
-use brush_process::config::TrainStreamConfig;
 use brush_process::message::ProcessMessage;
-use brush_vfs::DataSource;
 use eframe::egui;
 use egui::{ThemePreference, Ui};
 use egui_tiles::{SimplificationOptions, Tabs, TileId, Tiles};
@@ -218,15 +216,14 @@ impl App {
 
     pub fn new(
         cc: &eframe::CreationContext,
-        init_args: Option<TrainStreamConfig>,
-        init_source: Option<DataSource>,
+        init_process: Option<brush_process::RunningProcess>,
     ) -> Self {
         let state = cc
             .wgpu_render_state
             .as_ref()
             .expect("Must use wgpu to render UI.");
 
-        let burn_device = brush_render::burn_init_device(
+        let burn_device = brush_process::burn_init_device(
             state.adapter.clone(),
             state.device.clone(),
             state.queue.clone(),
@@ -235,10 +232,8 @@ impl App {
         log::info!("Connecting context to Burn device & GUI context.");
         let context = std::sync::Arc::new(UiProcess::new(burn_device.clone(), cc.egui_ctx.clone()));
 
-        if let Some(args) = init_args
-            && let Some(source) = init_source
-        {
-            context.start_new_process(source, async { args });
+        if let Some(process) = init_process {
+            context.connect_to_process(process);
         }
 
         cc.egui_ctx

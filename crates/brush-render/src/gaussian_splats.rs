@@ -15,7 +15,10 @@ use crate::{
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
 
-#[derive(Module, Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[derive(
+    Module, Clone, Copy, Debug, Eq, PartialEq, ValueEnum, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum SplatRenderMode {
     Default,
     Mip,

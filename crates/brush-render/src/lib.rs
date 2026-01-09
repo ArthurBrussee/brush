@@ -4,13 +4,11 @@ use burn::prelude::Backend;
 use burn::tensor::ops::FloatTensor;
 use burn_cubecl::CubeBackend;
 use burn_fusion::Fusion;
-use burn_wgpu::graphics::{AutoGraphicsApi, GraphicsApi};
-use burn_wgpu::{RuntimeOptions, WgpuDevice, WgpuRuntime};
+use burn_wgpu::WgpuRuntime;
 use camera::Camera;
 use clap::ValueEnum;
 use glam::Vec3;
 use render_aux::RenderAux;
-use wgpu::{Adapter, Device, Queue};
 
 use crate::gaussian_splats::SplatRenderMode;
 pub use crate::gaussian_splats::render_splats;
@@ -70,31 +68,10 @@ pub trait SplatForward<B: Backend> {
     ) -> (FloatTensor<B>, RenderAux<B>);
 }
 
-fn burn_options() -> RuntimeOptions {
-    RuntimeOptions {
-        tasks_max: 64,
-        memory_config: burn_wgpu::MemoryConfiguration::ExclusivePages,
-    }
-}
-
-pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuDevice {
-    let setup = burn_wgpu::WgpuSetup {
-        instance: wgpu::Instance::new(&wgpu::InstanceDescriptor::default()), // unused... need to fix this in Burn.
-        adapter,
-        device,
-        queue,
-        backend: AutoGraphicsApi::backend(),
-    };
-    burn_wgpu::init_device(setup, burn_options())
-}
-
-pub async fn burn_init_setup() -> WgpuDevice {
-    burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
-        .await;
-    WgpuDevice::DefaultDevice
-}
-
-#[derive(Default, ValueEnum, Clone, Copy, Eq, PartialEq, Debug)]
+#[derive(
+    Default, ValueEnum, Clone, Copy, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum AlphaMode {
     #[default]
     Masked,

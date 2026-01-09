@@ -2,8 +2,10 @@
 use crate::settings_popup::SettingsPopup;
 #[cfg(feature = "training")]
 use brush_process::message::TrainMessage;
+#[cfg(feature = "training")]
+use std::sync::Mutex;
 
-use brush_process::message::ProcessMessage;
+use brush_process::{create_process, message::ProcessMessage};
 use brush_vfs::DataSource;
 use core::f32;
 use egui::{
@@ -148,7 +150,7 @@ pub struct ScenePanel {
     last_rendered_iter: u32,
     #[cfg(feature = "training")]
     #[serde(skip)]
-    settings_popup: Option<SettingsPopup>,
+    settings_popup: Option<Arc<Mutex<SettingsPopup>>>,
 }
 
 impl ScenePanel {
@@ -248,29 +250,13 @@ impl ScenePanel {
         load_option
     }
 
-    fn start_loading(&mut self, source: DataSource, process: &UiProcess) {
-        let (_sender, receiver) = tokio::sync::oneshot::channel();
-        #[cfg(feature = "training")]
-        {
-            self.settings_popup = Some(SettingsPopup::new(_sender));
-        }
-        process.start_new_process(source, async {
-            receiver.await.unwrap_or(Default::default())
-        });
-    }
+    fn start_loading(&self, source: DataSource, process: &UiProcess) {
+        let settings = self.settings_popup.clone().unwrap();
 
-    #[cfg(feature = "training")]
-    fn draw_settings_popup(&mut self, ui: &egui::Ui, process: &UiProcess, scene_rect: egui::Rect) {
-        if let Some(popup) = &mut self.settings_popup
-            && process.is_loading()
-            && process.is_training()
-        {
-            popup.ui(ui, scene_rect.center());
-
-            if popup.is_done() {
-                self.settings_popup = None;
-            }
-        }
+        process.connect_to_process(create_process(source, async move |initial| {
+            let fut = settings.lock().unwrap().start_pick(initial);
+            fut.await
+        }));
     }
 
     pub(crate) fn draw_splats(
@@ -871,6 +857,12 @@ impl AppPane for ScenePanel {
     ) {
         self.widget_3d = Some(Widget3D::new(device.clone(), queue.clone()));
         self.backbuffer = Some(BurnTexture::new(renderer, device, queue));
+
+        // Create the settings popup now that we have the base_path
+        #[cfg(feature = "training")]
+        {
+            self.settings_popup = Some(Arc::new(Mutex::new(SettingsPopup::new())));
+        }
     }
 
     fn on_message(&mut self, message: &ProcessMessage, process: &UiProcess) {
@@ -886,6 +878,7 @@ impl AppPane for ScenePanel {
                 name,
                 source,
                 training,
+                base_path,
             } => {
                 // If training reset. Otherwise, keep existing state until new splats are loaded.
                 if *training {
@@ -893,6 +886,12 @@ impl AppPane for ScenePanel {
                 }
                 self.source_name = Some(name.clone());
                 self.source_type = Some(source.clone());
+                self.settings_popup
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .base_path = base_path.clone();
             }
             ProcessMessage::SplatsUpdated {
                 up_axis,
@@ -1055,7 +1054,15 @@ impl AppPane for ScenePanel {
 
         // Draw settings popup if loading (at end so it draws over everything)
         #[cfg(feature = "training")]
-        self.draw_settings_popup(ui, process, scene_rect);
+        {
+            if let Some(popup) = &mut self.settings_popup
+                && process.is_loading()
+                && process.is_training()
+            {
+                let mut popup = popup.lock().unwrap();
+                popup.ui(ui, scene_rect.center());
+            }
+        }
 
         // Reset confirmation dialog - check egui memory for the flag
         let show_reset_confirm = ui.ctx().memory(|mem| {

@@ -13,9 +13,9 @@ brush-process.path = "../brush-process"
 brush-vfs.path = "../brush-vfs"
 
 indicatif.workspace = true
+
 indicatif-log-bridge = "0.2"
 clap.workspace = true
-burn-wgpu.workspace = true
 tracing.workspace = true
 tokio-stream.workspace = true
 humantime.workspace = true

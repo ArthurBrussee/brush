@@ -1,4 +1,7 @@
 use std::ops::RangeInclusive;
+#[cfg(feature = "training")]
+use std::path::Path;
+use std::path::PathBuf;
 
 use brush_process::config::TrainStreamConfig;
 use brush_render::AlphaMode;
@@ -11,6 +14,10 @@ pub(crate) struct SettingsPopup {
     args: TrainStreamConfig,
     // Unique ID per instance so window state isn't persisted across popup opens
     window_id: egui::Id,
+    // Path to save args.txt (directory where args.txt should be saved)
+    pub(crate) base_path: Option<PathBuf>,
+    // Status message for save feedback
+    save_status: Option<(String, web_time::Instant)>,
 }
 
 fn slider<T>(ui: &mut Ui, value: &mut T, range: RangeInclusive<T>, text: &str, logarithmic: bool)
@@ -28,11 +35,13 @@ where
 }
 
 impl SettingsPopup {
-    pub(crate) fn new(send_args: Sender<TrainStreamConfig>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            send_args: Some(send_args),
+            send_args: None,
             args: TrainStreamConfig::default(),
             window_id: egui::Id::new(rand::random::<u64>()),
+            base_path: None,
+            save_status: None,
         }
     }
 
@@ -44,18 +53,79 @@ impl SettingsPopup {
     }
 
     pub(crate) fn ui(&mut self, ui: &egui::Ui, center: egui::Pos2) {
-        if self.send_args.is_none() {
+        if self.is_done() {
             return;
         }
 
-        egui::Window::new("Settings")
+        // Show save confirmation popup
+        #[cfg(not(target_family = "wasm"))]
+        if let Some((msg, time)) = &self.save_status
+            && time.elapsed().as_secs() < 2
+        {
+            let popup_id = self.window_id.with("save_popup");
+            egui::Window::new("Saved")
+                .id(popup_id)
+                .collapsible(false)
+                .resizable(false)
+                .title_bar(false)
+                .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ui.ctx(), |ui| {
+                    ui.label(egui::RichText::new(msg).size(14.0));
+                });
+        }
+
+        // Determine the title based on whether we can save
+        #[cfg(not(target_family = "wasm"))]
+        let title = if self.base_path.is_some() {
+            "Settings                      💾"
+        } else {
+            "Settings"
+        };
+        #[cfg(target_family = "wasm")]
+        let title = "Settings";
+
+        egui::Window::new(title)
         .id(self.window_id)
         .resizable(true)
         .collapsible(false)
         .default_pos(center)
         .default_size([300.0, 750.0])
         .pivot(Align2::CENTER_CENTER)
+        .title_bar(false)
         .show(ui.ctx(), |ui| {
+            // Custom title bar with save button
+            ui.horizontal(|ui| {
+                ui.heading("Settings");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    #[cfg(not(target_family = "wasm"))]
+                    if let Some(save_dir) = &self.base_path
+                        && ui.small_button("💾 Save").clicked()
+                    {
+                        let args_path = save_dir.join("args.txt");
+                        let path: &Path = &args_path;
+                        let config: &TrainStreamConfig = &self.args;
+                        let args = brush_process::args_file::config_to_args(config);
+
+                        match std::fs::write(path, args.join(" ")) {
+                            Ok(()) => {
+                                self.save_status = Some((
+                                    format!("Saved to {}", args_path.display()),
+                                    web_time::Instant::now(),
+                                ));
+                            }
+                            Err(e) => {
+                                self.save_status = Some((
+                                    format!("Failed: {e}"),
+                                    web_time::Instant::now(),
+                                ));
+                            }
+                        }
+                    }
+                });
+            });
+
+            ui.separator();
+
             egui::ScrollArea::vertical().show(ui, |ui| {
             ui.heading("Training");
             slider(ui, &mut self.args.train_config.total_steps, 1..=50000, " steps", false);
@@ -251,6 +321,7 @@ impl SettingsPopup {
             }
 
             ui.add_space(12.0);
+
             ui.vertical_centered_justified(|ui| {
                 if ui.add(egui::Button::new(egui::RichText::new("Start").size(14.0))
                     .min_size(egui::vec2(150.0, 36.0))
@@ -261,5 +332,15 @@ impl SettingsPopup {
             });
             });
         });
+    }
+
+    pub(crate) fn start_pick(
+        &mut self,
+        initial: TrainStreamConfig,
+    ) -> impl Future<Output = TrainStreamConfig> + use<> {
+        self.args = initial;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.send_args = Some(sender);
+        async move { receiver.await.expect("Must be some") }
     }
 }

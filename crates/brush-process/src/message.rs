@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use brush_vfs::DataSource;
 use glam::Vec3;
 
@@ -45,6 +47,8 @@ pub enum ProcessMessage {
         name: String,
         source: DataSource,
         training: bool,
+        /// The base directory path if available.
+        base_path: Option<PathBuf>,
     },
     /// Notification that splats have been updated.
     SplatsUpdated {

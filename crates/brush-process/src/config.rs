@@ -1,6 +1,8 @@
 use clap::{Args, Parser};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Args)]
+#[derive(Clone, Args, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct ProcessConfig {
     /// Random seed.
     #[arg(long, help_heading = "Process options", default_value = "42")]
@@ -18,9 +20,7 @@ pub struct ProcessConfig {
     #[arg(long, help_heading = "Process options", default_value = "5000")]
     pub export_every: u32,
     /// Location to put exported files. By default uses the data directory if available,
-    /// or the CWD otherwise.
-    ///
-    /// This path can be set as a relative path.
+    /// or the CWD otherwise. This can be set as a relative path.
     #[arg(long, help_heading = "Process options", default_value = "./")]
     pub export_path: String,
     /// Filename of exported ply file
@@ -32,18 +32,24 @@ pub struct ProcessConfig {
     pub export_name: String,
 }
 
-#[derive(Parser, Clone)]
+#[derive(Parser, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 #[cfg(feature = "training")]
 pub struct TrainStreamConfig {
     #[clap(flatten)]
+    #[serde(flatten)]
     pub train_config: brush_train::config::TrainConfig,
     #[clap(flatten)]
+    #[serde(flatten)]
     pub model_config: brush_dataset::config::ModelConfig,
     #[clap(flatten)]
+    #[serde(flatten)]
     pub load_config: brush_dataset::config::LoadDataseConfig,
     #[clap(flatten)]
+    #[serde(flatten)]
     pub process_config: ProcessConfig,
     #[clap(flatten)]
+    #[serde(flatten)]
     pub rerun_config: brush_rerun::RerunConfig,
 }
 

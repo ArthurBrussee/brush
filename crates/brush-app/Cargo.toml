@@ -21,17 +21,15 @@ default = ["training"]
 
 training = ["brush-cli/training", "brush-process/training", "brush-ui/training"]
 tracy = ["dep:tracing-subscriber", "dep:tracing-tracy"]
-debug-validation = ["brush-render/debug-validation", "brush-ui/debug-validation"]
+debug-validation = ["brush-ui/debug-validation"]
 
 [dependencies]
 # Brush deps.
 brush-ui.path = "../brush-ui"
-brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
 brush-process = { path = "../brush-process" }
 
 burn-cubecl.workspace = true
-burn-wgpu.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 
