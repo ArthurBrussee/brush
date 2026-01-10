@@ -353,14 +353,21 @@ impl CameraController {
         self.fly_velocity = exp_lerp3(self.fly_velocity, Vec3::ZERO, delta_time, 7.0);
 
         // Handle scroll wheel: move back, and adjust focus distance.
-        let scrolled = ui.input(|r| r.smooth_scroll_delta.y);
+        // Only zoom when mouse is over the scene view.
+        let scrolled = if response.hovered() {
+            ui.input(|r| r.smooth_scroll_delta.y)
+        } else {
+            0.0
+        };
         let scroll_speed = 0.001;
 
         let old_pivot = self.position + self.rotation * Vec3::Z * self.focus_distance;
 
-        // Handle pinch-to-zoom from multi-touch
+        // Handle pinch-to-zoom from multi-touch (only when hovered)
         let mut zoom_delta = 0.0;
-        if let Some(multi_touch) = multi_touch {
+        if response.hovered()
+            && let Some(multi_touch) = multi_touch
+        {
             // Convert zoom factor to distance change - try reversing the direction
             let zoom_factor = multi_touch.zoom_delta;
             if zoom_factor != 1.0 {

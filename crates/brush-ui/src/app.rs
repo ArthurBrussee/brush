@@ -277,9 +277,9 @@ impl App {
             egui_tiles::LinearDir::Vertical,
             vec![training_pane, dataset_pane, stats_pane],
         );
-        sidebar.shares.set_share(training_pane, 0.07);
-        sidebar.shares.set_share(dataset_pane, 0.5);
-        sidebar.shares.set_share(stats_pane, 0.43);
+        sidebar.shares.set_share(training_pane, 0.12);
+        sidebar.shares.set_share(dataset_pane, 0.53);
+        sidebar.shares.set_share(stats_pane, 0.35);
         let sidebar_id = tiles.insert_container(sidebar);
 
         let mut content = egui_tiles::Linear::new(

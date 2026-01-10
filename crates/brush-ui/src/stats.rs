@@ -41,6 +41,39 @@ fn bytes_format(bytes: u64) -> String {
     }
 }
 
+/// Helper to display a stat row - vertical stacks label above value, horizontal shows side-by-side
+fn stat_row(ui: &mut egui::Ui, label: &str, value: impl Into<String>, vertical: bool) {
+    if vertical {
+        ui.label(label);
+        ui.end_row();
+        ui.strong(value.into());
+        ui.end_row();
+    } else {
+        ui.label(label);
+        ui.label(value.into());
+        ui.end_row();
+    }
+}
+
+/// Creates a stats grid with responsive layout
+fn stats_grid(ui: &mut egui::Ui, id: &str, add_contents: impl FnOnce(&mut egui::Ui, bool)) {
+    let use_vertical = ui.available_width() < 200.0;
+    let first_col_width = ui.available_width() * 0.4;
+
+    let mut grid = egui::Grid::new(id)
+        .num_columns(if use_vertical { 1 } else { 2 })
+        .spacing([20.0, 4.0]);
+
+    if !use_vertical {
+        grid = grid
+            .striped(true)
+            .min_col_width(first_col_width)
+            .max_col_width(first_col_width);
+    }
+
+    grid.show(ui, |ui| add_contents(ui, use_vertical));
+}
+
 impl AppPane for StatsPanel {
     fn title(&self) -> egui::WidgetText {
         "Stats".into()
@@ -109,9 +142,7 @@ impl AppPane for StatsPanel {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
-        ui.vertical(|ui| {
-            let _ = process;
-
+        egui::ScrollArea::vertical().show(ui, |ui| {
             // Model Stats
             ui.heading(if self.training_complete {
                 "Final Model Stats"
@@ -125,71 +156,37 @@ impl AppPane for StatsPanel {
                 .and_then(|sv| sv.get_main())
                 .map_or((0, 0), |spl| (spl.num_splats(), spl.sh_degree()));
 
-            let first_col_width = ui.available_width() * 0.4;
-            egui::Grid::new("model_stats_grid")
-                .num_columns(2)
-                .spacing([20.0, 4.0])
-                .striped(true)
-                .min_col_width(first_col_width)
-                .max_col_width(first_col_width)
-                .show(ui, |ui| {
-                    ui.label("Splats");
-                    ui.label(format!("{num_splats}"));
-                    ui.end_row();
-
-                    ui.label("SH Degree");
-                    ui.label(format!("{sh_degree}"));
-                    ui.end_row();
-
-                    if self.frames > 0 {
-                        ui.label("Frames");
-                        ui.label(format!("{}", self.frames));
-                        ui.end_row();
-                    }
-                });
+            let frames = self.frames;
+            stats_grid(ui, "model_stats_grid", |ui, v| {
+                stat_row(ui, "Splats", format!("{num_splats}"), v);
+                stat_row(ui, "SH Degree", format!("{sh_degree}"), v);
+                if frames > 0 {
+                    stat_row(ui, "Frames", format!("{frames}"), v);
+                }
+            });
 
             if process.is_training() {
                 ui.add_space(10.0);
                 ui.heading("Training Stats");
                 ui.separator();
 
-                let first_col_width = ui.available_width() * 0.4;
-                egui::Grid::new("training_stats_grid")
-                    .num_columns(2)
-                    .spacing([20.0, 4.0])
-                    .striped(true)
-                    .min_col_width(first_col_width)
-                    .max_col_width(first_col_width)
-                    .show(ui, |ui| {
-                        ui.label("Train step");
-                        ui.label(format!("{}", self.last_train_step.1));
-                        ui.end_row();
+                let last_eval = self.last_eval.clone().unwrap_or_else(|| "--".to_owned());
+                let training_time = format!(
+                    "{}",
+                    humantime::format_duration(Duration::from_secs(
+                        self.last_train_step.0.as_secs()
+                    ))
+                );
+                let train_step = self.last_train_step.1;
+                let (train_views, eval_views) = self.train_eval_views;
 
-                        ui.label("Last eval");
-                        ui.label(if let Some(eval) = self.last_eval.as_ref() {
-                            eval
-                        } else {
-                            "--"
-                        });
-                        ui.end_row();
-
-                        ui.label("Training time");
-                        ui.label(format!(
-                            "{}",
-                            humantime::format_duration(Duration::from_secs(
-                                self.last_train_step.0.as_secs()
-                            ))
-                        ));
-                        ui.end_row();
-
-                        ui.label("Dataset views");
-                        ui.label(format!("{}", self.train_eval_views.0));
-                        ui.end_row();
-
-                        ui.label("Dataset eval views");
-                        ui.label(format!("{}", self.train_eval_views.1));
-                        ui.end_row();
-                    });
+                stats_grid(ui, "training_stats_grid", |ui, v| {
+                    stat_row(ui, "Train step", format!("{train_step}"), v);
+                    stat_row(ui, "Last eval", last_eval, v);
+                    stat_row(ui, "Training time", training_time, v);
+                    stat_row(ui, "Dataset views", format!("{train_views}"), v);
+                    stat_row(ui, "Dataset eval views", format!("{eval_views}"), v);
+                });
             }
 
             if let Some(device) = &self.device {
@@ -200,54 +197,31 @@ impl AppPane for StatsPanel {
                 let client = WgpuRuntime::client(device);
                 let memory = client.memory_usage();
 
-                let first_col_width = ui.available_width() * 0.4;
-                egui::Grid::new("memory_stats_grid")
-                    .num_columns(2)
-                    .spacing([20.0, 4.0])
-                    .striped(true)
-                    .min_col_width(first_col_width)
-                    .max_col_width(first_col_width)
-                    .show(ui, |ui| {
-                        ui.label("Bytes in use");
-                        ui.label(bytes_format(memory.bytes_in_use));
-                        ui.end_row();
-
-                        ui.label("Bytes reserved");
-                        ui.label(bytes_format(memory.bytes_reserved));
-                        ui.end_row();
-
-                        ui.label("Active allocations");
-                        ui.label(format!("{}", memory.number_allocs));
-                        ui.end_row();
-                    });
+                stats_grid(ui, "memory_stats_grid", |ui, v| {
+                    stat_row(ui, "Bytes in use", bytes_format(memory.bytes_in_use), v);
+                    stat_row(ui, "Bytes reserved", bytes_format(memory.bytes_reserved), v);
+                    stat_row(
+                        ui,
+                        "Active allocations",
+                        format!("{}", memory.number_allocs),
+                        v,
+                    );
+                });
 
                 // On WASM, adapter info is mostly private, not worth showing.
                 if !cfg!(target_family = "wasm")
                     && let Some(adapter_info) = &self.adapter_info
                 {
-                    let first_col_width = ui.available_width() * 0.4;
-                    egui::Grid::new("gpu_info_grid")
-                        .num_columns(2)
-                        .spacing([20.0, 4.0])
-                        .striped(true)
-                        .min_col_width(first_col_width)
-                        .max_col_width(first_col_width)
-                        .show(ui, |ui| {
-                            ui.label("Name");
-                            ui.label(&adapter_info.name);
-                            ui.end_row();
-
-                            ui.label("Type");
-                            ui.label(format!("{:?}", adapter_info.device_type));
-                            ui.end_row();
-
-                            ui.label("Driver");
-                            ui.label(format!(
-                                "{}, {}",
-                                adapter_info.driver, adapter_info.driver_info
-                            ));
-                            ui.end_row();
-                        });
+                    stats_grid(ui, "gpu_info_grid", |ui, v| {
+                        stat_row(ui, "Name", &adapter_info.name, v);
+                        stat_row(ui, "Type", format!("{:?}", adapter_info.device_type), v);
+                        stat_row(
+                            ui,
+                            "Driver",
+                            format!("{}, {}", adapter_info.driver, adapter_info.driver_info),
+                            v,
+                        );
+                    });
                 }
             }
         });

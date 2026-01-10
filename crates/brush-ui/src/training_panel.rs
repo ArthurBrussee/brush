@@ -213,61 +213,42 @@ impl AppPane for TrainingPanel {
         let is_complete = iter == total;
         let padding = 8.0;
 
-        let bar_rect = ui
-            .horizontal(|ui| {
-                if !is_complete {
-                    let paused = process.is_train_paused();
-                    let icon = if paused { "⏵" } else { "⏸" };
-                    let btn_color = if paused {
-                        egui::Color32::from_rgb(70, 70, 75)
-                    } else {
-                        egui::Color32::from_rgb(70, 130, 180)
-                    };
+        // Buttons row above progress bar
+        ui.horizontal(|ui| {
+            if !is_complete {
+                let paused = process.is_train_paused();
+                let icon = if paused { "⏵" } else { "⏸" };
+                let btn_color = if paused {
+                    egui::Color32::from_rgb(70, 70, 75)
+                } else {
+                    egui::Color32::from_rgb(70, 130, 180)
+                };
 
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new(icon).size(14.0).color(egui::Color32::WHITE),
-                            )
-                            .min_size(egui::vec2(28.0, 20.0))
-                            .corner_radius(6.0)
-                            .fill(btn_color),
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new(icon).size(14.0).color(egui::Color32::WHITE),
                         )
-                        .on_hover_text(if paused {
-                            "Resume training"
-                        } else {
-                            "Pause training"
-                        })
-                        .clicked()
-                    {
-                        process.set_train_paused(!paused);
-                    }
-
-                    ui.add_space(6.0);
-                }
-
-                let export_button_width = if process.is_training() { 65.0 } else { 0.0 };
-                let progress_width = ui.available_width()
-                    - export_button_width
-                    - if export_button_width > 0.0 { 6.0 } else { 0.0 };
-
-                let bar_response = ui.add(
-                    egui::ProgressBar::new(progress)
-                        .desired_width(progress_width)
-                        .desired_height(20.0)
-                        .fill(if is_complete {
-                            egui::Color32::from_rgb(100, 200, 100)
-                        } else {
-                            ui.visuals().selection.bg_fill
-                        }),
-                );
-
-                let bar_rect = bar_response.rect;
-
-                if let Some(slot) = process.current_splats()
-                    && process.is_training()
+                        .min_size(egui::vec2(28.0, 20.0))
+                        .corner_radius(6.0)
+                        .fill(btn_color),
+                    )
+                    .on_hover_text(if paused {
+                        "Resume training"
+                    } else {
+                        "Pause training"
+                    })
+                    .clicked()
                 {
-                    ui.add_space(6.0);
+                    process.set_train_paused(!paused);
+                }
+            }
+
+            if let Some(slot) = process.current_splats()
+                && process.is_training()
+            {
+                // Right-align export button
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Make export button more prominent when training is complete
                     let (button_text, button_color) = if is_complete {
                         ("Export", egui::Color32::from_rgb(60, 160, 60))
@@ -309,11 +290,25 @@ impl AppPane for TrainingPanel {
                             }
                         });
                     }
-                }
+                });
+            }
+        });
 
-                bar_rect
-            })
-            .inner;
+        ui.add_space(4.0);
+
+        // Progress bar
+        let bar_rect = ui
+            .add(
+                egui::ProgressBar::new(progress)
+                    .desired_width(ui.available_width().max(1.0))
+                    .desired_height(20.0)
+                    .fill(if is_complete {
+                        egui::Color32::from_rgb(100, 200, 100)
+                    } else {
+                        ui.visuals().selection.bg_fill
+                    }),
+            )
+            .rect;
 
         // Draw export pins on the progress bar
         if let Some(config) = &self.train_config {
