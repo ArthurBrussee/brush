@@ -2,9 +2,9 @@
 
 mod shared;
 
-use brush_ui::app::App;
-
 use brush_cli::Cli;
+use brush_process::create_process;
+use brush_ui::app::App;
 use clap::Parser;
 
 use crate::shared::startup;
@@ -51,10 +51,25 @@ fn main() -> Result<(), anyhow::Error> {
         .build()
         .expect("Failed to initialize tokio runtime")
         .block_on(async move {
+            // Create initial process if source is provided
+            let init_process = args.source.map(|source| {
+                create_process(
+                    source,
+                    #[cfg(feature = "training")]
+                    {
+                        let cli_config = args.train_stream.clone();
+                        async move |init| {
+                            brush_process::args_file::merge_configs(&init, &cli_config)
+                        }
+                    },
+                )
+            });
+
             if args.with_viewer {
                 env_logger::builder()
                     .target(env_logger::Target::Stdout)
                     .init();
+
                 let icon = eframe::icon_data::from_png_bytes(
                     &include_bytes!("../assets/icon-256.png")[..],
                 )
@@ -77,19 +92,20 @@ fn main() -> Result<(), anyhow::Error> {
                     "Brush"
                 };
 
+                // UI will init the burn device.
                 eframe::run_native(
                     title,
                     native_options,
-                    Box::new(move |cc| {
-                        Ok(Box::new(App::new(cc, Some(args.train_stream), args.source)))
-                    }),
+                    Box::new(move |cc| Ok(Box::new(App::new(cc, init_process)))),
                 )?;
             } else {
-                let Some(source) = args.source else {
-                    panic!("Validation of args failed?");
-                };
-                let device = brush_render::burn_init_setup().await;
-                brush_cli::run_cli_ui(source, args.train_stream, device).await?;
+                // Manually init the device.
+                brush_process::burn_init_setup().await;
+                brush_cli::run_cli_ui(
+                    init_process.expect("Must provide a source"),
+                    args.train_stream,
+                )
+                .await?;
             }
 
             anyhow::Result::<(), anyhow::Error>::Ok(())

@@ -1,10 +1,11 @@
+use brush_process::burn_init_setup;
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::TrainMessage;
-use brush_process::{message::ProcessMessage, process::create_process};
+use brush_process::{create_process, message::ProcessMessage};
 use brush_vfs::DataSource;
-use burn_wgpu::WgpuDevice;
 use std::convert::TryFrom;
 use std::ffi::{CStr, c_char, c_void};
+use tokio::sync::OnceCell;
 use tokio_stream::StreamExt;
 
 use crate::shared::startup;
@@ -74,6 +75,8 @@ impl TrainOptions {
 pub type ProgressCallback =
     extern "C" fn(progress_message: ProgressMessage, user_data: *mut c_void);
 
+static SETUP: OnceCell<()> = OnceCell::const_new();
+
 /// Trains a model from a dataset and saves the result.
 ///
 /// This function is designed to be called from other languages via FFI. It will
@@ -112,26 +115,30 @@ pub unsafe extern "C" fn train_and_save(
         return TrainExitCode::Error;
     }
 
-    startup();
-
     let dataset_path_str =
         // SAFETY: Checked if dataset_path is not null, caller guarantees the string is a valid C-string.
         unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
 
     let source = DataSource::Path(dataset_path_str);
-    let device = WgpuDevice::default();
 
     // SAFETY: Option is checked to not be null before the future.
     let train_options = unsafe { *options };
     // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
     let process_args = unsafe { train_options.into_train_stream_config() };
-    let mut process = create_process(source, async { process_args }, device);
+    let mut process = create_process(source, async move |_| process_args);
 
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("Failed to create tokio runtime")
         .block_on(async {
+            SETUP
+                .get_or_init(async move || {
+                    startup();
+                    burn_init_setup().await;
+                })
+                .await;
+
             while let Some(message_result) = process.stream.next().await {
                 match message_result {
                     Ok(message) => {

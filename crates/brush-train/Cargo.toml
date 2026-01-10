@@ -17,6 +17,7 @@ brush-serde.path = "../brush-serde"
 anyhow.workspace = true
 image.workspace = true
 clap.workspace = true
+serde.workspace = true
 glam.workspace = true
 rand.workspace = true
 tracing.workspace = true

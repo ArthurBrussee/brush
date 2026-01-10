@@ -1,10 +1,7 @@
 use crate::{UiMode, app::CameraSettings, camera_controls::CameraController};
 use anyhow::Result;
-use brush_process::{
-    config::TrainStreamConfig, message::ProcessMessage, process::create_process, slot::Slot,
-};
+use brush_process::{message::ProcessMessage, slot::Slot};
 use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
-use brush_vfs::DataSource;
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
 use glam::{Affine3A, Quat, Vec3};
@@ -173,11 +170,8 @@ impl UiProcess {
         inner.repaint();
     }
 
-    pub fn start_new_process(
-        &self,
-        source: DataSource,
-        args: impl Future<Output = TrainStreamConfig> + Send + 'static,
-    ) {
+    /// Connect to an existing running process.
+    pub fn connect_to_process(&self, process: brush_process::RunningProcess) {
         {
             let mut inner = self.write();
             let reset = UiProcessInner::new(inner.burn_device.clone(), inner.ui_ctx.clone());
@@ -187,7 +181,7 @@ impl UiProcess {
         let (sender, receiver) = mpsc::unbounded_channel();
         let (train_sender, mut train_receiver) = mpsc::unbounded_channel();
 
-        let mut process = create_process(source, args, self.read().burn_device.clone());
+        let mut process = process;
 
         let egui_ctx = self.read().ui_ctx.clone();
 

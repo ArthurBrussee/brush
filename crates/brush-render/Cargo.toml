@@ -22,9 +22,9 @@ burn-ir.workspace = true
 
 glam.workspace = true
 clap.workspace = true
+serde.workspace = true
 tracing.workspace = true
 log.workspace = true
-wgpu.workspace = true
 
 [package.metadata.cargo-shear]
 ignored = ["bytemuck"]

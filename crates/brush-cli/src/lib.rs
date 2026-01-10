@@ -1,12 +1,11 @@
 #![recursion_limit = "256"]
 
-use brush_process::message::ProcessMessage;
 #[cfg(feature = "training")]
 use brush_process::message::TrainMessage;
+use brush_process::{RunningProcess, message::ProcessMessage};
 
-use brush_process::{config::TrainStreamConfig, process::create_process};
+use brush_process::config::TrainStreamConfig;
 use brush_vfs::DataSource;
-use burn_wgpu::WgpuDevice;
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
@@ -51,9 +50,8 @@ impl Cli {
 }
 
 pub async fn run_cli_ui(
-    source: DataSource,
-    train_stream_config: TrainStreamConfig,
-    device: WgpuDevice,
+    mut process: RunningProcess,
+    #[allow(unused)] train_stream_config: TrainStreamConfig,
 ) -> Result<(), anyhow::Error> {
     // Initialize the logger with indicatif integration to prevent
     // progress bars from clobbering log output.
@@ -71,8 +69,6 @@ pub async fn run_cli_ui(
 
         multi
     };
-    let cfg = train_stream_config.clone();
-    let mut process = create_process(source, async { cfg }, device);
 
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")
