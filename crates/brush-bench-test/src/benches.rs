@@ -21,7 +21,7 @@ type DiffBackend = Autodiff<MainBackend>;
 const SEED: u64 = 42;
 const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
 const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
-const ITERS_PER_SYNC: u32 = 10;
+const ITERS_PER_SYNC: u32 = 4;
 
 fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(SEED);
@@ -253,6 +253,8 @@ mod backward_rendering {
 mod training {
     use brush_render::bounding_box::BoundingBox;
 
+    use crate::benches::ITERS_PER_SYNC;
+
     use super::{
         Backend, MainBackend, SPLAT_COUNTS, SplatTrainer, TrainConfig, Vec3, WgpuDevice,
         gen_splats, generate_training_batch,
@@ -272,9 +274,8 @@ mod training {
                 &device,
                 BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
             );
-
-            for step in 0..20 {
-                let batch = batches[step % batches.len()].clone();
+            for step in 0..ITERS_PER_SYNC {
+                let batch = batches[step as usize % batches.len()].clone();
                 let (new_splats, _) = trainer.step(batch, splats);
                 splats = new_splats;
             }
