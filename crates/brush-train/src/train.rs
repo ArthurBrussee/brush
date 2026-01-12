@@ -312,7 +312,16 @@ impl SplatTrainer {
 
         let scale_small = scales.clone().lower_elem(1e-10).any_dim(1).squeeze_dim(1);
         let scale_big = scales
+            .clone()
             .greater_elem(max_allowed_bounds)
+            .any_dim(1)
+            .squeeze_dim(1);
+
+        let areas = scales.square().sum_dim(1);
+        let k = (areas.dims()[0] / 10_000).max(1);
+        let min_surface_bound = areas.clone().topk(k, 0).min().into_scalar();
+        let surface_mask = areas
+            .greater_elem(min_surface_bound)
             .any_dim(1)
             .squeeze_dim(1);
 
@@ -328,6 +337,7 @@ impl SplatTrainer {
         let prune_mask = alpha_mask
             .bool_or(scale_small)
             .bool_or(scale_big)
+            .bool_or(surface_mask)
             .bool_or(bound_mask);
 
         let (mut splats, refiner, pruned_count) =
