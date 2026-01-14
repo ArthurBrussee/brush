@@ -19,9 +19,14 @@ pub struct ProcessConfig {
     /// Export every this many steps.
     #[arg(long, help_heading = "Process options", default_value = "5000")]
     pub export_every: u32,
-    /// Location to put exported files. By default uses the data directory if available,
-    /// or the CWD otherwise. This can be set as a relative path.
-    #[arg(long, help_heading = "Process options", default_value = "./")]
+    /// Location to put exported files. Supports {dataset} interpolation for the dataset
+    /// folder name. Path is relative to the dataset's parent directory (or CWD if unavailable).
+    /// Use "./{dataset}/" to export inside the dataset folder.
+    #[arg(
+        long,
+        help_heading = "Process options",
+        default_value = "./{dataset}_exports/"
+    )]
     pub export_path: String,
     /// Filename of exported ply file
     #[arg(

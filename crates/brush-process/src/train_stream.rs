@@ -149,14 +149,25 @@ pub(crate) async fn train_stream(
     let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
     let mut trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
 
-    let export_path = if let Some(base_path) = vfs.base_path() {
-        base_path.join("exports")
-    } else {
-        // Defaults to CWD.
-        PathBuf::from("./")
-    };
+    // Get the dataset name from the base path (if available) for interpolation.
+    let dataset_name = vfs
+        .base_path()
+        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "dataset".to_owned());
 
-    let export_path = export_path.join(&train_stream_config.process_config.export_path);
+    // Interpolate {dataset} in the export path.
+    let export_path_str = train_stream_config
+        .process_config
+        .export_path
+        .replace("{dataset}", &dataset_name);
+
+    // Resolve relative to the dataset's parent directory if available, otherwise CWD.
+    let base_path = vfs
+        .base_path()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let export_path = base_path.join(&export_path_str);
     // Normalize path components
     let export_path: PathBuf = export_path.components().collect();
 
