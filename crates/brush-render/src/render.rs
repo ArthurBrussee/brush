@@ -342,7 +342,7 @@ impl SplatForward<Self> for MainBackendBase {
 
         // Compile the kernel, including/excluding info for backwards pass.
         // see the BWD_INFO define in the rasterize shader.
-        let raster_task = Rasterize::task(bwd_info, cfg!(target_family = "wasm"));
+        let raster_task = Rasterize::task(bwd_info);
 
         // SAFETY: Kernel checked to have no OOB, bounded loops.
         unsafe {
