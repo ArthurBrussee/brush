@@ -3,7 +3,7 @@
 
 use brush_dataset::scene::{SceneBatch, sample_to_tensor_data};
 use brush_render::{
-    AlphaMode, MainBackend,
+    AlphaMode, MainBackend, TextureMode,
     bounding_box::BoundingBox,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::{SplatRenderMode, Splats},
@@ -178,6 +178,7 @@ impl eframe::App for App {
                 glam::uvec2(self.image.width(), self.image.height()),
                 Vec3::ZERO, // Just render with a black background
                 None,
+                TextureMode::Packed,
             );
 
             let size = egui::vec2(self.image.width() as f32, self.image.height() as f32);

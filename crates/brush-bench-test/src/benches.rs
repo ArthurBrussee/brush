@@ -1,6 +1,6 @@
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
-    AlphaMode, MainBackend,
+    AlphaMode, MainBackend, TextureMode,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
     render_splats,
@@ -144,7 +144,7 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
 mod forward_rendering {
     use super::{
         AutodiffModule, Backend, Camera, ITERS_PER_SYNC, MainBackend, Quat, RESOLUTIONS,
-        SPLAT_COUNTS, Vec3, WgpuDevice, gen_splats, render_splats,
+        SPLAT_COUNTS, TextureMode, Vec3, WgpuDevice, gen_splats, render_splats,
     };
 
     #[divan::bench(args = SPLAT_COUNTS)]
@@ -161,7 +161,14 @@ mod forward_rendering {
 
         bencher.bench_local(move || {
             for _ in 0..ITERS_PER_SYNC {
-                let _ = render_splats(&splats, &camera, glam::uvec2(1920, 1080), Vec3::ZERO, None);
+                let _ = render_splats(
+                    &splats,
+                    &camera,
+                    glam::uvec2(1920, 1080),
+                    Vec3::ZERO,
+                    None,
+                    TextureMode::Float,
+                );
             }
             MainBackend::sync(&device).expect("Failed to sync");
         });
@@ -187,6 +194,7 @@ mod forward_rendering {
                     glam::uvec2(width, height),
                     Vec3::ZERO,
                     None,
+                    TextureMode::Float,
                 );
             }
             MainBackend::sync(&device).expect("Failed to sync");

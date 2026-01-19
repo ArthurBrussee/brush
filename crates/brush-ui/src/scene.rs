@@ -14,7 +14,7 @@ use egui::{
 use std::sync::Arc;
 
 use brush_render::{
-    MainBackend,
+    MainBackend, TextureMode,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
     render_splats,
@@ -340,6 +340,7 @@ impl ScenePanel {
                     pixel_size,
                     settings.background.unwrap_or(Vec3::ZERO),
                     settings.splat_scale,
+                    TextureMode::Packed,
                 );
 
                 if let Some(backbuffer) = &mut self.backbuffer {

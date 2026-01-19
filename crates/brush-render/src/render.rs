@@ -25,7 +25,7 @@ use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::{CubeDim, CubeTensor, WgpuRuntime};
 use glam::{Vec3, uvec2};
 
-pub fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
+pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
     uvec2(
         img_size.x.div_ceil(shaders::helpers::TILE_WIDTH),
         img_size.y.div_ceil(shaders::helpers::TILE_WIDTH),

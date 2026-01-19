@@ -26,6 +26,13 @@ pub enum SplatRenderMode {
     Mip,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TextureMode {
+    Packed,
+    #[default]
+    Float,
+}
+
 #[derive(Module, Debug)]
 pub struct Splats<B: Backend> {
     pub means: Param<Tensor<B, 2>>,
@@ -242,6 +249,7 @@ pub fn render_splats<B: Backend + SplatOps<B>>(
     img_size: glam::UVec2,
     background: Vec3,
     splat_scale: Option<f32>,
+    texture_mode: TextureMode,
 ) -> (Tensor<B, 3>, RenderAux<B>) {
     splats.validate_values();
 
@@ -269,9 +277,9 @@ pub fn render_splats<B: Backend + SplatOps<B>>(
 
     let num_intersections = project_output.read_num_intersections();
 
-    // Second pass: rasterize (drop compact_gid_from_isect - only needed for backward)
+    let use_float = matches!(texture_mode, TextureMode::Float);
     let (out_img, render_aux, _) =
-        B::rasterize(&project_output, num_intersections, background, false);
+        B::rasterize(&project_output, num_intersections, background, use_float);
 
     // Validate rasterize outputs
     render_aux.validate();

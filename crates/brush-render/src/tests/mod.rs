@@ -1,52 +1,12 @@
-use crate::{MainBackend, RenderAux, SplatOps, camera::Camera, gaussian_splats::SplatRenderMode};
+use crate::{
+    MainBackend, TextureMode,
+    camera::Camera,
+    gaussian_splats::{SplatRenderMode, Splats, render_splats},
+};
 use assert_approx_eq::assert_approx_eq;
-use burn::tensor::{Distribution, Tensor, TensorPrimitive};
+use burn::tensor::{Distribution, Tensor};
 use burn_wgpu::WgpuDevice;
 use glam::Vec3;
-
-/// Helper to run project + readback + rasterize for tests.
-/// TODO: Get rid of this.
-fn render_splats_test(
-    cam: &Camera,
-    img_size: glam::UVec2,
-    means: Tensor<MainBackend, 2>,
-    log_scales: Tensor<MainBackend, 2>,
-    quats: Tensor<MainBackend, 2>,
-    sh_coeffs: Tensor<MainBackend, 3>,
-    raw_opacity: Tensor<MainBackend, 1>,
-    render_mode: SplatRenderMode,
-    background: Vec3,
-    bwd_info: bool,
-) -> (Tensor<MainBackend, 3>, RenderAux<MainBackend>) {
-    // First pass: project
-    let project_output = MainBackend::project(
-        cam,
-        img_size,
-        means.into_primitive().tensor(),
-        log_scales.into_primitive().tensor(),
-        quats.into_primitive().tensor(),
-        sh_coeffs.into_primitive().tensor(),
-        raw_opacity.into_primitive().tensor(),
-        render_mode,
-    );
-
-    // Validate project output
-    project_output.validate();
-
-    // Sync readback of num_intersections
-    let num_intersections = project_output.read_num_intersections();
-
-    // Second pass: rasterize (drop compact_gid_from_isect - only needed for backward)
-    let (out_img, render_aux, _) =
-        MainBackend::rasterize(&project_output, num_intersections, background, bwd_info);
-
-    // Validate render aux
-    render_aux.validate();
-
-    let img = Tensor::from_primitive(TensorPrimitive::Float(out_img));
-
-    (img, render_aux)
-}
 
 #[test]
 fn renders_at_all() {
@@ -71,18 +31,16 @@ fn renders_at_all() {
             .repeat_dim(0, num_points);
     let sh_coeffs = Tensor::<MainBackend, 3>::ones([num_points, 1, 3], &device);
     let raw_opacity = Tensor::<MainBackend, 1>::zeros([num_points], &device);
-    let (output, _render_aux) = render_splats_test(
-        &cam,
-        img_size,
+
+    let splats = Splats::from_tensor_data(
         means,
-        log_scales,
         quats,
+        log_scales,
         sh_coeffs,
         raw_opacity,
         SplatRenderMode::Default,
-        Vec3::ZERO,
-        true,
     );
+    let (output, _render_aux) = render_splats(&splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float);
 
     let rgb = output.clone().slice([0..32, 0..32, 0..3]);
     let alpha = output.slice([0..32, 0..32, 3..4]);
@@ -139,16 +97,13 @@ fn renders_many_splats() {
     let raw_opacity =
         Tensor::<MainBackend, 1>::random([num_splats], Distribution::Uniform(-2.0, 2.0), &device);
 
-    let (_output, _render_aux) = render_splats_test(
-        &cam,
-        img_size,
+    let splats = Splats::from_tensor_data(
         means,
-        log_scales,
         quats,
+        log_scales,
         sh_coeffs,
         raw_opacity,
         SplatRenderMode::Default,
-        Vec3::ZERO,
-        true,
     );
+    let (_output, _render_aux) = render_splats(&splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float);
 }

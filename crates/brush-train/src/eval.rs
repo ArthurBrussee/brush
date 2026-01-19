@@ -5,7 +5,7 @@ use anyhow::Result;
 use brush_dataset::scene::{sample_to_tensor_data, view_to_sample_image};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
-use brush_render::{AlphaMode, RenderAux, SplatOps, render_splats};
+use brush_render::{AlphaMode, RenderAux, SplatOps, TextureMode, render_splats};
 use burn::prelude::Backend;
 use burn::tensor::{Tensor, s};
 use glam::Vec3;
@@ -36,7 +36,8 @@ pub fn eval_stats<B: Backend + SplatOps<B>>(
     let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
 
     // Render on reference black background
-    let (img, render_aux) = render_splats(splats, gt_cam, res, Vec3::ZERO, None);
+    let (img, render_aux) =
+        render_splats(splats, gt_cam, res, Vec3::ZERO, None, TextureMode::Float);
     let render_rgb = img.slice(s![.., .., 0..3]);
 
     // Simulate an 8-bit roundtrip for fair comparison.

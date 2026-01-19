@@ -11,7 +11,7 @@ use glam::Vec3;
 use render_aux::ProjectOutput;
 
 use crate::gaussian_splats::SplatRenderMode;
-pub use crate::gaussian_splats::render_splats;
+pub use crate::gaussian_splats::{TextureMode, render_splats};
 pub use crate::render_aux::RenderAux;
 
 mod burn_glue;
