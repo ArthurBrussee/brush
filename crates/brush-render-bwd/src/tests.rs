@@ -46,7 +46,6 @@ fn diffs_at_all() {
         SplatRenderMode::Default,
         Vec3::ZERO,
     );
-    result.aux.validate_values();
 
     let output: Tensor<TestBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(result.img));
     let rgb = output.clone().slice([0..32, 0..32, 0..3]);
@@ -115,5 +114,4 @@ fn diffs_many_splats() {
         SplatRenderMode::Default,
         Vec3::ZERO,
     );
-    result.aux.validate_values();
 }

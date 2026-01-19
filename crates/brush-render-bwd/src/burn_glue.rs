@@ -1,9 +1,10 @@
 use brush_render::{
-    MainBackendBase, SplatForward,
+    MainBackendBase, SplatOps,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
-    render_aux::RenderAux,
+    render_aux::{ProjectAux, RasterizeAux, validate_render_output},
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
+    shaders::helpers::ProjectUniforms,
 };
 use burn::{
     backend::{
@@ -32,7 +33,7 @@ use glam::Vec3;
 
 use crate::render_bwd::SplatGrads;
 
-/// Like [`SplatForward`], but for backends that support differentiation.
+/// Like [`SplatOps`], but for backends that support differentiation.
 ///
 /// This shouldn't be a separate trait, but atm is needed because of orphan trait rules.
 pub trait SplatForwardDiff<B: Backend> {
@@ -65,7 +66,7 @@ pub trait SplatBackwardOps<B: Backend> {
     ) -> SplatGrads<B>;
 }
 
-/// State from the ProjectPrepare pass needed for backward computation.
+/// State from the `ProjectPrepare` pass needed for backward computation.
 #[derive(Debug, Clone)]
 pub struct ProjectBackwardState<B: Backend> {
     pub(crate) means: FloatTensor<B>,
@@ -73,10 +74,12 @@ pub struct ProjectBackwardState<B: Backend> {
     pub(crate) log_scales: FloatTensor<B>,
     pub(crate) raw_opac: FloatTensor<B>,
     pub(crate) projected_splats: FloatTensor<B>,
-    pub(crate) uniforms_buffer: IntTensor<B>,
+    pub(crate) project_uniforms: ProjectUniforms,
+    pub(crate) num_visible: IntTensor<B>,
     pub(crate) global_from_compact_gid: IntTensor<B>,
     pub(crate) render_mode: SplatRenderMode,
     pub(crate) sh_degree: u32,
+    pub(crate) background: Vec3,
 }
 
 /// State from the Rasterize pass needed for backward computation.
@@ -96,12 +99,14 @@ pub struct GaussianBackwardState<B: Backend> {
     pub(crate) raw_opac: FloatTensor<B>,
     pub(crate) out_img: FloatTensor<B>,
     pub(crate) projected_splats: FloatTensor<B>,
-    pub(crate) uniforms_buffer: IntTensor<B>,
+    pub(crate) project_uniforms: ProjectUniforms,
+    pub(crate) num_visible: IntTensor<B>,
     pub(crate) compact_gid_from_isect: IntTensor<B>,
     pub(crate) global_from_compact_gid: IntTensor<B>,
     pub(crate) tile_offsets: IntTensor<B>,
     pub(crate) render_mode: SplatRenderMode,
     pub(crate) sh_degree: u32,
+    pub(crate) background: Vec3,
 }
 
 impl<B: Backend> GaussianBackwardState<B> {
@@ -116,10 +121,12 @@ impl<B: Backend> GaussianBackwardState<B> {
             log_scales: project.log_scales,
             raw_opac: project.raw_opac,
             projected_splats: project.projected_splats,
-            uniforms_buffer: project.uniforms_buffer,
+            project_uniforms: project.project_uniforms,
+            num_visible: project.num_visible,
             global_from_compact_gid: project.global_from_compact_gid,
             render_mode: project.render_mode,
             sh_degree: project.sh_degree,
+            background: project.background,
             out_img: rasterize.out_img,
             compact_gid_from_isect: rasterize.compact_gid_from_isect,
             tile_offsets: rasterize.tile_offsets,
@@ -190,13 +197,14 @@ impl<B: Backend + SplatBackwardOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackw
 
 pub struct SplatOutputDiff<B: Backend> {
     pub img: FloatTensor<B>,
-    pub aux: RenderAux<B>,
+    pub project_aux: ProjectAux<B>,
+    pub rasterize_aux: RasterizeAux<B>,
     pub refine_weight_holder: Tensor<B, 1>,
 }
 
 // Implement
-impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
-    SplatForwardDiff<Self> for Autodiff<B, C>
+impl<B: Backend + SplatBackwardOps<B> + SplatOps<B>, C: CheckpointStrategy> SplatForwardDiff<Self>
+    for Autodiff<B, C>
 {
     fn render_splats(
         camera: &Camera,
@@ -228,8 +236,8 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
             .compute_bound()
             .stateful();
 
-        // Render complete forward pass.
-        let (out_img, aux) = <B as SplatForward<B>>::render_splats(
+        // First pass: project
+        let project_aux = <B as SplatOps<B>>::project(
             camera,
             img_size,
             means.clone().into_primitive(),
@@ -238,18 +246,32 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
             sh_coeffs.clone().into_primitive(),
             raw_opacity.clone().into_primitive(),
             render_mode,
-            background,
-            true,
         );
 
-        let wrapped_aux = RenderAux::<Self> {
-            projected_splats: <Self as AutodiffBackend>::from_inner(aux.projected_splats.clone()),
-            tile_offsets: aux.tile_offsets.clone(),
-            compact_gid_from_isect: aux.compact_gid_from_isect.clone(),
-            global_from_compact_gid: aux.global_from_compact_gid.clone(),
-            uniforms_buffer: aux.uniforms_buffer.clone(),
-            visible: <Self as AutodiffBackend>::from_inner(aux.visible),
-            img_size: aux.img_size,
+        // Sync readback of num_intersections
+        let num_intersections = project_aux.num_intersections();
+
+        // Second pass: rasterize (with bwd_info = true)
+        let (out_img, rasterize_aux) =
+            <B as SplatOps<B>>::rasterize(&project_aux, num_intersections, background, true);
+
+        // Create wrapped aux structs for Autodiff backend
+        let wrapped_project_aux = ProjectAux::<Self> {
+            project_uniforms: project_aux.project_uniforms,
+            projected_splats: <Self as AutodiffBackend>::from_inner(
+                project_aux.projected_splats.clone(),
+            ),
+            num_visible: project_aux.num_visible.clone(),
+            global_from_compact_gid: project_aux.global_from_compact_gid.clone(),
+            cum_tiles_hit: project_aux.cum_tiles_hit.clone(),
+            img_size: project_aux.img_size,
+        };
+
+        let wrapped_rasterize_aux = RasterizeAux::<Self> {
+            tile_offsets: rasterize_aux.tile_offsets.clone(),
+            compact_gid_from_isect: rasterize_aux.compact_gid_from_isect.clone(),
+            visible: <Self as AutodiffBackend>::from_inner(rasterize_aux.visible.clone()),
+            img_size: rasterize_aux.img_size,
         };
 
         match prep_nodes {
@@ -265,19 +287,22 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
                             [1] as u32,
                     ),
                     out_img: out_img.clone(),
-                    projected_splats: aux.projected_splats,
-                    uniforms_buffer: aux.uniforms_buffer,
-                    tile_offsets: aux.tile_offsets,
-                    compact_gid_from_isect: aux.compact_gid_from_isect,
+                    projected_splats: project_aux.projected_splats,
+                    project_uniforms: project_aux.project_uniforms,
+                    num_visible: project_aux.num_visible,
+                    tile_offsets: rasterize_aux.tile_offsets,
+                    compact_gid_from_isect: rasterize_aux.compact_gid_from_isect,
                     render_mode,
-                    global_from_compact_gid: aux.global_from_compact_gid,
+                    global_from_compact_gid: project_aux.global_from_compact_gid,
+                    background,
                 };
 
                 let out_img = prep.finish(state, out_img);
 
                 SplatOutputDiff {
                     img: out_img,
-                    aux: wrapped_aux,
+                    project_aux: wrapped_project_aux,
+                    rasterize_aux: wrapped_rasterize_aux,
                     refine_weight_holder,
                 }
             }
@@ -286,7 +311,8 @@ impl<B: Backend + SplatBackwardOps<B> + SplatForward<B>, C: CheckpointStrategy>
                 // keeping any state.
                 SplatOutputDiff {
                     img: prep.finish(out_img),
-                    aux: wrapped_aux,
+                    project_aux: wrapped_project_aux,
+                    rasterize_aux: wrapped_rasterize_aux,
                     refine_weight_holder,
                 }
             }
@@ -304,6 +330,8 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             desc: CustomOpIr,
             render_mode: SplatRenderMode,
             sh_degree: u32,
+            background: Vec3,
+            project_uniforms: ProjectUniforms,
         }
 
         impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp {
@@ -321,7 +349,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                     raw_opac,
                     out_img,
                     projected_splats,
-                    uniforms_buffer,
+                    num_visible,
                     tile_offsets,
                     compact_gid_from_isect,
                     global_from_compact_gid,
@@ -336,7 +364,8 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                     raw_opac: h.get_float_tensor::<MainBackendBase>(raw_opac),
                     out_img: h.get_float_tensor::<MainBackendBase>(out_img),
                     projected_splats: h.get_float_tensor::<MainBackendBase>(projected_splats),
-                    uniforms_buffer: h.get_int_tensor::<MainBackendBase>(uniforms_buffer),
+                    project_uniforms: self.project_uniforms,
+                    num_visible: h.get_int_tensor::<MainBackendBase>(num_visible),
                     tile_offsets: h.get_int_tensor::<MainBackendBase>(tile_offsets),
                     compact_gid_from_isect: h
                         .get_int_tensor::<MainBackendBase>(compact_gid_from_isect),
@@ -344,6 +373,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                         .get_int_tensor::<MainBackendBase>(global_from_compact_gid),
                     sh_degree: self.sh_degree,
                     render_mode: self.render_mode,
+                    background: self.background,
                 };
 
                 let grads =
@@ -405,7 +435,7 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
             state.raw_opac,
             state.out_img,
             state.projected_splats,
-            state.uniforms_buffer,
+            state.num_visible,
             state.tile_offsets,
             state.compact_gid_from_isect,
             state.global_from_compact_gid,
@@ -430,10 +460,11 @@ impl SplatBackwardOps<Self> for Fusion<MainBackendBase> {
                 stream,
                 OperationIr::Custom(desc.clone()),
                 CustomOp {
-                    // state,
                     desc,
                     sh_degree: state.sh_degree,
                     render_mode: state.render_mode,
+                    background: state.background,
+                    project_uniforms: state.project_uniforms,
                 },
             )
             .outputs();
@@ -480,6 +511,6 @@ where
         splats.render_mode,
         background,
     );
-    result.aux.validate_values();
+    validate_render_output(&result.project_aux, &result.rasterize_aux);
     result
 }

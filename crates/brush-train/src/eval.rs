@@ -5,8 +5,11 @@ use anyhow::Result;
 use brush_dataset::scene::{sample_to_tensor_data, view_to_sample_image};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
-use brush_render::render_aux::RenderAux;
-use brush_render::{AlphaMode, SplatForward};
+use brush_render::render_aux::{ProjectAux, RasterizeAux};
+use brush_render::{AlphaMode, SplatOps};
+
+#[cfg(target_family = "wasm")]
+use brush_render::render::calc_tile_bounds;
 use burn::prelude::Backend;
 use burn::tensor::{Tensor, TensorPrimitive, s};
 use glam::Vec3;
@@ -19,10 +22,11 @@ pub struct EvalSample<B: Backend> {
     pub rendered: Tensor<B, 3>,
     pub psnr: Tensor<B, 1>,
     pub ssim: Tensor<B, 1>,
-    pub aux: RenderAux<B>,
+    pub project_aux: ProjectAux<B>,
+    pub rasterize_aux: RasterizeAux<B>,
 }
 
-pub fn eval_stats<B: Backend + SplatForward<B>>(
+pub fn eval_stats<B: Backend + SplatOps<B>>(
     splats: &Splats<B>,
     gt_cam: &Camera,
     gt_img: DynamicImage,
@@ -36,9 +40,10 @@ pub fn eval_stats<B: Backend + SplatForward<B>>(
     let gt_tensor = Tensor::from_data(gt_tensor, device);
     let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
 
-    // Render on reference black background.
-    let (img, aux) = {
-        let (img, aux) = B::render_splats(
+    // Render on reference black background using split pipeline.
+    let (img, project_aux, rasterize_aux) = {
+        // First pass: project
+        let project_aux = B::project(
             gt_cam,
             res,
             splats.means.val().into_primitive().tensor(),
@@ -47,10 +52,26 @@ pub fn eval_stats<B: Backend + SplatForward<B>>(
             splats.sh_coeffs.val().into_primitive().tensor(),
             splats.raw_opacities.val().into_primitive().tensor(),
             splats.render_mode,
-            Vec3::ZERO,
-            true,
         );
-        (Tensor::from_primitive(TensorPrimitive::Float(img)), aux)
+
+        // Sync readback of num_intersections
+        #[cfg(not(target_family = "wasm"))]
+        let num_intersections = project_aux.num_intersections();
+
+        #[cfg(target_family = "wasm")]
+        let num_intersections = {
+            use burn::tensor::ops::FloatTensorOps;
+            let tile_bounds = calc_tile_bounds(res);
+            let num_tiles = tile_bounds[0] * tile_bounds[1];
+            let total_splats = splats.num_splats();
+            let max_possible = num_tiles.saturating_mul(total_splats);
+            max_possible.min(2 * 512 * 65535)
+        };
+
+        // Second pass: rasterize (with bwd_info = true for eval)
+        let (out_img, rasterize_aux) = B::rasterize(&project_aux, num_intersections, Vec3::ZERO, true);
+
+        (Tensor::from_primitive(TensorPrimitive::Float(out_img)), project_aux, rasterize_aux)
     };
     let render_rgb = img.slice(s![.., .., 0..3]);
 
@@ -68,7 +89,8 @@ pub fn eval_stats<B: Backend + SplatForward<B>>(
         psnr,
         ssim,
         rendered: render_rgb,
-        aux,
+        project_aux,
+        rasterize_aux,
     })
 }
 

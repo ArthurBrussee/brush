@@ -133,10 +133,9 @@ async fn test_reference() -> Result<()> {
             Vec3::ZERO,
         );
 
-        let (out, aux) = (
-            Tensor::from_primitive(TensorPrimitive::Float(diff_out.img)),
-            diff_out.aux,
-        );
+        let out: Tensor<DiffBack, 3> = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+        let project_aux = diff_out.project_aux;
+        let rasterize_aux = diff_out.rasterize_aux;
 
         if let Some(rec) = rec.as_ref() {
             rec.set_time_sequence("test case", i as i64);
@@ -148,17 +147,17 @@ async fn test_reference() -> Result<()> {
             )?;
             rec.log(
                 "images/tile_depth",
-                &aux.calc_tile_depth().into_rerun().await,
+                &rasterize_aux.calc_tile_depth().into_rerun().await,
             )?;
         }
 
-        let num_visible: Tensor<DiffBack, 1, Int> = aux.num_visible();
+        let num_visible: Tensor<DiffBack, 1, Int> = project_aux.get_num_visible();
         let num_visible = num_visible.into_scalar_async().await.unwrap() as usize;
         let global_from_compact_gid: Tensor<DiffBack, 1, Int> =
-            Tensor::from_primitive(aux.global_from_compact_gid.clone());
+            Tensor::from_primitive(project_aux.global_from_compact_gid.clone());
         let gs_ids = global_from_compact_gid.clone().slice([0..num_visible]);
         let projected_splats =
-            Tensor::from_primitive(TensorPrimitive::Float(aux.projected_splats.clone()));
+            Tensor::from_primitive(TensorPrimitive::Float(project_aux.projected_splats.clone()));
         let xys: Tensor<DiffBack, 2, Float> =
             projected_splats.clone().slice([0..num_visible, 0..2]);
         let xys_ref = safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("xys")?, &device);

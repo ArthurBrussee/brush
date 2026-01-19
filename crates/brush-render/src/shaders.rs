@@ -10,13 +10,10 @@ pub struct ProjectSplats {
 #[wgsl_kernel(source = "src/shaders/project_visible.wgsl")]
 pub struct ProjectVisible {
     mip_splatting: bool,
-    count_intersections: bool,
 }
 
 #[wgsl_kernel(source = "src/shaders/map_gaussian_to_intersects.wgsl")]
-pub struct MapGaussiansToIntersect {
-    pub prepass: bool,
-}
+pub struct MapGaussiansToIntersect;
 
 #[wgsl_kernel(source = "src/shaders/rasterize.wgsl")]
 pub struct Rasterize {
@@ -28,7 +25,8 @@ pub mod helpers {
     // Types used by multiple shaders - available from project_visible
     pub use super::project_visible::PackedVec3;
     pub use super::project_visible::ProjectedSplat;
-    pub use super::project_visible::RenderUniforms;
+    pub use super::project_visible::ProjectUniforms;
+    pub use super::rasterize::RasterizeUniforms;
 
     // Constants are now associated with the kernel structs
     pub const COV_BLUR: f32 = super::ProjectVisible::COV_BLUR;

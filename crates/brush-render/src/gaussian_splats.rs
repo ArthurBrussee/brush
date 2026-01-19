@@ -9,11 +9,14 @@ use glam::Vec3;
 use tracing::trace_span;
 
 use crate::{
-    SplatForward,
+    SplatOps,
     camera::Camera,
-    render_aux::RenderAux,
+    render_aux::{ProjectAux, RasterizeAux, validate_render_output},
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
+
+#[cfg(target_family = "wasm")]
+use crate::render::calc_tile_bounds;
 
 #[derive(
     Module, Clone, Copy, Debug, Eq, PartialEq, ValueEnum, serde::Serialize, serde::Deserialize,
@@ -234,13 +237,13 @@ impl<B: Backend> Splats<B> {
 ///
 /// NB: This doesn't work on a differentiable backend. Use
 /// [`brush_render_bwd::render_splats`] for that.
-pub fn render_splats<B: Backend + SplatForward<B>>(
+pub fn render_splats<B: Backend + SplatOps<B>>(
     splats: &Splats<B>,
     camera: &Camera,
     img_size: glam::UVec2,
     background: Vec3,
     splat_scale: Option<f32>,
-) -> (Tensor<B, 3>, RenderAux<B>) {
+) -> (Tensor<B, 3>, ProjectAux<B>, RasterizeAux<B>) {
     splats.validate_values();
 
     let mut scales = splats.log_scales.val();
@@ -250,7 +253,8 @@ pub fn render_splats<B: Backend + SplatForward<B>>(
         scales = scales + scale.ln();
     };
 
-    let (img, aux) = B::render_splats(
+    // First pass: project
+    let project_aux = B::project(
         camera,
         img_size,
         splats.means.val().into_primitive().tensor(),
@@ -259,12 +263,16 @@ pub fn render_splats<B: Backend + SplatForward<B>>(
         splats.sh_coeffs.val().into_primitive().tensor(),
         splats.raw_opacities.val().into_primitive().tensor(),
         splats.render_mode,
-        background,
-        false,
     );
-    let img = Tensor::from_primitive(TensorPrimitive::Float(img));
 
-    aux.validate_values();
+    let num_intersections = project_aux.num_intersections();
 
-    (img, aux)
+    // Second pass: rasterize
+    let (out_img, rasterize_aux) = B::rasterize(&project_aux, num_intersections, background, false);
+
+    let img = Tensor::from_primitive(TensorPrimitive::Float(out_img));
+
+    validate_render_output(&project_aux, &rasterize_aux);
+
+    (img, project_aux, rasterize_aux)
 }

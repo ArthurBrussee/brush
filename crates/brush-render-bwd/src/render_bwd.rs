@@ -1,5 +1,6 @@
-use brush_kernel::{CubeCount, calc_cube_count_1d};
+use brush_kernel::{CubeCount, calc_cube_count_1d, create_meta_binding};
 use brush_render::gaussian_splats::SplatRenderMode;
+use brush_render::shaders::helpers::RasterizeUniforms;
 use brush_wgsl::wgsl_kernel;
 
 use brush_render::MainBackendBase;
@@ -59,7 +60,6 @@ impl SplatBackwardOps<Self> for MainBackendBase {
 
         // We're in charge of these, SHOULD be contiguous but might as well.
         let projected_splats = into_contiguous(state.projected_splats);
-        let uniforms_buffer = into_contiguous(state.uniforms_buffer);
         let compact_gid_from_isect = into_contiguous(state.compact_gid_from_isect);
         let global_from_compact_gid = into_contiguous(state.global_from_compact_gid);
         let tile_offsets = into_contiguous(state.tile_offsets);
@@ -101,6 +101,13 @@ impl SplatBackwardOps<Self> for MainBackendBase {
                 .div_ceil(brush_render::shaders::helpers::TILE_WIDTH),
         );
 
+        // Create RasterizeUniforms for the backward rasterize pass (passed via with_metadata)
+        let rasterize_uniforms = RasterizeUniforms {
+            tile_bounds: tile_bounds.into(),
+            img_size: img_size.into(),
+            background: [state.background.x, state.background.y, state.background.z, 1.0],
+        };
+
         let hard_floats = client
             .properties()
             .type_usage(StorageType::Atomic(ElemType::Float(FloatKind::F32)))
@@ -117,18 +124,19 @@ impl SplatBackwardOps<Self> for MainBackendBase {
                     .launch_unchecked(
                         RasterizeBackwards::task(hard_floats, webgpu),
                         CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
-                        Bindings::new().with_buffers(vec![
-                            uniforms_buffer.handle.clone().binding(),
-                            compact_gid_from_isect.handle.binding(),
-                            global_from_compact_gid.handle.clone().binding(),
-                            tile_offsets.handle.binding(),
-                            projected_splats.handle.binding(),
-                            state.out_img.handle.binding(),
-                            v_output.handle.binding(),
-                            v_grads.handle.clone().binding(),
-                            v_raw_opac.handle.clone().binding(),
-                            v_refine_weight.handle.clone().binding(),
-                        ]),
+                        Bindings::new()
+                            .with_buffers(vec![
+                                compact_gid_from_isect.handle.binding(),
+                                global_from_compact_gid.handle.clone().binding(),
+                                tile_offsets.handle.binding(),
+                                projected_splats.handle.binding(),
+                                state.out_img.handle.binding(),
+                                v_output.handle.binding(),
+                                v_grads.handle.clone().binding(),
+                                v_raw_opac.handle.clone().binding(),
+                                v_refine_weight.handle.clone().binding(),
+                            ])
+                            .with_metadata(create_meta_binding(rasterize_uniforms)),
                     )
                     .expect("Failed to bwd-diff splats");
             }
@@ -140,21 +148,22 @@ impl SplatBackwardOps<Self> for MainBackendBase {
         client.launch_unchecked(
             ProjectBackwards::task(mip_splat),
             calc_cube_count_1d(num_points as u32, ProjectBackwards::WORKGROUP_SIZE[0]),
-            Bindings::new().with_buffers(
-            vec![
-                uniforms_buffer.handle.binding(),
-                means.handle.binding(),
-                log_scales.handle.binding(),
-                quats.handle.binding(),
-                raw_opac.handle.binding(),
-                global_from_compact_gid.handle.binding(),
-                v_grads.handle.binding(),
-                v_means.handle.clone().binding(),
-                v_scales.handle.clone().binding(),
-                v_quats.handle.clone().binding(),
-                v_coeffs.handle.clone().binding(),
-                v_raw_opac.handle.clone().binding(),
-            ]),
+            Bindings::new()
+                .with_buffers(vec![
+                    state.num_visible.handle.binding(),
+                    means.handle.binding(),
+                    log_scales.handle.binding(),
+                    quats.handle.binding(),
+                    raw_opac.handle.binding(),
+                    global_from_compact_gid.handle.binding(),
+                    v_grads.handle.binding(),
+                    v_means.handle.clone().binding(),
+                    v_scales.handle.clone().binding(),
+                    v_quats.handle.clone().binding(),
+                    v_coeffs.handle.clone().binding(),
+                    v_raw_opac.handle.clone().binding(),
+                ])
+                .with_metadata(create_meta_binding(state.project_uniforms)),
         ).expect("Failed to bwd-diff splats");
     });
 

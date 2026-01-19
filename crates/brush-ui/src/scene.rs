@@ -334,7 +334,7 @@ impl ScenePanel {
             if pixel_size.x > 8 && pixel_size.y > 8 && dirty {
                 let _span = trace_span!("Render splats").entered();
                 // Could add an option for background color.
-                let (img, _) = render_splats(
+                let (img, _, _) = render_splats(
                     &splats,
                     &camera,
                     pixel_size,

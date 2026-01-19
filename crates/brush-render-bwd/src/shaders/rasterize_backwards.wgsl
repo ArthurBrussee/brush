@@ -1,17 +1,18 @@
 #import helpers;
 
-@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
-@group(0) @binding(1) var<storage, read> compact_gid_from_isect: array<u32>;
-@group(0) @binding(2) var<storage, read> global_from_compact_gid: array<u32>;
-@group(0) @binding(3) var<storage, read> tile_offsets: array<u32>;
-@group(0) @binding(4) var<storage, read> projected: array<helpers::ProjectedSplat>;
-@group(0) @binding(5) var<storage, read> output: array<vec4f>;
-@group(0) @binding(6) var<storage, read> v_output: array<vec4f>;
+@group(0) @binding(0) var<storage, read> compact_gid_from_isect: array<u32>;
+@group(0) @binding(1) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(2) var<storage, read> tile_offsets: array<u32>;
+@group(0) @binding(3) var<storage, read> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(4) var<storage, read> output: array<vec4f>;
+@group(0) @binding(5) var<storage, read> v_output: array<vec4f>;
 
 #ifdef HARD_FLOAT
-    @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<f32>>;
-    @group(0) @binding(8) var<storage, read_write> v_opacs: array<atomic<f32>>;
-    @group(0) @binding(9) var<storage, read_write> v_refines: array<atomic<f32>>;
+    @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<f32>>;
+    @group(0) @binding(7) var<storage, read_write> v_opacs: array<atomic<f32>>;
+    @group(0) @binding(8) var<storage, read_write> v_refines: array<atomic<f32>>;
+    // Uniforms via with_metadata (always last binding)
+    @group(0) @binding(9) var<storage, read> uniforms: helpers::RasterizeUniforms;
 
     fn write_grads_atomic(id: u32, grads: f32) {
         atomicAdd(&v_splats[id], grads);
@@ -23,9 +24,11 @@
         atomicAdd(&v_opacs[id], grads);
     }
 #else
-    @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<u32>>;
-    @group(0) @binding(8) var<storage, read_write> v_opacs: array<atomic<u32>>;
-    @group(0) @binding(9) var<storage, read_write> v_refines: array<atomic<u32>>;
+    @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<u32>>;
+    @group(0) @binding(7) var<storage, read_write> v_opacs: array<atomic<u32>>;
+    @group(0) @binding(8) var<storage, read_write> v_refines: array<atomic<u32>>;
+    // Uniforms via with_metadata (always last binding)
+    @group(0) @binding(9) var<storage, read> uniforms: helpers::RasterizeUniforms;
 
     fn add_bitcast(cur: u32, add: f32) -> u32 {
         return bitcast<u32>(bitcast<f32>(cur) + add);
