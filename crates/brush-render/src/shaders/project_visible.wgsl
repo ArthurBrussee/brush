@@ -14,7 +14,6 @@ struct IsectInfo {
 @group(0) @binding(6) var<storage, read> global_from_compact_gid: array<u32>;
 @group(0) @binding(7) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
 @group(0) @binding(8) var<storage, read_write> splat_intersect_counts: array<u32>;
-// Uniforms via with_metadata (always last binding)
 @group(0) @binding(9) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 struct ShCoeffs {

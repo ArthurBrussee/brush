@@ -1,3 +1,4 @@
+use burn::tensor::ElementConversion;
 use burn::{
     Tensor,
     prelude::Backend,
@@ -21,9 +22,8 @@ pub struct ProjectOutput<B: Backend> {
 }
 
 impl<B: Backend> ProjectOutput<B> {
-    /// Extract the total number of intersections (sync readback).
-    pub fn num_intersections(&self) -> u32 {
-        use burn::tensor::ElementConversion;
+    /// Get the total number of intersections (sync readback).
+    pub fn read_num_intersections(&self) -> u32 {
         let cum_tiles_hit: Tensor<B, 1, Int> = Tensor::from_primitive(self.cum_tiles_hit.clone());
         let total = self.project_uniforms.total_splats as usize;
         if total > 0 {

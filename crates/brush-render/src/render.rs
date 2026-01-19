@@ -119,7 +119,6 @@ impl SplatOps<Self> for MainBackendBase {
             ).expect("Failed to render splats");
         });
 
-            // Step 2: DepthSort - use dynamic count to sort only up to num_visible
             let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort").in_scope(|| {
                 radix_argsort(
                     depths,
@@ -132,7 +131,6 @@ impl SplatOps<Self> for MainBackendBase {
             global_from_compact_gid
         };
 
-        // Step 3: ProjectVisible with intersection counting
         let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / size_of::<f32>();
         let projected_splats = create_tensor([total_splats, proj_size], device, DType::F32);
         let splat_intersect_counts = Self::int_zeros([total_splats].into(), device, IntDType::U32);
@@ -166,7 +164,6 @@ impl SplatOps<Self> for MainBackendBase {
             }
         });
 
-        // Step 4: PrefixSum to get cumulative tile hits
         let cum_tiles_hit = tracing::trace_span!("PrefixSumGaussHits")
             .in_scope(|| prefix_sum(splat_intersect_counts));
 
@@ -196,7 +193,6 @@ impl SplatOps<Self> for MainBackendBase {
         let tile_bounds = calc_tile_bounds(img_size);
         let num_tiles = tile_bounds.x * tile_bounds.y;
 
-        // Create rasterize uniforms (passed via with_metadata)
         let rasterize_uniforms = shaders::helpers::RasterizeUniforms {
             tile_bounds: tile_bounds.into(),
             img_size: img_size.into(),
@@ -214,7 +210,6 @@ impl SplatOps<Self> for MainBackendBase {
             MapGaussiansToIntersect::WORKGROUP_SIZE[0],
         );
 
-        // Uniforms for map_gaussian_to_intersects (passed via with_metadata)
         let map_uniforms = shaders::map_gaussians_to_intersect::Uniforms {
             tile_bounds: tile_bounds.into(),
         };
@@ -299,7 +294,11 @@ impl SplatOps<Self> for MainBackendBase {
                     tile_offsets.handle.clone().binding(),
                     project_output.projected_splats.handle.clone().binding(),
                     out_img.handle.clone().binding(),
-                    project_output.global_from_compact_gid.handle.clone().binding(),
+                    project_output
+                        .global_from_compact_gid
+                        .handle
+                        .clone()
+                        .binding(),
                     visible.handle.clone().binding(),
                 ])
                 .with_metadata(create_meta_binding(rasterize_uniforms));
@@ -328,13 +327,6 @@ impl SplatOps<Self> for MainBackendBase {
                 )
                 .expect("Failed to render splats");
         }
-
-        // Sanity checks
-        assert!(
-            tile_offsets.is_contiguous(),
-            "Tile offsets must be contiguous"
-        );
-        assert!(visible.is_contiguous(), "Visible must be contiguous");
 
         (
             out_img,

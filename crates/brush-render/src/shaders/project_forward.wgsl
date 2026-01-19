@@ -7,7 +7,6 @@
 @group(0) @binding(4) var<storage, read_write> global_from_compact_gid: array<u32>;
 @group(0) @binding(5) var<storage, read_write> depths: array<f32>;
 @group(0) @binding(6) var<storage, read_write> num_visible: atomic<u32>;
-// Uniforms via with_metadata (always last binding)
 @group(0) @binding(7) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 const WG_SIZE: u32 = 256u;

@@ -34,7 +34,7 @@ pub mod validation;
 pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u32>;
 pub type MainBackend = Fusion<MainBackendBase>;
 
-/// Trait for the split gaussian splatting rendering pipeline.
+/// Trait for the the gaussian splatting rendering pipeline.
 ///
 /// This trait provides two passes:
 /// 1. `project`: Culling, depth sort, projection, intersection counting, prefix sum.
@@ -42,8 +42,6 @@ pub type MainBackend = Fusion<MainBackendBase>;
 ///
 /// The split allows for an explicit GPU sync point between passes to read back
 /// the exact number of intersections needed for buffer allocation.
-///
-/// Users should typically use [`render_splats`] instead of this trait directly.
 pub trait SplatOps<B: Backend> {
     /// First pass: project gaussians and count intersections.
     fn project(
@@ -58,12 +56,6 @@ pub trait SplatOps<B: Backend> {
     ) -> ProjectOutput<B>;
 
     /// Second pass: rasterize using projection data.
-    ///
-    /// Takes the output of [`Self::project`] along with the actual
-    /// `num_intersections` value from sync readback.
-    ///
-    /// Returns `(image, render_aux, compact_gid_from_isect)` where the last
-    /// value is only needed for backward pass and can be dropped for forward-only.
     fn rasterize(
         project_output: &ProjectOutput<B>,
         num_intersections: u32,

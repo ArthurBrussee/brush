@@ -1,8 +1,4 @@
-use crate::{
-    MainBackend, RenderAux, SplatOps,
-    camera::Camera,
-    gaussian_splats::SplatRenderMode,
-};
+use crate::{MainBackend, RenderAux, SplatOps, camera::Camera, gaussian_splats::SplatRenderMode};
 use assert_approx_eq::assert_approx_eq;
 use burn::tensor::{Distribution, Tensor, TensorPrimitive};
 use burn_wgpu::WgpuDevice;
@@ -37,7 +33,7 @@ fn render_splats_test(
     project_output.validate();
 
     // Sync readback of num_intersections
-    let num_intersections = project_output.num_intersections();
+    let num_intersections = project_output.read_num_intersections();
 
     // Second pass: rasterize (drop compact_gid_from_isect - only needed for backward)
     let (out_img, render_aux, _) =

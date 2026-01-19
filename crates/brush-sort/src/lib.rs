@@ -71,32 +71,16 @@ pub fn radix_argsort(
 
     // Handle dynamic vs static dispatch
     let (num_keys_buf, num_wgs, num_reduce_wgs) = if let Some(count_buf) = dynamic_count {
-        // Dynamic dispatch: compute workgroup counts on GPU
-        // num_wgs = ceil(count / BLOCK_SIZE)
         let num_wgs = create_dispatch_buffer_1d(count_buf.clone(), BLOCK_SIZE);
-
-        // The reduce shader expects: num_reduce_wgs = BIN_COUNT * ceil(num_wgs / BLOCK_SIZE)
-        // This is NOT the same as ceil(num_wgs * BIN_COUNT / BLOCK_SIZE) due to ceiling!
-        // We need: first compute ceil(num_wgs_x / BLOCK_SIZE), then multiply by BIN_COUNT.
-        type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
-        let num_wgs_tensor: Tensor<Backend, 1, Int> = Tensor::from_primitive(num_wgs.clone());
-        let num_wgs_x = num_wgs_tensor.slice([0..1]); // Get just the X component (scalar)
-
-        // num_reduce_wg_per_bin = ceil(num_wgs_x / BLOCK_SIZE)
-        let num_reduce_wg_per_bin_buf =
-            create_dispatch_buffer_1d(num_wgs_x.into_primitive(), BLOCK_SIZE);
-        let num_reduce_wg_per_bin: Tensor<Backend, 1, Int> =
-            Tensor::from_primitive(num_reduce_wg_per_bin_buf);
-        let num_reduce_wg_per_bin_x = num_reduce_wg_per_bin.slice([0..1]);
-
-        // num_reduce_wgs_total = num_reduce_wg_per_bin * BIN_COUNT
-        let num_reduce_total: Tensor<Backend, 1, Int> =
-            num_reduce_wg_per_bin_x * (SortCount::BIN_COUNT as i32);
-
-        // Create dispatch buffer for the total (uses 2D tiling if > 65535)
-        let num_reduce_wgs = create_dispatch_buffer_1d(num_reduce_total.into_primitive(), 1);
-
-        (count_buf, CubeCount::Dynamic(num_wgs.handle.binding()), CubeCount::Dynamic(num_reduce_wgs.handle.binding()))
+        let num_reduce_wgs: Tensor<CubeBackend<WgpuRuntime, f32, i32, u32>, 1, Int> =
+            Tensor::from_primitive(create_dispatch_buffer_1d(num_wgs.clone(), BLOCK_SIZE))
+                * Tensor::from_ints([SortCount::BIN_COUNT, 1, 1], device);
+        let num_reduce_wgs: CubeTensor<WgpuRuntime> = num_reduce_wgs.into_primitive();
+        (
+            count_buf,
+            CubeCount::Dynamic(num_wgs.handle.binding()),
+            CubeCount::Dynamic(num_reduce_wgs.handle.binding()),
+        )
     } else {
         // Static dispatch: use full buffer size
         let num_keys_buf = {

@@ -8,11 +8,9 @@
     @group(0) @binding(3) var<storage, read_write> out_img: array<vec4f>;
     @group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
     @group(0) @binding(5) var<storage, read_write> visible: array<f32>;
-    // Uniforms via with_metadata (always last binding)
     @group(0) @binding(6) var<storage, read> uniforms: helpers::RasterizeUniforms;
 #else
     @group(0) @binding(3) var<storage, read_write> out_img: array<u32>;
-    // Uniforms via with_metadata (always last binding)
     @group(0) @binding(4) var<storage, read> uniforms: helpers::RasterizeUniforms;
 #endif
 

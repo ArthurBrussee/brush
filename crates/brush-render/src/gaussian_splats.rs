@@ -267,10 +267,11 @@ pub fn render_splats<B: Backend + SplatOps<B>>(
     // Validate before readback
     project_output.validate();
 
-    let num_intersections = project_output.num_intersections();
+    let num_intersections = project_output.read_num_intersections();
 
     // Second pass: rasterize (drop compact_gid_from_isect - only needed for backward)
-    let (out_img, render_aux, _) = B::rasterize(&project_output, num_intersections, background, false);
+    let (out_img, render_aux, _) =
+        B::rasterize(&project_output, num_intersections, background, false);
 
     // Validate rasterize outputs
     render_aux.validate();

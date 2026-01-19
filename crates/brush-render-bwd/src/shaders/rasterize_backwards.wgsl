@@ -11,7 +11,6 @@
     @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<f32>>;
     @group(0) @binding(7) var<storage, read_write> v_opacs: array<atomic<f32>>;
     @group(0) @binding(8) var<storage, read_write> v_refines: array<atomic<f32>>;
-    // Uniforms via with_metadata (always last binding)
     @group(0) @binding(9) var<storage, read> uniforms: helpers::RasterizeUniforms;
 
     fn write_grads_atomic(id: u32, grads: f32) {
@@ -27,7 +26,6 @@
     @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<u32>>;
     @group(0) @binding(7) var<storage, read_write> v_opacs: array<atomic<u32>>;
     @group(0) @binding(8) var<storage, read_write> v_refines: array<atomic<u32>>;
-    // Uniforms via with_metadata (always last binding)
     @group(0) @binding(9) var<storage, read> uniforms: helpers::RasterizeUniforms;
 
     fn add_bitcast(cur: u32, add: f32) -> u32 {

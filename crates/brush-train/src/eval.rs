@@ -5,12 +5,9 @@ use anyhow::Result;
 use brush_dataset::scene::{sample_to_tensor_data, view_to_sample_image};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
-use brush_render::{AlphaMode, RenderAux, SplatOps};
-
-#[cfg(target_family = "wasm")]
-use brush_render::render::calc_tile_bounds;
+use brush_render::{AlphaMode, RenderAux, SplatOps, render_splats};
 use burn::prelude::Backend;
-use burn::tensor::{Tensor, TensorPrimitive, s};
+use burn::tensor::{Tensor, s};
 use glam::Vec3;
 use image::DynamicImage;
 
@@ -38,39 +35,8 @@ pub fn eval_stats<B: Backend + SplatOps<B>>(
     let gt_tensor = Tensor::from_data(gt_tensor, device);
     let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
 
-    // Render on reference black background using split pipeline.
-    let (img, render_aux) = {
-        // First pass: project
-        let project_output = B::project(
-            gt_cam,
-            res,
-            splats.means.val().into_primitive().tensor(),
-            splats.log_scales.val().into_primitive().tensor(),
-            splats.rotations.val().into_primitive().tensor(),
-            splats.sh_coeffs.val().into_primitive().tensor(),
-            splats.raw_opacities.val().into_primitive().tensor(),
-            splats.render_mode,
-        );
-
-        // Sync readback of num_intersections
-        #[cfg(not(target_family = "wasm"))]
-        let num_intersections = project_output.num_intersections();
-
-        #[cfg(target_family = "wasm")]
-        let num_intersections = {
-            use burn::tensor::ops::FloatTensorOps;
-            let tile_bounds = calc_tile_bounds(res);
-            let num_tiles = tile_bounds[0] * tile_bounds[1];
-            let total_splats = splats.num_splats();
-            let max_possible = num_tiles.saturating_mul(total_splats);
-            max_possible.min(2 * 512 * 65535)
-        };
-
-        // Second pass: rasterize (with bwd_info = true for eval, drop compact_gid)
-        let (out_img, render_aux, _) = B::rasterize(&project_output, num_intersections, Vec3::ZERO, true);
-
-        (Tensor::from_primitive(TensorPrimitive::Float(out_img)), render_aux)
-    };
+    // Render on reference black background
+    let (img, render_aux) = render_splats(splats, gt_cam, res, Vec3::ZERO, None);
     let render_rgb = img.slice(s![.., .., 0..3]);
 
     // Simulate an 8-bit roundtrip for fair comparison.

@@ -16,8 +16,6 @@
 @group(0) @binding(9) var<storage, read_write> v_quats: array<vec4f>;
 @group(0) @binding(10) var<storage, read_write> v_coeffs: array<f32>;
 @group(0) @binding(11) var<storage, read_write> v_opacs: array<f32>;
-
-// Uniforms via with_metadata (always last binding)
 @group(0) @binding(12) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 const SH_C0: f32 = 0.2820947917738781f;
