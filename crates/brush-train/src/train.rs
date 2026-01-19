@@ -116,22 +116,23 @@ impl SplatTrainer {
         let has_alpha = batch.has_alpha();
         let gt_tensor = Tensor::from_data(batch.img_tensor, &device);
 
-        let (pred_image, render_aux, refine_weight_holder) = trace_span!("Forward").in_scope(|| {
-            // Could generate a random background color, but so far
-            // results just seem worse.
-            let background = Vec3::ZERO;
+        let (pred_image, render_aux, refine_weight_holder) =
+            trace_span!("Forward").in_scope(|| {
+                // Could generate a random background color, but so far
+                // results just seem worse.
+                let background = Vec3::ZERO;
 
-            let diff_out = render_splats(
-                &splats,
-                camera,
-                glam::uvec2(img_w as u32, img_h as u32),
-                background,
-            );
+                let diff_out = render_splats(
+                    &splats,
+                    camera,
+                    glam::uvec2(img_w as u32, img_h as u32),
+                    background,
+                );
 
-            let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+                let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
 
-            (img, diff_out.render_aux, diff_out.refine_weight_holder)
-        });
+                (img, diff_out.render_aux, diff_out.refine_weight_holder)
+            });
 
         let median_scale = self.bounds.median_size();
         let num_visible = render_aux.get_num_visible().inner();

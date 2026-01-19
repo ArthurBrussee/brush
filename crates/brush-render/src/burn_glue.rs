@@ -1,4 +1,7 @@
-use burn::tensor::{DType, Shape, ops::{FloatTensor, IntTensor}};
+use burn::tensor::{
+    DType, Shape,
+    ops::{FloatTensor, IntTensor},
+};
 use burn_cubecl::{BoolElement, fusion::FusionCubeRuntime};
 use burn_fusion::{
     Fusion, FusionHandle,

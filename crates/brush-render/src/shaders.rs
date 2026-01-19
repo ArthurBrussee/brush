@@ -24,8 +24,8 @@ pub struct Rasterize {
 pub mod helpers {
     // Types used by multiple shaders - available from project_visible
     pub use super::project_visible::PackedVec3;
-    pub use super::project_visible::ProjectedSplat;
     pub use super::project_visible::ProjectUniforms;
+    pub use super::project_visible::ProjectedSplat;
     pub use super::rasterize::RasterizeUniforms;
 
     // Constants are now associated with the kernel structs
