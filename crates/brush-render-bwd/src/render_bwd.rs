@@ -6,16 +6,16 @@ use brush_wgsl::wgsl_kernel;
 
 use brush_render::sh::sh_coeffs_for_degree;
 use burn::tensor::FloatDType;
+use burn::tensor::ops::IntTensor;
 use burn::tensor::ops::{FloatTensor, FloatTensorOps};
 use burn_cubecl::cubecl::features::TypeUsage;
 use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType};
 use burn_cubecl::cubecl::server::Bindings;
 use burn_cubecl::kernel::into_contiguous;
-use glam::uvec2;
+use glam::{Vec3, uvec2};
 
-use crate::burn_glue::{
-    ProjectBwdState, RasterizeBwdState, RasterizeGrads, SplatBwdOps, SplatGrads,
-};
+use crate::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};
+use brush_render::shaders::helpers::ProjectUniforms;
 
 // Kernel definitions using proc macro
 #[wgsl_kernel(
@@ -36,8 +36,15 @@ pub struct RasterizeBackwards {
 }
 
 impl SplatBwdOps<Self> for MainBackendBase {
+    #[allow(clippy::too_many_arguments)]
     fn rasterize_bwd(
-        state: RasterizeBwdState<Self>,
+        out_img: FloatTensor<Self>,
+        projected_splats: FloatTensor<Self>,
+        global_from_compact_gid: IntTensor<Self>,
+        compact_gid_from_isect: IntTensor<Self>,
+        tile_offsets: IntTensor<Self>,
+        background: Vec3,
+        img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
     ) -> RasterizeGrads<Self> {
         let _span = tracing::trace_span!("rasterize_bwd").entered();
@@ -45,15 +52,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         // Comes from loss, might not be contiguous.
         let v_output = into_contiguous(v_output);
 
-        // We're in charge of these, SHOULD be contiguous but might as well.
-        let projected_splats = into_contiguous(state.projected_splats);
-        let compact_gid_from_isect = into_contiguous(state.compact_gid_from_isect);
-        let global_from_compact_gid = into_contiguous(state.global_from_compact_gid);
-        let tile_offsets = into_contiguous(state.tile_offsets);
-        let out_img = into_contiguous(state.out_img);
-
         let device = &out_img.device;
-        let img_size = state.img_size;
         let num_points = projected_splats.shape.dims[0];
 
         let client = &projected_splats.client;
@@ -76,12 +75,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let rasterize_uniforms = RasterizeUniforms {
             tile_bounds: tile_bounds.into(),
             img_size: img_size.into(),
-            background: [
-                state.background.x,
-                state.background.y,
-                state.background.z,
-                1.0,
-            ],
+            background: [background.x, background.y, background.z, 1.0],
         };
 
         let hard_floats = client
@@ -123,18 +117,26 @@ impl SplatBwdOps<Self> for MainBackendBase {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn project_bwd(
-        state: ProjectBwdState<Self>,
+        means: FloatTensor<Self>,
+        log_scales: FloatTensor<Self>,
+        quats: FloatTensor<Self>,
+        raw_opac: FloatTensor<Self>,
+        num_visible: IntTensor<Self>,
+        global_from_compact_gid: IntTensor<Self>,
+        project_uniforms: ProjectUniforms,
+        sh_degree: u32,
+        render_mode: SplatRenderMode,
         rasterize_grads: RasterizeGrads<Self>,
     ) -> SplatGrads<Self> {
         let _span = tracing::trace_span!("project_bwd").entered();
 
         // Comes from params, might not be contiguous.
-        let means = into_contiguous(state.means);
-        let log_scales = into_contiguous(state.log_scales);
-        let quats = into_contiguous(state.quats);
-        let raw_opac = into_contiguous(state.raw_opac);
-        let global_from_compact_gid = into_contiguous(state.global_from_compact_gid);
+        let means = into_contiguous(means);
+        let log_scales = into_contiguous(log_scales);
+        let quats = into_contiguous(quats);
+        let raw_opac = into_contiguous(raw_opac);
 
         let device = &means.device;
         let num_points = means.shape.dims[0];
@@ -145,17 +147,12 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let v_scales = Self::float_zeros([num_points, 3].into(), device, FloatDType::F32);
         let v_quats = Self::float_zeros([num_points, 4].into(), device, FloatDType::F32);
         let v_coeffs = Self::float_zeros(
-            [
-                num_points,
-                sh_coeffs_for_degree(state.sh_degree) as usize,
-                3,
-            ]
-            .into(),
+            [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
             device,
             FloatDType::F32,
         );
 
-        let mip_splat = matches!(state.render_mode, SplatRenderMode::Mip);
+        let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
@@ -166,7 +163,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                         calc_cube_count_1d(num_points as u32, ProjectBackwards::WORKGROUP_SIZE[0]),
                         Bindings::new()
                             .with_buffers(vec![
-                                state.num_visible.handle.binding(),
+                                num_visible.handle.binding(),
                                 means.handle.binding(),
                                 log_scales.handle.binding(),
                                 quats.handle.binding(),
@@ -179,7 +176,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                                 v_coeffs.handle.clone().binding(),
                                 rasterize_grads.v_raw_opac.handle.clone().binding(),
                             ])
-                            .with_metadata(create_meta_binding(state.project_uniforms)),
+                            .with_metadata(create_meta_binding(project_uniforms)),
                     )
                     .expect("Failed to bwd-diff splats");
             }

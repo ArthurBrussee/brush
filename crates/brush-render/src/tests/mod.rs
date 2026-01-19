@@ -5,6 +5,7 @@ use burn_wgpu::WgpuDevice;
 use glam::Vec3;
 
 /// Helper to run project + readback + rasterize for tests.
+/// TODO: Get rid of this.
 fn render_splats_test(
     cam: &Camera,
     img_size: glam::UVec2,

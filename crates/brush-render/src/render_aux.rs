@@ -57,14 +57,12 @@ impl<B: Backend> ProjectOutput<B> {
                 "num_visible ({num_visible}) > total_splats ({total_splats})"
             );
 
-            if num_visible > 0 {
+            if total_splats > 0 && num_visible > 0 {
                 let projected_splats: Tensor<B, 2> =
                     Tensor::from_primitive(TensorPrimitive::Float(self.projected_splats.clone()));
                 let projected_splats = projected_splats.slice(s![0..num_visible, ..]);
                 validate_tensor_val(&projected_splats, "projected_splats", None, None);
-            }
 
-            if num_visible > 0 && total_splats > 0 {
                 let global_from_compact_gid: Tensor<B, 1, Int> =
                     Tensor::from_primitive(self.global_from_compact_gid.clone());
                 let global_from_compact_gid = &global_from_compact_gid
