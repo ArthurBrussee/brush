@@ -1,17 +1,18 @@
 #![recursion_limit = "256"]
 
 use burn::prelude::Backend;
-use burn::tensor::ops::FloatTensor;
+use burn::tensor::ops::{FloatTensor, IntTensor};
 use burn_cubecl::CubeBackend;
 use burn_fusion::Fusion;
 use burn_wgpu::WgpuRuntime;
 use camera::Camera;
 use clap::ValueEnum;
 use glam::Vec3;
-use render_aux::{ProjectAux, RasterizeAux};
+use render_aux::ProjectOutput;
 
 use crate::gaussian_splats::SplatRenderMode;
 pub use crate::gaussian_splats::render_splats;
+pub use crate::render_aux::RenderAux;
 
 mod burn_glue;
 mod dim_check;
@@ -33,11 +34,6 @@ pub mod validation;
 pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u32>;
 pub type MainBackend = Fusion<MainBackendBase>;
 
-#[derive(Debug, Clone)]
-pub struct RenderStats {
-    pub num_visible: u32,
-}
-
 /// Trait for the split gaussian splatting rendering pipeline.
 ///
 /// This trait provides two passes:
@@ -46,11 +42,10 @@ pub struct RenderStats {
 ///
 /// The split allows for an explicit GPU sync point between passes to read back
 /// the exact number of intersections needed for buffer allocation.
+///
+/// Users should typically use [`render_splats`] instead of this trait directly.
 pub trait SplatOps<B: Backend> {
     /// First pass: project gaussians and count intersections.
-    ///
-    /// Returns [`ProjectAux`] containing projected splat data and `num_intersections`
-    /// tensor for explicit readback.
     fn project(
         camera: &Camera,
         img_size: glam::UVec2,
@@ -60,18 +55,21 @@ pub trait SplatOps<B: Backend> {
         sh_coeffs: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
         render_mode: SplatRenderMode,
-    ) -> ProjectAux<B>;
+    ) -> ProjectOutput<B>;
 
     /// Second pass: rasterize using projection data.
     ///
     /// Takes the output of [`Self::project`] along with the actual
     /// `num_intersections` value from sync readback.
+    ///
+    /// Returns `(image, render_aux, compact_gid_from_isect)` where the last
+    /// value is only needed for backward pass and can be dropped for forward-only.
     fn rasterize(
-        project_aux: &ProjectAux<B>,
+        project_output: &ProjectOutput<B>,
         num_intersections: u32,
         background: Vec3,
         bwd_info: bool,
-    ) -> (FloatTensor<B>, RasterizeAux<B>);
+    ) -> (FloatTensor<B>, RenderAux<B>, IntTensor<B>);
 }
 
 #[derive(

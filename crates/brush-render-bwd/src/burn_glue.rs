@@ -1,8 +1,7 @@
 use brush_render::{
-    MainBackendBase, SplatOps,
+    MainBackendBase, RenderAux, SplatOps,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
-    render_aux::{ProjectAux, RasterizeAux, validate_render_output},
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
     shaders::helpers::ProjectUniforms,
 };
@@ -197,8 +196,7 @@ impl<B: Backend + SplatBackwardOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackw
 
 pub struct SplatOutputDiff<B: Backend> {
     pub img: FloatTensor<B>,
-    pub project_aux: ProjectAux<B>,
-    pub rasterize_aux: RasterizeAux<B>,
+    pub render_aux: RenderAux<B>,
     pub refine_weight_holder: Tensor<B, 1>,
 }
 
@@ -237,7 +235,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatOps<B>, C: CheckpointStrategy> Spla
             .stateful();
 
         // First pass: project
-        let project_aux = <B as SplatOps<B>>::project(
+        let project_output = <B as SplatOps<B>>::project(
             camera,
             img_size,
             means.clone().into_primitive(),
@@ -249,29 +247,19 @@ impl<B: Backend + SplatBackwardOps<B> + SplatOps<B>, C: CheckpointStrategy> Spla
         );
 
         // Sync readback of num_intersections
-        let num_intersections = project_aux.num_intersections();
+        let num_intersections = project_output.num_intersections();
 
         // Second pass: rasterize (with bwd_info = true)
-        let (out_img, rasterize_aux) =
-            <B as SplatOps<B>>::rasterize(&project_aux, num_intersections, background, true);
+        let (out_img, render_aux, compact_gid_from_isect) =
+            <B as SplatOps<B>>::rasterize(&project_output, num_intersections, background, true);
 
-        // Create wrapped aux structs for Autodiff backend
-        let wrapped_project_aux = ProjectAux::<Self> {
-            project_uniforms: project_aux.project_uniforms,
-            projected_splats: <Self as AutodiffBackend>::from_inner(
-                project_aux.projected_splats.clone(),
-            ),
-            num_visible: project_aux.num_visible.clone(),
-            global_from_compact_gid: project_aux.global_from_compact_gid.clone(),
-            cum_tiles_hit: project_aux.cum_tiles_hit.clone(),
-            img_size: project_aux.img_size,
-        };
-
-        let wrapped_rasterize_aux = RasterizeAux::<Self> {
-            tile_offsets: rasterize_aux.tile_offsets.clone(),
-            compact_gid_from_isect: rasterize_aux.compact_gid_from_isect.clone(),
-            visible: <Self as AutodiffBackend>::from_inner(rasterize_aux.visible.clone()),
-            img_size: rasterize_aux.img_size,
+        // Create wrapped render_aux for Autodiff backend
+        let wrapped_render_aux = RenderAux::<Self> {
+            num_visible: render_aux.num_visible.clone(),
+            num_intersections: render_aux.num_intersections,
+            visible: <Self as AutodiffBackend>::from_inner(render_aux.visible.clone()),
+            tile_offsets: render_aux.tile_offsets.clone(),
+            img_size: render_aux.img_size,
         };
 
         match prep_nodes {
@@ -287,13 +275,13 @@ impl<B: Backend + SplatBackwardOps<B> + SplatOps<B>, C: CheckpointStrategy> Spla
                             [1] as u32,
                     ),
                     out_img: out_img.clone(),
-                    projected_splats: project_aux.projected_splats,
-                    project_uniforms: project_aux.project_uniforms,
-                    num_visible: project_aux.num_visible,
-                    tile_offsets: rasterize_aux.tile_offsets,
-                    compact_gid_from_isect: rasterize_aux.compact_gid_from_isect,
+                    projected_splats: project_output.projected_splats,
+                    project_uniforms: project_output.project_uniforms,
+                    num_visible: project_output.num_visible,
+                    tile_offsets: render_aux.tile_offsets,
+                    compact_gid_from_isect,
                     render_mode,
-                    global_from_compact_gid: project_aux.global_from_compact_gid,
+                    global_from_compact_gid: project_output.global_from_compact_gid,
                     background,
                 };
 
@@ -301,8 +289,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatOps<B>, C: CheckpointStrategy> Spla
 
                 SplatOutputDiff {
                     img: out_img,
-                    project_aux: wrapped_project_aux,
-                    rasterize_aux: wrapped_rasterize_aux,
+                    render_aux: wrapped_render_aux,
                     refine_weight_holder,
                 }
             }
@@ -311,8 +298,7 @@ impl<B: Backend + SplatBackwardOps<B> + SplatOps<B>, C: CheckpointStrategy> Spla
                 // keeping any state.
                 SplatOutputDiff {
                     img: prep.finish(out_img),
-                    project_aux: wrapped_project_aux,
-                    rasterize_aux: wrapped_rasterize_aux,
+                    render_aux: wrapped_render_aux,
                     refine_weight_holder,
                 }
             }
@@ -511,6 +497,6 @@ where
         splats.render_mode,
         background,
     );
-    validate_render_output(&result.project_aux, &result.rasterize_aux);
+    result.render_aux.validate();
     result
 }

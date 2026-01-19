@@ -1,10 +1,10 @@
 use crate::{
-    MainBackendBase, SplatOps,
+    MainBackendBase, RenderAux, SplatOps,
     camera::Camera,
     dim_check::DimCheck,
     gaussian_splats::SplatRenderMode,
     get_tile_offset::{CHECKS_PER_ITER, get_tile_offsets},
-    render_aux::{ProjectAux, RasterizeAux},
+    render_aux::ProjectOutput,
     sh::sh_degree_from_coeffs,
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
@@ -18,7 +18,7 @@ use brush_sort::radix_argsort;
 use burn::tensor::{DType, IntDType, Shape, ops::FloatTensor};
 use burn::tensor::{
     FloatDType,
-    ops::{FloatTensorOps, IntTensorOps},
+    ops::{FloatTensorOps, IntTensor, IntTensorOps},
 };
 use burn_cubecl::cubecl::server::Bindings;
 use burn_cubecl::kernel::into_contiguous;
@@ -42,7 +42,7 @@ impl SplatOps<Self> for MainBackendBase {
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
-    ) -> ProjectAux<Self> {
+    ) -> ProjectOutput<Self> {
         assert!(
             img_size[0] > 0 && img_size[1] > 0,
             "Can't render images with 0 size."
@@ -170,7 +170,7 @@ impl SplatOps<Self> for MainBackendBase {
         let cum_tiles_hit = tracing::trace_span!("PrefixSumGaussHits")
             .in_scope(|| prefix_sum(splat_intersect_counts));
 
-        ProjectAux {
+        ProjectOutput {
             projected_splats,
             project_uniforms,
             num_visible: num_visible_buffer,
@@ -181,16 +181,16 @@ impl SplatOps<Self> for MainBackendBase {
     }
 
     fn rasterize(
-        project_aux: &ProjectAux<Self>,
+        project_output: &ProjectOutput<Self>,
         num_intersections: u32,
         background: Vec3,
         bwd_info: bool,
-    ) -> (FloatTensor<Self>, RasterizeAux<Self>) {
+    ) -> (FloatTensor<Self>, RenderAux<Self>, IntTensor<Self>) {
         let _span = tracing::trace_span!("rasterize").entered();
 
-        let device = &project_aux.projected_splats.device.clone();
-        let client = project_aux.projected_splats.client.clone();
-        let img_size = project_aux.img_size;
+        let device = &project_output.projected_splats.device.clone();
+        let client = project_output.projected_splats.client.clone();
+        let img_size = project_output.img_size;
 
         // Divide screen into tiles.
         let tile_bounds = calc_tile_bounds(img_size);
@@ -210,7 +210,7 @@ impl SplatOps<Self> for MainBackendBase {
 
         // Step 2: MapGaussiansToIntersect (fill pass)
         let num_vis_map_wg = create_dispatch_buffer_1d(
-            project_aux.num_visible.clone(),
+            project_output.num_visible.clone(),
             MapGaussiansToIntersect::WORKGROUP_SIZE[0],
         );
 
@@ -228,9 +228,9 @@ impl SplatOps<Self> for MainBackendBase {
                         CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
                         Bindings::new()
                             .with_buffers(vec![
-                                project_aux.num_visible.handle.clone().binding(),
-                                project_aux.projected_splats.handle.clone().binding(),
-                                project_aux.cum_tiles_hit.handle.clone().binding(),
+                                project_output.num_visible.handle.clone().binding(),
+                                project_output.projected_splats.handle.clone().binding(),
+                                project_output.cum_tiles_hit.handle.clone().binding(),
                                 tile_id_from_isect.handle.clone().binding(),
                                 compact_gid_from_isect.handle.clone().binding(),
                             ])
@@ -289,7 +289,7 @@ impl SplatOps<Self> for MainBackendBase {
         );
 
         // Get total_splats from the shape of projected_splats
-        let total_splats = project_aux.projected_splats.shape.dims[0];
+        let total_splats = project_output.projected_splats.shape.dims[0];
 
         let (bindings, visible) = if bwd_info {
             let visible = Self::float_zeros([total_splats].into(), device, FloatDType::F32);
@@ -297,9 +297,9 @@ impl SplatOps<Self> for MainBackendBase {
                 .with_buffers(vec![
                     compact_gid_from_isect.handle.clone().binding(),
                     tile_offsets.handle.clone().binding(),
-                    project_aux.projected_splats.handle.clone().binding(),
+                    project_output.projected_splats.handle.clone().binding(),
                     out_img.handle.clone().binding(),
-                    project_aux.global_from_compact_gid.handle.clone().binding(),
+                    project_output.global_from_compact_gid.handle.clone().binding(),
                     visible.handle.clone().binding(),
                 ])
                 .with_metadata(create_meta_binding(rasterize_uniforms));
@@ -309,7 +309,7 @@ impl SplatOps<Self> for MainBackendBase {
                 .with_buffers(vec![
                     compact_gid_from_isect.handle.clone().binding(),
                     tile_offsets.handle.clone().binding(),
-                    project_aux.projected_splats.handle.clone().binding(),
+                    project_output.projected_splats.handle.clone().binding(),
                     out_img.handle.clone().binding(),
                 ])
                 .with_metadata(create_meta_binding(rasterize_uniforms));
@@ -338,12 +338,14 @@ impl SplatOps<Self> for MainBackendBase {
 
         (
             out_img,
-            RasterizeAux {
-                tile_offsets,
-                compact_gid_from_isect,
+            RenderAux {
+                num_visible: project_output.num_visible.clone(),
+                num_intersections,
                 visible,
-                img_size: project_aux.img_size,
+                tile_offsets,
+                img_size: project_output.img_size,
             },
+            compact_gid_from_isect,
         )
     }
 }

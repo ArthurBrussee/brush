@@ -5,8 +5,7 @@ use anyhow::Result;
 use brush_dataset::scene::{sample_to_tensor_data, view_to_sample_image};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
-use brush_render::render_aux::{ProjectAux, RasterizeAux};
-use brush_render::{AlphaMode, SplatOps};
+use brush_render::{AlphaMode, RenderAux, SplatOps};
 
 #[cfg(target_family = "wasm")]
 use brush_render::render::calc_tile_bounds;
@@ -22,8 +21,7 @@ pub struct EvalSample<B: Backend> {
     pub rendered: Tensor<B, 3>,
     pub psnr: Tensor<B, 1>,
     pub ssim: Tensor<B, 1>,
-    pub project_aux: ProjectAux<B>,
-    pub rasterize_aux: RasterizeAux<B>,
+    pub render_aux: RenderAux<B>,
 }
 
 pub fn eval_stats<B: Backend + SplatOps<B>>(
@@ -41,9 +39,9 @@ pub fn eval_stats<B: Backend + SplatOps<B>>(
     let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
 
     // Render on reference black background using split pipeline.
-    let (img, project_aux, rasterize_aux) = {
+    let (img, render_aux) = {
         // First pass: project
-        let project_aux = B::project(
+        let project_output = B::project(
             gt_cam,
             res,
             splats.means.val().into_primitive().tensor(),
@@ -56,7 +54,7 @@ pub fn eval_stats<B: Backend + SplatOps<B>>(
 
         // Sync readback of num_intersections
         #[cfg(not(target_family = "wasm"))]
-        let num_intersections = project_aux.num_intersections();
+        let num_intersections = project_output.num_intersections();
 
         #[cfg(target_family = "wasm")]
         let num_intersections = {
@@ -68,10 +66,10 @@ pub fn eval_stats<B: Backend + SplatOps<B>>(
             max_possible.min(2 * 512 * 65535)
         };
 
-        // Second pass: rasterize (with bwd_info = true for eval)
-        let (out_img, rasterize_aux) = B::rasterize(&project_aux, num_intersections, Vec3::ZERO, true);
+        // Second pass: rasterize (with bwd_info = true for eval, drop compact_gid)
+        let (out_img, render_aux, _) = B::rasterize(&project_output, num_intersections, Vec3::ZERO, true);
 
-        (Tensor::from_primitive(TensorPrimitive::Float(out_img)), project_aux, rasterize_aux)
+        (Tensor::from_primitive(TensorPrimitive::Float(out_img)), render_aux)
     };
     let render_rgb = img.slice(s![.., .., 0..3]);
 
@@ -89,8 +87,7 @@ pub fn eval_stats<B: Backend + SplatOps<B>>(
         psnr,
         ssim,
         rendered: render_rgb,
-        project_aux,
-        rasterize_aux,
+        render_aux,
     })
 }
 

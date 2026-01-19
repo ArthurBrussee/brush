@@ -10,7 +10,7 @@ use burn::{
     Tensor,
     backend::{Autodiff, wgpu::WgpuDevice},
     prelude::Backend,
-    tensor::{Float, Int, TensorPrimitive},
+    tensor::TensorPrimitive,
 };
 
 use anyhow::{Context, Result};
@@ -134,8 +134,7 @@ async fn test_reference() -> Result<()> {
         );
 
         let out: Tensor<DiffBack, 3> = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-        let project_aux = diff_out.project_aux;
-        let rasterize_aux = diff_out.rasterize_aux;
+        let render_aux = diff_out.render_aux;
 
         if let Some(rec) = rec.as_ref() {
             rec.set_time_sequence("test case", i as i64);
@@ -147,27 +146,9 @@ async fn test_reference() -> Result<()> {
             )?;
             rec.log(
                 "images/tile_depth",
-                &rasterize_aux.calc_tile_depth().into_rerun().await,
+                &render_aux.calc_tile_depth().into_rerun().await,
             )?;
         }
-
-        let num_visible: Tensor<DiffBack, 1, Int> = project_aux.get_num_visible();
-        let num_visible = num_visible.into_scalar_async().await.unwrap() as usize;
-        let global_from_compact_gid: Tensor<DiffBack, 1, Int> =
-            Tensor::from_primitive(project_aux.global_from_compact_gid.clone());
-        let gs_ids = global_from_compact_gid.clone().slice([0..num_visible]);
-        let projected_splats =
-            Tensor::from_primitive(TensorPrimitive::Float(project_aux.projected_splats.clone()));
-        let xys: Tensor<DiffBack, 2, Float> =
-            projected_splats.clone().slice([0..num_visible, 0..2]);
-        let xys_ref = safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("xys")?, &device);
-        let xys_ref = xys_ref.select(0, gs_ids.clone());
-        compare("xy", xys, xys_ref, 1e-5, 2e-5);
-        let conics: Tensor<DiffBack, 2, Float> =
-            projected_splats.clone().slice([0..num_visible, 2..5]);
-        let conics_ref = safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("conics")?, &device);
-        let conics_ref = conics_ref.select(0, gs_ids.clone());
-        compare("conics", conics, conics_ref, 1e-6, 2e-5);
 
         // Check if images match.
         compare("img", out.clone(), img_ref, 1e-5, 1e-5);

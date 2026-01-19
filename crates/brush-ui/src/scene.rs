@@ -250,7 +250,7 @@ impl ScenePanel {
         load_option
     }
 
-    fn start_loading(&self, source: DataSource, process: &UiProcess) {
+    fn start_loading(#[allow(clippy::unused_self)] &self, source: DataSource, process: &UiProcess) {
         process.connect_to_process(create_process(
             source,
             #[cfg(feature = "training")]
@@ -334,7 +334,7 @@ impl ScenePanel {
             if pixel_size.x > 8 && pixel_size.y > 8 && dirty {
                 let _span = trace_span!("Render splats").entered();
                 // Could add an option for background color.
-                let (img, _, _) = render_splats(
+                let (img, _render_aux) = render_splats(
                     &splats,
                     &camera,
                     pixel_size,

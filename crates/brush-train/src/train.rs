@@ -116,7 +116,7 @@ impl SplatTrainer {
         let has_alpha = batch.has_alpha();
         let gt_tensor = Tensor::from_data(batch.img_tensor, &device);
 
-        let (pred_image, project_aux, rasterize_aux, refine_weight_holder) = trace_span!("Forward").in_scope(|| {
+        let (pred_image, render_aux, refine_weight_holder) = trace_span!("Forward").in_scope(|| {
             // Could generate a random background color, but so far
             // results just seem worse.
             let background = Vec3::ZERO;
@@ -130,16 +130,16 @@ impl SplatTrainer {
 
             let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
 
-            (img, diff_out.project_aux, diff_out.rasterize_aux, diff_out.refine_weight_holder)
+            (img, diff_out.render_aux, diff_out.refine_weight_holder)
         });
 
         let median_scale = self.bounds.median_size();
-        let num_visible = project_aux.get_num_visible().inner();
+        let num_visible = render_aux.get_num_visible().inner();
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
         let gt_rgb = gt_tensor.clone().slice(s![.., .., 0..3]);
 
         let visible: Tensor<Autodiff<MainBackend>, 1> =
-            Tensor::from_primitive(TensorPrimitive::Float(rasterize_aux.visible));
+            Tensor::from_primitive(TensorPrimitive::Float(render_aux.visible));
 
         let loss = trace_span!("Calculate losses").in_scope(|| {
             let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();

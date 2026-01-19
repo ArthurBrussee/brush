@@ -172,7 +172,7 @@ impl eframe::App for App {
                 return;
             };
 
-            let (img, _) = render_splats(
+            let (img, _render_aux) = render_splats(
                 &msg.splats,
                 &self.camera,
                 glam::uvec2(self.image.width(), self.image.height()),

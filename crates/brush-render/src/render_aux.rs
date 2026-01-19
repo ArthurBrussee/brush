@@ -9,32 +9,10 @@ use burn::{
 
 use crate::shaders::helpers::ProjectUniforms;
 
-/// Validate both ProjectAux and RasterizeAux outputs together.
-/// This is a no-op in release builds unless `debug-validation` feature is enabled.
-/// Also skipped when running benchmarks (detected via `--bench` arg).
-pub fn validate_render_output<B: Backend>(project_aux: &ProjectAux<B>, rasterize_aux: &RasterizeAux<B>) {
-    #[cfg(any(test, feature = "debug-validation"))]
-    {
-        if std::env::args().any(|a| a == "--bench") {
-            return;
-        }
-        project_aux.validate_values();
-        use burn::tensor::ElementConversion;
-        let num_visible = project_aux.get_num_visible().into_scalar().elem::<u32>();
-        rasterize_aux.validate_values(num_visible);
-    }
-    #[cfg(not(any(test, feature = "debug-validation")))]
-    {
-        let _ = project_aux;
-        let _ = rasterize_aux;
-    }
-}
-
+/// Output from the project pass. Consumed by rasterize.
 #[derive(Debug, Clone)]
-pub struct ProjectAux<B: Backend> {
+pub struct ProjectOutput<B: Backend> {
     pub project_uniforms: ProjectUniforms,
-
-    /// The packed projected splat information, see `ProjectedSplat` in helpers.wgsl
     pub projected_splats: FloatTensor<B>,
     pub num_visible: IntTensor<B>,
     pub global_from_compact_gid: IntTensor<B>,
@@ -42,15 +20,12 @@ pub struct ProjectAux<B: Backend> {
     pub img_size: glam::UVec2,
 }
 
-impl<B: Backend> ProjectAux<B> {
-    /// Extract the total number of intersections.
-    ///
-    /// This requires a sync readback from the GPU.
+impl<B: Backend> ProjectOutput<B> {
+    /// Extract the total number of intersections (sync readback).
     pub fn num_intersections(&self) -> u32 {
         use burn::tensor::ElementConversion;
         let cum_tiles_hit: Tensor<B, 1, Int> = Tensor::from_primitive(self.cum_tiles_hit.clone());
         let total = self.project_uniforms.total_splats as usize;
-        // The prefix sum is inclusive, so the last element is the total number of intersections
         if total > 0 {
             cum_tiles_hit
                 .slice([total - 1..total])
@@ -61,31 +36,27 @@ impl<B: Backend> ProjectAux<B> {
         }
     }
 
-    pub fn get_num_visible(&self) -> Tensor<B, 1, Int> {
-        Tensor::from_primitive(self.num_visible.clone())
-    }
-
-    pub fn validate_values(&self) {
+    /// Validate project outputs. Call before consuming.
+    pub fn validate(&self) {
         #[cfg(any(test, feature = "debug-validation"))]
         {
-            use burn::tensor::{ElementConversion, TensorPrimitive, s};
-
-            use crate::validation::validate_tensor_val;
-
             if std::env::args().any(|a| a == "--bench") {
                 return;
             }
 
-            let num_visible_tensor: Tensor<B, 1, Int> = self.get_num_visible();
+            use crate::validation::validate_tensor_val;
+            use burn::tensor::{ElementConversion, TensorPrimitive, s};
+
+            let num_visible_tensor: Tensor<B, 1, Int> =
+                Tensor::from_primitive(self.num_visible.clone());
             let total_splats = self.project_uniforms.total_splats;
             let num_visible = num_visible_tensor.into_scalar().elem::<i32>() as u32;
 
             assert!(
                 num_visible <= total_splats,
-                "Something went wrong when calculating the number of visible gaussians. {num_visible} > {total_splats}"
+                "num_visible ({num_visible}) > total_splats ({total_splats})"
             );
 
-            // Projected splats is only valid up to num_visible and undefined for other values.
             if num_visible > 0 {
                 let projected_splats: Tensor<B, 2> =
                     Tensor::from_primitive(TensorPrimitive::Float(self.projected_splats.clone()));
@@ -93,8 +64,6 @@ impl<B: Backend> ProjectAux<B> {
                 validate_tensor_val(&projected_splats, "projected_splats", None, None);
             }
 
-            // assert that every ID in global_from_compact_gid is valid.
-            // Only validate when there are visible splats
             if num_visible > 0 && total_splats > 0 {
                 let global_from_compact_gid: Tensor<B, 1, Int> =
                     Tensor::from_primitive(self.global_from_compact_gid.clone());
@@ -107,7 +76,7 @@ impl<B: Backend> ProjectAux<B> {
                 for &global_gid in global_from_compact_gid {
                     assert!(
                         global_gid < total_splats,
-                        "Invalid gaussian ID in global_from_compact_gid buffer. {global_gid} out of {total_splats}"
+                        "Invalid gaussian ID in global_from_compact_gid: {global_gid} >= {total_splats}"
                     );
                 }
             }
@@ -115,16 +84,28 @@ impl<B: Backend> ProjectAux<B> {
     }
 }
 
-/// Output of the Rasterize pass.
+/// Minimal output from rendering. Contains only what callers typically need.
 #[derive(Debug, Clone)]
-pub struct RasterizeAux<B: Backend> {
-    pub tile_offsets: IntTensor<B>,
-    pub compact_gid_from_isect: IntTensor<B>,
+pub struct RenderAux<B: Backend> {
+    /// Number of visible splats (for stats/logging)
+    pub num_visible: IntTensor<B>,
+    /// Total number of tile-splat intersections (for stats/logging)
+    pub num_intersections: u32,
+    /// Visibility weights per splat (for training densification)
     pub visible: FloatTensor<B>,
+    /// Tile offsets [ty, tx, 2] with (start, end) per tile (for visualization)
+    pub tile_offsets: IntTensor<B>,
+    /// Image size
     pub img_size: glam::UVec2,
 }
 
-impl<B: Backend> RasterizeAux<B> {
+impl<B: Backend> RenderAux<B> {
+    /// Get `num_visible` as a tensor.
+    pub fn get_num_visible(&self) -> Tensor<B, 1, Int> {
+        Tensor::from_primitive(self.num_visible.clone())
+    }
+
+    /// Calculate tile depth map for visualization.
     pub fn calc_tile_depth(&self) -> Tensor<B, 2, Int> {
         use crate::shaders::helpers::TILE_WIDTH;
         use burn::tensor::s;
@@ -137,83 +118,45 @@ impl<B: Backend> RasterizeAux<B> {
         (max - min).reshape([ty as usize, tx as usize])
     }
 
-    pub fn validate_values(&self, #[allow(unused)] num_visible: u32) {
+    /// Validate rasterize outputs.
+    pub fn validate(&self) {
         #[cfg(any(test, feature = "debug-validation"))]
         {
-            use burn::tensor::TensorPrimitive;
-
-            use crate::validation::validate_tensor_val;
-
             if std::env::args().any(|a| a == "--bench") {
                 return;
             }
 
-            let compact_gid_from_isect: Tensor<B, 1, Int> =
-                Tensor::from_primitive(self.compact_gid_from_isect.clone());
+            use crate::validation::validate_tensor_val;
+            use burn::tensor::{ElementConversion, TensorPrimitive};
 
-            let num_intersections = compact_gid_from_isect.shape()[0] as u32;
+            let num_visible = Tensor::<B, 1, Int>::from_primitive(self.num_visible.clone())
+                .into_scalar()
+                .elem::<u32>();
 
             let visible: Tensor<B, 1> =
                 Tensor::from_primitive(TensorPrimitive::Float(self.visible.clone()));
             let visible_2d: Tensor<B, 2> = visible.unsqueeze_dim(1);
             validate_tensor_val(&visible_2d, "visible", None, None);
 
-            // Only validate tile_offsets when there are intersections to validate
-            if num_intersections > 0 {
-                let tile_offsets: Tensor<B, 3, Int> =
-                    Tensor::from_primitive(self.tile_offsets.clone());
+            // Validate tile_offsets
+            let tile_offsets: Tensor<B, 3, Int> = Tensor::from_primitive(self.tile_offsets.clone());
+            let tile_offsets_data = tile_offsets
+                .into_data()
+                .into_vec::<u32>()
+                .expect("Failed to fetch tile offsets");
 
-                let tile_offsets = tile_offsets
-                    .into_data()
-                    .into_vec::<u32>()
-                    .expect("Failed to fetch tile offsets");
-                for &offsets in &tile_offsets {
-                    assert!(
-                        offsets <= num_intersections,
-                        "Tile offsets exceed bounds. Value: {offsets}, num_intersections: {num_intersections}"
-                    );
-                }
-
-                for i in 0..(tile_offsets.len() - 1) / 2 {
-                    // Check pairs of start/end points.
-                    let start = tile_offsets[i * 2];
-                    let end = tile_offsets[i * 2 + 1];
-                    assert!(
-                        start < num_intersections && end <= num_intersections,
-                        "Invalid elements in tile offsets. Start {start} ending at {end}"
-                    );
-                    assert!(
-                        end >= start,
-                        "Invalid elements in tile offsets. Start {start} ending at {end}"
-                    );
-                    assert!(
-                        end - start <= num_visible,
-                        "One tile has more hits than total visible splats. Start {start} ending at {end}"
-                    );
-                }
-            }
-
-            // Validate compact_gid_from_isect
-            // Only validate when there are visible splats (if num_visible=0, no valid intersections)
-            if num_visible > 0 {
-                let data = compact_gid_from_isect.into_data();
-
-                // Handle both I32 and U32 tensor types
-                let compact_gid_vec: Vec<u32> = data
-                    .clone()
-                    .into_vec::<u32>()
-                    .or_else(|_| {
-                        data.into_vec::<i32>()
-                            .map(|v| v.into_iter().map(|x| x as u32).collect())
-                    })
-                    .expect("Failed to fetch compact_gid_from_isect");
-
-                for compact_gid in &compact_gid_vec {
-                    assert!(
-                        *compact_gid < num_visible,
-                        "Invalid gaussian ID in intersection buffer. {compact_gid} out of {num_visible}."
-                    );
-                }
+            for i in 0..(tile_offsets_data.len() / 2) {
+                let start = tile_offsets_data[i * 2];
+                let end = tile_offsets_data[i * 2 + 1];
+                assert!(
+                    end >= start,
+                    "Invalid tile offsets: start {start} > end {end}"
+                );
+                assert!(
+                    end - start <= num_visible,
+                    "Tile has more hits ({}) than visible splats ({num_visible})",
+                    end - start
+                );
             }
         }
     }

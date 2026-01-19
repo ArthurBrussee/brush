@@ -1,8 +1,7 @@
 use crate::{
-    MainBackend, SplatOps,
+    MainBackend, RenderAux, SplatOps,
     camera::Camera,
     gaussian_splats::SplatRenderMode,
-    render_aux::{ProjectAux, RasterizeAux, validate_render_output},
 };
 use assert_approx_eq::assert_approx_eq;
 use burn::tensor::{Distribution, Tensor, TensorPrimitive};
@@ -21,13 +20,9 @@ fn render_splats_test(
     render_mode: SplatRenderMode,
     background: Vec3,
     bwd_info: bool,
-) -> (
-    Tensor<MainBackend, 3>,
-    ProjectAux<MainBackend>,
-    RasterizeAux<MainBackend>,
-) {
+) -> (Tensor<MainBackend, 3>, RenderAux<MainBackend>) {
     // First pass: project
-    let project_aux = MainBackend::project(
+    let project_output = MainBackend::project(
         cam,
         img_size,
         means.into_primitive().tensor(),
@@ -38,18 +33,22 @@ fn render_splats_test(
         render_mode,
     );
 
-    // Sync readback of num_intersections
-    let num_intersections = project_aux.num_intersections();
+    // Validate project output
+    project_output.validate();
 
-    // Second pass: rasterize
-    let (out_img, rasterize_aux) =
-        MainBackend::rasterize(&project_aux, num_intersections, background, bwd_info);
+    // Sync readback of num_intersections
+    let num_intersections = project_output.num_intersections();
+
+    // Second pass: rasterize (drop compact_gid_from_isect - only needed for backward)
+    let (out_img, render_aux, _) =
+        MainBackend::rasterize(&project_output, num_intersections, background, bwd_info);
+
+    // Validate render aux
+    render_aux.validate();
 
     let img = Tensor::from_primitive(TensorPrimitive::Float(out_img));
 
-    validate_render_output(&project_aux, &rasterize_aux);
-
-    (img, project_aux, rasterize_aux)
+    (img, render_aux)
 }
 
 #[test]
@@ -75,7 +74,7 @@ fn renders_at_all() {
             .repeat_dim(0, num_points);
     let sh_coeffs = Tensor::<MainBackend, 3>::ones([num_points, 1, 3], &device);
     let raw_opacity = Tensor::<MainBackend, 1>::zeros([num_points], &device);
-    let (output, _project_aux, _rasterize_aux) = render_splats_test(
+    let (output, _render_aux) = render_splats_test(
         &cam,
         img_size,
         means,
@@ -143,7 +142,7 @@ fn renders_many_splats() {
     let raw_opacity =
         Tensor::<MainBackend, 1>::random([num_splats], Distribution::Uniform(-2.0, 2.0), &device);
 
-    let (_output, _project_aux, _rasterize_aux) = render_splats_test(
+    let (_output, _render_aux) = render_splats_test(
         &cam,
         img_size,
         means,

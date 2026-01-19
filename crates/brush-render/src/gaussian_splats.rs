@@ -9,9 +9,8 @@ use glam::Vec3;
 use tracing::trace_span;
 
 use crate::{
-    SplatOps,
+    RenderAux, SplatOps,
     camera::Camera,
-    render_aux::{ProjectAux, RasterizeAux, validate_render_output},
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
 
@@ -243,7 +242,7 @@ pub fn render_splats<B: Backend + SplatOps<B>>(
     img_size: glam::UVec2,
     background: Vec3,
     splat_scale: Option<f32>,
-) -> (Tensor<B, 3>, ProjectAux<B>, RasterizeAux<B>) {
+) -> (Tensor<B, 3>, RenderAux<B>) {
     splats.validate_values();
 
     let mut scales = splats.log_scales.val();
@@ -254,7 +253,7 @@ pub fn render_splats<B: Backend + SplatOps<B>>(
     };
 
     // First pass: project
-    let project_aux = B::project(
+    let project_output = B::project(
         camera,
         img_size,
         splats.means.val().into_primitive().tensor(),
@@ -265,14 +264,18 @@ pub fn render_splats<B: Backend + SplatOps<B>>(
         splats.render_mode,
     );
 
-    let num_intersections = project_aux.num_intersections();
+    // Validate before readback
+    project_output.validate();
 
-    // Second pass: rasterize
-    let (out_img, rasterize_aux) = B::rasterize(&project_aux, num_intersections, background, false);
+    let num_intersections = project_output.num_intersections();
+
+    // Second pass: rasterize (drop compact_gid_from_isect - only needed for backward)
+    let (out_img, render_aux, _) = B::rasterize(&project_output, num_intersections, background, false);
+
+    // Validate rasterize outputs
+    render_aux.validate();
 
     let img = Tensor::from_primitive(TensorPrimitive::Float(out_img));
 
-    validate_render_output(&project_aux, &rasterize_aux);
-
-    (img, project_aux, rasterize_aux)
+    (img, render_aux)
 }

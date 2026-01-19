@@ -103,7 +103,7 @@ fn diffs_many_splats() {
     let raw_opacity =
         Tensor::<TestBackend, 1>::random([num_points], Distribution::Uniform(-2.0, 2.0), &device);
 
-    let result = <TestBackend as SplatForwardDiff<TestBackend>>::render_splats(
+    <TestBackend as SplatForwardDiff<TestBackend>>::render_splats(
         &cam,
         img_size,
         means.into_primitive().tensor(),
