@@ -1,5 +1,5 @@
 use crate::{
-    INTERSECTS_UPPER_BOUND, MainBackendBase, SplatForward,
+    MainBackendBase, SplatForward,
     camera::Camera,
     dim_check::DimCheck,
     gaussian_splats::SplatRenderMode,
@@ -14,7 +14,9 @@ use brush_kernel::create_uniform_buffer;
 use brush_kernel::{CubeCount, calc_cube_count_1d};
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
-use burn::tensor::{DType, IntDType, ops::FloatTensor};
+#[cfg(not(target_family = "wasm"))]
+use burn::Tensor;
+use burn::tensor::{DType, IntDType, Slice, ops::FloatTensor};
 use burn::tensor::{
     FloatDType,
     ops::{FloatTensorOps, IntTensorOps},
@@ -22,8 +24,8 @@ use burn::tensor::{
 use burn_cubecl::cubecl::server::Bindings;
 
 use burn_cubecl::kernel::into_contiguous;
-use burn_wgpu::CubeDim;
 use burn_wgpu::WgpuRuntime;
+use burn_wgpu::{CubeDim, CubeTensor};
 use glam::{Vec3, uvec2};
 use std::mem::offset_of;
 
@@ -40,15 +42,17 @@ pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
 // dispatch to avoid this.
 // Estimating the max number of intersects can be a bad hack though... The worst case scenario is so massive
 // that it's easy to run out of memory... How do we actually properly deal with this :/
-pub fn max_intersections(img_size: glam::UVec2, num_splats: u32) -> u32 {
+pub fn max_intersections(
+    img_size: glam::UVec2,
+    num_splats: u32,
+    _num_intersections: CubeTensor<WgpuRuntime>,
+) -> u32 {
     // Divide screen into tiles.
     let tile_bounds = calc_tile_bounds(img_size);
-    // Assume on average each splat is maximally covering half x half the screen,
-    // and adjust for the variance such that we're fairly certain we have enough intersections.
     let num_tiles = tile_bounds[0] * tile_bounds[1];
     let max_possible = num_tiles.saturating_mul(num_splats);
-    // clamp to max nr. of dispatches.
-    max_possible.min(INTERSECTS_UPPER_BOUND)
+    // clamp to some max nr. or we run out of memory.
+    max_possible.min(2 * 512 * 65535)
 }
 
 // Implement forward functions for the inner wgpu backend.
@@ -108,7 +112,6 @@ impl SplatForward<Self> for MainBackendBase {
         // Tile rendering setup.
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape.dims[1] as u32);
         let total_splats = means.shape.dims[0];
-        let max_intersects = max_intersections(img_size, total_splats as u32);
 
         let uniforms = shaders::helpers::RenderUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
@@ -119,10 +122,10 @@ impl SplatForward<Self> for MainBackendBase {
             tile_bounds: tile_bounds.into(),
             sh_degree,
             total_splats: total_splats as u32,
-            max_intersects,
             background: [background.x, background.y, background.z, 1.0],
             // Nb: Bit of a hack as these aren't _really_ uniforms but are written to by the shaders.
             num_visible: 0,
+            pad_a: 0,
         };
 
         // Nb: This contains both static metadata and some dynamic data so can't pass this as metadata to execute. In the future
@@ -232,16 +235,28 @@ impl SplatForward<Self> for MainBackendBase {
                 }
             });
 
-            // TODO: Only need to do this up to num_visible gaussians really.
+            // TODO: Only need to do this up to num_visible gaussians really. Would need a
+            // prefix sum with a dynamic total length, and get the num at the dynamic length.
             let cum_tiles_hit = tracing::trace_span!("PrefixSumGaussHits")
                 .in_scope(|| prefix_sum(splat_intersect_counts));
+            let num_intersections = Self::int_slice(
+                cum_tiles_hit.clone(),
+                &[Slice::new(cum_tiles_hit.shape[0] as isize - 1, None, 1)],
+            );
+            #[cfg(target_family = "wasm")]
+            let max_intersects =
+                max_intersections(img_size, total_splats as u32, num_intersections.clone());
+            #[cfg(not(target_family = "wasm"))]
+            let max_intersects = {
+                use burn::tensor::{ElementConversion, Int};
+                let intersects: Tensor<Self, 1, Int> =
+                    Tensor::from_primitive(num_intersections.clone());
+                intersects.into_scalar().elem::<u32>()
+            };
 
             let tile_id_from_isect = create_tensor([max_intersects as usize], device, DType::U32);
             let compact_gid_from_isect =
                 create_tensor([max_intersects as usize], device, DType::U32);
-
-            // Zero this out, as the kernel _might_ not run at all if no gaussians are visible.
-            let num_intersections = Self::int_zeros([1].into(), device, IntDType::U32);
 
             tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
                 // SAFETY: Kernel checked to have no OOB, bounded loops.
@@ -256,7 +271,6 @@ impl SplatForward<Self> for MainBackendBase {
                                 cum_tiles_hit.handle.binding(),
                                 tile_id_from_isect.handle.clone().binding(),
                                 compact_gid_from_isect.handle.clone().binding(),
-                                num_intersections.handle.clone().binding(),
                             ]),
                         )
                         .expect("Failed to render splats");
@@ -383,7 +397,6 @@ impl SplatForward<Self> for MainBackendBase {
             RenderAux {
                 uniforms_buffer,
                 tile_offsets,
-                num_intersections,
                 projected_splats,
                 compact_gid_from_isect,
                 global_from_compact_gid,

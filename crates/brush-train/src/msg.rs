@@ -13,7 +13,6 @@ pub struct RefineStats {
 pub struct TrainStepStats<B: Backend> {
     pub pred_image: Tensor<B, 3>,
 
-    pub num_intersections: Tensor<B, 1, Int>,
     pub num_visible: Tensor<B, 1, Int>,
     pub loss: Tensor<B, 1>,
 

@@ -9,12 +9,8 @@ use burn_wgpu::WgpuRuntime;
 use glam::Vec3;
 
 use crate::{
-    MainBackendBase, SplatForward,
-    camera::Camera,
-    gaussian_splats::SplatRenderMode,
-    render::{calc_tile_bounds, max_intersections},
-    render_aux::RenderAux,
-    shaders,
+    MainBackendBase, SplatForward, camera::Camera, gaussian_splats::SplatRenderMode,
+    render::calc_tile_bounds, render_aux::RenderAux, shaders,
 };
 
 impl SplatForward<Self> for Fusion<MainBackendBase> {
@@ -54,7 +50,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                     // Aux
                     projected_splats,
                     uniforms_buffer,
-                    num_intersections,
                     tile_offsets,
                     compact_gid_from_isect,
                     global_from_compact_gid,
@@ -81,10 +76,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                     aux.projected_splats,
                 );
                 h.register_int_tensor::<MainBackendBase>(&uniforms_buffer.id, aux.uniforms_buffer);
-                h.register_int_tensor::<MainBackendBase>(
-                    &num_intersections.id,
-                    aux.num_intersections,
-                );
                 h.register_int_tensor::<MainBackendBase>(&tile_offsets.id, aux.tile_offsets);
                 h.register_int_tensor::<MainBackendBase>(
                     &compact_gid_from_isect.id,
@@ -106,7 +97,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
         let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / 4;
         let uniforms_size = size_of::<shaders::helpers::RenderUniforms>() / 4;
         let tile_bounds = calc_tile_bounds(img_size);
-        let max_intersects = max_intersections(img_size, num_points as u32);
 
         // If render_u32_buffer is true, we render a packed buffer of u32 values, otherwise
         // render RGBA f32 values.
@@ -134,18 +124,17 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             Shape::new([uniforms_size]),
             DType::U32,
         );
-        let num_intersections =
-            TensorIr::uninit(client.create_empty_handle(), Shape::new([1]), DType::U32);
         let tile_offsets = TensorIr::uninit(
             client.create_empty_handle(),
             Shape::new([tile_bounds.y as usize, tile_bounds.x as usize, 2]),
             DType::U32,
         );
-        let compact_gid_from_isect = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([max_intersects as usize]),
-            DType::U32,
-        );
+
+        // This is not actually size 0, but, it's dynamic. This is just a dummy handle so we just
+        // set a dummy size of 0.
+        let compact_gid_from_isect =
+            TensorIr::uninit(client.create_empty_handle(), Shape::new([0]), DType::U32);
+
         let global_from_compact_gid = TensorIr::uninit(
             client.create_empty_handle(),
             Shape::new([num_points]),
@@ -162,7 +151,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
                 out_img,
                 projected_splats,
                 uniforms_buffer,
-                num_intersections,
                 tile_offsets,
                 compact_gid_from_isect,
                 global_from_compact_gid,
@@ -188,7 +176,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             // Aux
             projected_splats,
             uniforms_buffer,
-            num_intersections,
             tile_offsets,
             compact_gid_from_isect,
             global_from_compact_gid,
@@ -200,7 +187,6 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
             RenderAux::<Self> {
                 projected_splats,
                 uniforms_buffer,
-                num_intersections,
                 tile_offsets,
                 compact_gid_from_isect,
                 global_from_compact_gid,

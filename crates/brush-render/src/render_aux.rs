@@ -17,7 +17,6 @@ pub struct RenderAux<B: Backend> {
     /// The packed projected splat information, see `ProjectedSplat` in helpers.wgsl
     pub projected_splats: FloatTensor<B>,
     pub uniforms_buffer: IntTensor<B>,
-    pub num_intersections: IntTensor<B>,
     pub tile_offsets: IntTensor<B>,
     pub compact_gid_from_isect: IntTensor<B>,
     pub global_from_compact_gid: IntTensor<B>,
@@ -35,10 +34,6 @@ impl<B: Backend> RenderAux<B> {
         (max - min).reshape([ty as usize, tx as usize])
     }
 
-    pub fn num_intersections(&self) -> Tensor<B, 1, Int> {
-        Tensor::from_primitive(self.num_intersections.clone())
-    }
-
     pub fn num_visible(&self) -> Tensor<B, 1, Int> {
         let num_vis_field_offset = offset_of!(shaders::helpers::RenderUniforms, num_visible) / 4;
         Tensor::from_primitive(self.uniforms_buffer.clone()).slice(s![num_vis_field_offset])
@@ -49,35 +44,22 @@ impl<B: Backend> RenderAux<B> {
         {
             use burn::tensor::{ElementConversion, TensorPrimitive};
 
-            use crate::{
-                INTERSECTS_UPPER_BOUND, render::max_intersections, validation::validate_tensor_val,
-            };
+            use crate::validation::validate_tensor_val;
 
             if std::env::args().any(|a| a == "--bench") {
                 return;
             }
 
-            let num_intersects: Tensor<B, 1, Int> = self.num_intersections();
             let compact_gid_from_isect: Tensor<B, 1, Int> =
                 Tensor::from_primitive(self.compact_gid_from_isect.clone());
             let num_visible: Tensor<B, 1, Int> = self.num_visible();
 
-            let num_intersections = num_intersects.into_scalar().elem::<i32>();
             let num_points = compact_gid_from_isect.dims()[0] as u32;
             let num_visible = num_visible.into_scalar().elem::<i32>() as u32;
-            let img_size = self.img_size;
-
-            let max_intersects = max_intersections(img_size, num_points);
-
-            assert!(
-                num_intersections < max_intersects as i32,
-                "Too many intersections, estimated too low of a number. {num_intersections} / {max_intersects}"
-            );
-
-            assert!(
-                num_intersections < INTERSECTS_UPPER_BOUND as i32,
-                "Too many intersections, Brush currently can't handle this. {num_intersections} > {INTERSECTS_UPPER_BOUND}"
-            );
+            let num_intersections: Tensor<B, 1, Int> =
+                Tensor::from_primitive(self.tile_offsets.clone());
+            let num_intersections =
+                num_intersections.slice(s![-1]).into_scalar().elem::<i32>() as u32;
 
             assert!(
                 num_visible <= num_points,
@@ -106,7 +88,7 @@ impl<B: Backend> RenderAux<B> {
                 .expect("Failed to fetch tile offsets");
             for &offsets in &tile_offsets {
                 assert!(
-                    offsets as i32 <= num_intersections,
+                    offsets <= num_intersections,
                     "Tile offsets exceed bounds. Value: {offsets}, num_intersections: {num_intersections}"
                 );
             }
@@ -114,8 +96,8 @@ impl<B: Backend> RenderAux<B> {
             if num_intersections > 0 {
                 for i in 0..(tile_offsets.len() - 1) / 2 {
                     // Check pairs of start/end points.
-                    let start = tile_offsets[i * 2] as i32;
-                    let end = tile_offsets[i * 2 + 1] as i32;
+                    let start = tile_offsets[i * 2];
+                    let end = tile_offsets[i * 2 + 1];
                     assert!(
                         start < num_intersections && end <= num_intersections,
                         "Invalid elements in tile offsets. Start {start} ending at {end}"
@@ -125,7 +107,7 @@ impl<B: Backend> RenderAux<B> {
                         "Invalid elements in tile offsets. Start {start} ending at {end}"
                     );
                     assert!(
-                        end - start <= num_visible as i32,
+                        end - start <= num_visible,
                         "One tile has more hits than total visible splats. Start {start} ending at {end}"
                     );
                 }

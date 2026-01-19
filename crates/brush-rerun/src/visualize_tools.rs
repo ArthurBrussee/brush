@@ -245,17 +245,6 @@ mod visualize_tools_impl {
                     .log("lr/coeffs", &rerun::Scalars::new(vec![stats.lr_coeffs]))?;
                 self.rec
                     .log("lr/opac", &rerun::Scalars::new(vec![stats.lr_opac]))?;
-
-                self.rec.log(
-                    "splats/num_intersects",
-                    &rerun::Scalars::new(vec![
-                        stats
-                            .num_intersections
-                            .into_scalar_async()
-                            .await?
-                            .elem::<f64>(),
-                    ]),
-                )?;
                 self.rec.log(
                     "splats/splats_visible",
                     &rerun::Scalars::new(vec![

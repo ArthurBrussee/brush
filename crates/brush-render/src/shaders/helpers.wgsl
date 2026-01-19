@@ -67,8 +67,9 @@ struct RenderUniforms {
     num_visible: u32,
 #endif
 
+    pad_a: u32,
+
     total_splats: u32,
-    max_intersects: u32,
 
     // Nb: Alpha is ignored atm.
     background: vec4f,

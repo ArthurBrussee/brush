@@ -36,14 +36,7 @@ pub type MainBackend = Fusion<MainBackendBase>;
 #[derive(Debug, Clone)]
 pub struct RenderStats {
     pub num_visible: u32,
-    pub num_intersections: u32,
 }
-
-// The maximum number of intersections that can be rendered.
-//
-// With 2D dispatch support, we can now handle more than the original 65535 workgroup limit.
-// Doubled from the original 512 * 65535 to allow higher resolution rendering.
-const INTERSECTS_UPPER_BOUND: u32 = 2 * 512 * 65535;
 
 pub trait SplatForward<B: Backend> {
     /// Render splats to a buffer.

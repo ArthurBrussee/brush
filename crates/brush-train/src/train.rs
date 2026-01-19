@@ -135,7 +135,6 @@ impl SplatTrainer {
 
         let median_scale = self.bounds.median_size();
         let num_visible = aux.num_visible().inner();
-        let num_intersections = aux.num_intersections().inner();
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
         let gt_rgb = gt_tensor.clone().slice(s![.., .., 0..3]);
 
@@ -273,7 +272,6 @@ impl SplatTrainer {
         let stats = TrainStepStats {
             pred_image: pred_image.inner(),
             num_visible,
-            num_intersections,
             loss: loss.inner(),
             lr_mean,
             lr_rotation,

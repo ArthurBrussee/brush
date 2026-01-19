@@ -22,6 +22,7 @@ fn check_tile_boundary(
             // Write the end of the last tile.
             tile_offsets[tid * 2 + 1] = isect_id + 1;
         }
+
         if tid != prev_tid {
             // Write the end of the previous tile.
             tile_offsets[prev_tid * 2 + 1] = isect_id;
