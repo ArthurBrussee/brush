@@ -78,48 +78,28 @@ pub struct SplatGrads<B: Backend> {
     pub v_refine_weight: FloatTensor<B>,
 }
 
-/// Backward pass trait mirroring [`SplatOps`].
-///
-/// Provides backward methods for each forward pass:
-/// - `rasterize_bwd`: computes gradients w.r.t. projected splats
-/// - `project_bwd`: computes gradients w.r.t. original inputs
-///
-/// These are called in reverse order during backpropagation.
 pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
-    /// Backward pass for rasterization.
-    ///
-    /// Takes the upstream gradient `v_output` and produces intermediate gradients
-    /// w.r.t. the projected splat representation.
     fn rasterize_bwd(state: RasterizeBwdState<B>, v_output: FloatTensor<B>) -> RasterizeGrads<B>;
-
-    /// Backward pass for projection.
-    ///
-    /// Takes the intermediate gradients from `rasterize_bwd` and produces
-    /// the final gradients w.r.t. the original splat inputs.
     fn project_bwd(state: ProjectBwdState<B>, rasterize_grads: RasterizeGrads<B>) -> SplatGrads<B>;
 }
 
 /// State saved during forward pass for backward computation.
 #[derive(Debug, Clone)]
 struct GaussianBackwardState<B: Backend> {
-    // Original inputs (needed for project_bwd)
     means: FloatTensor<B>,
     quats: FloatTensor<B>,
     log_scales: FloatTensor<B>,
     raw_opac: FloatTensor<B>,
 
-    // From project forward (needed for both bwd passes)
     projected_splats: FloatTensor<B>,
     project_uniforms: ProjectUniforms,
     num_visible: IntTensor<B>,
     global_from_compact_gid: IntTensor<B>,
 
-    // From rasterize forward (needed for rasterize_bwd)
     out_img: FloatTensor<B>,
     compact_gid_from_isect: IntTensor<B>,
     tile_offsets: IntTensor<B>,
 
-    // Settings
     render_mode: SplatRenderMode,
     sh_degree: u32,
     background: Vec3,

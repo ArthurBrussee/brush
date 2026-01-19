@@ -1,7 +1,7 @@
 use brush_kernel::{CubeCount, calc_cube_count_1d, create_meta_binding};
+use brush_render::MainBackendBase;
 use brush_render::gaussian_splats::SplatRenderMode;
 use brush_render::shaders::helpers::RasterizeUniforms;
-use brush_render::MainBackendBase;
 use brush_wgsl::wgsl_kernel;
 
 use brush_render::sh::sh_coeffs_for_degree;
@@ -13,7 +13,9 @@ use burn_cubecl::cubecl::server::Bindings;
 use burn_cubecl::kernel::into_contiguous;
 use glam::uvec2;
 
-use crate::burn_glue::{ProjectBwdState, RasterizeBwdState, RasterizeGrads, SplatBwdOps, SplatGrads};
+use crate::burn_glue::{
+    ProjectBwdState, RasterizeBwdState, RasterizeGrads, SplatBwdOps, SplatGrads,
+};
 
 // Kernel definitions using proc macro
 #[wgsl_kernel(
@@ -57,8 +59,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let client = &projected_splats.client;
 
         // Setup output tensors.
-        let v_projected_splats =
-            Self::float_zeros([num_points, 8].into(), device, FloatDType::F32);
+        let v_projected_splats = Self::float_zeros([num_points, 8].into(), device, FloatDType::F32);
         let v_raw_opac = Self::float_zeros([num_points].into(), device, FloatDType::F32);
         let v_refine_weight = Self::float_zeros([num_points].into(), device, FloatDType::F32);
 
@@ -75,7 +76,12 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let rasterize_uniforms = RasterizeUniforms {
             tile_bounds: tile_bounds.into(),
             img_size: img_size.into(),
-            background: [state.background.x, state.background.y, state.background.z, 1.0],
+            background: [
+                state.background.x,
+                state.background.y,
+                state.background.z,
+                1.0,
+            ],
         };
 
         let hard_floats = client
@@ -178,19 +184,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     .expect("Failed to bwd-diff splats");
             }
         });
-
-        assert!(v_means.is_contiguous(), "Grads must be contiguous");
-        assert!(v_quats.is_contiguous(), "Grads must be contiguous");
-        assert!(v_scales.is_contiguous(), "Grads must be contiguous");
-        assert!(v_coeffs.is_contiguous(), "Grads must be contiguous");
-        assert!(
-            rasterize_grads.v_raw_opac.is_contiguous(),
-            "Grads must be contiguous"
-        );
-        assert!(
-            rasterize_grads.v_refine_weight.is_contiguous(),
-            "Grads must be contiguous"
-        );
 
         SplatGrads {
             v_means,
