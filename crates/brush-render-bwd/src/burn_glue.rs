@@ -491,7 +491,14 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                     v_refine_weight_in,
                 ] = inputs;
 
-                let [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
+                let [
+                    v_means,
+                    v_quats,
+                    v_scales,
+                    v_coeffs,
+                    v_raw_opac,
+                    v_refine_weight,
+                ] = outputs;
 
                 let inner_rasterize_grads = RasterizeGrads {
                     v_projected_splats: h.get_float_tensor::<MainBackendBase>(v_projected_splats),
@@ -598,7 +605,14 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             )
             .outputs();
 
-        let [v_means, v_quats, v_scales, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
+        let [
+            v_means,
+            v_quats,
+            v_scales,
+            v_coeffs,
+            v_raw_opac,
+            v_refine_weight,
+        ] = outputs;
 
         SplatGrads {
             v_means,

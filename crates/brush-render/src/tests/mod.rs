@@ -40,7 +40,14 @@ fn renders_at_all() {
         raw_opacity,
         SplatRenderMode::Default,
     );
-    let (output, _render_aux) = render_splats(&splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float);
+    let (output, _render_aux) = render_splats(
+        &splats,
+        &cam,
+        img_size,
+        Vec3::ZERO,
+        None,
+        TextureMode::Float,
+    );
 
     let rgb = output.clone().slice([0..32, 0..32, 0..3]);
     let alpha = output.slice([0..32, 0..32, 3..4]);
@@ -105,5 +112,12 @@ fn renders_many_splats() {
         raw_opacity,
         SplatRenderMode::Default,
     );
-    let (_output, _render_aux) = render_splats(&splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float);
+    let (_output, _render_aux) = render_splats(
+        &splats,
+        &cam,
+        img_size,
+        Vec3::ZERO,
+        None,
+        TextureMode::Float,
+    );
 }
