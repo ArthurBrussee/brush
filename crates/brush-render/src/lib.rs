@@ -8,7 +8,7 @@ use burn_wgpu::WgpuRuntime;
 use camera::Camera;
 use clap::ValueEnum;
 use glam::Vec3;
-use render_aux::RenderAux;
+use render_aux::{ProjectAux, RasterizeAux, RenderAux};
 
 use crate::gaussian_splats::SplatRenderMode;
 pub use crate::gaussian_splats::render_splats;
@@ -59,6 +59,37 @@ pub trait SplatForward<B: Backend> {
         background: Vec3,
         bwd_info: bool,
     ) -> (FloatTensor<B>, RenderAux<B>);
+}
+
+/// First pass of split rendering pipeline: culling, depth sort, projection, intersection counting, prefix sum.
+///
+/// Returns [`ProjectAux`] which contains data needed for [`SplatRasterize::rasterize`],
+/// including `cum_tiles_hit` which allows sync readback of the exact number of intersections.
+pub trait SplatProjectPrepare<B: Backend> {
+    fn project_prepare(
+        camera: &Camera,
+        img_size: glam::UVec2,
+        means: FloatTensor<B>,
+        log_scales: FloatTensor<B>,
+        quats: FloatTensor<B>,
+        sh_coeffs: FloatTensor<B>,
+        raw_opacities: FloatTensor<B>,
+        render_mode: SplatRenderMode,
+        background: Vec3,
+    ) -> ProjectAux<B>;
+}
+
+/// Second pass of split rendering pipeline: intersection filling, tile sort, tile offsets, rasterization.
+///
+/// Takes the output of [`SplatProjectPrepare::project_prepare`] along with the actual
+/// `num_intersections` value from userland readback.
+pub trait SplatRasterize<B: Backend> {
+    fn rasterize(
+        project_aux: &ProjectAux<B>,
+        num_intersections: u32,
+        background: Vec3,
+        bwd_info: bool,
+    ) -> (FloatTensor<B>, RasterizeAux<B>);
 }
 
 #[derive(

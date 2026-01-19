@@ -10,6 +10,7 @@ pub struct ProjectSplats {
 #[wgsl_kernel(source = "src/shaders/project_visible.wgsl")]
 pub struct ProjectVisible {
     mip_splatting: bool,
+    count_intersections: bool,
 }
 
 #[wgsl_kernel(source = "src/shaders/map_gaussian_to_intersects.wgsl")]

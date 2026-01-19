@@ -65,6 +65,29 @@ pub trait SplatBackwardOps<B: Backend> {
     ) -> SplatGrads<B>;
 }
 
+/// State from the ProjectPrepare pass needed for backward computation.
+#[derive(Debug, Clone)]
+pub struct ProjectBackwardState<B: Backend> {
+    pub(crate) means: FloatTensor<B>,
+    pub(crate) quats: FloatTensor<B>,
+    pub(crate) log_scales: FloatTensor<B>,
+    pub(crate) raw_opac: FloatTensor<B>,
+    pub(crate) projected_splats: FloatTensor<B>,
+    pub(crate) uniforms_buffer: IntTensor<B>,
+    pub(crate) global_from_compact_gid: IntTensor<B>,
+    pub(crate) render_mode: SplatRenderMode,
+    pub(crate) sh_degree: u32,
+}
+
+/// State from the Rasterize pass needed for backward computation.
+#[derive(Debug, Clone)]
+pub struct RasterizeBackwardState<B: Backend> {
+    pub(crate) out_img: FloatTensor<B>,
+    pub(crate) compact_gid_from_isect: IntTensor<B>,
+    pub(crate) tile_offsets: IntTensor<B>,
+}
+
+/// Combined backward state for compatibility with existing code.
 #[derive(Debug, Clone)]
 pub struct GaussianBackwardState<B: Backend> {
     pub(crate) means: FloatTensor<B>,
@@ -79,6 +102,29 @@ pub struct GaussianBackwardState<B: Backend> {
     pub(crate) tile_offsets: IntTensor<B>,
     pub(crate) render_mode: SplatRenderMode,
     pub(crate) sh_degree: u32,
+}
+
+impl<B: Backend> GaussianBackwardState<B> {
+    /// Construct combined state from project and rasterize backward states.
+    pub fn from_parts(
+        project: ProjectBackwardState<B>,
+        rasterize: RasterizeBackwardState<B>,
+    ) -> Self {
+        Self {
+            means: project.means,
+            quats: project.quats,
+            log_scales: project.log_scales,
+            raw_opac: project.raw_opac,
+            projected_splats: project.projected_splats,
+            uniforms_buffer: project.uniforms_buffer,
+            global_from_compact_gid: project.global_from_compact_gid,
+            render_mode: project.render_mode,
+            sh_degree: project.sh_degree,
+            out_img: rasterize.out_img,
+            compact_gid_from_isect: rasterize.compact_gid_from_isect,
+            tile_offsets: rasterize.tile_offsets,
+        }
+    }
 }
 
 #[derive(Debug)]
