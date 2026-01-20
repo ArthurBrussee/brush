@@ -235,15 +235,11 @@ impl SplatOps<Self> for MainBackendBase {
             }
         });
 
-        // Step 3: Tile sort - use static dispatch with full buffer (num_intersections)
         let bits = u32::BITS - num_tiles.leading_zeros();
-
         let (tile_id_from_isect, compact_gid_from_isect) = tracing::trace_span!("Tile sort")
             .in_scope(|| radix_argsort(tile_id_from_isect, compact_gid_from_isect, bits, None));
 
-        // Step 4: GetTileOffsets
         let cube_dim = CubeDim::new_1d(256);
-
         let tile_offsets = Self::int_zeros(
             [tile_bounds.y as usize, tile_bounds.x as usize, 2].into(),
             device,
@@ -275,7 +271,6 @@ impl SplatOps<Self> for MainBackendBase {
             .expect("Failed to render splats");
         }
 
-        // Step 5: Rasterize
         let out_dim = if bwd_info { 4 } else { 1 };
         let out_img = create_tensor(
             [img_size.y as usize, img_size.x as usize, out_dim],

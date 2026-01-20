@@ -85,15 +85,10 @@ impl<B: Backend> ProjectOutput<B> {
 /// Minimal output from rendering. Contains only what callers typically need.
 #[derive(Debug, Clone)]
 pub struct RenderAux<B: Backend> {
-    /// Number of visible splats (for stats/logging)
     pub num_visible: IntTensor<B>,
-    /// Total number of tile-splat intersections (for stats/logging)
     pub num_intersections: u32,
-    /// Visibility weights per splat (for training densification)
     pub visible: FloatTensor<B>,
-    /// Tile offsets [ty, tx, 2] with (start, end) per tile (for visualization)
     pub tile_offsets: IntTensor<B>,
-    /// Image size
     pub img_size: glam::UVec2,
 }
 
