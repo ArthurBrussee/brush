@@ -19,7 +19,7 @@ use egui::{Color32, Rect, Slider};
 use glam::{UVec2, Vec3};
 use web_time::Instant;
 
-use crate::async_renderer::{AsyncRenderer, RenderRequest};
+use crate::splat_backbuffer::{RenderRequest, SplatBackbuffer};
 
 use serde::{Deserialize, Serialize};
 
@@ -58,7 +58,6 @@ impl RenderUpdateMode {
 use crate::{
     UiMode,
     app::CameraSettings,
-    burn_texture::BurnTexture,
     draw_checkerboard,
     panels::AppPane,
     ui_process::{BackgroundStyle, UiProcess},
@@ -103,8 +102,9 @@ impl ErrorDisplay {
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct ScenePanel {
+    /// Async splat renderer and texture backbuffer.
     #[serde(skip)]
-    pub(crate) backbuffer: Option<BurnTexture>,
+    backbuffer: Option<SplatBackbuffer>,
     #[serde(skip)]
     pub(crate) last_draw: Option<Instant>,
     #[serde(skip)]
@@ -147,9 +147,6 @@ pub struct ScenePanel {
     #[cfg(feature = "training")]
     #[serde(skip)]
     settings_popup: Option<Arc<Mutex<SettingsPopup>>>,
-    /// Async renderer for non-blocking splat rendering.
-    #[serde(skip)]
-    async_renderer: AsyncRenderer,
 }
 
 impl ScenePanel {
@@ -249,7 +246,8 @@ impl ScenePanel {
         load_option
     }
 
-    fn start_loading(#[allow(clippy::unused_self)] &self, source: DataSource, process: &UiProcess) {
+    #[allow(clippy::unused_self)]
+    fn start_loading(&self, source: DataSource, process: &UiProcess) {
         process.connect_to_process(create_process(
             source,
             #[cfg(feature = "training")]
@@ -323,39 +321,34 @@ impl ScenePanel {
             (size.y as f32 * ui.ctx().pixels_per_point().round()) as u32,
         );
 
-        // Check for new render result from background task
-        if let Some(result) = self.async_renderer.try_get_result() {
-            if let Some(backbuffer) = &mut self.backbuffer {
-                backbuffer.update_texture(result.image);
-            }
-
-            // Render widget_3d in sync with new splat render (same camera/size)
-            if let Some(widget_3d) = &mut self.widget_3d
-                && let Some(backbuffer) = &self.backbuffer
-                && let Some(texture) = backbuffer.texture()
-            {
-                widget_3d.render_to_texture(
-                    &result.camera,
-                    process.model_local_to_world(),
-                    result.img_size,
-                    texture,
-                    grid_opacity,
-                );
-            }
-
-            ui.ctx().request_repaint();
-        }
-
         // Submit new render request if dirty and we have splats
-        if pixel_size.x > 8 && pixel_size.y > 8 && dirty {
-            self.async_renderer.submit(RenderRequest {
+        if let Some(backbuffer) = &mut self.backbuffer
+            && pixel_size.x > 8
+            && pixel_size.y > 8
+            && dirty
+        {
+            backbuffer.submit(RenderRequest {
                 slot: process.current_splats(),
                 frame: self.frame as usize,
-                camera,
+                camera: camera.clone(),
                 img_size: pixel_size,
                 background: settings.background.unwrap_or(Vec3::ZERO),
                 splat_scale: settings.splat_scale,
             });
+
+            // Render widget_3d overlay to the same texture
+            if let Some(widget_3d) = &mut self.widget_3d
+                && let Some(texture) = backbuffer.texture()
+            {
+                widget_3d.render_to_texture(
+                    &camera,
+                    process.model_local_to_world(),
+                    pixel_size,
+                    &texture,
+                    grid_opacity,
+                );
+            }
+
             ui.ctx().request_repaint();
         }
 
@@ -859,7 +852,7 @@ impl AppPane for ScenePanel {
         _adapter_info: wgpu::AdapterInfo,
     ) {
         self.widget_3d = Some(Widget3D::new(device.clone(), queue.clone()));
-        self.backbuffer = Some(BurnTexture::new(renderer, device, queue));
+        self.backbuffer = Some(SplatBackbuffer::new(renderer, device, queue));
 
         // Create the settings popup now that we have the base_path
         #[cfg(feature = "training")]

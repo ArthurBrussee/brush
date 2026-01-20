@@ -2,18 +2,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use brush_dataset::scene::{SceneBatch, sample_to_tensor_data};
+use brush_process::slot::Slot;
 use brush_render::{
-    AlphaMode, MainBackend, TextureMode,
+    AlphaMode, MainBackend,
     bounding_box::BoundingBox,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::{SplatRenderMode, Splats},
-    render_splats,
 };
 use brush_train::{
     RandomSplatsConfig, config::TrainConfig, create_random_splats, splats_into_autodiff,
     train::SplatTrainer,
 };
-use brush_ui::burn_texture::BurnTexture;
+use brush_ui::splat_backbuffer::{RenderRequest, SplatBackbuffer};
 use burn::{backend::wgpu::WgpuDevice, module::AutodiffModule, prelude::Backend};
 use egui::{ImageSource, TextureHandle, TextureOptions, load::SizedTexture};
 use glam::{Quat, Vec2, Vec3};
@@ -22,8 +22,8 @@ use rand::SeedableRng;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 struct TrainStep {
-    splats: Splats<MainBackend>,
     iter: u32,
+    num_splats: u32,
 }
 
 fn spawn_train_loop(
@@ -33,6 +33,7 @@ fn spawn_train_loop(
     device: WgpuDevice,
     ctx: egui::Context,
     sender: Sender<TrainStep>,
+    slot: Slot<Splats<MainBackend>>,
 ) {
     // Spawn a task that iterates over the training stream.
     tokio::spawn(async move {
@@ -69,18 +70,16 @@ fn spawn_train_loop(
         loop {
             let (new_splats, _) = trainer.step(batch.clone(), splats).await;
             let (new_splats, _) = trainer.refine(iter, new_splats.valid()).await;
+            let num_splats = new_splats.num_splats();
+
+            // Update the slot with latest splats
+            slot.set(new_splats.clone()).await;
+
             splats = splats_into_autodiff(new_splats);
             iter += 1;
             ctx.request_repaint();
 
-            if sender
-                .send(TrainStep {
-                    splats: splats.valid(),
-                    iter,
-                })
-                .await
-                .is_err()
-            {
+            if sender.send(TrainStep { iter, num_splats }).await.is_err() {
                 break;
             }
         }
@@ -91,7 +90,8 @@ struct App {
     image: image::DynamicImage,
     camera: Camera,
     tex_handle: TextureHandle,
-    backbuffer: BurnTexture,
+    backbuffer: SplatBackbuffer,
+    slot: Slot<Splats<MainBackend>>,
     receiver: Receiver<TrainStep>,
     last_step: Option<TrainStep>,
 }
@@ -133,6 +133,8 @@ impl App {
             cc.egui_ctx
                 .load_texture("nearest_view_tex", color_img, TextureOptions::default());
 
+        let slot = Slot::default();
+
         let config = TrainConfig::default();
         spawn_train_loop(
             image.clone(),
@@ -141,6 +143,7 @@ impl App {
             device,
             cc.egui_ctx.clone(),
             sender,
+            slot.clone(),
         );
 
         let renderer = cc
@@ -154,7 +157,8 @@ impl App {
             image,
             camera,
             tex_handle: handle,
-            backbuffer: BurnTexture::new(renderer, state.device.clone(), state.queue.clone()),
+            backbuffer: SplatBackbuffer::new(renderer, state.device.clone(), state.queue.clone()),
+            slot,
             receiver,
             last_step: None,
         }
@@ -168,32 +172,37 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let Some(msg) = self.last_step.as_ref() else {
+            let Some(step) = self.last_step.as_ref() else {
+                ui.label("Waiting for first training step...");
                 return;
             };
 
-            let (img, _render_aux) = burn_cubecl::cubecl::future::block_on(render_splats(
-                msg.splats.clone(),
-                &self.camera,
-                glam::uvec2(self.image.width(), self.image.height()),
-                Vec3::ZERO, // Just render with a black background
-                None,
-                TextureMode::Packed,
-            ));
+            // Submit a render request
+            self.backbuffer.submit(RenderRequest {
+                slot: self.slot.clone(),
+                frame: 0,
+                camera: self.camera.clone(),
+                img_size: glam::uvec2(self.image.width(), self.image.height()),
+                background: Vec3::ZERO,
+                splat_scale: None,
+            });
 
             let size = egui::vec2(self.image.width() as f32, self.image.height() as f32);
 
             ui.horizontal(|ui| {
-                let texture_id = self.backbuffer.update_texture(img);
-                ui.image(ImageSource::Texture(SizedTexture::new(texture_id, size)));
+                if let Some(texture_id) = self.backbuffer.id() {
+                    ui.image(ImageSource::Texture(SizedTexture::new(texture_id, size)));
+                } else {
+                    ui.label("Rendering...");
+                }
                 ui.image(ImageSource::Texture(SizedTexture::new(
                     self.tex_handle.id(),
                     size,
                 )));
             });
 
-            ui.label(format!("Splats: {}", msg.splats.num_splats()));
-            ui.label(format!("Step: {}", msg.iter));
+            ui.label(format!("Splats: {}", step.num_splats));
+            ui.label(format!("Step: {}", step.iter));
         });
     }
 }
