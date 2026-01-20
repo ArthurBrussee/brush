@@ -185,6 +185,9 @@ impl eframe::App for App {
                 img_size: glam::uvec2(self.image.width(), self.image.height()),
                 background: Vec3::ZERO,
                 splat_scale: None,
+                ctx: ctx.clone(),
+                model_transform: glam::Affine3A::IDENTITY,
+                grid_opacity: 0.0,
             });
 
             let size = egui::vec2(self.image.width() as f32, self.image.height() as f32);

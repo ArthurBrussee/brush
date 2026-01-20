@@ -3,6 +3,7 @@
 //! Background task renders splats directly to a wgpu texture.
 //! wgpu handles GPU synchronization - no locks needed on results.
 
+use crate::widget_3d::Widget3D;
 use brush_process::slot::Slot;
 use brush_render::{
     MainBackend, MainBackendBase, TextureMode, camera::Camera, gaussian_splats::Splats,
@@ -27,6 +28,11 @@ pub struct RenderRequest {
     pub img_size: glam::UVec2,
     pub background: Vec3,
     pub splat_scale: Option<f32>,
+    pub ctx: egui::Context,
+    /// Model transform for the 3D overlay (grid, axes).
+    pub model_transform: glam::Affine3A,
+    /// Opacity of the grid overlay (0.0 = hidden, 1.0 = fully visible).
+    pub grid_opacity: f32,
 }
 
 /// Shared texture state that the render loop writes to directly.
@@ -216,6 +222,9 @@ async fn render_loop(
     queue: wgpu::Queue,
     mut request_rx: mpsc::UnboundedReceiver<RenderRequest>,
 ) {
+    // Create Widget3D for rendering the grid overlay
+    let widget_3d = Widget3D::new(device.clone(), queue.clone());
+
     while let Some(mut req) = request_rx.recv().await {
         // Drain channel to get the latest request
         while let Ok(newer) = request_rx.try_recv() {
@@ -245,6 +254,21 @@ async fn render_loop(
 
         if let Some(image) = render_result {
             copy_to_texture(image, &texture_state, &renderer, &device, &queue);
+
+            // Render 3D overlay (grid, axes) on top of the splats
+            if req.grid_opacity > 0.0 {
+                if let Some(texture) = texture_state.lock().unwrap().texture.clone() {
+                    widget_3d.render_to_texture(
+                        &req.camera,
+                        req.model_transform,
+                        req.img_size,
+                        &texture,
+                        req.grid_opacity,
+                    );
+                }
+            }
         }
+
+        req.ctx.request_repaint();
     }
 }

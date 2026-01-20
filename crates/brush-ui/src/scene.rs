@@ -61,7 +61,6 @@ use crate::{
     draw_checkerboard,
     panels::AppPane,
     ui_process::{BackgroundStyle, UiProcess},
-    widget_3d::Widget3D,
 };
 
 #[derive(Clone, PartialEq)]
@@ -127,8 +126,6 @@ pub struct ScenePanel {
     seen_warning_count: usize,
     #[serde(skip)]
     last_state: Option<RenderState>,
-    #[serde(skip)]
-    widget_3d: Option<Widget3D>,
     #[serde(skip)]
     source_name: Option<String>,
     #[serde(skip)]
@@ -334,22 +331,10 @@ impl ScenePanel {
                 img_size: pixel_size,
                 background: settings.background.unwrap_or(Vec3::ZERO),
                 splat_scale: settings.splat_scale,
+                ctx: ui.ctx().clone(),
+                model_transform: process.model_local_to_world(),
+                grid_opacity,
             });
-
-            // Render widget_3d overlay to the same texture
-            if let Some(widget_3d) = &mut self.widget_3d
-                && let Some(texture) = backbuffer.texture()
-            {
-                widget_3d.render_to_texture(
-                    &camera,
-                    process.model_local_to_world(),
-                    pixel_size,
-                    &texture,
-                    grid_opacity,
-                );
-            }
-
-            ui.ctx().request_repaint();
         }
 
         ui.scope(|ui| {
@@ -851,7 +836,6 @@ impl AppPane for ScenePanel {
         _burn_device: burn_wgpu::WgpuDevice,
         _adapter_info: wgpu::AdapterInfo,
     ) {
-        self.widget_3d = Some(Widget3D::new(device.clone(), queue.clone()));
         self.backbuffer = Some(SplatBackbuffer::new(renderer, device, queue));
 
         // Create the settings popup now that we have the base_path
