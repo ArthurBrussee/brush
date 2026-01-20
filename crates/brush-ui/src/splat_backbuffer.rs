@@ -256,16 +256,16 @@ async fn render_loop(
             copy_to_texture(image, &texture_state, &renderer, &device, &queue);
 
             // Render 3D overlay (grid, axes) on top of the splats
-            if req.grid_opacity > 0.0 {
-                if let Some(texture) = texture_state.lock().unwrap().texture.clone() {
-                    widget_3d.render_to_texture(
-                        &req.camera,
-                        req.model_transform,
-                        req.img_size,
-                        &texture,
-                        req.grid_opacity,
-                    );
-                }
+            if req.grid_opacity > 0.0
+                && let Some(texture) = texture_state.lock().unwrap().texture.clone()
+            {
+                widget_3d.render_to_texture(
+                    &req.camera,
+                    req.model_transform,
+                    req.img_size,
+                    &texture,
+                    req.grid_opacity,
+                );
             }
         }
 

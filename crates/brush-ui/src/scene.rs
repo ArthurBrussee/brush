@@ -327,7 +327,7 @@ impl ScenePanel {
             backbuffer.submit(RenderRequest {
                 slot: process.current_splats(),
                 frame: self.frame as usize,
-                camera: camera.clone(),
+                camera,
                 img_size: pixel_size,
                 background: settings.background.unwrap_or(Vec3::ZERO),
                 splat_scale: settings.splat_scale,
