@@ -35,7 +35,6 @@ fn spawn_train_loop(
     sender: Sender<TrainStep>,
     slot: Slot<Splats<MainBackend>>,
 ) {
-    // Spawn a task that iterates over the training stream.
     tokio::spawn(async move {
         let seed = 42;
 
@@ -58,7 +57,6 @@ fn spawn_train_loop(
             BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
         );
 
-        // One batch of training data, it's the same every step so can just construct it once.
         let batch = SceneBatch {
             img_tensor: sample_to_tensor_data(image),
             alpha_mode: AlphaMode::Transparent,
@@ -71,8 +69,6 @@ fn spawn_train_loop(
             let (new_splats, _) = trainer.step(batch.clone(), splats).await;
             let (new_splats, _) = trainer.refine(iter, new_splats.valid()).await;
             let num_splats = new_splats.num_splats();
-
-            // Update the slot with latest splats
             slot.set(new_splats.clone()).await;
 
             splats = splats_into_autodiff(new_splats);
@@ -177,7 +173,6 @@ impl eframe::App for App {
                 return;
             };
 
-            // Submit a render request
             self.backbuffer.submit(RenderRequest {
                 slot: self.slot.clone(),
                 frame: 0,
@@ -213,7 +208,6 @@ impl eframe::App for App {
 #[tokio::main]
 async fn main() {
     let native_options = eframe::NativeOptions {
-        // Build app display.
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(egui::Vec2::new(1100.0, 500.0))
             .with_active(true),

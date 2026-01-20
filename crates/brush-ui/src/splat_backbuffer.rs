@@ -1,8 +1,3 @@
-//! Async splat rendering backbuffer.
-//!
-//! Background task renders splats directly to a wgpu texture.
-//! wgpu handles GPU synchronization - no locks needed on results.
-
 use crate::widget_3d::Widget3D;
 use brush_process::slot::Slot;
 use brush_render::{
@@ -35,16 +30,12 @@ pub struct RenderRequest {
     pub grid_opacity: f32,
 }
 
-/// Shared texture state that the render loop writes to directly.
 struct TextureState {
     texture: Option<wgpu::Texture>,
     texture_id: Option<TextureId>,
 }
 
-/// Async splat rendering backbuffer.
-///
-/// Background task renders splats and writes directly to a wgpu texture.
-/// No synchronization needed on results - wgpu handles that.
+/// Renders splats asynchronously in a background task.
 pub struct SplatBackbuffer {
     texture_state: Arc<Mutex<TextureState>>,
     request_tx: mpsc::UnboundedSender<RenderRequest>,
@@ -62,7 +53,6 @@ impl SplatBackbuffer {
         }));
         let (request_tx, request_rx) = mpsc::unbounded_channel();
 
-        // Spawn the background render loop
         task::spawn(render_loop(
             Arc::clone(&texture_state),
             renderer,
@@ -77,19 +67,12 @@ impl SplatBackbuffer {
         }
     }
 
-    /// Submit a new render request.
     pub fn submit(&self, request: RenderRequest) {
         let _ = self.request_tx.send(request);
     }
 
-    /// Get the texture ID for display.
     pub fn id(&self) -> Option<TextureId> {
         self.texture_state.lock().unwrap().texture_id
-    }
-
-    /// Get the underlying texture for additional rendering.
-    pub fn texture(&self) -> Option<wgpu::Texture> {
-        self.texture_state.lock().unwrap().texture.clone()
     }
 }
 
@@ -123,7 +106,6 @@ fn copy_to_texture(
     assert!(c == 1, "texture should be u8 packed RGBA");
     let size = glam::uvec2(w as u32, h as u32);
 
-    // Check if we need to resize/create texture
     let needs_resize = {
         let state = texture_state.lock().unwrap();
         state
@@ -133,7 +115,6 @@ fn copy_to_texture(
     };
 
     if needs_resize {
-        // Cleanup memory when resizing
         let client = WgpuRuntime::client(&img.device());
         client.memory_cleanup();
 
@@ -141,7 +122,6 @@ fn copy_to_texture(
 
         let mut state = texture_state.lock().unwrap();
         if let Some(id) = state.texture_id {
-            // Update existing registration
             renderer.write().update_egui_texture_from_wgpu_texture(
                 device,
                 &texture.create_view(&TextureViewDescriptor::default()),
@@ -149,7 +129,6 @@ fn copy_to_texture(
                 id,
             );
         } else {
-            // New registration
             let id = renderer.write().register_native_texture(
                 device,
                 &texture.create_view(&TextureViewDescriptor::default()),
@@ -222,11 +201,10 @@ async fn render_loop(
     queue: wgpu::Queue,
     mut request_rx: mpsc::UnboundedReceiver<RenderRequest>,
 ) {
-    // Create Widget3D for rendering the grid overlay
     let widget_3d = Widget3D::new(device.clone(), queue.clone());
 
     while let Some(mut req) = request_rx.recv().await {
-        // Drain channel to get the latest request
+        // Drain to get latest request
         while let Ok(newer) = request_rx.try_recv() {
             req = newer;
         }
@@ -255,7 +233,6 @@ async fn render_loop(
         if let Some(image) = render_result {
             copy_to_texture(image, &texture_state, &renderer, &device, &queue);
 
-            // Render 3D overlay (grid, axes) on top of the splats
             if req.grid_opacity > 0.0
                 && let Some(texture) = texture_state.lock().unwrap().texture.clone()
             {
