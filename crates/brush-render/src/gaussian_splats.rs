@@ -243,8 +243,10 @@ impl<B: Backend> Splats<B> {
 ///
 /// NB: This doesn't work on a differentiable backend. Use
 /// [`brush_render_bwd::render_splats`] for that.
-pub fn render_splats<B: Backend + SplatOps<B>>(
-    splats: &Splats<B>,
+///
+/// Takes ownership of the splats to avoid cloning internally.
+pub async fn render_splats<B: Backend + SplatOps<B>>(
+    splats: Splats<B>,
     camera: &Camera,
     img_size: glam::UVec2,
     background: Vec3,
@@ -253,38 +255,36 @@ pub fn render_splats<B: Backend + SplatOps<B>>(
 ) -> (Tensor<B, 3>, RenderAux<B>) {
     splats.validate_values();
 
-    let mut scales = splats.log_scales.val();
+    let mut scales = splats.log_scales.into_value();
 
-    // Add in scaling if needed.
     if let Some(scale) = splat_scale {
         scales = scales + scale.ln();
     };
 
-    // First pass: project
     let project_output = B::project(
         camera,
         img_size,
-        splats.means.val().into_primitive().tensor(),
+        splats.means.into_value().into_primitive().tensor(),
         scales.into_primitive().tensor(),
-        splats.rotations.val().into_primitive().tensor(),
-        splats.sh_coeffs.val().into_primitive().tensor(),
-        splats.raw_opacities.val().into_primitive().tensor(),
+        splats.rotations.into_value().into_primitive().tensor(),
+        splats.sh_coeffs.into_value().into_primitive().tensor(),
+        splats.raw_opacities.into_value().into_primitive().tensor(),
         splats.render_mode,
     );
 
-    // Validate before readback
     project_output.validate();
 
-    let num_intersections = project_output.read_num_intersections();
+    // Async readback
+    let num_intersections = project_output.read_num_intersections().await;
 
     let use_float = matches!(texture_mode, TextureMode::Float);
     let (out_img, render_aux, _) =
         B::rasterize(&project_output, num_intersections, background, use_float);
 
-    // Validate rasterize outputs
     render_aux.validate();
 
-    let img = Tensor::from_primitive(TensorPrimitive::Float(out_img));
-
-    (img, render_aux)
+    (
+        Tensor::from_primitive(TensorPrimitive::Float(out_img)),
+        render_aux,
+    )
 }

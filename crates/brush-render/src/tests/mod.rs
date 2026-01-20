@@ -8,8 +8,8 @@ use burn::tensor::{Distribution, Tensor};
 use burn_wgpu::WgpuDevice;
 use glam::Vec3;
 
-#[test]
-fn renders_at_all() {
+#[tokio::test]
+async fn renders_at_all() {
     // Check if rendering doesn't hard crash or anything.
     // These are some zero-sized gaussians, so we know
     // what the result should look like.
@@ -40,14 +40,8 @@ fn renders_at_all() {
         raw_opacity,
         SplatRenderMode::Default,
     );
-    let (output, _render_aux) = render_splats(
-        &splats,
-        &cam,
-        img_size,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-    );
+    let (output, _render_aux) =
+        render_splats(splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float).await;
 
     let rgb = output.clone().slice([0..32, 0..32, 0..3]);
     let alpha = output.slice([0..32, 0..32, 3..4]);
@@ -61,8 +55,8 @@ fn renders_at_all() {
     assert_approx_eq!(alpha_mean, 0.0);
 }
 
-#[test]
-fn renders_many_splats() {
+#[tokio::test]
+async fn renders_many_splats() {
     // Test rendering with a ton of gaussians to verify 2D dispatch works correctly.
     // This exceeds the 1D 65535 * 256 = 16.7M limit.
     let num_splats = 30_000_000;
@@ -112,12 +106,6 @@ fn renders_many_splats() {
         raw_opacity,
         SplatRenderMode::Default,
     );
-    let (_output, _render_aux) = render_splats(
-        &splats,
-        &cam,
-        img_size,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-    );
+    let (_output, _render_aux) =
+        render_splats(splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float).await;
 }

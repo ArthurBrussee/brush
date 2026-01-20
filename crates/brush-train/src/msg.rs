@@ -7,6 +7,7 @@ use burn::{
 pub struct RefineStats {
     pub num_added: u32,
     pub num_pruned: u32,
+    pub total_splats: u32,
 }
 
 #[derive(Clone)]

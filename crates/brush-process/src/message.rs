@@ -55,6 +55,8 @@ pub enum ProcessMessage {
         up_axis: Option<Vec3>,
         frame: u32,
         total_frames: u32,
+        num_splats: u32,
+        sh_degree: u32,
     },
     #[cfg(feature = "training")]
     TrainMessage(TrainMessage),

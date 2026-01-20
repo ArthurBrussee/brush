@@ -22,14 +22,16 @@ pub struct ProjectOutput<B: Backend> {
 }
 
 impl<B: Backend> ProjectOutput<B> {
-    /// Get the total number of intersections (sync readback).
-    pub fn read_num_intersections(&self) -> u32 {
+    /// Get the total number of intersections.
+    pub async fn read_num_intersections(&self) -> u32 {
         let cum_tiles_hit: Tensor<B, 1, Int> = Tensor::from_primitive(self.cum_tiles_hit.clone());
         let total = self.project_uniforms.total_splats as usize;
         if total > 0 {
             cum_tiles_hit
                 .slice([total - 1..total])
-                .into_scalar()
+                .into_scalar_async()
+                .await
+                .expect("Failed to read num_intersections")
                 .elem::<u32>()
         } else {
             0

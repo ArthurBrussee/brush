@@ -172,23 +172,21 @@ pub fn create_process<
 
                     // For the first frame of a new file, clear existing frames
                     if frame == 0 {
-                        splat_view.clear();
+                        splat_view.clear().await;
                     }
 
-                    // Ensure we have space up to this frame index and set it
-                    {
-                        let mut guard = splat_view.write();
-                        if guard.len() <= frame {
-                            guard.resize(frame + 1, splats.clone());
-                        }
-                        guard[frame] = splats;
-                    }
+                    // Capture stats before moving splats
+                    let num_splats = splats.num_splats();
+                    let sh_degree = splats.sh_degree();
+                    splat_view.set_at(frame, splats).await;
 
                     emitter
                         .emit(ProcessMessage::SplatsUpdated {
                             up_axis: message.meta.up_axis,
                             frame: frame as u32,
                             total_frames,
+                            num_splats,
+                            sh_degree,
                         })
                         .await;
                 }

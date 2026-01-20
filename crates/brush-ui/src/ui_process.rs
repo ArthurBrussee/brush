@@ -65,11 +65,11 @@ impl UiProcess {
         self.write().background_style = style;
     }
 
-    pub(crate) fn current_splats(&self) -> Option<Slot<Splats<MainBackend>>> {
+    pub(crate) fn current_splats(&self) -> Slot<Splats<MainBackend>> {
         self.read()
             .process_handle
             .as_ref()
-            .map(|s| s.splat_view.clone())
+            .map_or(Slot::default(), |s| s.splat_view.clone())
     }
 
     pub fn is_loading(&self) -> bool {

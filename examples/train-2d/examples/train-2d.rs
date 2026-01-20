@@ -67,7 +67,7 @@ fn spawn_train_loop(
         let mut iter = 0;
 
         loop {
-            let (new_splats, _) = trainer.step(batch.clone(), splats);
+            let (new_splats, _) = trainer.step(batch.clone(), splats).await;
             let (new_splats, _) = trainer.refine(iter, new_splats.valid()).await;
             splats = splats_into_autodiff(new_splats);
             iter += 1;
@@ -172,14 +172,14 @@ impl eframe::App for App {
                 return;
             };
 
-            let (img, _render_aux) = render_splats(
-                &msg.splats,
+            let (img, _render_aux) = burn_cubecl::cubecl::future::block_on(render_splats(
+                msg.splats.clone(),
                 &self.camera,
                 glam::uvec2(self.image.width(), self.image.height()),
                 Vec3::ZERO, // Just render with a black background
                 None,
                 TextureMode::Packed,
-            );
+            ));
 
             let size = egui::vec2(self.image.width() as f32, self.image.height() as f32);
 

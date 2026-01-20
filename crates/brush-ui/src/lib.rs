@@ -6,6 +6,7 @@ pub mod camera_controls;
 
 pub mod ui_process;
 
+mod async_renderer;
 mod panels;
 mod scene;
 #[cfg(feature = "training")]

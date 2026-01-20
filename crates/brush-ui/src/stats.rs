@@ -19,6 +19,8 @@ pub struct StatsPanel {
     last_train_step: (Duration, u32),
     train_eval_views: (u32, u32),
     training_complete: bool,
+    num_splats: u32,
+    sh_degree: u32,
 }
 
 fn bytes_format(bytes: u64) -> String {
@@ -103,11 +105,20 @@ impl AppPane for StatsPanel {
                 self.last_train_step = (Duration::from_secs(0), 0);
                 self.train_eval_views = (0, 0);
                 self.training_complete = false;
+                self.num_splats = 0;
+                self.sh_degree = 0;
             }
             ProcessMessage::StartLoading { .. } => {
                 self.last_eval = None;
             }
-            ProcessMessage::SplatsUpdated { .. } => {}
+            ProcessMessage::SplatsUpdated {
+                num_splats,
+                sh_degree,
+                ..
+            } => {
+                self.num_splats = *num_splats;
+                self.sh_degree = *sh_degree;
+            }
             ProcessMessage::TrainMessage(train) => match train {
                 TrainMessage::TrainStep {
                     iter,
@@ -151,11 +162,8 @@ impl AppPane for StatsPanel {
             });
             ui.separator();
 
-            let (num_splats, sh_degree) = process
-                .current_splats()
-                .and_then(|sv| sv.get_main())
-                .map_or((0, 0), |spl| (spl.num_splats(), spl.sh_degree()));
-
+            let num_splats = self.num_splats;
+            let sh_degree = self.sh_degree;
             let frames = self.frames;
             stats_grid(ui, "model_stats_grid", |ui, v| {
                 stat_row(ui, "Splats", format!("{num_splats}"), v);

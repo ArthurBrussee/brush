@@ -13,17 +13,13 @@ use egui::{
 };
 use std::sync::Arc;
 
-use brush_render::{
-    MainBackend, TextureMode,
-    camera::{Camera, focal_to_fov, fov_to_focal},
-    gaussian_splats::Splats,
-    render_splats,
-};
+use brush_render::camera::{Camera, focal_to_fov, fov_to_focal};
 use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect, Slider};
 use glam::{UVec2, Vec3};
-use tracing::trace_span;
 use web_time::Instant;
+
+use crate::async_renderer::{AsyncRenderer, RenderRequest};
 
 use serde::{Deserialize, Serialize};
 
@@ -151,6 +147,9 @@ pub struct ScenePanel {
     #[cfg(feature = "training")]
     #[serde(skip)]
     settings_popup: Option<Arc<Mutex<SettingsPopup>>>,
+    /// Async renderer for non-blocking splat rendering.
+    #[serde(skip)]
+    async_renderer: AsyncRenderer,
 }
 
 impl ScenePanel {
@@ -268,7 +267,6 @@ impl ScenePanel {
         &mut self,
         ui: &mut egui::Ui,
         process: &UiProcess,
-        splats: Option<Splats<MainBackend>>,
         interactive: bool,
     ) -> egui::Rect {
         let size = ui.available_size();
@@ -292,17 +290,13 @@ impl ScenePanel {
         let settings = process.get_cam_settings();
 
         // Adjust FOV so that the scene view shows at least what's visible in the dataset view.
-        // The camera has original fov_x and fov_y from the dataset. We need to ensure
-        // the viewport shows at least that much in both dimensions.
         let camera_aspect = (camera.fov_x / 2.0).tan() / (camera.fov_y / 2.0).tan();
         let viewport_aspect = size.x as f64 / size.y as f64;
 
         if viewport_aspect > camera_aspect {
-            // Viewport is wider than camera - keep fov_y, expand fov_x
             let focal_y = fov_to_focal(camera.fov_y, size.y);
             camera.fov_x = focal_to_fov(focal_y, size.x);
         } else {
-            // Viewport is taller than camera - keep fov_x, expand fov_y
             let focal_x = fov_to_focal(camera.fov_x, size.x);
             camera.fov_y = focal_to_fov(focal_x, size.y);
         }
@@ -321,45 +315,48 @@ impl ScenePanel {
 
         if dirty {
             self.last_state = Some(state);
-            // Check again next frame, as there might be more to animate.
             ui.ctx().request_repaint();
         }
 
-        if let Some(splats) = splats {
-            let pixel_size = glam::uvec2(
-                (size.x as f32 * ui.ctx().pixels_per_point().round()) as u32,
-                (size.y as f32 * ui.ctx().pixels_per_point().round()) as u32,
-            );
-            // If this viewport is re-rendering.
-            if pixel_size.x > 8 && pixel_size.y > 8 && dirty {
-                let _span = trace_span!("Render splats").entered();
-                // Could add an option for background color.
-                let (img, _render_aux) = render_splats(
-                    &splats,
-                    &camera,
-                    pixel_size,
-                    settings.background.unwrap_or(Vec3::ZERO),
-                    settings.splat_scale,
-                    TextureMode::Packed,
-                );
+        let pixel_size = glam::uvec2(
+            (size.x as f32 * ui.ctx().pixels_per_point().round()) as u32,
+            (size.y as f32 * ui.ctx().pixels_per_point().round()) as u32,
+        );
 
-                if let Some(backbuffer) = &mut self.backbuffer {
-                    backbuffer.update_texture(img);
-                }
-
-                if let Some(widget_3d) = &mut self.widget_3d
-                    && let Some(backbuffer) = &self.backbuffer
-                    && let Some(texture) = backbuffer.texture()
-                {
-                    widget_3d.render_to_texture(
-                        &camera,
-                        process.model_local_to_world(),
-                        pixel_size,
-                        texture,
-                        grid_opacity,
-                    );
-                }
+        // Check for new render result from background task
+        if let Some(result) = self.async_renderer.try_get_result() {
+            if let Some(backbuffer) = &mut self.backbuffer {
+                backbuffer.update_texture(result.image);
             }
+
+            // Render widget_3d in sync with new splat render (same camera/size)
+            if let Some(widget_3d) = &mut self.widget_3d
+                && let Some(backbuffer) = &self.backbuffer
+                && let Some(texture) = backbuffer.texture()
+            {
+                widget_3d.render_to_texture(
+                    &result.camera,
+                    process.model_local_to_world(),
+                    result.img_size,
+                    texture,
+                    grid_opacity,
+                );
+            }
+
+            ui.ctx().request_repaint();
+        }
+
+        // Submit new render request if dirty and we have splats
+        if pixel_size.x > 8 && pixel_size.y > 8 && dirty {
+            self.async_renderer.submit(RenderRequest {
+                slot: process.current_splats(),
+                frame: self.frame as usize,
+                camera,
+                img_size: pixel_size,
+                background: settings.background.unwrap_or(Vec3::ZERO),
+                splat_scale: settings.splat_scale,
+            });
+            ui.ctx().request_repaint();
         }
 
         ui.scope(|ui| {
@@ -908,6 +905,7 @@ impl AppPane for ScenePanel {
                 up_axis,
                 frame,
                 total_frames,
+                ..
             } => {
                 self.has_splats = true;
                 self.frame_count = *total_frames;
@@ -1048,15 +1046,9 @@ impl AppPane for ScenePanel {
                 ui.ctx().request_repaint();
             }
 
-            // Get the splat for the current frame
-            let splats = process.current_splats().and_then(|sv| {
-                let frame_idx = self.frame as usize;
-                sv.get(frame_idx)
-            });
-
             let interactive =
                 matches!(process.ui_mode(), UiMode::Default | UiMode::FullScreenSplat);
-            let rect = self.draw_splats(ui, process, splats, interactive);
+            let rect = self.draw_splats(ui, process, interactive);
 
             if interactive {
                 self.draw_play_pause(ui, rect);

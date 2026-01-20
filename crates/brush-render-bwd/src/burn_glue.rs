@@ -200,8 +200,10 @@ pub struct SplatOutputDiff<B: Backend> {
 ///
 /// This is the main entry point for differentiable rendering, wrapping
 /// the forward pass with autodiff support.
-pub fn render_splats<B, C>(
-    splats: &Splats<Autodiff<B, C>>,
+///
+/// Takes ownership of the splats. Clone before calling if you need to reuse them.
+pub async fn render_splats<B, C>(
+    splats: Splats<Autodiff<B, C>>,
     camera: &Camera,
     img_size: glam::UVec2,
     background: Vec3,
@@ -218,7 +220,6 @@ where
     .device();
     let refine_weight_holder = Tensor::<Autodiff<B, C>, 1>::zeros([1], &device).require_grad();
 
-    // Prepare backward pass, and check if we even need to do it.
     let prep_nodes = RenderBackwards
         .prepare::<C>([
             splats.means.val().into_primitive().tensor().node,
@@ -262,8 +263,8 @@ where
         .into_primitive()
         .tensor()
         .into_primitive();
+    let render_mode = splats.render_mode;
 
-    // First pass: project
     let project_output = <B as SplatOps<B>>::project(
         camera,
         img_size,
@@ -272,17 +273,15 @@ where
         quats.clone(),
         sh_coeffs,
         raw_opacity.clone(),
-        splats.render_mode,
+        render_mode,
     );
 
-    // Sync readback of num_intersections
-    let num_intersections = project_output.read_num_intersections();
+    // Async readback
+    let num_intersections = project_output.read_num_intersections().await;
 
-    // Second pass: rasterize (with bwd_info = true)
     let (out_img, render_aux, compact_gid_from_isect) =
         <B as SplatOps<B>>::rasterize(&project_output, num_intersections, background, true);
 
-    // Create wrapped render_aux for Autodiff backend
     let wrapped_render_aux = RenderAux::<Autodiff<B, C>> {
         num_visible: render_aux.num_visible.clone(),
         num_intersections: render_aux.num_intersections,
@@ -295,7 +294,6 @@ where
 
     match prep_nodes {
         OpsKind::Tracked(prep) => {
-            // Save state needed for backward pass.
             let state = GaussianBackwardState {
                 means,
                 log_scales,
@@ -308,7 +306,7 @@ where
                 num_visible: project_output.num_visible,
                 tile_offsets: render_aux.tile_offsets,
                 compact_gid_from_isect,
-                render_mode: splats.render_mode,
+                render_mode,
                 global_from_compact_gid: project_output.global_from_compact_gid,
                 background,
                 img_size,
@@ -325,8 +323,6 @@ where
             result
         }
         OpsKind::UnTracked(prep) => {
-            // When no node is tracked, we can just use the original operation without
-            // keeping any state.
             let result = SplatOutputDiff {
                 img: prep.finish(out_img),
                 render_aux: wrapped_render_aux,

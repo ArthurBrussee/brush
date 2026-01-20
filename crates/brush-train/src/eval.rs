@@ -21,8 +21,8 @@ pub struct EvalSample<B: Backend> {
     pub render_aux: RenderAux<B>,
 }
 
-pub fn eval_stats<B: Backend + SplatOps<B>>(
-    splats: &Splats<B>,
+pub async fn eval_stats<B: Backend + SplatOps<B>>(
+    splats: Splats<B>,
     gt_cam: &Camera,
     gt_img: DynamicImage,
     alpha_mode: AlphaMode,
@@ -35,9 +35,9 @@ pub fn eval_stats<B: Backend + SplatOps<B>>(
     let gt_tensor = Tensor::from_data(gt_tensor, device);
     let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
 
-    // Render on reference black background
+    // Render on reference black background - async readback
     let (img, render_aux) =
-        render_splats(splats, gt_cam, res, Vec3::ZERO, None, TextureMode::Float);
+        render_splats(splats, gt_cam, res, Vec3::ZERO, None, TextureMode::Float).await;
     let render_rgb = img.slice(s![.., .., 0..3]);
 
     // Simulate an 8-bit roundtrip for fair comparison.

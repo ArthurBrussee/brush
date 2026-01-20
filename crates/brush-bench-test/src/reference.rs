@@ -127,11 +127,12 @@ async fn test_reference() -> Result<()> {
         );
 
         let diff_out = brush_render_bwd::render_splats(
-            &splats,
+            splats.clone(),
             &cam,
             glam::uvec2(w as u32, h as u32),
             Vec3::ZERO,
-        );
+        )
+        .await;
 
         let out: Tensor<DiffBack, 3> = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
         let render_aux = diff_out.render_aux;
