@@ -360,7 +360,7 @@ mod visualize_tools_impl {
 
         #[allow(unused_variables)]
         #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
-        pub fn log_splat_stats<B: Backend>(&self, _iter: u32, _splats: &Splats<B>) -> Result<()> {
+        pub fn log_splat_stats(&self, _iter: u32, _num_splats: u32) -> Result<()> {
             Ok(())
         }
 

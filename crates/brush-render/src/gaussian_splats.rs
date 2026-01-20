@@ -14,9 +14,6 @@ use crate::{
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
 
-#[cfg(target_family = "wasm")]
-use crate::render::calc_tile_bounds;
-
 #[derive(
     Module, Clone, Copy, Debug, Eq, PartialEq, ValueEnum, serde::Serialize, serde::Deserialize,
 )]
