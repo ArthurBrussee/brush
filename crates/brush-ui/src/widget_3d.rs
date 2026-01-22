@@ -302,7 +302,6 @@ impl Widget3D {
             render_pass.set_vertex_buffer(0, self.up_axis_vertex_buffer.slice(..));
             render_pass.draw(0..self.up_axis_vertex_count, 0..1);
         }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.queue.submit([encoder.finish()]);
     }
 }

@@ -12,10 +12,11 @@ use egui::TextureId;
 use egui::epaint::mutex::RwLock as EguiRwLock;
 use glam::Vec3;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio_with_wasm::alias::task;
 use wgpu::{CommandEncoderDescriptor, TexelCopyBufferLayout, TextureViewDescriptor};
 
+#[derive(Clone)]
 pub struct RenderRequest {
     pub slot: Slot<Splats<MainBackend>>,
     pub frame: usize,
@@ -23,7 +24,6 @@ pub struct RenderRequest {
     pub img_size: glam::UVec2,
     pub background: Vec3,
     pub splat_scale: Option<f32>,
-    pub ctx: egui::Context,
     /// Model transform for the 3D overlay (grid, axes).
     pub model_transform: glam::Affine3A,
     /// Opacity of the grid overlay (0.0 = hidden, 1.0 = fully visible).
@@ -38,7 +38,7 @@ struct TextureState {
 /// Renders splats asynchronously in a background task.
 pub struct SplatBackbuffer {
     texture_state: Arc<Mutex<TextureState>>,
-    request_tx: mpsc::UnboundedSender<RenderRequest>,
+    request_tx: watch::Sender<Option<RenderRequest>>,
 }
 
 impl SplatBackbuffer {
@@ -51,7 +51,7 @@ impl SplatBackbuffer {
             texture: None,
             texture_id: None,
         }));
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (request_tx, request_rx) = watch::channel(None);
 
         task::spawn(render_loop(
             Arc::clone(&texture_state),
@@ -67,8 +67,10 @@ impl SplatBackbuffer {
         }
     }
 
+    /// Submit a render request. If a request is already pending,
+    /// it will be replaced with this one (latest wins).
     pub fn submit(&self, request: RenderRequest) {
-        let _ = self.request_tx.send(request);
+        let _ = self.request_tx.send(Some(request));
     }
 
     pub fn id(&self) -> Option<TextureId> {
@@ -199,15 +201,21 @@ async fn render_loop(
     renderer: Arc<EguiRwLock<Renderer>>,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    mut request_rx: mpsc::UnboundedReceiver<RenderRequest>,
+    mut request_rx: watch::Receiver<Option<RenderRequest>>,
 ) {
     let widget_3d = Widget3D::new(device.clone(), queue.clone());
 
-    while let Some(mut req) = request_rx.recv().await {
-        // Drain to get latest request
-        while let Ok(newer) = request_rx.try_recv() {
-            req = newer;
+    loop {
+        // Wait for a new request (watch wakes on value change)
+        if request_rx.changed().await.is_err() {
+            // Sender dropped, exit loop
+            break;
         }
+
+        // Get the latest request
+        let Some(req) = request_rx.borrow_and_update().clone() else {
+            continue;
+        };
 
         let camera = req.camera.clone();
         let img_size = req.img_size;
@@ -245,7 +253,5 @@ async fn render_loop(
                 );
             }
         }
-
-        req.ctx.request_repaint();
     }
 }
