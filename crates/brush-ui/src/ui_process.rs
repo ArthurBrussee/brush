@@ -139,7 +139,14 @@ impl UiProcess {
     }
 
     pub fn set_cam_fov(&self, fov_y: f64) {
-        self.write().camera.fov_y = fov_y;
+        let mut inner = self.write();
+        // Scale fov_x proportionally to maintain the camera's aspect ratio.
+        // This allows setting FOV smaller than the dataset FOV.
+        let old_fov_y = inner.camera.fov_y;
+        let aspect = (inner.camera.fov_x / 2.0).tan() / (old_fov_y / 2.0).tan();
+        inner.camera.fov_y = fov_y;
+        inner.camera.fov_x = 2.0 * (aspect * (fov_y / 2.0).tan()).atan();
+        drop(inner);
         self.read().repaint();
     }
 
