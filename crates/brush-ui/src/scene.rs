@@ -330,6 +330,7 @@ impl ScenePanel {
                 img_size: pixel_size,
                 background: settings.background.unwrap_or(Vec3::ZERO),
                 splat_scale: settings.splat_scale,
+                ctx: ui.ctx().clone(),
                 model_transform: process.model_local_to_world(),
                 grid_opacity,
             });

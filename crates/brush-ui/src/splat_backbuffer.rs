@@ -11,9 +11,8 @@ use eframe::egui_wgpu::Renderer;
 use egui::TextureId;
 use egui::epaint::mutex::RwLock as EguiRwLock;
 use glam::Vec3;
-use std::sync::{Arc, Mutex};
-use tokio::sync::watch;
-use tokio_with_wasm::alias::task;
+use pollster::block_on;
+use std::sync::Arc;
 use wgpu::{CommandEncoderDescriptor, TexelCopyBufferLayout, TextureViewDescriptor};
 
 #[derive(Clone)]
@@ -24,21 +23,20 @@ pub struct RenderRequest {
     pub img_size: glam::UVec2,
     pub background: Vec3,
     pub splat_scale: Option<f32>,
+    pub ctx: egui::Context,
     /// Model transform for the 3D overlay (grid, axes).
     pub model_transform: glam::Affine3A,
     /// Opacity of the grid overlay (0.0 = hidden, 1.0 = fully visible).
     pub grid_opacity: f32,
 }
 
-struct TextureState {
-    texture: Option<wgpu::Texture>,
-    texture_id: Option<TextureId>,
-}
-
-/// Renders splats asynchronously in a background task.
 pub struct SplatBackbuffer {
-    texture_state: Arc<Mutex<TextureState>>,
-    request_tx: watch::Sender<Option<RenderRequest>>,
+    texture: wgpu::Texture,
+    texture_id: TextureId,
+    renderer: Arc<EguiRwLock<Renderer>>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    widget_3d: Widget3D,
 }
 
 impl SplatBackbuffer {
@@ -47,34 +45,87 @@ impl SplatBackbuffer {
         device: wgpu::Device,
         queue: wgpu::Queue,
     ) -> Self {
-        let texture_state = Arc::new(Mutex::new(TextureState {
-            texture: None,
-            texture_id: None,
-        }));
-        let (request_tx, request_rx) = watch::channel(None);
+        // Start with a dummy texture
+        let texture = create_texture(glam::uvec2(64, 64), &device);
+        let id = renderer.write().register_native_texture(
+            &device,
+            &texture.create_view(&TextureViewDescriptor::default()),
+            wgpu::FilterMode::Linear,
+        );
+        let widget_3d = Widget3D::new(device.clone(), queue.clone());
 
-        task::spawn(render_loop(
-            Arc::clone(&texture_state),
+        Self {
+            texture,
+            texture_id: id,
             renderer,
             device,
             queue,
-            request_rx,
-        ));
-
-        Self {
-            texture_state,
-            request_tx,
+            widget_3d,
         }
     }
 
-    /// Submit a render request. If a request is already pending,
-    /// it will be replaced with this one (latest wins).
-    pub fn submit(&self, request: RenderRequest) {
-        let _ = self.request_tx.send(Some(request));
+    /// Submit a render request. Spawns an async task to do the rendering.
+    pub fn submit(&self, req: RenderRequest) {
+        let needs_resize =
+            self.texture.width() != req.img_size.x || self.texture.height() != req.img_size.y;
+        if needs_resize {
+            // TODO: Restore this.
+            // let client = WgpuRuntime::client(&req.);
+            // client.memory_cleanup();
+
+            self.texture = create_texture(req.img_size, &self.device);
+            self.renderer.write().update_egui_texture_from_wgpu_texture(
+                &self.device,
+                &self.texture.create_view(&TextureViewDescriptor::default()),
+                wgpu::FilterMode::Linear,
+                self.texture_id,
+            );
+        }
+
+        block_on(async move {
+            let camera = req.camera.clone();
+            let img_size = req.img_size;
+            let background = req.background;
+            let splat_scale = req.splat_scale;
+
+            let splats = req.slot.clone_main().await;
+
+            if let Some(splats) = splats {
+                let (image, _) = render_splats(
+                    splats.clone(),
+                    &camera,
+                    img_size,
+                    background,
+                    splat_scale,
+                    TextureMode::Packed,
+                )
+                .await;
+
+                copy_to_texture(
+                    image,
+                    &self.texture,
+                    self.texture_id,
+                    &self.renderer,
+                    &self.device,
+                    &self.queue,
+                );
+
+                if req.grid_opacity > 0.0 {
+                    self.widget_3d.render_to_texture(
+                        &req.camera,
+                        req.model_transform,
+                        req.img_size,
+                        &texture,
+                        req.grid_opacity,
+                    );
+                }
+            }
+            req.ctx.request_repaint();
+        });
     }
 
     pub fn id(&self) -> Option<TextureId> {
-        self.texture_state.lock().unwrap().texture_id
+        self.texture_id
     }
 }
 
@@ -99,7 +150,8 @@ fn create_texture(size: glam::UVec2, device: &wgpu::Device) -> wgpu::Texture {
 
 fn copy_to_texture(
     img: Tensor<MainBackend, 3>,
-    texture_state: &Arc<Mutex<TextureState>>,
+    texture: &wgpu::Texture,
+    texture_id: TextureId,
     renderer: &Arc<EguiRwLock<Renderer>>,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -108,41 +160,19 @@ fn copy_to_texture(
     assert!(c == 1, "texture should be u8 packed RGBA");
     let size = glam::uvec2(w as u32, h as u32);
 
-    let needs_resize = {
-        let state = texture_state.lock().unwrap();
-        state
-            .texture
-            .as_ref()
-            .is_none_or(|t| t.width() != size.x || t.height() != size.y)
-    };
-
+    let needs_resize = texture.width() != size.x || texture.height() != size.y;
     if needs_resize {
         let client = WgpuRuntime::client(&img.device());
         client.memory_cleanup();
-
-        let texture = create_texture(size, device);
-
-        let mut state = texture_state.lock().unwrap();
-        if let Some(id) = state.texture_id {
-            renderer.write().update_egui_texture_from_wgpu_texture(
-                device,
-                &texture.create_view(&TextureViewDescriptor::default()),
-                wgpu::FilterMode::Linear,
-                id,
-            );
-        } else {
-            let id = renderer.write().register_native_texture(
-                device,
-                &texture.create_view(&TextureViewDescriptor::default()),
-                wgpu::FilterMode::Linear,
-            );
-            state.texture_id = Some(id);
-        }
-
-        state.texture = Some(texture);
+        texture = create_texture(size, device);
+        renderer.write().update_egui_texture_from_wgpu_texture(
+            &device,
+            &texture.create_view(&TextureViewDescriptor::default()),
+            wgpu::FilterMode::Linear,
+            texture_id,
+        );
     }
 
-    let texture = texture_state.lock().unwrap().texture.clone().unwrap();
     let [height, width, c] = img.dims();
 
     let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
@@ -194,64 +224,4 @@ fn copy_to_texture(
     );
 
     queue.submit([encoder.finish()]);
-}
-
-async fn render_loop(
-    texture_state: Arc<Mutex<TextureState>>,
-    renderer: Arc<EguiRwLock<Renderer>>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    mut request_rx: watch::Receiver<Option<RenderRequest>>,
-) {
-    let widget_3d = Widget3D::new(device.clone(), queue.clone());
-
-    loop {
-        // Wait for a new request (watch wakes on value change)
-        if request_rx.changed().await.is_err() {
-            // Sender dropped, exit loop
-            break;
-        }
-
-        // Get the latest request
-        let Some(req) = request_rx.borrow_and_update().clone() else {
-            continue;
-        };
-
-        let camera = req.camera.clone();
-        let img_size = req.img_size;
-        let background = req.background;
-        let splat_scale = req.splat_scale;
-
-        let render_result = req
-            .slot
-            .act(req.frame, async move |splats| {
-                let (image, _) = render_splats(
-                    splats.clone(),
-                    &camera,
-                    img_size,
-                    background,
-                    splat_scale,
-                    TextureMode::Packed,
-                )
-                .await;
-                (splats, image)
-            })
-            .await;
-
-        if let Some(image) = render_result {
-            copy_to_texture(image, &texture_state, &renderer, &device, &queue);
-
-            if req.grid_opacity > 0.0
-                && let Some(texture) = texture_state.lock().unwrap().texture.clone()
-            {
-                widget_3d.render_to_texture(
-                    &req.camera,
-                    req.model_transform,
-                    req.img_size,
-                    &texture,
-                    req.grid_opacity,
-                );
-            }
-        }
-    }
 }
