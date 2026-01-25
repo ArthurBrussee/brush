@@ -39,7 +39,6 @@ bytemuck = { version = "1.14", features = ["derive"] }
 
 brush-dataset = { path = "../brush-dataset", optional = true }
 image = { workspace = true, optional = true }
-pollster = "0.4.0"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread"] }

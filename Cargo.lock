@@ -1301,7 +1301,6 @@ dependencies = [
  "humantime",
  "image",
  "log",
- "pollster",
  "rand 0.9.2",
  "rrfd",
  "serde",

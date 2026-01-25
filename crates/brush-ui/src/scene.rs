@@ -4,6 +4,7 @@ use crate::settings_popup::SettingsPopup;
 use brush_process::message::TrainMessage;
 #[cfg(feature = "training")]
 use std::sync::Mutex;
+use wgpu::naga::back;
 
 use brush_process::{create_process, message::ProcessMessage};
 use brush_vfs::DataSource;
@@ -256,114 +257,6 @@ impl ScenePanel {
                 }
             },
         ));
-    }
-
-    pub(crate) fn draw_splats(
-        &mut self,
-        ui: &mut egui::Ui,
-        process: &UiProcess,
-        interactive: bool,
-    ) -> egui::Rect {
-        let size = ui.available_size();
-        let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
-        let (rect, response) = ui.allocate_exact_size(
-            egui::Vec2::new(size.x as f32, size.y as f32),
-            egui::Sense::drag(),
-        );
-        if interactive {
-            process.tick_controls(&response, ui);
-        }
-
-        // Get camera after modifying the controls.
-        let mut camera = process.current_camera();
-
-        let view_eff = (camera.world_to_local() * process.model_local_to_world()).inverse();
-        let (_, rotation, position) = view_eff.to_scale_rotation_translation();
-        camera.position = position;
-        camera.rotation = rotation;
-
-        let settings = process.get_cam_settings();
-
-        // Adjust FOV so that the scene view shows at least what's visible in the dataset view.
-        let camera_aspect = (camera.fov_x / 2.0).tan() / (camera.fov_y / 2.0).tan();
-        let viewport_aspect = size.x as f64 / size.y as f64;
-
-        if viewport_aspect > camera_aspect {
-            let focal_y = fov_to_focal(camera.fov_y, size.y);
-            camera.fov_x = focal_to_fov(focal_y, size.x);
-        } else {
-            let focal_x = fov_to_focal(camera.fov_x, size.x);
-            camera.fov_y = focal_to_fov(focal_x, size.y);
-        }
-
-        let grid_opacity = process.get_grid_opacity();
-
-        let state = RenderState {
-            size,
-            cam: camera.clone(),
-            settings: settings.clone(),
-            grid_opacity,
-            frame: self.frame as u32,
-        };
-
-        let dirty = self.last_state != Some(state.clone());
-
-        if dirty {
-            self.last_state = Some(state);
-        }
-
-        let pixel_size = glam::uvec2(
-            (size.x as f32 * ui.ctx().pixels_per_point().round()) as u32,
-            (size.y as f32 * ui.ctx().pixels_per_point().round()) as u32,
-        );
-
-        // Submit new render request if dirty and we have splats
-        if let Some(backbuffer) = &self.backbuffer
-            && pixel_size.x > 8
-            && pixel_size.y > 8
-            && dirty
-        {
-            backbuffer.submit(RenderRequest {
-                slot: process.current_splats(),
-                frame: self.frame as usize,
-                camera,
-                img_size: pixel_size,
-                background: settings.background.unwrap_or(Vec3::ZERO),
-                splat_scale: settings.splat_scale,
-                ctx: ui.ctx().clone(),
-                model_transform: process.model_local_to_world(),
-                grid_opacity,
-            });
-        }
-
-        ui.scope(|ui| {
-            // if training views have alpha, show a background checker. Masked images
-            // should still use a black background.
-            match process.background_style() {
-                BackgroundStyle::Checkerboard => {
-                    draw_checkerboard(ui, rect, Color32::WHITE);
-                }
-                BackgroundStyle::Black => {
-                    ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
-                }
-            }
-
-            if let Some(backbuffer) = &self.backbuffer
-                && let Some(id) = backbuffer.id()
-            {
-                ui.painter().image(
-                    id,
-                    rect,
-                    Rect {
-                        min: egui::pos2(0.0, 0.0),
-                        max: egui::pos2(1.0, 1.0),
-                    },
-                    Color32::WHITE,
-                );
-            }
-        });
-
-        rect
     }
 
     fn draw_play_pause(&mut self, ui: &egui::Ui, rect: Rect) {
@@ -1024,7 +917,99 @@ impl AppPane for ScenePanel {
 
             let interactive =
                 matches!(process.ui_mode(), UiMode::Default | UiMode::FullScreenSplat);
-            let rect = self.draw_splats(ui, process, interactive);
+
+            let size = ui.available_size();
+            let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
+            let (rect, response) = ui.allocate_exact_size(
+                egui::Vec2::new(size.x as f32, size.y as f32),
+                egui::Sense::drag(),
+            );
+            if interactive {
+                process.tick_controls(&response, ui);
+            }
+
+            // Get camera after modifying the controls.
+            let mut camera = process.current_camera();
+
+            let view_eff = (camera.world_to_local() * process.model_local_to_world()).inverse();
+            let (_, rotation, position) = view_eff.to_scale_rotation_translation();
+            camera.position = position;
+            camera.rotation = rotation;
+
+            let settings = process.get_cam_settings();
+
+            // Adjust FOV so that the scene view shows at least what's visible in the dataset view.
+            let camera_aspect = (camera.fov_x / 2.0).tan() / (camera.fov_y / 2.0).tan();
+            let viewport_aspect = size.x as f64 / size.y as f64;
+
+            if viewport_aspect > camera_aspect {
+                let focal_y = fov_to_focal(camera.fov_y, size.y);
+                camera.fov_x = focal_to_fov(focal_y, size.x);
+            } else {
+                let focal_x = fov_to_focal(camera.fov_x, size.x);
+                camera.fov_y = focal_to_fov(focal_x, size.y);
+            }
+
+            let grid_opacity = process.get_grid_opacity();
+
+            let state = RenderState {
+                size,
+                cam: camera.clone(),
+                settings: settings.clone(),
+                grid_opacity,
+                frame: self.frame as u32,
+            };
+
+            let dirty = self.last_state != Some(state.clone());
+
+            if dirty {
+                self.last_state = Some(state);
+            }
+
+            let pixel_size = glam::uvec2(
+                (size.x as f32 * ui.ctx().pixels_per_point().round()) as u32,
+                (size.y as f32 * ui.ctx().pixels_per_point().round()) as u32,
+            );
+
+            // Submit new render request if dirty and we have splats
+            ui.scope(|ui| {
+                // if training views have alpha, show a background checker. Masked images
+                // should still use a black background.
+                match process.background_style() {
+                    BackgroundStyle::Checkerboard => {
+                        draw_checkerboard(ui, rect, Color32::WHITE);
+                    }
+                    BackgroundStyle::Black => {
+                        ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+                    }
+                }
+
+                if let Some(backbuffer) = &mut self.backbuffer {
+                    if dirty {
+                        backbuffer.submit(RenderRequest {
+                            slot: process.current_splats(),
+                            frame: self.frame as usize,
+                            camera,
+                            img_size: pixel_size,
+                            background: settings.background.unwrap_or(Vec3::ZERO),
+                            splat_scale: settings.splat_scale,
+                            ctx: ui.ctx().clone(),
+                            model_transform: process.model_local_to_world(),
+                            grid_opacity,
+                        });
+                    }
+                    // ui.painter().image(
+                    //     backbuffer.id(),
+                    //     rect,
+                    //     Rect {
+                    //         min: egui::pos2(0.0, 0.0),
+                    //         max: egui::pos2(1.0, 1.0),
+                    //     },
+                    //     Color32::WHITE,
+                    // );
+                    backbuffer.draw();
+                }
+            });
 
             if interactive {
                 self.draw_play_pause(ui, rect);

@@ -182,16 +182,16 @@ impl eframe::App for App {
                 splat_scale: None,
                 model_transform: glam::Affine3A::IDENTITY,
                 grid_opacity: 0.0,
+                ctx: ctx.clone(),
             });
 
             let size = egui::vec2(self.image.width() as f32, self.image.height() as f32);
 
             ui.horizontal(|ui| {
-                if let Some(texture_id) = self.backbuffer.id() {
-                    ui.image(ImageSource::Texture(SizedTexture::new(texture_id, size)));
-                } else {
-                    ui.label("Rendering...");
-                }
+                ui.image(ImageSource::Texture(SizedTexture::new(
+                    self.backbuffer.id(),
+                    size,
+                )));
                 ui.image(ImageSource::Texture(SizedTexture::new(
                     self.tex_handle.id(),
                     size,
