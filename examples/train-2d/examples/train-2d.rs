@@ -13,7 +13,7 @@ use brush_train::{
     RandomSplatsConfig, config::TrainConfig, create_random_splats, splats_into_autodiff,
     train::SplatTrainer,
 };
-use brush_ui::splat_backbuffer::{RenderRequest, SplatBackbuffer};
+use brush_ui::splat_backbuffer::SplatBackbuffer;
 use burn::{backend::wgpu::WgpuDevice, module::AutodiffModule, prelude::Backend};
 use egui::{ImageSource, TextureHandle, TextureOptions, load::SizedTexture};
 use glam::{Quat, Vec2, Vec3};
@@ -90,6 +90,7 @@ struct App {
     slot: Slot<Splats<MainBackend>>,
     receiver: Receiver<TrainStep>,
     last_step: Option<TrainStep>,
+    splats_dirty: bool,
 }
 
 impl App {
@@ -98,6 +99,7 @@ impl App {
             .wgpu_render_state
             .as_ref()
             .expect("No wgpu renderer enabled in egui");
+
         let device = brush_process::burn_init_device(
             state.adapter.clone(),
             state.device.clone(),
@@ -128,7 +130,6 @@ impl App {
         let handle =
             cc.egui_ctx
                 .load_texture("nearest_view_tex", color_img, TextureOptions::default());
-
         let slot = Slot::default();
 
         let config = TrainConfig::default();
@@ -146,10 +147,11 @@ impl App {
             image,
             camera,
             tex_handle: handle,
-            backbuffer: SplatBackbuffer::new(),
+            backbuffer: SplatBackbuffer::new(state),
             slot,
             receiver,
             last_step: None,
+            splats_dirty: false,
         }
     }
 }
@@ -158,6 +160,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(step) = self.receiver.try_recv() {
             self.last_step = Some(step);
+            self.splats_dirty = true;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -166,25 +169,22 @@ impl eframe::App for App {
                 return;
             };
 
-            self.backbuffer.submit(RenderRequest {
-                slot: self.slot.clone(),
-                frame: 0,
-                camera: self.camera.clone(),
-                img_size: glam::uvec2(self.image.width(), self.image.height()),
-                background: Vec3::ZERO,
-                splat_scale: None,
-                ctx: ctx.clone(),
-            });
-
             let size = egui::vec2(self.image.width() as f32, self.image.height() as f32);
 
             ui.horizontal(|ui| {
-                // TODO: Fixup to new methods.
+                let (rect, _response) = ui.allocate_exact_size(size, egui::Sense::hover());
+                self.backbuffer.paint(
+                    rect,
+                    ui,
+                    &self.slot,
+                    &self.camera,
+                    0,
+                    Vec3::ZERO,
+                    None,
+                    self.splats_dirty,
+                );
+                self.splats_dirty = false;
 
-                // ui.image(ImageSource::Texture(SizedTexture::new(
-                //     self.backbuffer.id(),
-                //     size,
-                // )));
                 ui.image(ImageSource::Texture(SizedTexture::new(
                     self.tex_handle.id(),
                     size,
