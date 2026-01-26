@@ -245,7 +245,9 @@ impl UiProcess {
                     inner.is_loading = false;
                 }
                 #[cfg(feature = "training")]
-                Ok(ProcessMessage::TrainMessage(TrainMessage::TrainStep { iter, .. })) => {
+                Ok(ProcessMessage::TrainMessage(
+                    brush_process::message::TrainMessage::TrainStep { iter, .. },
+                )) => {
                     inner.train_iter = *iter;
                 }
                 Err(_) => {
