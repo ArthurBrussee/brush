@@ -7,13 +7,13 @@ use burn::{
 pub struct RefineStats {
     pub num_added: u32,
     pub num_pruned: u32,
+    pub total_splats: u32,
 }
 
 #[derive(Clone)]
 pub struct TrainStepStats<B: Backend> {
     pub pred_image: Tensor<B, 3>,
 
-    pub num_intersections: Tensor<B, 1, Int>,
     pub num_visible: Tensor<B, 1, Int>,
     pub loss: Tensor<B, 1>,
 

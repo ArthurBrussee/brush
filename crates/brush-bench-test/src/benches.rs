@@ -1,6 +1,6 @@
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
-    AlphaMode, MainBackend,
+    AlphaMode, MainBackend, TextureMode,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
     render_splats,
@@ -144,8 +144,9 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
 mod forward_rendering {
     use super::{
         AutodiffModule, Backend, Camera, ITERS_PER_SYNC, MainBackend, Quat, RESOLUTIONS,
-        SPLAT_COUNTS, Vec3, WgpuDevice, gen_splats, render_splats,
+        SPLAT_COUNTS, TextureMode, Vec3, WgpuDevice, gen_splats, render_splats,
     };
+    use burn_cubecl::cubecl::future::block_on;
 
     #[divan::bench(args = SPLAT_COUNTS)]
     fn render_1080p(bencher: divan::Bencher, splat_count: usize) {
@@ -160,10 +161,20 @@ mod forward_rendering {
         );
 
         bencher.bench_local(move || {
-            for _ in 0..ITERS_PER_SYNC {
-                let _ = render_splats(&splats, &camera, glam::uvec2(1920, 1080), Vec3::ZERO, None);
-            }
-            MainBackend::sync(&device).expect("Failed to sync");
+            block_on(async {
+                for _ in 0..ITERS_PER_SYNC {
+                    let _ = render_splats(
+                        splats.clone(),
+                        &camera,
+                        glam::uvec2(1920, 1080),
+                        Vec3::ZERO,
+                        None,
+                        TextureMode::Float,
+                    )
+                    .await;
+                }
+                MainBackend::sync(&device).expect("Failed to sync");
+            });
         });
     }
 
@@ -180,16 +191,20 @@ mod forward_rendering {
         );
 
         bencher.bench_local(move || {
-            for _ in 0..ITERS_PER_SYNC {
-                let _ = render_splats(
-                    &splats,
-                    &camera,
-                    glam::uvec2(width, height),
-                    Vec3::ZERO,
-                    None,
-                );
-            }
-            MainBackend::sync(&device).expect("Failed to sync");
+            block_on(async {
+                for _ in 0..ITERS_PER_SYNC {
+                    let _ = render_splats(
+                        splats.clone(),
+                        &camera,
+                        glam::uvec2(width, height),
+                        Vec3::ZERO,
+                        None,
+                        TextureMode::Float,
+                    )
+                    .await;
+                }
+                MainBackend::sync(&device).expect("Failed to sync");
+            });
         });
     }
 }
@@ -200,6 +215,7 @@ mod backward_rendering {
         Backend, Camera, DiffBackend, ITERS_PER_SYNC, MainBackend, Quat, RESOLUTIONS, Tensor,
         TensorPrimitive, Vec3, WgpuDevice, gen_splats, render_splats_diff,
     };
+    use burn_cubecl::cubecl::future::block_on;
 
     #[divan::bench(args = [1_000_000, 2_000_000, 5_000_000])]
     fn render_grad_1080p(bencher: divan::Bencher, splat_count: usize) {
@@ -214,14 +230,21 @@ mod backward_rendering {
         );
 
         bencher.bench_local(move || {
-            for _ in 0..ITERS_PER_SYNC {
-                let diff_out =
-                    render_splats_diff(&splats, &camera, glam::uvec2(1920, 1080), Vec3::ZERO);
-                let img: Tensor<DiffBackend, 3> =
-                    Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-                let _ = img.mean().backward();
-            }
-            MainBackend::sync(&device).expect("Failed to sync");
+            block_on(async {
+                for _ in 0..ITERS_PER_SYNC {
+                    let diff_out = render_splats_diff(
+                        splats.clone(),
+                        &camera,
+                        glam::uvec2(1920, 1080),
+                        Vec3::ZERO,
+                    )
+                    .await;
+                    let img: Tensor<DiffBackend, 3> =
+                        Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+                    let _ = img.mean().backward();
+                }
+                MainBackend::sync(&device).expect("Failed to sync");
+            });
         });
     }
 
@@ -237,14 +260,21 @@ mod backward_rendering {
             glam::vec2(0.5, 0.5),
         );
         bencher.bench_local(move || {
-            for _ in 0..ITERS_PER_SYNC {
-                let diff_out =
-                    render_splats_diff(&splats, &camera, glam::uvec2(width, height), Vec3::ZERO);
-                let img: Tensor<DiffBackend, 3> =
-                    Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-                let _ = img.mean().backward();
-            }
-            MainBackend::sync(&device).expect("Failed to sync");
+            block_on(async {
+                for _ in 0..ITERS_PER_SYNC {
+                    let diff_out = render_splats_diff(
+                        splats.clone(),
+                        &camera,
+                        glam::uvec2(width, height),
+                        Vec3::ZERO,
+                    )
+                    .await;
+                    let img: Tensor<DiffBackend, 3> =
+                        Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+                    let _ = img.mean().backward();
+                }
+                MainBackend::sync(&device).expect("Failed to sync");
+            });
         });
     }
 }
@@ -252,6 +282,7 @@ mod backward_rendering {
 #[divan::bench_group(max_time = 4)]
 mod training {
     use brush_render::bounding_box::BoundingBox;
+    use burn_cubecl::cubecl::future::block_on;
 
     use crate::benches::ITERS_PER_SYNC;
 
@@ -262,25 +293,23 @@ mod training {
 
     #[divan::bench(args = SPLAT_COUNTS)]
     fn train_steps(splat_count: usize) {
-        burn_cubecl::cubecl::future::block_on(async {
-            let device = WgpuDevice::default();
-            let batch1 = generate_training_batch((1920, 1080), Vec3::new(0.0, 0.0, 5.0));
-            let batch2 = generate_training_batch((1920, 1080), Vec3::new(2.0, 0.0, 5.0));
-            let batches = [batch1, batch2];
-            let config = TrainConfig::default();
-            let mut splats = gen_splats(&device, splat_count);
-            let mut trainer = SplatTrainer::new(
-                &config,
-                &device,
-                BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
-            );
-            for step in 0..ITERS_PER_SYNC {
-                let batch = batches[step as usize % batches.len()].clone();
-                let (new_splats, _) = trainer.step(batch, splats);
-                splats = new_splats;
-            }
-            MainBackend::sync(&device).expect("Failed to sync");
-        });
+        let device = WgpuDevice::default();
+        let batch1 = generate_training_batch((1920, 1080), Vec3::new(0.0, 0.0, 5.0));
+        let batch2 = generate_training_batch((1920, 1080), Vec3::new(2.0, 0.0, 5.0));
+        let batches = [batch1, batch2];
+        let config = TrainConfig::default();
+        let mut splats = gen_splats(&device, splat_count);
+        let mut trainer = SplatTrainer::new(
+            &config,
+            &device,
+            BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+        );
+        for step in 0..ITERS_PER_SYNC {
+            let batch = batches[step as usize % batches.len()].clone();
+            let (new_splats, _) = block_on(trainer.step(batch, splats));
+            splats = new_splats;
+        }
+        MainBackend::sync(&device).expect("Failed to sync");
     }
 }
 

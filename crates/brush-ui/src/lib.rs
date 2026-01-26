@@ -1,13 +1,13 @@
 #![recursion_limit = "256"]
 
 pub mod app;
-pub mod burn_texture;
 pub mod camera_controls;
 
 pub mod ui_process;
 
 mod panels;
 mod scene;
+pub mod splat_backbuffer;
 #[cfg(feature = "training")]
 mod stats;
 mod widget_3d;

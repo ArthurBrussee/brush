@@ -1,16 +1,16 @@
 #import helpers;
 
-@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
+@group(0) @binding(0) var<storage, read> num_visible: u32;
 @group(0) @binding(1) var<storage, read> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(2) var<storage, read> splat_cum_hit_counts: array<u32>;
+@group(0) @binding(3) var<storage, read_write> tile_id_from_isect: array<u32>;
+@group(0) @binding(4) var<storage, read_write> compact_gid_from_isect: array<u32>;
 
-#ifdef PREPASS
-    @group(0) @binding(2) var<storage, read_write> splat_intersect_counts: array<u32>;
-#else
-    @group(0) @binding(2) var<storage, read> splat_cum_hit_counts: array<u32>;
-    @group(0) @binding(3) var<storage, read_write> tile_id_from_isect: array<u32>;
-    @group(0) @binding(4) var<storage, read_write> compact_gid_from_isect: array<u32>;
-    @group(0) @binding(5) var<storage, read_write> num_intersections: array<u32>;
-#endif
+// Uniforms passed via with_metadata (always last binding)
+struct Uniforms {
+    tile_bounds: vec2u,
+}
+@group(0) @binding(5) var<storage, read> uniforms: Uniforms;
 
 const WG_SIZE: u32 = 256u;
 
@@ -23,13 +23,7 @@ fn main(
 ) {
     let compact_gid = helpers::get_global_id(wid, num_wgs, lid, WG_SIZE);
 
-#ifndef PREPASS
-    if compact_gid == 0u {
-        num_intersections[0] = splat_cum_hit_counts[uniforms.num_visible];
-    }
-#endif
-
-    if compact_gid >= uniforms.num_visible {
+    if compact_gid >= num_visible {
         return;
     }
 
@@ -45,11 +39,10 @@ fn main(
     let tile_bbox_min = tile_bbox.xy;
     let tile_bbox_max = tile_bbox.zw;
 
-    var num_tiles_hit = 0u;
+    // With inclusive prefix sum, use cum[compact_gid - 1] as base (or 0 for first element)
+    let base_isect_id = select(splat_cum_hit_counts[compact_gid - 1u], 0u, compact_gid == 0u);
 
-    #ifndef PREPASS
-        let base_isect_id = splat_cum_hit_counts[compact_gid];
-    #endif
+    var num_tiles_hit = 0u;
 
     // Nb: It's really really important here the two dispatches
     // of this kernel arrive at the exact same num_tiles_hit count. Otherwise
@@ -67,20 +60,14 @@ fn main(
         if helpers::will_primitive_contribute(rect, mean2d, conic, power_threshold) {
             let tile_id = tx + ty * uniforms.tile_bounds.x;
 
-        #ifndef PREPASS
             let isect_id = base_isect_id + num_tiles_hit;
             // Nb: isect_id MIGHT be out of bounds here for degenerate cases.
             // These kernels should be launched with bounds checking, so that these
             // writes are ignored. This will skip these intersections.
             tile_id_from_isect[isect_id] = tile_id;
             compact_gid_from_isect[isect_id] = compact_gid;
-        #endif
 
             num_tiles_hit += 1u;
         }
     }
-
-    #ifdef PREPASS
-        splat_intersect_counts[compact_gid + 1u] = num_tiles_hit;
-    #endif
 }

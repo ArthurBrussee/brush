@@ -1,37 +1,65 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-/// A thread-safe slot for sharing data between the process and UI.
-/// Uses Mutex because the inner type (Splats) is not Sync.
+/// Async slot for sharing data between the process and UI.
 #[derive(Clone)]
 pub struct Slot<T>(Arc<Mutex<Vec<T>>>);
 
 impl<T: Clone> Slot<T> {
-    pub fn write(&self) -> MutexGuard<'_, Vec<T>> {
-        self.0.lock().unwrap()
+    /// Take ownership of value at index, apply async function, put result back.
+    pub async fn act<F, R>(&self, index: usize, f: F) -> Option<R>
+    where
+        F: AsyncFnOnce(T) -> (T, R),
+    {
+        let mut guard = self.0.lock().await;
+        let len = guard.len();
+        if index >= len {
+            return None;
+        }
+        guard.swap(index, len - 1);
+        let value = guard.pop().unwrap();
+        let (new_value, result) = f(value).await;
+
+        guard.push(new_value);
+        let new_len = guard.len();
+        guard.swap(index, new_len - 1);
+        Some(result)
     }
 
-    pub fn push(&self, value: T) {
-        self.0.lock().unwrap().push(value);
+    pub async fn map<F, R>(&self, index: usize, f: F) -> Option<R>
+    where
+        F: FnOnce(&T) -> R,
+    {
+        self.act(index, async move |value| {
+            let ret = f(&value);
+            (value, ret)
+        })
+        .await
     }
 
-    pub fn clear(&self) {
-        self.0.lock().unwrap().clear();
+    pub async fn clone_main(&self) -> Option<T> {
+        self.0.lock().await.last().cloned()
     }
 
-    pub fn len(&self) -> usize {
-        self.0.lock().unwrap().len()
+    /// Replace all contents with a single value.
+    pub async fn set(&self, value: T) {
+        let mut guard = self.0.lock().await;
+        guard.clear();
+        guard.push(value);
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.0.lock().unwrap().is_empty()
+    /// Set value at index, or push if index == len. Panics if index > len.
+    pub async fn set_at(&self, index: usize, value: T) {
+        let mut guard = self.0.lock().await;
+        if index == guard.len() {
+            guard.push(value);
+        } else {
+            guard[index] = value;
+        }
     }
 
-    pub fn get(&self, index: usize) -> Option<T> {
-        self.0.lock().unwrap().get(index).cloned()
-    }
-
-    pub fn get_main(&self) -> Option<T> {
-        self.0.lock().unwrap().last().cloned()
+    pub async fn clear(&self) {
+        self.0.lock().await.clear();
     }
 }
 

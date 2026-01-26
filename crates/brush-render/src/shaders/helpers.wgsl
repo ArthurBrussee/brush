@@ -38,7 +38,8 @@ fn map_1d_to_2d(id: u32, tiles_per_row: u32) -> vec2<u32> {
     return vec2u(tile_x * TILE_WIDTH, tile_y * TILE_WIDTH) + decode_morton_2d(within_tile_id);
 }
 
-struct RenderUniforms {
+// Uniforms for projection passes.
+struct ProjectUniforms {
     // View matrix transform world to view position.
     viewmat: mat4x4f,
 
@@ -57,19 +58,16 @@ struct RenderUniforms {
     // Degree of sh coefficients used.
     sh_degree: u32,
 
-#ifdef UNIFORM_WRITE
-    // Number of visible gaussians, written by project_forward.
-    // This needs to be non-atomic for other kernels as you can't have
-    // read-only atomic data.
-    num_visible: atomic<u32>,
-#else
-    // Number of visible gaussians.
-    num_visible: u32,
-#endif
-
     total_splats: u32,
-    max_intersects: u32,
 
+    pad_a: u32,
+    pad_b: u32,
+}
+
+// Uniforms for rasterize pass.
+struct RasterizeUniforms {
+    tile_bounds: vec2u,
+    img_size: vec2u,
     // Nb: Alpha is ignored atm.
     background: vec4f,
 }

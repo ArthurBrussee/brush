@@ -1,16 +1,17 @@
 #import helpers
 
-@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
-@group(0) @binding(1) var<storage, read> compact_gid_from_isect: array<u32>;
-@group(0) @binding(2) var<storage, read> tile_offsets: array<u32>;
-@group(0) @binding(3) var<storage, read> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(0) var<storage, read> compact_gid_from_isect: array<u32>;
+@group(0) @binding(1) var<storage, read> tile_offsets: array<u32>;
+@group(0) @binding(2) var<storage, read> projected: array<helpers::ProjectedSplat>;
 
 #ifdef BWD_INFO
-    @group(0) @binding(4) var<storage, read_write> out_img: array<vec4f>;
-    @group(0) @binding(5) var<storage, read> global_from_compact_gid: array<u32>;
-    @group(0) @binding(6) var<storage, read_write> visible: array<f32>;
+    @group(0) @binding(3) var<storage, read_write> out_img: array<vec4f>;
+    @group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
+    @group(0) @binding(5) var<storage, read_write> visible: array<f32>;
+    @group(0) @binding(6) var<storage, read> uniforms: helpers::RasterizeUniforms;
 #else
-    @group(0) @binding(4) var<storage, read_write> out_img: array<u32>;
+    @group(0) @binding(3) var<storage, read_write> out_img: array<u32>;
+    @group(0) @binding(4) var<storage, read> uniforms: helpers::RasterizeUniforms;
 #endif
 
 var<workgroup> range_uniform: vec2u;

@@ -9,9 +9,8 @@ use glam::Vec3;
 use tracing::trace_span;
 
 use crate::{
-    SplatForward,
+    RenderAux, SplatOps,
     camera::Camera,
-    render_aux::RenderAux,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
 
@@ -22,6 +21,13 @@ use crate::{
 pub enum SplatRenderMode {
     Default,
     Mip,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TextureMode {
+    Packed,
+    #[default]
+    Float,
 }
 
 #[derive(Module, Debug)]
@@ -234,37 +240,48 @@ impl<B: Backend> Splats<B> {
 ///
 /// NB: This doesn't work on a differentiable backend. Use
 /// [`brush_render_bwd::render_splats`] for that.
-pub fn render_splats<B: Backend + SplatForward<B>>(
-    splats: &Splats<B>,
+///
+/// Takes ownership of the splats to avoid cloning internally.
+pub async fn render_splats<B: Backend + SplatOps<B>>(
+    splats: Splats<B>,
     camera: &Camera,
     img_size: glam::UVec2,
     background: Vec3,
     splat_scale: Option<f32>,
+    texture_mode: TextureMode,
 ) -> (Tensor<B, 3>, RenderAux<B>) {
     splats.validate_values();
 
-    let mut scales = splats.log_scales.val();
+    let mut scales = splats.log_scales.into_value();
 
-    // Add in scaling if needed.
     if let Some(scale) = splat_scale {
         scales = scales + scale.ln();
     };
 
-    let (img, aux) = B::render_splats(
+    let project_output = B::project(
         camera,
         img_size,
-        splats.means.val().into_primitive().tensor(),
+        splats.means.into_value().into_primitive().tensor(),
         scales.into_primitive().tensor(),
-        splats.rotations.val().into_primitive().tensor(),
-        splats.sh_coeffs.val().into_primitive().tensor(),
-        splats.raw_opacities.val().into_primitive().tensor(),
+        splats.rotations.into_value().into_primitive().tensor(),
+        splats.sh_coeffs.into_value().into_primitive().tensor(),
+        splats.raw_opacities.into_value().into_primitive().tensor(),
         splats.render_mode,
-        background,
-        false,
     );
-    let img = Tensor::from_primitive(TensorPrimitive::Float(img));
 
-    aux.validate_values();
+    project_output.validate();
 
-    (img, aux)
+    // Async readback
+    let num_intersections = project_output.read_num_intersections().await;
+
+    let use_float = matches!(texture_mode, TextureMode::Float);
+    let (out_img, render_aux, _) =
+        B::rasterize(&project_output, num_intersections, background, use_float);
+
+    render_aux.validate();
+
+    (
+        Tensor::from_primitive(TensorPrimitive::Float(out_img)),
+        render_aux,
+    )
 }

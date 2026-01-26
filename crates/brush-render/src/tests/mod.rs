@@ -1,11 +1,15 @@
-use crate::{MainBackend, SplatForward, camera::Camera, gaussian_splats::SplatRenderMode};
+use crate::{
+    MainBackend, TextureMode,
+    camera::Camera,
+    gaussian_splats::{SplatRenderMode, Splats, render_splats},
+};
 use assert_approx_eq::assert_approx_eq;
-use burn::tensor::{Distribution, Tensor, TensorPrimitive};
+use burn::tensor::{Distribution, Tensor};
 use burn_wgpu::WgpuDevice;
 use glam::Vec3;
 
-#[test]
-fn renders_at_all() {
+#[tokio::test]
+async fn renders_at_all() {
     // Check if rendering doesn't hard crash or anything.
     // These are some zero-sized gaussians, so we know
     // what the result should look like.
@@ -27,21 +31,18 @@ fn renders_at_all() {
             .repeat_dim(0, num_points);
     let sh_coeffs = Tensor::<MainBackend, 3>::ones([num_points, 1, 3], &device);
     let raw_opacity = Tensor::<MainBackend, 1>::zeros([num_points], &device);
-    let (output, aux) = <MainBackend as SplatForward<MainBackend>>::render_splats(
-        &cam,
-        img_size,
-        means.into_primitive().tensor(),
-        log_scales.into_primitive().tensor(),
-        quats.into_primitive().tensor(),
-        sh_coeffs.into_primitive().tensor(),
-        raw_opacity.into_primitive().tensor(),
-        SplatRenderMode::Default,
-        Vec3::ZERO,
-        true,
-    );
-    aux.validate_values();
 
-    let output: Tensor<MainBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(output));
+    let splats = Splats::from_tensor_data(
+        means,
+        quats,
+        log_scales,
+        sh_coeffs,
+        raw_opacity,
+        SplatRenderMode::Default,
+    );
+    let (output, _render_aux) =
+        render_splats(splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float).await;
+
     let rgb = output.clone().slice([0..32, 0..32, 0..3]);
     let alpha = output.slice([0..32, 0..32, 3..4]);
     let rgb_mean = rgb.mean().to_data().as_slice::<f32>().expect("Wrong type")[0];
@@ -54,8 +55,8 @@ fn renders_at_all() {
     assert_approx_eq!(alpha_mean, 0.0);
 }
 
-#[test]
-fn renders_many_splats() {
+#[tokio::test]
+async fn renders_many_splats() {
     // Test rendering with a ton of gaussians to verify 2D dispatch works correctly.
     // This exceeds the 1D 65535 * 256 = 16.7M limit.
     let num_splats = 30_000_000;
@@ -97,17 +98,14 @@ fn renders_many_splats() {
     let raw_opacity =
         Tensor::<MainBackend, 1>::random([num_splats], Distribution::Uniform(-2.0, 2.0), &device);
 
-    let (_output, aux) = <MainBackend as SplatForward<MainBackend>>::render_splats(
-        &cam,
-        img_size,
-        means.into_primitive().tensor(),
-        log_scales.into_primitive().tensor(),
-        quats.into_primitive().tensor(),
-        sh_coeffs.into_primitive().tensor(),
-        raw_opacity.into_primitive().tensor(),
+    let splats = Splats::from_tensor_data(
+        means,
+        quats,
+        log_scales,
+        sh_coeffs,
+        raw_opacity,
         SplatRenderMode::Default,
-        Vec3::ZERO,
-        true,
     );
-    aux.validate_values();
+    let (_output, _render_aux) =
+        render_splats(splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float).await;
 }

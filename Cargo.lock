@@ -1175,6 +1175,7 @@ dependencies = [
  "glam",
  "log",
  "serde",
+ "tokio",
  "tracing",
 ]
 
@@ -3865,6 +3866,7 @@ dependencies = [
  "brush-train",
  "brush-ui",
  "burn",
+ "burn-cubecl",
  "eframe",
  "egui",
  "glam",

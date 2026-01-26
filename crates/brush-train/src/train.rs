@@ -34,7 +34,7 @@ use burn::{
 use burn_cubecl::cubecl::Runtime;
 use glam::Vec3;
 use hashbrown::{HashMap, HashSet};
-use tracing::trace_span;
+use tracing::{Instrument, trace_span};
 
 pub const BOUND_PERCENTILE: f32 = 0.8;
 
@@ -99,48 +99,41 @@ impl SplatTrainer {
         }
     }
 
-    pub fn step(
+    pub async fn step(
         &mut self,
         batch: SceneBatch,
         splats: Splats<DiffBackend>,
     ) -> (Splats<DiffBackend>, TrainStepStats<MainBackend>) {
-        let _span = trace_span!("Train step").entered();
-
         let mut splats = splats;
 
         let [img_h, img_w, _] = batch.img_tensor.shape.clone().try_into().unwrap();
-        let camera = &batch.camera;
+        let camera = batch.camera.clone();
 
         // Upload tensor early.
         let device = splats.device();
         let has_alpha = batch.has_alpha();
         let gt_tensor = Tensor::from_data(batch.img_tensor, &device);
 
-        let (pred_image, aux, refine_weight_holder) = trace_span!("Forward").in_scope(|| {
-            // Could generate a random background color, but so far
-            // results just seem worse.
-            let background = Vec3::ZERO;
+        // Forward pass - render splats asynchronously.
+        // Clone splats to avoid holding references across the await.
+        let background = Vec3::ZERO;
+        let img_size = glam::uvec2(img_w as u32, img_h as u32);
 
-            let diff_out = render_splats(
-                &splats,
-                camera,
-                glam::uvec2(img_w as u32, img_h as u32),
-                background,
-            );
+        let diff_out = render_splats(splats.clone(), &camera, img_size, background)
+            .instrument(trace_span!("Forward"))
+            .await;
 
-            let img = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-
-            (img, diff_out.aux, diff_out.refine_weight_holder)
-        });
+        let pred_image = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+        let render_aux = diff_out.render_aux;
+        let refine_weight_holder = diff_out.refine_weight_holder;
 
         let median_scale = self.bounds.median_size();
-        let num_visible = aux.num_visible().inner();
-        let num_intersections = aux.num_intersections().inner();
+        let num_visible = render_aux.get_num_visible().inner();
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
         let gt_rgb = gt_tensor.clone().slice(s![.., .., 0..3]);
 
         let visible: Tensor<Autodiff<MainBackend>, 1> =
-            Tensor::from_primitive(TensorPrimitive::Float(aux.visible));
+            Tensor::from_primitive(TensorPrimitive::Float(render_aux.visible));
 
         let loss = trace_span!("Calculate losses").in_scope(|| {
             let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();
@@ -273,7 +266,6 @@ impl SplatTrainer {
         let stats = TrainStepStats {
             pred_image: pred_image.inner(),
             num_visible,
-            num_intersections,
             loss: loss.inner(),
             lr_mean,
             lr_rotation,
@@ -389,11 +381,14 @@ impl SplatTrainer {
         self.bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
         client.memory_cleanup();
 
+        let splat_count = splats.num_splats();
+
         (
             splats,
             RefineStats {
                 num_added: refine_count as u32,
                 num_pruned: pruned_count,
+                total_splats: splat_count,
             },
         )
     }

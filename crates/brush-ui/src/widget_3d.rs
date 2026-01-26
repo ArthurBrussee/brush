@@ -1,3 +1,6 @@
+use brush_render::camera::Camera;
+use eframe::egui_wgpu::{self, RenderState, wgpu};
+use egui::Rect;
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
@@ -13,7 +16,7 @@ struct Vertex {
 struct Uniforms {
     view_proj: [[f32; 4]; 4],
     grid_opacity: f32,
-    _padding: [f32; 3], // Padding for alignment
+    _padding: [f32; 3],
 }
 
 impl Vertex {
@@ -29,9 +32,42 @@ impl Vertex {
     }
 }
 
-pub struct Widget3D {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+pub struct GridWidget {}
+
+impl GridWidget {
+    pub fn new(state: &RenderState) -> Self {
+        state
+            .renderer
+            .write()
+            .callback_resources
+            .insert(GridWidgetResources::new(&state.device, state.target_format));
+        Self {}
+    }
+
+    #[expect(clippy::unused_self)]
+    pub fn paint(
+        &self, // Not used atm,but, in the future the widget might have some state.
+        rect: Rect,
+        camera: Camera,
+        model_transform: glam::Affine3A,
+        grid_opacity: f32,
+        ui: &egui::Ui,
+    ) {
+        if grid_opacity > 0.0 {
+            ui.painter()
+                .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                    rect,
+                    GridWidgetPainter {
+                        camera,
+                        model_transform,
+                        grid_opacity,
+                    },
+                ));
+        }
+    }
+}
+
+struct GridWidgetResources {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
@@ -41,14 +77,13 @@ pub struct Widget3D {
     up_axis_vertex_count: u32,
 }
 
-impl Widget3D {
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+impl GridWidgetResources {
+    pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Widget 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/widget_3d.wgsl").into()),
         });
 
-        // Create uniform buffer
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Widget 3D Uniform Buffer"),
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -56,12 +91,11 @@ impl Widget3D {
             mapped_at_creation: false,
         });
 
-        // Create bind group layout and bind group
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Widget 3D Bind Group Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, // Fragment needs access for grid_opacity
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -80,13 +114,13 @@ impl Widget3D {
             }],
         });
 
-        // Create render pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Widget 3D Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
 
+        // Pipeline without depth stencil - draws on top of egui content
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Widget 3D Pipeline"),
             layout: Some(&pipeline_layout),
@@ -100,7 +134,7 @@ impl Widget3D {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    format: target_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -115,19 +149,12 @@ impl Widget3D {
                 polygon_mode: wgpu::PolygonMode::Fill,
                 conservative: false,
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
+            depth_stencil: None, // No depth buffer - draw on top
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
         });
 
-        // Create geometry
         let (grid_vertices, grid_vertex_count) = Self::create_grid_geometry();
         let grid_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Grid Vertex Buffer"),
@@ -143,8 +170,6 @@ impl Widget3D {
         });
 
         Self {
-            device,
-            queue,
             pipeline,
             uniform_buffer,
             uniform_bind_group,
@@ -159,13 +184,10 @@ impl Widget3D {
         let mut vertices = Vec::new();
         let size = 10.0;
         let step = 1.0;
-        let color = [0.3, 0.3, 0.3, 0.8]; // Semi-transparent gray
+        let color = [0.3, 0.3, 0.3, 0.8];
 
-        // Create grid lines in XZ plane (Y=0) for OpenCV coordinates
-        // This creates a ground plane since Y is down in OpenCV
         let mut i = -size;
         while i <= size {
-            // Lines parallel to X axis
             vertices.push(Vertex {
                 position: [-size, 0.0, i],
                 color,
@@ -174,8 +196,6 @@ impl Widget3D {
                 position: [size, 0.0, i],
                 color,
             });
-
-            // Lines parallel to Z axis
             vertices.push(Vertex {
                 position: [i, 0.0, -size],
                 color,
@@ -184,7 +204,6 @@ impl Widget3D {
                 position: [i, 0.0, size],
                 color,
             });
-
             i += step;
         }
 
@@ -192,117 +211,75 @@ impl Widget3D {
     }
 
     fn create_up_axis_geometry() -> (Vec<Vertex>, u32) {
-        let mut vertices = Vec::new();
-        let length = 1.5;
-
-        // Single blue line pointing up (negative Y in OpenCV coordinates)
-        vertices.push(Vertex {
-            position: [0.0, 0.0, 0.0],
-            color: [0.0, 0.5, 1.0, 1.0], // Light blue
-        });
-        vertices.push(Vertex {
-            position: [0.0, -length, 0.0], // Negative Y is up
-            color: [0.0, 0.5, 1.0, 1.0],   // Light blue
-        });
-
+        let vertices = vec![
+            Vertex {
+                position: [0.0, 0.0, 0.0],
+                color: [0.0, 0.5, 1.0, 1.0],
+            },
+            Vertex {
+                position: [0.0, -1.5, 0.0],
+                color: [0.0, 0.5, 1.0, 1.0],
+            },
+        ];
         (vertices, 2)
     }
+}
 
-    pub fn render_to_texture(
+/// Callback for rendering the 3D widget overlay via egui's paint system.
+struct GridWidgetPainter {
+    pub camera: Camera,
+    pub model_transform: glam::Affine3A,
+    pub grid_opacity: f32,
+}
+
+impl egui_wgpu::CallbackTrait for GridWidgetPainter {
+    fn prepare(
         &self,
-        camera: &brush_render::camera::Camera,
-        model_transform: glam::Affine3A,
-        size: glam::UVec2,
-        target_texture: &wgpu::Texture,
-        grid_opacity: f32,
-    ) {
-        let output_view = target_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        _device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        screen_descriptor: &egui_wgpu::ScreenDescriptor,
+        _egui_encoder: &mut wgpu::CommandEncoder,
+        resources: &mut egui_wgpu::CallbackResources,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let Some(resources) = resources.get::<GridWidgetResources>() else {
+            return Vec::new();
+        };
 
-        // Create depth texture
-        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Widget 3D Depth Texture"),
-            size: wgpu::Extent3d {
-                width: size.x,
-                height: size.y,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Use perspective_lh since camera uses +Z as forward
-        // But flip Y since camera uses Y-down while perspective_lh uses Y-up
-        let aspect = size.x as f32 / size.y as f32;
-        let proj_matrix = Mat4::perspective_lh(camera.fov_y as f32, aspect, 0.1, 1000.0);
-
-        // Y-flip to convert from Y-up to Y-down
+        let aspect =
+            screen_descriptor.size_in_pixels[0] as f32 / screen_descriptor.size_in_pixels[1] as f32;
+        let proj_matrix = Mat4::perspective_lh(self.camera.fov_y as f32, aspect, 0.1, 1000.0);
         let y_flip = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
-
-        // The camera already has model transform baked in
-        // To get world-space view, we need to undo the model transform by applying its inverse
-        let view_matrix = camera.world_to_local();
-        let world_view = Mat4::from(view_matrix) * Mat4::from(model_transform.inverse());
-
-        // Apply Y flip and combine with projection
+        let view_matrix = self.camera.world_to_local();
+        let world_view = Mat4::from(view_matrix) * Mat4::from(self.model_transform.inverse());
         let view_proj = proj_matrix * y_flip * world_view;
 
         let uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
-            grid_opacity,
+            grid_opacity: self.grid_opacity,
             _padding: [0.0; 3],
         };
+        queue.write_buffer(
+            &resources.uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[uniforms]),
+        );
+        Vec::new()
+    }
 
-        self.queue
-            .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
-
-        // Render
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Widget 3D Render Encoder"),
-            });
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Widget 3D Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &output_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load, // Load existing content instead of clearing
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            render_pass.set_pipeline(&self.pipeline);
-            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-
-            // Draw grid
-            render_pass.set_vertex_buffer(0, self.grid_vertex_buffer.slice(..));
-            render_pass.draw(0..self.grid_vertex_count, 0..1);
-
-            // Draw up axis
-            render_pass.set_vertex_buffer(0, self.up_axis_vertex_buffer.slice(..));
-            render_pass.draw(0..self.up_axis_vertex_count, 0..1);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
+    fn paint(
+        &self,
+        _info: egui::PaintCallbackInfo,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        resources: &egui_wgpu::CallbackResources,
+    ) {
+        let Some(resources) = resources.get::<GridWidgetResources>() else {
+            return;
+        };
+        render_pass.set_pipeline(&resources.pipeline);
+        render_pass.set_bind_group(0, &resources.uniform_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, resources.grid_vertex_buffer.slice(..));
+        render_pass.draw(0..resources.grid_vertex_count, 0..1);
+        render_pass.set_vertex_buffer(0, resources.up_axis_vertex_buffer.slice(..));
+        render_pass.draw(0..resources.up_axis_vertex_count, 0..1);
     }
 }

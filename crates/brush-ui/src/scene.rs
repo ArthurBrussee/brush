@@ -1,47 +1,30 @@
 #[cfg(feature = "training")]
 use crate::settings_popup::SettingsPopup;
-#[cfg(feature = "training")]
-use brush_process::message::TrainMessage;
-#[cfg(feature = "training")]
-use std::sync::Mutex;
-
+use crate::{splat_backbuffer::SplatBackbuffer, widget_3d::GridWidget};
 use brush_process::{create_process, message::ProcessMessage};
+use brush_render::camera::{focal_to_fov, fov_to_focal};
 use brush_vfs::DataSource;
 use core::f32;
-use egui::{
-    Align2, Button, Frame, RichText, containers::Popup, epaint::mutex::RwLock as EguiRwLock,
-};
-use std::sync::Arc;
-
-use brush_render::{
-    MainBackend,
-    camera::{Camera, focal_to_fov, fov_to_focal},
-    gaussian_splats::Splats,
-    render_splats,
-};
-use eframe::egui_wgpu::Renderer;
+use eframe::egui_wgpu::RenderState;
+use egui::{Align2, Button, Frame, RichText, containers::Popup};
 use egui::{Color32, Rect, Slider};
-use glam::{UVec2, Vec3};
-use tracing::trace_span;
-use web_time::Instant;
-
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "training")]
+use std::sync::{Arc, Mutex};
+use web_time::Instant;
 
 /// Controls how often the viewport re-renders during training.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RenderUpdateMode {
-    /// Don't re-render during training
     Off,
-    /// Re-render every 100 iterations
     Low,
-    /// Re-render every 5 iterations (default)
     #[default]
     Live,
 }
 
 impl RenderUpdateMode {
     /// Returns the iteration interval for this mode, or None if rendering is disabled.
-    #[cfg(feature = "training")]
     fn update_interval(&self) -> Option<u32> {
         match self {
             Self::Off => None,
@@ -60,23 +43,10 @@ impl RenderUpdateMode {
 }
 
 use crate::{
-    UiMode,
-    app::CameraSettings,
-    burn_texture::BurnTexture,
-    draw_checkerboard,
+    UiMode, draw_checkerboard,
     panels::AppPane,
     ui_process::{BackgroundStyle, UiProcess},
-    widget_3d::Widget3D,
 };
-
-#[derive(Clone, PartialEq)]
-struct RenderState {
-    size: UVec2,
-    cam: Camera,
-    settings: CameraSettings,
-    grid_opacity: f32,
-    frame: u32,
-}
 
 struct ErrorDisplay {
     headline: String,
@@ -108,11 +78,15 @@ impl ErrorDisplay {
 #[derive(Default, Serialize, Deserialize)]
 pub struct ScenePanel {
     #[serde(skip)]
-    pub(crate) backbuffer: Option<BurnTexture>,
+    grid: Option<GridWidget>,
+    #[serde(skip)]
+    backbuffer: Option<SplatBackbuffer>,
     #[serde(skip)]
     pub(crate) last_draw: Option<Instant>,
     #[serde(skip)]
     has_splats: bool,
+    #[serde(skip)]
+    splats_dirty: bool,
     /// Current frame for animated sequences (as float for smooth interpolation).
     #[serde(skip)]
     frame: f32,
@@ -129,10 +103,6 @@ pub struct ScenePanel {
     /// Number of warnings that have been seen by the user.
     #[serde(skip)]
     seen_warning_count: usize,
-    #[serde(skip)]
-    last_state: Option<RenderState>,
-    #[serde(skip)]
-    widget_3d: Option<Widget3D>,
     #[serde(skip)]
     source_name: Option<String>,
     #[serde(skip)]
@@ -250,6 +220,7 @@ impl ScenePanel {
         load_option
     }
 
+    #[allow(clippy::unused_self)]
     fn start_loading(&self, source: DataSource, process: &UiProcess) {
         process.connect_to_process(create_process(
             source,
@@ -262,133 +233,6 @@ impl ScenePanel {
                 }
             },
         ));
-    }
-
-    pub(crate) fn draw_splats(
-        &mut self,
-        ui: &mut egui::Ui,
-        process: &UiProcess,
-        splats: Option<Splats<MainBackend>>,
-        interactive: bool,
-    ) -> egui::Rect {
-        let size = ui.available_size();
-        let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
-        let (rect, response) = ui.allocate_exact_size(
-            egui::Vec2::new(size.x as f32, size.y as f32),
-            egui::Sense::drag(),
-        );
-        if interactive {
-            process.tick_controls(&response, ui);
-        }
-
-        // Get camera after modifying the controls.
-        let mut camera = process.current_camera();
-
-        let view_eff = (camera.world_to_local() * process.model_local_to_world()).inverse();
-        let (_, rotation, position) = view_eff.to_scale_rotation_translation();
-        camera.position = position;
-        camera.rotation = rotation;
-
-        let settings = process.get_cam_settings();
-
-        // Adjust FOV so that the scene view shows at least what's visible in the dataset view.
-        // The camera has original fov_x and fov_y from the dataset. We need to ensure
-        // the viewport shows at least that much in both dimensions.
-        let camera_aspect = (camera.fov_x / 2.0).tan() / (camera.fov_y / 2.0).tan();
-        let viewport_aspect = size.x as f64 / size.y as f64;
-
-        if viewport_aspect > camera_aspect {
-            // Viewport is wider than camera - keep fov_y, expand fov_x
-            let focal_y = fov_to_focal(camera.fov_y, size.y);
-            camera.fov_x = focal_to_fov(focal_y, size.x);
-        } else {
-            // Viewport is taller than camera - keep fov_x, expand fov_y
-            let focal_x = fov_to_focal(camera.fov_x, size.x);
-            camera.fov_y = focal_to_fov(focal_x, size.y);
-        }
-
-        let grid_opacity = process.get_grid_opacity();
-
-        let state = RenderState {
-            size,
-            cam: camera.clone(),
-            settings: settings.clone(),
-            grid_opacity,
-            frame: self.frame as u32,
-        };
-
-        let dirty = self.last_state != Some(state.clone());
-
-        if dirty {
-            self.last_state = Some(state);
-            // Check again next frame, as there might be more to animate.
-            ui.ctx().request_repaint();
-        }
-
-        if let Some(splats) = splats {
-            let pixel_size = glam::uvec2(
-                (size.x as f32 * ui.ctx().pixels_per_point().round()) as u32,
-                (size.y as f32 * ui.ctx().pixels_per_point().round()) as u32,
-            );
-            // If this viewport is re-rendering.
-            if pixel_size.x > 8 && pixel_size.y > 8 && dirty {
-                let _span = trace_span!("Render splats").entered();
-                // Could add an option for background color.
-                let (img, _) = render_splats(
-                    &splats,
-                    &camera,
-                    pixel_size,
-                    settings.background.unwrap_or(Vec3::ZERO),
-                    settings.splat_scale,
-                );
-
-                if let Some(backbuffer) = &mut self.backbuffer {
-                    backbuffer.update_texture(img);
-                }
-
-                if let Some(widget_3d) = &mut self.widget_3d
-                    && let Some(backbuffer) = &self.backbuffer
-                    && let Some(texture) = backbuffer.texture()
-                {
-                    widget_3d.render_to_texture(
-                        &camera,
-                        process.model_local_to_world(),
-                        pixel_size,
-                        texture,
-                        grid_opacity,
-                    );
-                }
-            }
-        }
-
-        ui.scope(|ui| {
-            // if training views have alpha, show a background checker. Masked images
-            // should still use a black background.
-            match process.background_style() {
-                BackgroundStyle::Checkerboard => {
-                    draw_checkerboard(ui, rect, Color32::WHITE);
-                }
-                BackgroundStyle::Black => {
-                    ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
-                }
-            }
-
-            if let Some(backbuffer) = &self.backbuffer
-                && let Some(id) = backbuffer.id()
-            {
-                ui.painter().image(
-                    id,
-                    rect,
-                    Rect {
-                        min: egui::pos2(0.0, 0.0),
-                        max: egui::pos2(1.0, 1.0),
-                    },
-                    Color32::WHITE,
-                );
-            }
-        });
-
-        rect
     }
 
     fn draw_play_pause(&mut self, ui: &egui::Ui, rect: Rect) {
@@ -500,8 +344,8 @@ impl ScenePanel {
 impl ScenePanel {
     fn reset(&mut self) {
         self.last_draw = None;
-        self.last_state = None;
         self.has_splats = false;
+        self.splats_dirty = false;
         self.frame = 0.0;
         self.frame_count = 0;
         self.paused = false;
@@ -838,30 +682,18 @@ impl AppPane for ScenePanel {
 
             let new_idx = idx.round() as usize;
             if new_idx != old_idx {
-                let old_mode = self.render_update_mode;
                 self.render_update_mode = match new_idx {
                     0 => RenderUpdateMode::Off,
                     1 => RenderUpdateMode::Low,
                     _ => RenderUpdateMode::Live,
                 };
-                // If enabling rendering from Off, force a redraw
-                if old_mode == RenderUpdateMode::Off {
-                    self.last_state = None;
-                }
             }
         }
     }
 
-    fn init(
-        &mut self,
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        renderer: Arc<EguiRwLock<Renderer>>,
-        _burn_device: burn_wgpu::WgpuDevice,
-        _adapter_info: wgpu::AdapterInfo,
-    ) {
-        self.widget_3d = Some(Widget3D::new(device.clone(), queue.clone()));
-        self.backbuffer = Some(BurnTexture::new(renderer, device, queue));
+    fn init(&mut self, state: &RenderState) {
+        self.grid = Some(GridWidget::new(state));
+        self.backbuffer = Some(SplatBackbuffer::new(state));
 
         // Create the settings popup now that we have the base_path
         #[cfg(feature = "training")]
@@ -907,13 +739,14 @@ impl AppPane for ScenePanel {
                 up_axis,
                 frame,
                 total_frames,
+                ..
             } => {
                 self.has_splats = true;
                 self.frame_count = *total_frames;
 
                 // For non-training updates (e.g., loading), always redraw
                 if !process.is_training() {
-                    self.last_state = None;
+                    self.splats_dirty = true;
 
                     // When training, datasets handle this.
                     if let Some(up_axis) = up_axis {
@@ -924,16 +757,18 @@ impl AppPane for ScenePanel {
                     if *total_frames <= 1 || *frame < *total_frames - 1 {
                         self.frame = *frame as f32;
                     }
-                }
-            }
-            #[cfg(feature = "training")]
-            ProcessMessage::TrainMessage(TrainMessage::TrainStep { iter, .. }) => {
-                // Check if we should redraw based on render update mode
-                if let Some(interval) = self.render_update_mode.update_interval() {
-                    // Check if enough iterations have passed since last render
-                    if *iter >= self.last_rendered_iter + interval || self.last_rendered_iter == 0 {
-                        self.last_rendered_iter = *iter;
-                        self.last_state = None;
+                } else {
+                    // Check if we should redraw based on render update mode
+                    if let Some(interval) = self.render_update_mode.update_interval() {
+                        let iter = process.train_iter();
+
+                        // Check if enough iterations have passed since last render
+                        if iter >= self.last_rendered_iter + interval
+                            || self.last_rendered_iter == 0
+                        {
+                            self.last_rendered_iter = iter;
+                            self.splats_dirty = true;
+                        }
                     }
                 }
             }
@@ -1047,15 +882,74 @@ impl AppPane for ScenePanel {
                 ui.ctx().request_repaint();
             }
 
-            // Get the splat for the current frame
-            let splats = process.current_splats().and_then(|sv| {
-                let frame_idx = self.frame as usize;
-                sv.get(frame_idx)
-            });
-
             let interactive =
                 matches!(process.ui_mode(), UiMode::Default | UiMode::FullScreenSplat);
-            let rect = self.draw_splats(ui, process, splats, interactive);
+
+            let size = ui.available_size();
+            let size = glam::uvec2(size.x.round() as u32, size.y.round() as u32);
+            let (rect, response) = ui.allocate_exact_size(
+                egui::Vec2::new(size.x as f32, size.y as f32),
+                egui::Sense::drag(),
+            );
+            if interactive {
+                process.tick_controls(&response, ui);
+            }
+
+            // Get camera after modifying the controls.
+            let mut camera = process.current_camera();
+
+            let view_eff = (camera.world_to_local() * process.model_local_to_world()).inverse();
+            let (_, rotation, position) = view_eff.to_scale_rotation_translation();
+            camera.position = position;
+            camera.rotation = rotation;
+
+            let settings = process.get_cam_settings();
+
+            // Adjust FOV so that the scene view shows at least what's visible in the dataset view.
+            let camera_aspect = (camera.fov_x / 2.0).tan() / (camera.fov_y / 2.0).tan();
+            let viewport_aspect = size.x as f64 / size.y as f64;
+
+            if viewport_aspect > camera_aspect {
+                let focal_y = fov_to_focal(camera.fov_y, size.y);
+                camera.fov_x = focal_to_fov(focal_y, size.x);
+            } else {
+                let focal_x = fov_to_focal(camera.fov_x, size.x);
+                camera.fov_y = focal_to_fov(focal_x, size.y);
+            }
+
+            // Render the splats and grid
+            ui.scope(|ui| {
+                // if training views have alpha, show a background checker. Masked images
+                // should still use a black background.
+                match process.background_style() {
+                    BackgroundStyle::Checkerboard => {
+                        draw_checkerboard(ui, rect, Color32::WHITE);
+                    }
+                    BackgroundStyle::Black => {
+                        ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+                    }
+                }
+
+                if let Some(backbuffer) = &mut self.backbuffer {
+                    backbuffer.paint(
+                        rect,
+                        ui,
+                        &process.current_splats(),
+                        &camera,
+                        self.frame as usize,
+                        settings.background.unwrap_or(Vec3::ZERO),
+                        settings.splat_scale,
+                        self.splats_dirty,
+                    );
+                    self.splats_dirty = false;
+                }
+
+                if let Some(grid) = &mut self.grid {
+                    let model_ltw = process.model_local_to_world();
+                    let grid_opacity = process.get_grid_opacity();
+                    grid.paint(rect, camera, model_ltw, grid_opacity, ui);
+                }
+            });
 
             if interactive {
                 self.draw_play_pause(ui, rect);

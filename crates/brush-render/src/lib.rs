@@ -1,17 +1,18 @@
 #![recursion_limit = "256"]
 
 use burn::prelude::Backend;
-use burn::tensor::ops::FloatTensor;
+use burn::tensor::ops::{FloatTensor, IntTensor};
 use burn_cubecl::CubeBackend;
 use burn_fusion::Fusion;
 use burn_wgpu::WgpuRuntime;
 use camera::Camera;
 use clap::ValueEnum;
 use glam::Vec3;
-use render_aux::RenderAux;
+use render_aux::ProjectOutput;
 
 use crate::gaussian_splats::SplatRenderMode;
-pub use crate::gaussian_splats::render_splats;
+pub use crate::gaussian_splats::{TextureMode, render_splats};
+pub use crate::render_aux::RenderAux;
 
 mod burn_glue;
 mod dim_check;
@@ -33,28 +34,17 @@ pub mod validation;
 pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u32>;
 pub type MainBackend = Fusion<MainBackendBase>;
 
-#[derive(Debug, Clone)]
-pub struct RenderStats {
-    pub num_visible: u32,
-    pub num_intersections: u32,
-}
-
-// The maximum number of intersections that can be rendered.
-//
-// With 2D dispatch support, we can now handle more than the original 65535 workgroup limit.
-// Doubled from the original 512 * 65535 to allow higher resolution rendering.
-const INTERSECTS_UPPER_BOUND: u32 = 2 * 512 * 65535;
-
-pub trait SplatForward<B: Backend> {
-    /// Render splats to a buffer.
-    ///
-    /// This projects the gaussians, sorts them, and rasterizes them to a buffer, in a
-    /// differentiable way.
-    /// The arguments are all passed as raw tensors. See [`Splats`] for a convenient Module that wraps this fun
-    /// The [`xy_grad_dummy`] variable is only used to carry screenspace xy gradients.
-    /// This function can optionally render a "u32" buffer, which is a packed RGBA (8 bits per channel)
-    /// buffer. This is useful when the results need to be displayed immediately.
-    fn render_splats(
+/// Trait for the the gaussian splatting rendering pipeline.
+///
+/// This trait provides two passes:
+/// 1. `project`: Culling, depth sort, projection, intersection counting, prefix sum.
+/// 2. `rasterize`: Intersection filling, tile sort, tile offsets, rasterization.
+///
+/// The split allows for an explicit GPU sync point between passes to read back
+/// the exact number of intersections needed for buffer allocation.
+pub trait SplatOps<B: Backend> {
+    /// First pass: project gaussians and count intersections.
+    fn project(
         camera: &Camera,
         img_size: glam::UVec2,
         means: FloatTensor<B>,
@@ -63,9 +53,15 @@ pub trait SplatForward<B: Backend> {
         sh_coeffs: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
         render_mode: SplatRenderMode,
+    ) -> ProjectOutput<B>;
+
+    /// Second pass: rasterize using projection data.
+    fn rasterize(
+        project_output: &ProjectOutput<B>,
+        num_intersections: u32,
         background: Vec3,
         bwd_info: bool,
-    ) -> (FloatTensor<B>, RenderAux<B>);
+    ) -> (FloatTensor<B>, RenderAux<B>, IntTensor<B>);
 }
 
 #[derive(

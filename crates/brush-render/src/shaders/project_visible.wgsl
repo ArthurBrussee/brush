@@ -5,8 +5,7 @@ struct IsectInfo {
     tile_id: u32,
 }
 
-@group(0) @binding(0) var<storage, read> uniforms: helpers::RenderUniforms;
-
+@group(0) @binding(0) var<storage, read> num_visible: u32;
 @group(0) @binding(1) var<storage, read> means: array<helpers::PackedVec3>;
 @group(0) @binding(2) var<storage, read> log_scales: array<helpers::PackedVec3>;
 @group(0) @binding(3) var<storage, read> quats: array<vec4f>;
@@ -14,6 +13,8 @@ struct IsectInfo {
 @group(0) @binding(5) var<storage, read> raw_opacities: array<f32>;
 @group(0) @binding(6) var<storage, read> global_from_compact_gid: array<u32>;
 @group(0) @binding(7) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(8) var<storage, read_write> splat_intersect_counts: array<u32>;
+@group(0) @binding(9) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 struct ShCoeffs {
     b0_c0: vec3f,
@@ -171,7 +172,7 @@ fn main(
 ) {
     let compact_gid = helpers::get_global_id(wid, num_wgs, lid, WG_SIZE);
 
-    if compact_gid >= uniforms.num_visible {
+    if compact_gid >= num_visible {
         return;
     }
 
@@ -246,9 +247,34 @@ fn main(
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
     var color = sh_coeffs_to_color(sh_degree, viewdir, sh) + vec3f(0.5);
 
+    let conic_packed = vec3f(conic[0][0], conic[0][1], conic[1][1]);
+
     projected[compact_gid] = helpers::create_projected_splat(
         mean2d,
-        vec3f(conic[0][0], conic[0][1], conic[1][1]),
+        conic_packed,
         vec4f(color, opac)
     );
+
+    // Count intersections for this splat (merged from map_gaussian_to_intersects prepass)
+    let power_threshold = log(opac * 255.0);
+    let extent = helpers::compute_bbox_extent(cov2d, power_threshold);
+    let tile_bbox = helpers::get_tile_bbox(mean2d, extent, uniforms.tile_bounds);
+    let tile_bbox_min = tile_bbox.xy;
+    let tile_bbox_max = tile_bbox.zw;
+
+    var num_tiles_hit = 0u;
+    let tile_bbox_width = tile_bbox_max.x - tile_bbox_min.x;
+    let num_tiles_bbox = (tile_bbox_max.y - tile_bbox_min.y) * tile_bbox_width;
+
+    for (var tile_idx = 0u; tile_idx < num_tiles_bbox; tile_idx++) {
+        let tx = (tile_idx % tile_bbox_width) + tile_bbox_min.x;
+        let ty = (tile_idx / tile_bbox_width) + tile_bbox_min.y;
+
+        let rect = helpers::tile_rect(vec2u(tx, ty));
+        if helpers::will_primitive_contribute(rect, mean2d, conic_packed, power_threshold) {
+            num_tiles_hit += 1u;
+        }
+    }
+
+    splat_intersect_counts[compact_gid] = num_tiles_hit;
 }

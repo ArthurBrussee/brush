@@ -161,8 +161,8 @@ fn test_forward_rendering() {
     assert!(means_data.iter().all(|&x| x.is_finite()));
 }
 
-#[test]
-fn test_training_step() {
+#[tokio::test]
+async fn test_training_step() {
     let device = WgpuDevice::default();
     let batch = generate_test_batch((64, 64));
     let splats = generate_test_splats(&device, 500);
@@ -172,7 +172,7 @@ fn test_training_step() {
         &device,
         BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
     );
-    let (final_splats, stats) = trainer.step(batch, splats);
+    let (final_splats, stats) = trainer.step(batch, splats).await;
 
     assert!(final_splats.num_splats() > 0);
     let loss = stats.loss.into_scalar();
@@ -190,8 +190,8 @@ fn test_batch_generation() {
     assert!(img_data.iter().all(|&x| (0.0..=1.1).contains(&x)));
 }
 
-#[test]
-fn test_multi_step_training() {
+#[tokio::test]
+async fn test_multi_step_training() {
     let device = WgpuDevice::default();
     let batch = generate_test_batch((64, 64));
     let config = TrainConfig::default();
@@ -205,7 +205,7 @@ fn test_multi_step_training() {
 
     // Run a few training steps
     for _ in 0..3 {
-        let (new_splats, stats) = trainer.step(batch.clone(), splats);
+        let (new_splats, stats) = trainer.step(batch.clone(), splats).await;
         splats = new_splats;
 
         let loss = stats.loss.into_scalar();
@@ -216,8 +216,8 @@ fn test_multi_step_training() {
     assert!(splats.num_splats() > 0);
 }
 
-#[test]
-fn test_gradient_validation() {
+#[tokio::test]
+async fn test_gradient_validation() {
     let device = WgpuDevice::default();
     let splats = generate_test_splats(&device, 100);
 
@@ -231,7 +231,8 @@ fn test_gradient_validation() {
     );
     let img_size = glam::uvec2(64, 64);
 
-    let result = render_splats(&splats, &camera, img_size, Vec3::ZERO);
+    // Clone splats since render_splats takes ownership and we need splats for gradient validation
+    let result = render_splats(splats.clone(), &camera, img_size, Vec3::ZERO).await;
 
     let rendered: Tensor<DiffBackend, 3> =
         Tensor::from_primitive(TensorPrimitive::Float(result.img));

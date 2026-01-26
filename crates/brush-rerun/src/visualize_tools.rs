@@ -217,12 +217,13 @@ mod visualize_tools_impl {
         }
 
         #[allow(unused_variables)]
-        pub fn log_splat_stats<B: Backend>(&self, iter: u32, splats: &Splats<B>) -> Result<()> {
+        pub fn log_splat_stats(&self, iter: u32, num_splats: u32) -> Result<()> {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
-                let num = splats.num_splats();
-                self.rec
-                    .log("splats/num_splats", &rerun::Scalars::new(vec![num as f64]))?;
+                self.rec.log(
+                    "splats/num_splats",
+                    &rerun::Scalars::new(vec![num_splats as f64]),
+                )?;
             }
             Ok(())
         }
@@ -245,17 +246,6 @@ mod visualize_tools_impl {
                     .log("lr/coeffs", &rerun::Scalars::new(vec![stats.lr_coeffs]))?;
                 self.rec
                     .log("lr/opac", &rerun::Scalars::new(vec![stats.lr_opac]))?;
-
-                self.rec.log(
-                    "splats/num_intersects",
-                    &rerun::Scalars::new(vec![
-                        stats
-                            .num_intersections
-                            .into_scalar_async()
-                            .await?
-                            .elem::<f64>(),
-                    ]),
-                )?;
                 self.rec.log(
                     "splats/splats_visible",
                     &rerun::Scalars::new(vec![
@@ -370,7 +360,7 @@ mod visualize_tools_impl {
 
         #[allow(unused_variables)]
         #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
-        pub fn log_splat_stats<B: Backend>(&self, _iter: u32, _splats: &Splats<B>) -> Result<()> {
+        pub fn log_splat_stats(&self, _iter: u32, _num_splats: u32) -> Result<()> {
             Ok(())
         }
 
