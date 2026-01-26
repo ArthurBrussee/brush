@@ -230,7 +230,7 @@ impl App {
         );
 
         log::info!("Connecting context to Burn device & GUI context.");
-        let context = std::sync::Arc::new(UiProcess::new(burn_device.clone(), cc.egui_ctx.clone()));
+        let context = std::sync::Arc::new(UiProcess::new(burn_device, cc.egui_ctx.clone()));
 
         if let Some(process) = init_process {
             context.connect_to_process(process);
@@ -249,9 +249,7 @@ impl App {
         // Initialize all panels with runtime state
         for (_, tile) in tree.tiles.iter_mut() {
             if let egui_tiles::Tile::Pane(pane) = tile {
-                pane.get_mut()
-                    .as_pane_mut()
-                    .init(state, burn_device.clone());
+                pane.get_mut().as_pane_mut().init(state);
             }
         }
 

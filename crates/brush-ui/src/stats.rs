@@ -2,14 +2,13 @@ use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
 use brush_process::message::ProcessMessage;
 use brush_process::message::TrainMessage;
 use burn_cubecl::cubecl::Runtime;
-use burn_wgpu::{WgpuDevice, WgpuRuntime};
+use burn_wgpu::WgpuRuntime;
 use eframe::egui_wgpu::RenderState;
 use web_time::Duration;
 use wgpu::AdapterInfo;
 
 #[derive(Default)]
 pub struct StatsPanel {
-    device: Option<WgpuDevice>,
     last_eval: Option<String>,
     frames: u32,
     adapter_info: Option<AdapterInfo>,
@@ -78,8 +77,7 @@ impl AppPane for StatsPanel {
         "Stats".into()
     }
 
-    fn init(&mut self, state: &RenderState, burn_device: burn_wgpu::WgpuDevice) {
-        self.device = Some(burn_device);
+    fn init(&mut self, state: &RenderState) {
         self.adapter_info = Some(state.adapter.get_info());
     }
 
@@ -187,40 +185,39 @@ impl AppPane for StatsPanel {
                 });
             }
 
-            if let Some(device) = &self.device {
-                ui.add_space(10.0);
-                ui.heading("GPU");
-                ui.separator();
+            let device = process.burn_device();
+            let client = WgpuRuntime::client(&device);
+            let memory = client.memory_usage();
 
-                let client = WgpuRuntime::client(device);
-                let memory = client.memory_usage();
+            ui.add_space(10.0);
+            ui.heading("GPU");
+            ui.separator();
 
-                stats_grid(ui, "memory_stats_grid", |ui, v| {
-                    stat_row(ui, "Bytes in use", bytes_format(memory.bytes_in_use), v);
-                    stat_row(ui, "Bytes reserved", bytes_format(memory.bytes_reserved), v);
+            stats_grid(ui, "memory_stats_grid", |ui, v| {
+                stat_row(ui, "Bytes in use", bytes_format(memory.bytes_in_use), v);
+                stat_row(ui, "Bytes reserved", bytes_format(memory.bytes_reserved), v);
+                stat_row(
+                    ui,
+                    "Active allocations",
+                    format!("{}", memory.number_allocs),
+                    v,
+                );
+            });
+
+            // On WASM, adapter info is mostly private, not worth showing.
+            if !cfg!(target_family = "wasm")
+                && let Some(adapter_info) = &self.adapter_info
+            {
+                stats_grid(ui, "gpu_info_grid", |ui, v| {
+                    stat_row(ui, "Name", &adapter_info.name, v);
+                    stat_row(ui, "Type", format!("{:?}", adapter_info.device_type), v);
                     stat_row(
                         ui,
-                        "Active allocations",
-                        format!("{}", memory.number_allocs),
+                        "Driver",
+                        format!("{}, {}", adapter_info.driver, adapter_info.driver_info),
                         v,
                     );
                 });
-
-                // On WASM, adapter info is mostly private, not worth showing.
-                if !cfg!(target_family = "wasm")
-                    && let Some(adapter_info) = &self.adapter_info
-                {
-                    stats_grid(ui, "gpu_info_grid", |ui, v| {
-                        stat_row(ui, "Name", &adapter_info.name, v);
-                        stat_row(ui, "Type", format!("{:?}", adapter_info.device_type), v);
-                        stat_row(
-                            ui,
-                            "Driver",
-                            format!("{}, {}", adapter_info.driver, adapter_info.driver_info),
-                            v,
-                        );
-                    });
-                }
             }
         });
     }

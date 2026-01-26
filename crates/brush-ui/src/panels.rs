@@ -1,5 +1,4 @@
 use brush_process::message::ProcessMessage;
-use burn_wgpu::WgpuDevice;
 use eframe::egui_wgpu::RenderState;
 
 use crate::ui_process::UiProcess;
@@ -9,7 +8,7 @@ pub(crate) trait AppPane {
 
     /// Initialize runtime state after creation or deserialization.
     #[allow(unused_variables)]
-    fn init(&mut self, state: &RenderState, burn_device: WgpuDevice) {}
+    fn init(&mut self, state: &RenderState) {}
 
     /// Draw the pane's UI's content.
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess);

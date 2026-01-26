@@ -7,6 +7,7 @@ use burn::tensor::Tensor;
 use egui::Rect;
 use glam::{UVec2, Vec3};
 use tokio::sync::mpsc;
+use tokio_with_wasm::alias::task;
 
 use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 
@@ -49,7 +50,7 @@ impl SplatBackbuffer {
                 state.target_format,
             ));
 
-        tokio::task::spawn(render_worker(req_rec, img_send));
+        task::spawn(render_worker(req_rec, img_send));
         Self {
             req_send,
             img_rec,

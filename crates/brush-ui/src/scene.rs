@@ -691,7 +691,7 @@ impl AppPane for ScenePanel {
         }
     }
 
-    fn init(&mut self, state: &RenderState, _burn_device: burn_wgpu::WgpuDevice) {
+    fn init(&mut self, state: &RenderState) {
         self.grid = Some(GridWidget::new(state));
         self.backbuffer = Some(SplatBackbuffer::new(state));
 
