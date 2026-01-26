@@ -25,7 +25,6 @@ pub enum RenderUpdateMode {
 
 impl RenderUpdateMode {
     /// Returns the iteration interval for this mode, or None if rendering is disabled.
-    #[cfg(feature = "training")]
     fn update_interval(&self) -> Option<u32> {
         match self {
             Self::Off => None,

@@ -1,9 +1,6 @@
 use crate::{UiMode, app::CameraSettings, camera_controls::CameraController};
 use anyhow::Result;
-use brush_process::{
-    message::{ProcessMessage, TrainMessage},
-    slot::Slot,
-};
+use brush_process::{message::ProcessMessage, slot::Slot};
 use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
