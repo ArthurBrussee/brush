@@ -1,6 +1,9 @@
 use crate::{UiMode, app::CameraSettings, camera_controls::CameraController};
 use anyhow::Result;
-use brush_process::{message::ProcessMessage, slot::Slot};
+use brush_process::{
+    message::{ProcessMessage, TrainMessage},
+    slot::Slot,
+};
 use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
@@ -106,6 +109,10 @@ impl UiProcess {
 
     pub fn is_train_paused(&self) -> bool {
         self.read().train_paused
+    }
+
+    pub(crate) fn train_iter(&self) -> u32 {
+        self.read().train_iter
     }
 
     pub fn get_cam_settings(&self) -> CameraSettings {
@@ -235,9 +242,14 @@ impl UiProcess {
                 Ok(ProcessMessage::StartLoading { training, .. }) => {
                     inner.is_training = *training;
                     inner.is_loading = true;
+                    inner.train_iter = 0;
                 }
                 Ok(ProcessMessage::DoneLoading) => {
                     inner.is_loading = false;
+                }
+                #[cfg(feature = "training")]
+                Ok(ProcessMessage::TrainMessage(TrainMessage::TrainStep { iter, .. })) => {
+                    inner.train_iter = *iter;
                 }
                 Err(_) => {
                     inner.is_loading = false;
@@ -293,6 +305,7 @@ struct UiProcessInner {
     ui_mode: UiMode,
     background_style: BackgroundStyle,
     train_paused: bool,
+    train_iter: u32,
     reset_layout_requested: bool,
     session_reset_requested: bool,
     ui_ctx: egui::Context,
@@ -313,6 +326,7 @@ impl UiProcessInner {
             splat_scale: None,
             is_loading: false,
             is_training: false,
+            train_iter: 0,
             process_handle: None,
             ui_mode: UiMode::Default,
             background_style: BackgroundStyle::Black,

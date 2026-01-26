@@ -1,8 +1,6 @@
 #[cfg(feature = "training")]
 use crate::settings_popup::SettingsPopup;
 use crate::{splat_backbuffer::SplatBackbuffer, widget_3d::GridWidget};
-#[cfg(feature = "training")]
-use brush_process::message::TrainMessage;
 use brush_process::{create_process, message::ProcessMessage};
 use brush_render::camera::{focal_to_fov, fov_to_focal};
 use brush_vfs::DataSource;
@@ -685,16 +683,11 @@ impl AppPane for ScenePanel {
 
             let new_idx = idx.round() as usize;
             if new_idx != old_idx {
-                let old_mode = self.render_update_mode;
                 self.render_update_mode = match new_idx {
                     0 => RenderUpdateMode::Off,
                     1 => RenderUpdateMode::Low,
                     _ => RenderUpdateMode::Live,
                 };
-                // If enabling rendering from Off, force a redraw
-                if old_mode == RenderUpdateMode::Off {
-                    self.splats_dirty = true;
-                }
             }
         }
     }
@@ -750,11 +743,12 @@ impl AppPane for ScenePanel {
                 ..
             } => {
                 self.has_splats = true;
-                self.splats_dirty = true;
                 self.frame_count = *total_frames;
 
                 // For non-training updates (e.g., loading), always redraw
                 if !process.is_training() {
+                    self.splats_dirty = true;
+
                     // When training, datasets handle this.
                     if let Some(up_axis) = up_axis {
                         process.set_model_up(*up_axis);
@@ -764,16 +758,18 @@ impl AppPane for ScenePanel {
                     if *total_frames <= 1 || *frame < *total_frames - 1 {
                         self.frame = *frame as f32;
                     }
-                }
-            }
-            #[cfg(feature = "training")]
-            ProcessMessage::TrainMessage(TrainMessage::TrainStep { iter, .. }) => {
-                // Check if we should redraw based on render update mode
-                if let Some(interval) = self.render_update_mode.update_interval() {
-                    // Check if enough iterations have passed since last render
-                    if *iter >= self.last_rendered_iter + interval || self.last_rendered_iter == 0 {
-                        self.last_rendered_iter = *iter;
-                        self.splats_dirty = true;
+                } else {
+                    // Check if we should redraw based on render update mode
+                    if let Some(interval) = self.render_update_mode.update_interval() {
+                        let iter = process.train_iter();
+
+                        // Check if enough iterations have passed since last render
+                        if iter >= self.last_rendered_iter + interval
+                            || self.last_rendered_iter == 0
+                        {
+                            self.last_rendered_iter = iter;
+                            self.splats_dirty = true;
+                        }
                     }
                 }
             }

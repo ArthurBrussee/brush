@@ -95,8 +95,8 @@ impl SplatBackbuffer {
             // Send request to worker (ignore send errors if channel closed)
             let _ = self.req_send.send(RenderRequest {
                 slot: slot.clone(),
-                state: current_state,
                 ctx: ui.ctx().clone(),
+                state: current_state,
             });
         }
 
