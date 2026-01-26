@@ -10,7 +10,6 @@ use tokio::sync::mpsc;
 
 use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 
-/// Internal request sent to the async render worker.
 #[derive(Clone)]
 struct RenderRequest {
     slot: Slot<Splats<MainBackend>>,
@@ -18,7 +17,6 @@ struct RenderRequest {
     state: LastRenderState,
 }
 
-/// State used to track if we need to re-render.
 #[derive(Clone, PartialEq)]
 struct LastRenderState {
     frame: usize,
@@ -299,7 +297,7 @@ impl CallbackTrait for SplatBackbufferPainter {
 
         render_pass.set_pipeline(&res.pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
-        render_pass.draw(0..3, 0..1); // 3 vertices for fullscreen triangle
+        render_pass.draw(0..3, 0..1);
     }
 }
 

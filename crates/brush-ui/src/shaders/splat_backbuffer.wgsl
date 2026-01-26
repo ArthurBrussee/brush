@@ -14,17 +14,11 @@ struct VertexOutput {
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     // Fullscreen triangle using oversized triangle technique
-    // Creates a triangle twice as large as the viewport - GPU clips to screen
     var out: VertexOutput;
     let x = f32((vertex_index << 1u) & 2u);  // 0, 2, 0 for indices 0, 1, 2
     let y = f32(vertex_index & 2u);           // 0, 0, 2 for indices 0, 1, 2
-
-    // Position in clip space: (-1,-1), (3,-1), (-1,3) - oversized triangle
     out.position = vec4<f32>(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
-
-    // UV coordinates with Y flipped (image top = uv.y 0, clip space top = y 1)
     out.uv = vec2<f32>(x, 1.0 - y);
-
     return out;
 }
 
@@ -45,6 +39,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let g = f32((packed >> 8u) & 0xFFu) / 255.0;
     let b = f32((packed >> 16u) & 0xFFu) / 255.0;
     let a = f32((packed >> 24u) & 0xFFu) / 255.0;
-
     return vec4<f32>(r, g, b, a);
 }
