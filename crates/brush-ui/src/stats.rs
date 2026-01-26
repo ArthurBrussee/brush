@@ -1,12 +1,9 @@
-use std::sync::Arc;
-
 use crate::{UiMode, panels::AppPane, ui_process::UiProcess};
 use brush_process::message::ProcessMessage;
 use brush_process::message::TrainMessage;
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
-use eframe::egui_wgpu::Renderer;
-use egui::mutex::RwLock;
+use eframe::egui_wgpu::RenderState;
 use web_time::Duration;
 use wgpu::AdapterInfo;
 
@@ -81,16 +78,9 @@ impl AppPane for StatsPanel {
         "Stats".into()
     }
 
-    fn init(
-        &mut self,
-        _device: wgpu::Device,
-        _queue: wgpu::Queue,
-        _renderer: Arc<RwLock<Renderer>>,
-        burn_device: burn_wgpu::WgpuDevice,
-        adapter_info: wgpu::AdapterInfo,
-    ) {
+    fn init(&mut self, state: &RenderState, burn_device: burn_wgpu::WgpuDevice) {
         self.device = Some(burn_device);
-        self.adapter_info = Some(adapter_info);
+        self.adapter_info = Some(state.adapter.get_info());
     }
 
     fn is_visible(&self, process: &UiProcess) -> bool {

@@ -5,21 +5,20 @@ use brush_process::message::TrainMessage;
 use brush_process::{create_process, message::ProcessMessage};
 use brush_vfs::DataSource;
 use core::f32;
-use egui::{
-    Align2, Button, Frame, RichText, containers::Popup, epaint::mutex::RwLock as EguiRwLock,
-};
-use std::sync::Arc;
+use eframe::egui_wgpu::RenderState;
+use egui::{Align2, Button, Frame, RichText, containers::Popup};
 #[cfg(feature = "training")]
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use brush_render::camera::{Camera, focal_to_fov, fov_to_focal};
-use eframe::egui_wgpu::Renderer;
 use egui::{Color32, Rect, Slider};
 use glam::{UVec2, Vec3};
 use web_time::Instant;
 
-use crate::splat_backbuffer::{RenderRequest, SplatBackbuffer};
-use crate::widget_3d::Widget3DCallback;
+use crate::{
+    splat_backbuffer::{RenderRequest, SplatBackbuffer},
+    widget_3d::GridWidget,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +60,7 @@ use crate::{
 };
 
 #[derive(Clone, PartialEq)]
-struct RenderState {
+struct SplatRenderState {
     size: UVec2,
     cam: Camera,
     settings: CameraSettings,
@@ -98,7 +97,8 @@ impl ErrorDisplay {
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct ScenePanel {
-    /// Async splat renderer and texture backbuffer.
+    #[serde(skip)]
+    grid: Option<GridWidget>,
     #[serde(skip)]
     backbuffer: Option<SplatBackbuffer>,
     #[serde(skip)]
@@ -122,7 +122,7 @@ pub struct ScenePanel {
     #[serde(skip)]
     seen_warning_count: usize,
     #[serde(skip)]
-    last_state: Option<RenderState>,
+    last_state: Option<SplatRenderState>,
     #[serde(skip)]
     source_name: Option<String>,
     #[serde(skip)]
@@ -716,21 +716,9 @@ impl AppPane for ScenePanel {
         }
     }
 
-    fn init(
-        &mut self,
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        renderer: Arc<EguiRwLock<Renderer>>,
-        _burn_device: burn_wgpu::WgpuDevice,
-        _adapter_info: wgpu::AdapterInfo,
-    ) {
-        // Initialize Widget3D resources for the grid overlay
-        // renderer
-        //     .write()
-        //     .callback_resources
-        //     .insert(Widget3DResources::new(&device, target_format));
-
-        self.backbuffer = Some(SplatBackbuffer::new(renderer, device, &queue));
+    fn init(&mut self, state: &RenderState, _burn_device: burn_wgpu::WgpuDevice) {
+        GridWidget::new(state);
+        self.backbuffer = Some(SplatBackbuffer::new());
 
         // Create the settings popup now that we have the base_path
         #[cfg(feature = "training")]
@@ -954,7 +942,7 @@ impl AppPane for ScenePanel {
 
             let grid_opacity = process.get_grid_opacity();
 
-            let state = RenderState {
+            let state = SplatRenderState {
                 size,
                 cam: camera.clone(),
                 settings: settings.clone(),
@@ -998,28 +986,13 @@ impl AppPane for ScenePanel {
                             ctx: ui.ctx().clone(),
                         });
                     }
-                    ui.painter().image(
-                        backbuffer.id(),
-                        rect,
-                        Rect {
-                            min: egui::pos2(0.0, 0.0),
-                            max: egui::pos2(1.0, 1.0),
-                        },
-                        Color32::WHITE,
-                    );
 
-                    // Draw the 3D grid overlay using egui's wgpu callback
-                    if grid_opacity > 0.0 {
-                        ui.painter()
-                            .add(eframe::egui_wgpu::Callback::new_paint_callback(
-                                rect,
-                                Widget3DCallback {
-                                    camera,
-                                    model_transform: process.model_local_to_world(),
-                                    grid_opacity,
-                                },
-                            ));
-                    }
+                    backbuffer.paint(rect, ui);
+                }
+
+                if let Some(grid) = &mut self.grid {
+                    let model_ltw = process.model_local_to_world();
+                    grid.paint(rect, camera, model_ltw, grid_opacity, ui);
                 }
             });
 

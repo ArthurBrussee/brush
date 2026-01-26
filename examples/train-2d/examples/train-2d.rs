@@ -142,18 +142,11 @@ impl App {
             slot.clone(),
         );
 
-        let renderer = cc
-            .wgpu_render_state
-            .as_ref()
-            .expect("No wgpu renderer enabled in egui")
-            .renderer
-            .clone();
-
         Self {
             image,
             camera,
             tex_handle: handle,
-            backbuffer: SplatBackbuffer::new(renderer, state.device.clone(), &state.queue),
+            backbuffer: SplatBackbuffer::new(),
             slot,
             receiver,
             last_step: None,
@@ -186,10 +179,12 @@ impl eframe::App for App {
             let size = egui::vec2(self.image.width() as f32, self.image.height() as f32);
 
             ui.horizontal(|ui| {
-                ui.image(ImageSource::Texture(SizedTexture::new(
-                    self.backbuffer.id(),
-                    size,
-                )));
+                // TODO: Fixup to new methods.
+
+                // ui.image(ImageSource::Texture(SizedTexture::new(
+                //     self.backbuffer.id(),
+                //     size,
+                // )));
                 ui.image(ImageSource::Texture(SizedTexture::new(
                     self.tex_handle.id(),
                     size,

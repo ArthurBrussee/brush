@@ -1,5 +1,6 @@
 use brush_render::camera::Camera;
-use eframe::egui_wgpu::{self, wgpu};
+use eframe::egui_wgpu::{self, RenderState, wgpu};
+use egui::Rect;
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
@@ -31,8 +32,42 @@ impl Vertex {
     }
 }
 
-/// Resources for Widget3D stored in callback_resources.
-pub struct Widget3DResources {
+pub struct GridWidget {}
+
+impl GridWidget {
+    pub fn new(state: &RenderState) -> Self {
+        state
+            .renderer
+            .write()
+            .callback_resources
+            .insert(GridWidgetResources::new(&state.device, state.target_format));
+        Self {}
+    }
+
+    #[expect(clippy::unused_self)]
+    pub fn paint(
+        &self, // Not used atm,but, in the future the widget might have some state.
+        rect: Rect,
+        camera: Camera,
+        model_transform: glam::Affine3A,
+        grid_opacity: f32,
+        ui: &egui::Ui,
+    ) {
+        if grid_opacity > 0.0 {
+            ui.painter()
+                .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                    rect,
+                    GridWidgetPainter {
+                        camera,
+                        model_transform,
+                        grid_opacity,
+                    },
+                ));
+        }
+    }
+}
+
+struct GridWidgetResources {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
@@ -42,8 +77,7 @@ pub struct Widget3DResources {
     up_axis_vertex_count: u32,
 }
 
-impl Widget3DResources {
-    /// Create Widget3D resources. Call this once during initialization.
+impl GridWidgetResources {
     pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Widget 3D Shader"),
@@ -189,38 +223,16 @@ impl Widget3DResources {
         ];
         (vertices, 2)
     }
-
-    /// Update uniforms for rendering.
-    pub fn prepare(&self, queue: &wgpu::Queue, view_proj: Mat4, grid_opacity: f32) {
-        let uniforms = Uniforms {
-            view_proj: view_proj.to_cols_array_2d(),
-            grid_opacity,
-            _padding: [0.0; 3],
-        };
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
-    }
-
-    /// Issue draw commands to the provided render pass.
-    pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>) {
-        render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-
-        render_pass.set_vertex_buffer(0, self.grid_vertex_buffer.slice(..));
-        render_pass.draw(0..self.grid_vertex_count, 0..1);
-
-        render_pass.set_vertex_buffer(0, self.up_axis_vertex_buffer.slice(..));
-        render_pass.draw(0..self.up_axis_vertex_count, 0..1);
-    }
 }
 
 /// Callback for rendering the 3D widget overlay via egui's paint system.
-pub struct Widget3DCallback {
+struct GridWidgetPainter {
     pub camera: Camera,
     pub model_transform: glam::Affine3A,
     pub grid_opacity: f32,
 }
 
-impl egui_wgpu::CallbackTrait for Widget3DCallback {
+impl egui_wgpu::CallbackTrait for GridWidgetPainter {
     fn prepare(
         &self,
         _device: &wgpu::Device,
@@ -229,20 +241,28 @@ impl egui_wgpu::CallbackTrait for Widget3DCallback {
         _egui_encoder: &mut wgpu::CommandEncoder,
         resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
-        let Some(widget_3d) = resources.get::<Widget3DResources>() else {
+        let Some(resources) = resources.get::<GridWidgetResources>() else {
             return Vec::new();
         };
 
-        let aspect = screen_descriptor.size_in_pixels[0] as f32
-            / screen_descriptor.size_in_pixels[1] as f32;
+        let aspect =
+            screen_descriptor.size_in_pixels[0] as f32 / screen_descriptor.size_in_pixels[1] as f32;
         let proj_matrix = Mat4::perspective_lh(self.camera.fov_y as f32, aspect, 0.1, 1000.0);
         let y_flip = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
         let view_matrix = self.camera.world_to_local();
         let world_view = Mat4::from(view_matrix) * Mat4::from(self.model_transform.inverse());
         let view_proj = proj_matrix * y_flip * world_view;
 
-        widget_3d.prepare(queue, view_proj, self.grid_opacity);
-
+        let uniforms = Uniforms {
+            view_proj: view_proj.to_cols_array_2d(),
+            grid_opacity: self.grid_opacity,
+            _padding: [0.0; 3],
+        };
+        queue.write_buffer(
+            &resources.uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[uniforms]),
+        );
         Vec::new()
     }
 
@@ -252,9 +272,14 @@ impl egui_wgpu::CallbackTrait for Widget3DCallback {
         render_pass: &mut wgpu::RenderPass<'static>,
         resources: &egui_wgpu::CallbackResources,
     ) {
-        let Some(widget_3d) = resources.get::<Widget3DResources>() else {
+        let Some(resources) = resources.get::<GridWidgetResources>() else {
             return;
         };
-        widget_3d.paint(render_pass);
+        render_pass.set_pipeline(&resources.pipeline);
+        render_pass.set_bind_group(0, &resources.uniform_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, resources.grid_vertex_buffer.slice(..));
+        render_pass.draw(0..resources.grid_vertex_count, 0..1);
+        render_pass.set_vertex_buffer(0, resources.up_axis_vertex_buffer.slice(..));
+        render_pass.draw(0..resources.up_axis_vertex_count, 0..1);
     }
 }
