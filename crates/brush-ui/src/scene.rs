@@ -2,10 +2,6 @@
 use crate::settings_popup::SettingsPopup;
 #[cfg(feature = "training")]
 use brush_process::message::TrainMessage;
-#[cfg(feature = "training")]
-use std::sync::Mutex;
-use wgpu::naga::back;
-
 use brush_process::{create_process, message::ProcessMessage};
 use brush_vfs::DataSource;
 use core::f32;
@@ -13,6 +9,8 @@ use egui::{
     Align2, Button, Frame, RichText, containers::Popup, epaint::mutex::RwLock as EguiRwLock,
 };
 use std::sync::Arc;
+#[cfg(feature = "training")]
+use std::sync::Mutex;
 
 use brush_render::camera::{Camera, focal_to_fov, fov_to_focal};
 use eframe::egui_wgpu::Renderer;
@@ -21,17 +19,15 @@ use glam::{UVec2, Vec3};
 use web_time::Instant;
 
 use crate::splat_backbuffer::{RenderRequest, SplatBackbuffer};
+use crate::widget_3d::Widget3DCallback;
 
 use serde::{Deserialize, Serialize};
 
 /// Controls how often the viewport re-renders during training.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RenderUpdateMode {
-    /// Don't re-render during training
     Off,
-    /// Re-render every 100 iterations
     Low,
-    /// Re-render every 5 iterations (default)
     #[default]
     Live,
 }
@@ -728,7 +724,13 @@ impl AppPane for ScenePanel {
         _burn_device: burn_wgpu::WgpuDevice,
         _adapter_info: wgpu::AdapterInfo,
     ) {
-        self.backbuffer = Some(SplatBackbuffer::new(renderer, device, queue));
+        // Initialize Widget3D resources for the grid overlay
+        // renderer
+        //     .write()
+        //     .callback_resources
+        //     .insert(Widget3DResources::new(&device, target_format));
+
+        self.backbuffer = Some(SplatBackbuffer::new(renderer, device, &queue));
 
         // Create the settings popup now that we have the base_path
         #[cfg(feature = "training")]
@@ -989,25 +991,35 @@ impl AppPane for ScenePanel {
                         backbuffer.submit(RenderRequest {
                             slot: process.current_splats(),
                             frame: self.frame as usize,
-                            camera,
+                            camera: camera.clone(),
                             img_size: pixel_size,
                             background: settings.background.unwrap_or(Vec3::ZERO),
                             splat_scale: settings.splat_scale,
                             ctx: ui.ctx().clone(),
-                            model_transform: process.model_local_to_world(),
-                            grid_opacity,
                         });
                     }
-                    // ui.painter().image(
-                    //     backbuffer.id(),
-                    //     rect,
-                    //     Rect {
-                    //         min: egui::pos2(0.0, 0.0),
-                    //         max: egui::pos2(1.0, 1.0),
-                    //     },
-                    //     Color32::WHITE,
-                    // );
-                    backbuffer.draw();
+                    ui.painter().image(
+                        backbuffer.id(),
+                        rect,
+                        Rect {
+                            min: egui::pos2(0.0, 0.0),
+                            max: egui::pos2(1.0, 1.0),
+                        },
+                        Color32::WHITE,
+                    );
+
+                    // Draw the 3D grid overlay using egui's wgpu callback
+                    if grid_opacity > 0.0 {
+                        ui.painter()
+                            .add(eframe::egui_wgpu::Callback::new_paint_callback(
+                                rect,
+                                Widget3DCallback {
+                                    camera,
+                                    model_transform: process.model_local_to_world(),
+                                    grid_opacity,
+                                },
+                            ));
+                    }
                 }
             });
 

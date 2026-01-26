@@ -153,7 +153,7 @@ impl App {
             image,
             camera,
             tex_handle: handle,
-            backbuffer: SplatBackbuffer::new(renderer, state.device.clone(), state.queue.clone()),
+            backbuffer: SplatBackbuffer::new(renderer, state.device.clone(), &state.queue),
             slot,
             receiver,
             last_step: None,
@@ -180,8 +180,6 @@ impl eframe::App for App {
                 img_size: glam::uvec2(self.image.width(), self.image.height()),
                 background: Vec3::ZERO,
                 splat_scale: None,
-                model_transform: glam::Affine3A::IDENTITY,
-                grid_opacity: 0.0,
                 ctx: ctx.clone(),
             });
 
