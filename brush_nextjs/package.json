@@ -4,16 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:wasm-release": "cd ../crates/brush-app && wasm-pack build --release --target bundler --out-dir ../../brush_nextjs/pkg",
-    "build:wasm-dev": "cd ../crates/brush-app && wasm-pack build --dev --target bundler --out-dir ../../brush_nextjs/pkg",
-    "build:wasm-release-viewer": "cd ../crates/brush-app && wasm-pack build --release --target bundler --out-dir ../../brush_nextjs/pkg -- --no-default-features",
-    "build:wasm-dev-viewer": "cd ../crates/brush-app && wasm-pack build --dev --target bundler --out-dir ../../brush_nextjs/pkg -- --no-default-features",
     "dev": "npm run build:wasm-dev && next dev --turbopack --experimental-https",
     "dev:viewer": "npm run build:wasm-dev-viewer && next dev --turbopack --experimental-https",
+
     "release": "npm run build:wasm-release && next dev --turbopack --experimental-https",
     "release:viewer": "npm run build:wasm-release-viewer && next dev --turbopack --experimental-https",
-    "build": "npm run build:wasm-release && NEXT_PUBLIC_BASE_PATH=/brush-demo next build --turbopack",
-    "build:viewer": "npm run build:wasm-release-viewer && NEXT_PUBLIC_BASE_PATH=/brush-demo next build --turbopack"
+
+    "build": "npm run build:wasm-release && next build --turbopack",
+    "build:viewer": "npm run build:wasm-release-viewer && next build --turbopack",
+
+    "build-gh-demo": "npm run build:wasm-release && NEXT_PUBLIC_BASE_PATH=/brush-demo next build --turbopack",
+    "build-gh-demo:viewer": "npm run build:wasm-release-viewer && NEXT_PUBLIC_BASE_PATH=/brush-demo next build --turbopack"
   },
   "dependencies": {
     "@types/three": "^0.175.0",
