@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:wasm-release": "cd ../crates/brush-app && wasm-pack build --release --target bundler --out-dir ../../brush_nextjs/pkg",
+    "build:wasm-dev": "cd ../crates/brush-app && wasm-pack build --dev --target bundler --out-dir ../../brush_nextjs/pkg",
+
+    "build:wasm-release-viewer": "cd ../crates/brush-app && wasm-pack build --release --target bundler --out-dir ../../brush_nextjs/pkg -- --no-default-features",
+    "build:wasm-dev-viewer": "cd ../crates/brush-app && wasm-pack build --dev --target bundler --out-dir ../../brush_nextjs/pkg -- --no-default-features",
+
     "dev": "npm run build:wasm-dev && next dev --turbopack --experimental-https",
     "dev:viewer": "npm run build:wasm-dev-viewer && next dev --turbopack --experimental-https",
 
