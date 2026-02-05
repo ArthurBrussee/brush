@@ -1,8 +1,8 @@
 use crate::{
     adam_scaled::{AdamScaled, AdamScaledConfig, AdamState},
     config::TrainConfig,
+    density_control::GaussianScores,
     msg::{RefineStats, TrainStepStats},
-    multinomial::multinomial_sample,
     quat_vec::quaternion_vec_multiply,
     splat_init::bounds_from_pos,
     ssim::Ssim,
@@ -281,6 +281,7 @@ impl SplatTrainer {
         &mut self,
         iter: u32,
         splats: Splats<MainBackend>,
+        gaussian_scores: GaussianScores<MainBackend>,
     ) -> (Splats<MainBackend>, RefineStats) {
         let device = splats.means.device();
         let client = WgpuRuntime::client(&device);
@@ -292,13 +293,13 @@ impl SplatTrainer {
 
         let max_allowed_bounds = self.bounds.extent.max_element() * 100.0;
 
-        // If not refining, update splat to step with gradients applied.
-        // Prune dead splats. This ALWAYS happen even if we're not "refining" anymore.
         let mut record = self
             .optim
             .take()
             .expect("Can only refine after optimizer is initialized")
             .to_record();
+
+        // Remove splats that are too transparent, big, small or out of bounds.
         let alpha_mask = splats.opacities().lower_elem(MIN_OPACITY);
         let scales = splats.scales();
 
@@ -308,7 +309,6 @@ impl SplatTrainer {
             .any_dim(1)
             .squeeze_dim(1);
 
-        // Remove splats that are way out of bounds.
         let center = self.bounds.center;
         let bound_center =
             Tensor::<_, 1>::from_floats([center.x, center.y, center.z], &device).reshape([1, 3]);
@@ -323,70 +323,121 @@ impl SplatTrainer {
             .bool_or(bound_mask);
 
         let (mut splats, refiner, pruned_count) =
-            prune_points(splats, &mut record, refiner, prune_mask).await;
-        let mut split_inds = HashSet::new();
+            prune_points(splats, &mut record, refiner, prune_mask.clone()).await;
 
-        // Replace dead gaussians.
-        if pruned_count > 0 {
-            // Sample weighted by opacity from splat visible during optimization.
-            let resampled_weights = splats.opacities() * refiner.vis_mask().float();
-            let resampled_weights = resampled_weights
+        let keep_mask = prune_mask.bool_not().argwhere().squeeze();
+        let importance_score = gaussian_scores.importance_score.select(0, keep_mask);
+
+        // Split splats that have a high gradient and importance score
+        let mut split_inds = HashSet::new();
+        let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
+        let above_importance_score =
+            importance_score.greater_elem(self.config.min_importance_score);
+        let to_split = above_threshold.bool_and(above_importance_score);
+
+        let cur_splats = splats.num_splats();
+        let capacity = (self.config.max_splats as i64 - cur_splats as i64).max(0) as usize;
+
+        if capacity > 0 {
+            let mask_data = to_split
                 .into_data_async()
                 .await
-                .expect("Failed to get weights")
-                .into_vec::<f32>()
-                .expect("Failed to read weights");
-            let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
-            split_inds.extend(resampled_inds);
-        }
+                .expect("Failed to download split mask")
+                .into_vec::<u32>()
+                .expect("Failed to read split mask");
 
-        if iter < self.config.growth_stop_iter {
-            let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
+            let mut candidates: Vec<i32> = mask_data
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, &flag)| if flag > 0 { Some(idx as i32) } else { None })
+                .collect();
 
-            let threshold_count = above_threshold
-                .clone()
-                .int()
-                .sum()
-                .into_scalar_async()
-                .await
-                .expect("Failed to get threshold") as u32;
-
-            let grow_count =
-                (threshold_count as f32 * self.config.growth_select_fraction).round() as u32;
-
-            let sample_high_grad = grow_count.saturating_sub(pruned_count);
-
-            // Only grow to the max nr. of splats.
-            let cur_splats = splats.num_splats() + split_inds.len() as u32;
-            let grow_count = sample_high_grad.min(self.config.max_splats - cur_splats);
-
-            // If still growing, sample from indices which are over the threshold.
-            if grow_count > 0 {
-                let weights = above_threshold.float() * refiner.refine_weight_norm;
-                let weights = weights
-                    .into_data_async()
-                    .await
-                    .expect("Failed to get weights")
-                    .into_vec::<f32>()
-                    .expect("Failed to read weights");
-                let growth_inds = multinomial_sample(&weights, grow_count);
-                split_inds.extend(growth_inds);
+            if candidates.len() > capacity {
+                use rand::seq::SliceRandom;
+                let mut rng = rand::rng();
+                candidates.shuffle(&mut rng);
+                candidates.truncate(capacity);
             }
+
+            split_inds.extend(candidates);
         }
 
         let refine_count = split_inds.len();
         splats = self.refine_splats(&device, record, splats, split_inds, iter);
+        let splat_count = splats.num_splats();
 
         // Update current bounds based on the splats.
         self.bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
         client.memory_cleanup();
 
+        (
+            splats,
+            RefineStats {
+                num_added: refine_count as u32,
+                num_pruned: pruned_count,
+                total_splats: splat_count,
+            },
+        )
+    }
+
+    pub async fn refine_final(
+        &mut self,
+        splats: Splats<MainBackend>,
+        gaussian_scores: GaussianScores<MainBackend>,
+    ) -> (Splats<MainBackend>, RefineStats) {
+        let device = splats.means.device();
+
+        // Remove splats that are too transparent, big, small or out of bounds.
+        // The opacity threshold is typically stricter than when growing.
+        // Additionally we remove splats whose pruning score is large.
+        let max_allowed_bounds = self.bounds.extent.max_element() * 100.0;
+        let alpha_mask = splats.opacities().lower_elem(self.config.final_min_opacity);
+        let scales = splats.scales();
+
+        let scale_small = scales.clone().lower_elem(1e-10).any_dim(1).squeeze_dim(1);
+        let scale_big = scales
+            .greater_elem(max_allowed_bounds)
+            .any_dim(1)
+            .squeeze_dim(1);
+
+        let center = self.bounds.center;
+        let bound_center =
+            Tensor::<_, 1>::from_floats([center.x, center.y, center.z], &device).reshape([1, 3]);
+        let splat_dists = (splats.means.val() - bound_center).abs();
+        let bound_mask = splat_dists
+            .greater_elem(max_allowed_bounds)
+            .any_dim(1)
+            .squeeze_dim(1);
+
+        let high_error_mask = gaussian_scores
+            .pruning_score
+            .clone()
+            .greater_elem(self.config.final_max_pruning_score);
+
+        let prune_mask = alpha_mask
+            .clone()
+            .bool_or(scale_small)
+            .bool_or(scale_big)
+            .bool_or(bound_mask)
+            .bool_or(high_error_mask);
+
+        let mut record = self
+            .optim
+            .take()
+            .expect("Can only refine after optimizer is initialized")
+            .to_record();
+        let refiner = self
+            .refine_record
+            .take()
+            .expect("Can only refine if refine stats are initialized");
+        let (splats, _, pruned_count) =
+            prune_points(splats, &mut record, refiner, prune_mask.clone()).await;
         let splat_count = splats.num_splats();
 
         (
             splats,
             RefineStats {
-                num_added: refine_count as u32,
+                num_added: 0,
                 num_pruned: pruned_count,
                 total_splats: splat_count,
             },

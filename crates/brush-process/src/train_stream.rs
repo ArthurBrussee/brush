@@ -13,6 +13,7 @@ use brush_render::{
 use brush_rerun::visualize_tools::VisualizeTools;
 use brush_train::{
     RandomSplatsConfig, create_random_splats,
+    density_control::compute_gaussian_score,
     eval::eval_stats,
     msg::RefineStats,
     splats_into_autodiff, to_init_splats,
@@ -194,15 +195,37 @@ pub(crate) async fn train_stream(
             .await
             .unwrap();
 
-        let train_t =
-            (iter as f32 / train_stream_config.train_config.total_steps as f32).clamp(0.0, 1.0);
-
         let refine = if iter > 0
             && iter.is_multiple_of(train_stream_config.train_config.refine_every)
-            && train_t <= 0.95
+            && iter < train_stream_config.train_config.growth_stop_iter
         {
             splat_slot
-                .act(0, async |splats| trainer.refine(iter, splats).await)
+                .act(0, async |splats| {
+                    let gaussian_scores = compute_gaussian_score(
+                        &mut dataloader,
+                        splats.clone(),
+                        train_stream_config.train_config.n_views,
+                        train_stream_config.train_config.high_error_threshold,
+                    )
+                    .await;
+                    trainer.refine(iter, splats.clone(), gaussian_scores).await
+                })
+                .await
+                .unwrap()
+        } else if iter > train_stream_config.train_config.growth_stop_iter
+            && iter % train_stream_config.train_config.refine_every_final == 0
+        {
+            splat_slot
+                .act(0, async |splats| {
+                    let gaussian_scores = compute_gaussian_score(
+                        &mut dataloader,
+                        splats.clone(),
+                        train_stream_config.train_config.n_views,
+                        train_stream_config.train_config.high_error_threshold,
+                    )
+                    .await;
+                    trainer.refine_final(splats.clone(), gaussian_scores).await
+                })
                 .await
                 .unwrap()
         } else {
