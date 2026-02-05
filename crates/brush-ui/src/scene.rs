@@ -436,6 +436,23 @@ impl ScenePanel {
             process.set_cam_settings(&settings);
         }
 
+        // Fly speed slider
+        ui.label(RichText::new("Fly Speed").size(12.0));
+        let mut settings = process.get_cam_settings();
+        let mut speed = settings.speed_scale.unwrap_or(1.0);
+
+        let response = ui.add(
+            Slider::new(&mut speed, 0.01..=100.0)
+                .logarithmic(true)
+                .show_value(true)
+                .custom_formatter(|val, _| format!("{val:.2}x")),
+        );
+
+        if response.changed() {
+            settings.speed_scale = Some(speed);
+            process.set_cam_settings(&settings);
+        }
+
         ui.add_space(6.0);
 
         // Grid toggle
