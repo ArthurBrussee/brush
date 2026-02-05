@@ -18,6 +18,7 @@ pub struct MapGaussiansToIntersect;
 #[wgsl_kernel(source = "src/shaders/rasterize.wgsl")]
 pub struct Rasterize {
     pub bwd_info: bool,
+    pub high_error_info: bool,
 }
 
 // Re-export helper types and constants from the kernel modules that use them

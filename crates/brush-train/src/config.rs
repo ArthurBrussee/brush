@@ -52,19 +52,18 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "10000000")]
     pub max_splats: u32,
 
-    /// Frequency of 'refinement' where gaussians are replaced and densified. This should
+    /// Frequency of 'refinement' where gaussians densified. This should
     /// roughly be the number of images it takes to properly "cover" your scene.
     #[arg(long, help_heading = "Refine options", default_value = "200")]
     pub refine_every: u32,
 
+    // Refine final frequency
+    #[arg(long, help_heading = "Refine options", default_value = "3000")]
+    pub refine_every_final: u32,
+
     /// Threshold to control splat growth. Lower means faster growth.
     #[arg(long, help_heading = "Refine options", default_value = "0.003")]
     pub growth_grad_threshold: f32,
-
-    /// What fraction of splats that are deemed as needing to grow do actually grow.
-    /// Increase this to make splats grow more aggressively.
-    #[arg(long, help_heading = "Refine options", default_value = "0.2")]
-    pub growth_select_fraction: f32,
 
     /// Period after which splat growth stops.
     #[arg(long, help_heading = "Refine options", default_value = "15000")]
@@ -92,6 +91,26 @@ pub struct TrainConfig {
 
     #[arg(long, help_heading = "Refine options", default_value = "0.0")]
     pub lpips_loss_weight: f32,
+
+    // N views used in multi view densification
+    #[arg(long, help_heading = "Refine options", default_value = "10")]
+    pub n_views: i32,
+
+    // High error threshold used in multi view densification
+    #[arg(long, help_heading = "Refine options", default_value = "0.1")]
+    pub high_error_threshold: f32,
+
+    // Min importance score used in multi view densification
+    #[arg(long, help_heading = "Refine options", default_value = "5.0")]
+    pub min_importance_score: f32,
+
+    // Final min opacity
+    #[arg(long, help_heading = "Refine options", default_value = "0.005")]
+    pub final_min_opacity: f32,
+
+    // Final max pruning score
+    #[arg(long, help_heading = "Refine options", default_value = "0.95")]
+    pub final_max_pruning_score: f32,
 }
 
 impl Default for TrainConfig {

@@ -92,6 +92,7 @@ pub struct RenderAux<B: Backend> {
     pub visible: FloatTensor<B>,
     pub tile_offsets: IntTensor<B>,
     pub img_size: glam::UVec2,
+    pub high_error_count: IntTensor<B>,
 }
 
 impl<B: Backend> RenderAux<B> {

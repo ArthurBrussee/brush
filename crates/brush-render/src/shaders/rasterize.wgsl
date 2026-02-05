@@ -8,7 +8,13 @@
     @group(0) @binding(3) var<storage, read_write> out_img: array<vec4f>;
     @group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
     @group(0) @binding(5) var<storage, read_write> visible: array<f32>;
-    @group(0) @binding(6) var<storage, read> uniforms: helpers::RasterizeUniforms;
+    #ifdef HIGH_ERROR_INFO
+        @group(0) @binding(6) var<storage, read> high_error_mask: array<f32>;
+        @group(0) @binding(7) var<storage, read_write> high_error_count: array<atomic<u32>>;
+        @group(0) @binding(8) var<storage, read> uniforms: helpers::RasterizeUniforms;
+    #else
+        @group(0) @binding(6) var<storage, read> uniforms: helpers::RasterizeUniforms;
+    #endif
 #else
     @group(0) @binding(3) var<storage, read_write> out_img: array<u32>;
     @group(0) @binding(4) var<storage, read> uniforms: helpers::RasterizeUniforms;
@@ -30,6 +36,7 @@ var<workgroup> local_batch: array<helpers::ProjectedSplat, helpers::TILE_SIZE>;
 fn main(
     @builtin(global_invocation_id) global_id: vec3u,
     @builtin(local_invocation_index) local_idx: u32,
+    @builtin(subgroup_invocation_id) subgroup_invocation_id: u32
 ) {
     let pix_loc = helpers::map_1d_to_2d(global_id.x, uniforms.tile_bounds.x);
     let pix_id = pix_loc.x + pix_loc.y * uniforms.img_size.x;
@@ -83,6 +90,8 @@ fn main(
             let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
             let alpha = min(0.999f, color.a * exp(-sigma));
 
+            var err_val = 0u;
+
             if sigma >= 0.0f && alpha >= 1.0f / 255.0f {
                 let next_T = T * (1.0 - alpha);
 
@@ -94,12 +103,28 @@ fn main(
                 #ifdef BWD_INFO
                     // Count visible if contribution is at least somewhat significant.
                     visible[load_gid[t]] = 1.0;
+                    #ifdef HIGH_ERROR_INFO
+                        if (high_error_mask[pix_id] > 0.f) {
+                            err_val = 1u;
+                        }
+                    #endif
                 #endif
 
                 let vis = alpha * T;
                 pix_out += max(color.rgb, vec3f(0.0)) * vis;
                 T = next_T;
             }
+
+            #ifdef BWD_INFO
+                #ifdef HIGH_ERROR_INFO
+                    let subgroup_err_sum = subgroupAdd(err_val);
+
+                    if (subgroup_err_sum > 0u && subgroup_invocation_id == 0u) {
+                        atomicAdd(&high_error_count[load_gid[t]], subgroup_err_sum);
+                    }
+                #endif
+            #endif
+
         }
     }
 
