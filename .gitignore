@@ -41,3 +41,4 @@ brush-app/captures
 .cxx
 local.properties
 *.so
+.claude/settings.local.json
