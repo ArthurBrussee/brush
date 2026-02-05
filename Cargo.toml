@@ -22,7 +22,6 @@ members = [
     "crates/lpips",
     "crates/lpips-convert",
     "crates/rrfd",
-    "examples/train-2d",
 ]
 default-members = ["crates/brush-app"]
 

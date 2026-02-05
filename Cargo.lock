@@ -3857,25 +3857,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "examples"
-version = "0.3.0"
-dependencies = [
- "brush-dataset",
- "brush-process",
- "brush-render",
- "brush-train",
- "brush-ui",
- "burn",
- "burn-cubecl",
- "eframe",
- "egui",
- "glam",
- "image",
- "rand 0.9.2",
- "tokio",
-]
-
-[[package]]
 name = "exr"
 version = "1.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
