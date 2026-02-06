@@ -182,6 +182,8 @@ impl SplatOps<Self> for MainBackendBase {
         num_intersections: u32,
         background: Vec3,
         bwd_info: bool,
+        high_error_info: bool,
+        high_error_mask: Option<&FloatTensor<Self>>,
     ) -> (FloatTensor<Self>, RenderAux<Self>, IntTensor<Self>) {
         let _span = tracing::trace_span!("rasterize").entered();
 
@@ -281,23 +283,47 @@ impl SplatOps<Self> for MainBackendBase {
         // Get total_splats from the shape of projected_splats
         let total_splats = project_output.projected_splats.shape.dims[0];
 
-        let (bindings, visible) = if bwd_info {
+        let (bindings, visible, high_error_count) = if bwd_info {
             let visible = Self::float_zeros([total_splats].into(), device, FloatDType::F32);
-            let bindings = Bindings::new()
-                .with_buffers(vec![
-                    compact_gid_from_isect.handle.clone().binding(),
-                    tile_offsets.handle.clone().binding(),
-                    project_output.projected_splats.handle.clone().binding(),
-                    out_img.handle.clone().binding(),
-                    project_output
-                        .global_from_compact_gid
-                        .handle
-                        .clone()
-                        .binding(),
-                    visible.handle.clone().binding(),
-                ])
-                .with_metadata(create_meta_binding(rasterize_uniforms));
-            (bindings, visible)
+            if high_error_info {
+                let high_error_count =
+                    MainBackendBase::int_zeros([total_splats].into(), device, IntDType::U32);
+                let high_error_mask = high_error_mask
+                    .expect("Provide high error mask if high error info is required");
+                let bindings = Bindings::new()
+                    .with_buffers(vec![
+                        compact_gid_from_isect.handle.clone().binding(),
+                        tile_offsets.handle.clone().binding(),
+                        project_output.projected_splats.handle.clone().binding(),
+                        out_img.handle.clone().binding(),
+                        project_output
+                            .global_from_compact_gid
+                            .handle
+                            .clone()
+                            .binding(),
+                        visible.handle.clone().binding(),
+                        high_error_mask.handle.clone().binding(),
+                        high_error_count.handle.clone().binding(),
+                    ])
+                    .with_metadata(create_meta_binding(rasterize_uniforms));
+                (bindings, visible, high_error_count)
+            } else {
+                let bindings = Bindings::new()
+                    .with_buffers(vec![
+                        compact_gid_from_isect.handle.clone().binding(),
+                        tile_offsets.handle.clone().binding(),
+                        project_output.projected_splats.handle.clone().binding(),
+                        out_img.handle.clone().binding(),
+                        project_output
+                            .global_from_compact_gid
+                            .handle
+                            .clone()
+                            .binding(),
+                        visible.handle.clone().binding(),
+                    ])
+                    .with_metadata(create_meta_binding(rasterize_uniforms));
+                (bindings, visible, create_tensor([1], device, DType::U32))
+            }
         } else {
             let bindings = Bindings::new()
                 .with_buffers(vec![
@@ -307,10 +333,14 @@ impl SplatOps<Self> for MainBackendBase {
                     out_img.handle.clone().binding(),
                 ])
                 .with_metadata(create_meta_binding(rasterize_uniforms));
-            (bindings, create_tensor([1], device, DType::F32))
+            (
+                bindings,
+                create_tensor([1], device, DType::F32),
+                create_tensor([1], device, DType::U32),
+            )
         };
 
-        let raster_task = Rasterize::task(bwd_info);
+        let raster_task = Rasterize::task(bwd_info, high_error_info);
 
         // SAFETY: Kernel checked to have no OOB, bounded loops.
         unsafe {
@@ -331,6 +361,7 @@ impl SplatOps<Self> for MainBackendBase {
                 visible,
                 tile_offsets,
                 img_size: project_output.img_size,
+                high_error_count,
             },
             compact_gid_from_isect,
         )

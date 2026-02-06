@@ -1,5 +1,5 @@
 use burn::tensor::{
-    DType, Shape,
+    DType, Shape, Tensor,
     ops::{FloatTensor, IntTensor},
 };
 use burn_cubecl::{BoolElement, fusion::FusionCubeRuntime};
@@ -164,6 +164,8 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         num_intersections: u32,
         background: Vec3,
         bwd_info: bool,
+        high_error_info: bool,
+        high_error_mask: Option<&FloatTensor<Self>>,
     ) -> (FloatTensor<Self>, RenderAux<Self>, IntTensor<Self>) {
         #[derive(Debug)]
         struct CustomOp {
@@ -171,6 +173,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             num_intersections: u32,
             background: Vec3,
             bwd_info: bool,
+            high_error_info: bool,
             project_uniforms: ProjectUniforms,
             desc: CustomOpIr,
         }
@@ -187,8 +190,15 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                     num_visible,
                     global_from_compact_gid,
                     cum_tiles_hit,
+                    high_error_mask,
                 ] = inputs;
-                let [out_img, tile_offsets, compact_gid_from_isect, visible] = outputs;
+                let [
+                    out_img,
+                    tile_offsets,
+                    compact_gid_from_isect,
+                    visible,
+                    high_error_count,
+                ] = outputs;
 
                 let inner_output = ProjectOutput::<MainBackendBase> {
                     projected_splats: h.get_float_tensor::<MainBackendBase>(projected_splats),
@@ -200,11 +210,19 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                     img_size: self.img_size,
                 };
 
+                let high_error_mask = if self.high_error_info {
+                    Some(&h.get_float_tensor::<MainBackendBase>(high_error_mask))
+                } else {
+                    None
+                };
+
                 let (img, aux, compact_gid) = MainBackendBase::rasterize(
                     &inner_output,
                     self.num_intersections,
                     self.background,
                     self.bwd_info,
+                    self.high_error_info,
+                    high_error_mask,
                 );
 
                 // Register outputs
@@ -212,10 +230,15 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 h.register_int_tensor::<MainBackendBase>(&tile_offsets.id, aux.tile_offsets);
                 h.register_int_tensor::<MainBackendBase>(&compact_gid_from_isect.id, compact_gid);
                 h.register_float_tensor::<MainBackendBase>(&visible.id, aux.visible);
+                h.register_int_tensor::<MainBackendBase>(
+                    &high_error_count.id,
+                    aux.high_error_count,
+                );
             }
         }
 
         let client = project_output.projected_splats.client.clone();
+        let device = project_output.projected_splats.client.device();
         let img_size = project_output.img_size;
         let tile_bounds = calc_tile_bounds(img_size);
 
@@ -248,23 +271,52 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         };
         let visible = TensorIr::uninit(client.create_empty_handle(), visible_shape, DType::F32);
 
+        let high_error_count_shape = if bwd_info && high_error_info {
+            Shape::new([num_points])
+        } else {
+            Shape::new([1])
+        };
+        let high_error_count = TensorIr::uninit(
+            client.create_empty_handle(),
+            high_error_count_shape,
+            DType::U32,
+        );
+
+        let high_error_mask = if bwd_info && high_error_info {
+            high_error_mask
+                .expect("Provide high error mask if high error info is required")
+                .clone()
+        } else {
+            Tensor::<Self, 2>::zeros([1, 1], &device)
+                .into_primitive()
+                .tensor()
+        };
+
         let input_tensors = [
             project_output.projected_splats.clone(),
             project_output.num_visible.clone(),
             project_output.global_from_compact_gid.clone(),
             project_output.cum_tiles_hit.clone(),
+            high_error_mask.clone(),
         ];
         let stream = OperationStreams::with_inputs(&input_tensors);
         let desc = CustomOpIr::new(
             "rasterize",
             &input_tensors.map(|t| t.into_ir()),
-            &[out_img, tile_offsets, compact_gid_from_isect, visible],
+            &[
+                out_img,
+                tile_offsets,
+                compact_gid_from_isect,
+                visible,
+                high_error_count,
+            ],
         );
         let op = CustomOp {
             img_size,
             num_intersections,
             background,
             bwd_info,
+            high_error_info,
             project_uniforms: project_output.project_uniforms,
             desc: desc.clone(),
         };
@@ -273,7 +325,13 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             .register(stream, OperationIr::Custom(desc), op)
             .outputs();
 
-        let [out_img, tile_offsets, compact_gid_from_isect, visible] = outputs;
+        let [
+            out_img,
+            tile_offsets,
+            compact_gid_from_isect,
+            visible,
+            high_error_count,
+        ] = outputs;
 
         (
             out_img,
@@ -283,6 +341,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 visible,
                 tile_offsets,
                 img_size,
+                high_error_count,
             },
             compact_gid_from_isect,
         )

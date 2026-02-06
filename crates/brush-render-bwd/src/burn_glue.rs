@@ -279,8 +279,14 @@ where
     // Async readback
     let num_intersections = project_output.read_num_intersections().await;
 
-    let (out_img, render_aux, compact_gid_from_isect) =
-        <B as SplatOps<B>>::rasterize(&project_output, num_intersections, background, true);
+    let (out_img, render_aux, compact_gid_from_isect) = <B as SplatOps<B>>::rasterize(
+        &project_output,
+        num_intersections,
+        background,
+        true,
+        false,
+        None,
+    );
 
     let wrapped_render_aux = RenderAux::<Autodiff<B, C>> {
         num_visible: render_aux.num_visible.clone(),
@@ -288,6 +294,7 @@ where
         visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(render_aux.visible.clone()),
         tile_offsets: render_aux.tile_offsets.clone(),
         img_size: render_aux.img_size,
+        high_error_count: render_aux.high_error_count,
     };
 
     let sh_degree = sh_degree_from_coeffs(sh_coeffs_dims[1] as u32);

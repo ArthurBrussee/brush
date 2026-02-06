@@ -61,6 +61,8 @@ pub trait SplatOps<B: Backend> {
         num_intersections: u32,
         background: Vec3,
         bwd_info: bool,
+        high_error_info: bool,
+        high_error_mask: Option<&FloatTensor<B>>,
     ) -> (FloatTensor<B>, RenderAux<B>, IntTensor<B>);
 }
 
