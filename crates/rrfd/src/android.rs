@@ -1,5 +1,5 @@
 use jni::JNIEnv;
-use jni::objects::{GlobalRef, JClass, JStaticMethodID};
+use jni::objects::{GlobalRef, JClass, JStaticMethodID, JString};
 use jni::signature::Primitive;
 use jni::sys::jint;
 use lazy_static::lazy_static;
@@ -11,111 +11,115 @@ use tokio::sync::mpsc::Sender;
 
 lazy_static! {
     static ref VM: RwLock<Option<Arc<jni::JavaVM>>> = RwLock::new(None);
-    static ref CHANNEL: RwLock<Option<Sender<Option<File>>>> = RwLock::new(None);
-    static ref START_FILE_PICKER: RwLock<Option<JStaticMethodID>> = RwLock::new(None);
-    static ref FILE_PICKER_CLASS: RwLock<Option<GlobalRef>> = RwLock::new(None);
+
+    // ✅ Now sends (File, filename)
+    static ref CHANNEL: RwLock<Option<Sender<Option<(File, String)>>>> =
+        RwLock::new(None);
+
+    static ref START_FILE_PICKER: RwLock<Option<JStaticMethodID>> =
+        RwLock::new(None);
+
+    static ref FILE_PICKER_CLASS: RwLock<Option<GlobalRef>> =
+        RwLock::new(None);
 }
 
-#[allow(unused)]
 pub fn jni_initialize(vm: Arc<jni::JavaVM>) {
-    let mut env = vm.get_env().expect("Cannot get reference to the JNIEnv");
+    let mut env = vm.get_env().expect("Cannot get JNIEnv");
+
     let class = env.find_class("com/splats/app/FilePicker").unwrap();
+
     let method = env
         .get_static_method_id(&class, "startFilePicker", "()V")
         .unwrap();
-    *FILE_PICKER_CLASS
-        .write()
-        .expect("Failed to write JNI data.") = Some(env.new_global_ref(class).unwrap());
-    *START_FILE_PICKER
-        .write()
-        .expect("Failed to write JNI data.") = Some(method);
+
+    *FILE_PICKER_CLASS.write().unwrap() =
+        Some(env.new_global_ref(class).unwrap());
+
+    *START_FILE_PICKER.write().unwrap() = Some(method);
+
     *VM.write().unwrap() = Some(vm);
 }
 
-#[allow(unused)]
-pub(crate) async fn pick_file() -> std::io::Result<File> {
+pub(crate) async fn pick_file() -> std::io::Result<(File, String)> {
     let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+
     {
-        let channel = CHANNEL.write();
-        if let Ok(mut channel) = channel {
-            *channel = Some(sender);
-        } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to initialize file picker channel",
-            ));
-        }
+        let mut channel = CHANNEL.write().unwrap();
+        *channel = Some(sender);
     }
 
-    // Call method. Be sure this is scoped so we drop all guards before waiting.
     {
         let java_vm = VM
             .read()
             .unwrap()
             .clone()
-            .expect("Failed to initialize Java VM");
+            .expect("Java VM not initialized");
+
         let mut env = java_vm.attach_current_thread().map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("JNI error: {:?}", e))
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("JNI error: {:?}", e),
+            )
         })?;
 
-        let class = FILE_PICKER_CLASS
-            .read()
-            .expect("Failed to initialize FilePicker class");
-        let method = START_FILE_PICKER
-            .read()
-            .expect("Failed to initialize FilePicker method");
+        let class = FILE_PICKER_CLASS.read().unwrap();
+        let method = START_FILE_PICKER.read().unwrap();
 
-        // SAFETY: This is safe as long as we cached the method in the right way, and
-        // this matches the Java side. Not much more we can do here.
-        let _ = unsafe {
+        unsafe {
             env.call_static_method_unchecked(
-                class.as_ref().expect("Failed to get class reference"),
-                method.as_ref().expect("Failed to get method reference"),
+                class.as_ref().unwrap(),
+                method.as_ref().unwrap(),
                 jni::signature::ReturnType::Primitive(Primitive::Void),
                 &[],
             )
         }
         .map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("JNI error: {:?}", e))
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("JNI error: {:?}", e),
+            )
         })?;
     }
-    let file = receiver.recv().await.ok_or_else(|| {
+
+    let result = receiver.recv().await.ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::Other,
             "Failed to receive file picker result",
         )
-    });
+    })?;
 
-    match file {
-        Ok(Some(file)) => Ok(file),
-        Ok(None) => Err(std::io::Error::new(
+    match result {
+        Some((file, name)) => Ok((file, name)),
+        None => Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "No file selected",
         )),
-        Err(e) => Err(e),
     }
 }
 
 #[unsafe(no_mangle)]
 extern "system" fn Java_com_splats_app_FilePicker_onFilePickerResult<'local>(
-    _env: JNIEnv<'local>,
+    mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     fd: jint,
+    name: JString<'local>,
 ) {
+    let filename: String = match env.get_string(&name) {
+        Ok(s) => s.into(),
+        Err(_) => "file".to_string(),
+    };
+
     let file = if fd < 0 {
         None
     } else {
-        // Convert the raw file descriptor into a Rust File
-        // SAFETY: Pray that JNI gets us a valid file. It will be open
-        // when passed to us.
-        Some(unsafe { tokio::fs::File::from_raw_fd(fd) })
+        let std_file = unsafe { std::fs::File::from_raw_fd(fd) };
+        Some((File::from_std(std_file), filename))
     };
 
-    // Channel can be gone before the callback if other parts of pick_file fail.
     if let Ok(ch) = CHANNEL.read() {
         if let Some(ch) = ch.as_ref() {
-            ch.try_send(file)
-                .expect("Failed to send file picking result");
+            let _ = ch.try_send(file);
         }
     }
 }
+

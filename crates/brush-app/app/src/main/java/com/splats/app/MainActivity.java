@@ -5,7 +5,7 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.google.androidgamesdk.GameActivity;
-
+import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -14,6 +14,7 @@ import android.view.View;
 import android.view.WindowManager;
 
 import java.io.IOException;
+import android.util.Log;
 
 public class MainActivity extends GameActivity {
     static {
@@ -42,25 +43,29 @@ public class MainActivity extends GameActivity {
             int fd = -1;
 
             try {
-                Uri uri = data.getData();
+                if (resultCode == Activity.RESULT_OK && data != null) {
+                    Uri uri = data.getData();
 
-                if (uri == null) {
-                    throw new IOException("Failed to open URI");
+                    if (uri != null) {
+                        ParcelFileDescriptor parcelFileDescriptor =
+                                getContentResolver().openFileDescriptor(uri, "r");
+
+                        if (parcelFileDescriptor != null) {
+                            fd = parcelFileDescriptor.detachFd();
+                            FilePicker.onPicked(uri, fd);
+                            return;
+                        }
+                    }
                 }
-                ParcelFileDescriptor parcelFileDescriptor = getContentResolver()
-                        .openFileDescriptor(uri, "r");
-                if (parcelFileDescriptor == null) {
-                    throw new IOException("Failed to open ParcelFileDescriptor");
-                }
-                // Detach and get the raw file descriptor
-                fd = parcelFileDescriptor.detachFd();
-            } catch (IOException ignored) {
-            } finally {
-                FilePicker.onPicked(requestCode, fd);
+            } catch (Exception ignored) {
             }
+
+            FilePicker.onPicked(null, -1);
         }
+
         super.onActivityResult(requestCode, resultCode, data);
     }
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {

@@ -27,6 +27,7 @@ pub struct PickedFile<R: AsyncRead + Unpin> {
 }
 
 /// Pick a file and return the name & reader of the file.
+/// Pick a file and return the name & reader of the file.
 pub async fn pick_file() -> Result<PickedFile<impl AsyncRead + Unpin>, PickFileError> {
     #[cfg(all(not(target_os = "android"), not(target_family = "wasm")))]
     {
@@ -37,23 +38,25 @@ pub async fn pick_file() -> Result<PickedFile<impl AsyncRead + Unpin>, PickFileE
 
         let name = file.file_name();
         let file = tokio::fs::File::open(file.path()).await?;
-        Ok(PickedFile { name, reader: file })
+        return Ok(PickedFile { name, reader: file });
     }
 
     #[cfg(target_family = "wasm")]
     {
-        wasm::pick_file().await
+        return wasm::pick_file().await;
     }
 
     #[cfg(target_os = "android")]
     {
-        let file = android::pick_file().await?;
-        Ok(PickedFile {
-            name: "file".to_owned(), // Android doesn't easily give us the filename
+        let (file, name) = android::pick_file().await?;
+
+        return Ok(PickedFile {
+            name,
             reader: file,
-        })
+        });
     }
 }
+
 
 #[cfg(not(target_family = "wasm"))]
 pub async fn pick_directory() -> Result<PathBuf, PickFileError> {

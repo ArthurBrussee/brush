@@ -36,7 +36,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
                     wgpu_options,
                     ..Default::default()
                 },
-                Box::new(|cc| Ok(Box::new(App::new(cc, None, None)))),
+                Box::new(|cc| Ok(Box::new(App::new(cc, None)))),
             )
             .unwrap();
         });
