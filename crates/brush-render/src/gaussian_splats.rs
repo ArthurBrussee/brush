@@ -275,8 +275,14 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
     let num_intersections = project_output.read_num_intersections().await;
 
     let use_float = matches!(texture_mode, TextureMode::Float);
-    let (out_img, render_aux, _) =
-        B::rasterize(&project_output, num_intersections, background, use_float);
+    let (out_img, render_aux, _) = B::rasterize(
+        &project_output,
+        num_intersections,
+        background,
+        use_float,
+        false,
+        None,
+    );
 
     render_aux.validate();
 
