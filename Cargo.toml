@@ -140,7 +140,7 @@ alphanumeric-sort = "1.5.3"
 # cubecl-std = { path = "../cubecl/crates/cubecl-std" }
 # cubecl-core = { path = "../cubecl/crates/cubecl-core" }
 # cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
-# cubecl-quant = { path = "../cubecl/crates/cubecl-quant" }
+# cubecl-zspace = { path = "../cubecl/crates/cubecl-zspace" }
 
 [patch.crates-io]
 egui = { git = "https://github.com/emilk/egui", rev = "refs/pull/7853/head"  }

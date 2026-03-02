@@ -162,12 +162,14 @@ impl SplatTrainer {
 
             // TODO: Support masked lpips.
             #[cfg(not(target_family = "wasm"))]
-            if let Some(lpips) = &self.lpips {
+            let loss = if let Some(lpips) = &self.lpips {
                 loss + lpips.lpips(pred_rgb.unsqueeze_dim(0), gt_rgb.unsqueeze_dim(0))
                     * self.config.lpips_loss_weight
             } else {
                 loss
-            }
+            };
+
+            loss
         });
 
         let mut grads = trace_span!("Backward pass").in_scope(|| loss.backward());
