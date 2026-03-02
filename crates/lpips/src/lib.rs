@@ -35,7 +35,7 @@ impl VggBlockConfig {
                 // conv3x3
                 let conv = Conv2dConfig::new([in_channels, self.out_channels], [3, 3])
                     .with_stride([1, 1])
-                    .with_padding(PaddingConfig2d::Explicit(1, 1))
+                    .with_padding(PaddingConfig2d::Explicit(1, 1, 1, 1))
                     .with_bias(true);
                 conv.init(device)
             })

@@ -117,7 +117,7 @@ impl GridWidgetResources {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Widget 3D Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         // Pipeline without depth stencil - draws on top of egui content
@@ -151,8 +151,8 @@ impl GridWidgetResources {
             },
             depth_stencil: None, // No depth buffer - draw on top
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
             cache: None,
+            multiview_mask: None,
         });
 
         let (grid_vertices, grid_vertex_count) = Self::create_grid_geometry();

@@ -46,7 +46,8 @@ pub fn radix_argsort(
     dynamic_count: Option<CubeTensor<WgpuRuntime>>,
 ) -> (CubeTensor<WgpuRuntime>, CubeTensor<WgpuRuntime>) {
     assert_eq!(
-        input_keys.shape.dims[0], input_values.shape.dims[0],
+        input_keys.shape()[0],
+        input_values.shape()[0],
         "Input keys and values must have the same number of elements"
     );
     assert!(sorting_bits <= 32, "Can only sort up to 32 bits");
@@ -62,7 +63,7 @@ pub fn radix_argsort(
     let _span = tracing::trace_span!("Radix sort").entered();
 
     let client = &input_keys.client.clone();
-    let max_n = input_keys.shape.dims[0] as u32;
+    let max_n = input_keys.shape()[0] as u32;
 
     // compute buffer and dispatch sizes
     let device = &input_keys.device.clone();
@@ -190,7 +191,7 @@ mod tests {
     use crate::radix_argsort;
     use burn::tensor::{Int, Tensor};
     use burn_wgpu::{CubeBackend, WgpuRuntime};
-    use rand::Rng;
+    use rand::RngExt;
 
     type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
 

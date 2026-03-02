@@ -2,6 +2,7 @@ use brush_kernel::calc_cube_count_1d;
 use brush_kernel::create_tensor;
 use brush_wgsl::wgsl_kernel;
 use burn::tensor::DType;
+use burn::tensor::TensorMetadata;
 use burn_cubecl::cubecl::server::Bindings;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
@@ -20,9 +21,9 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     assert!(input.is_contiguous(), "Please ensure input is contiguous");
 
     let threads_per_group = PrefixSumScan::THREADS_PER_GROUP as usize;
-    let num = input.shape.dims[0];
+    let num = input.shape()[0];
     let client = &input.client;
-    let outputs = create_tensor(input.shape.dims::<1>(), &input.device, DType::I32);
+    let outputs = create_tensor(input.shape().dims::<1>(), &input.device, DType::I32);
 
     // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {

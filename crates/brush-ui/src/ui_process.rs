@@ -2,6 +2,7 @@ use crate::{UiMode, app::CameraSettings, camera_controls::CameraController};
 use anyhow::Result;
 use brush_process::{message::ProcessMessage, slot::Slot};
 use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
+use burn::backend::Autodiff;
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
 use glam::{Affine3A, Quat, Vec3};
@@ -18,7 +19,7 @@ enum ControlMessage {
 struct ProcessHandle {
     messages: mpsc::UnboundedReceiver<anyhow::Result<ProcessMessage>>,
     control: mpsc::UnboundedSender<ControlMessage>,
-    splat_view: Slot<Splats<MainBackend>>,
+    splat_view: Slot<Splats<Autodiff<MainBackend>>>,
 }
 
 /// A thread-safe wrapper around the UI process.
@@ -65,7 +66,7 @@ impl UiProcess {
         self.write().background_style = style;
     }
 
-    pub(crate) fn current_splats(&self) -> Slot<Splats<MainBackend>> {
+    pub(crate) fn current_splats(&self) -> Slot<Splats<Autodiff<MainBackend>>> {
         self.read()
             .process_handle
             .as_ref()

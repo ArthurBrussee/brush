@@ -15,11 +15,11 @@ use brush_train::{
     RandomSplatsConfig, create_random_splats,
     eval::eval_stats,
     msg::RefineStats,
-    splats_into_autodiff, to_init_splats,
+    to_init_splats,
     train::{BOUND_PERCENTILE, SplatTrainer, get_splat_bounds},
 };
 use brush_vfs::BrushVfs;
-use burn::{module::AutodiffModule, prelude::Backend};
+use burn::{backend::Autodiff, module::AutodiffModule, prelude::Backend};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
@@ -37,7 +37,7 @@ pub(crate) async fn train_stream(
     train_stream_config: TrainStreamConfig,
     device: WgpuDevice,
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
-    splat_slot: Slot<Splats<MainBackend>>,
+    splat_slot: Slot<Splats<Autodiff<MainBackend>>>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
@@ -188,8 +188,8 @@ pub(crate) async fn train_stream(
 
         let stats = splat_slot
             .act(0, |splats| async {
-                let (new_splats, stats) = trainer.step(batch, splats_into_autodiff(splats)).await;
-                (new_splats.valid(), stats)
+                let (new_splats, stats) = trainer.step(batch, splats).await;
+                (new_splats, stats)
             })
             .await
             .unwrap();
@@ -235,7 +235,7 @@ pub(crate) async fn train_stream(
                 &device,
                 &emitter,
                 &visualize,
-                splat_slot.clone_main().await.unwrap(),
+                splat_slot.clone_main().await.unwrap().valid(),
                 iter,
                 eval_scene,
                 save_path,
@@ -251,7 +251,7 @@ pub(crate) async fn train_stream(
         #[cfg(not(target_family = "wasm"))]
         if iter % process_config.export_every == 0 || is_last_step {
             let res = export_checkpoint(
-                splat_slot.clone_main().await.unwrap(),
+                splat_slot.clone_main().await.unwrap().valid(),
                 &export_path,
                 &process_config.export_name,
                 iter,

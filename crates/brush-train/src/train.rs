@@ -22,7 +22,7 @@ use burn::{
         LrScheduler,
         exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig},
     },
-    module::ParamId,
+    module::{AutodiffModule, Module, ParamId},
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
     prelude::Backend,
     tensor::{
@@ -289,8 +289,8 @@ impl SplatTrainer {
     pub async fn refine(
         &mut self,
         iter: u32,
-        splats: Splats<MainBackend>,
-    ) -> (Splats<MainBackend>, RefineStats) {
+        splats: Splats<Autodiff<MainBackend>>,
+    ) -> (Splats<Autodiff<MainBackend>>, RefineStats) {
         let device = splats.means.device();
         let client = WgpuRuntime::client(&device);
 
@@ -300,6 +300,9 @@ impl SplatTrainer {
             .expect("Can only refine if refine stats are initialized");
 
         let max_allowed_bounds = self.bounds.extent.max_element() * 100.0;
+
+        // Do this all on the non-diff backend.
+        let splats = splats.valid();
 
         // If not refining, update splat to step with gradients applied.
         // Prune dead splats. This ALWAYS happen even if we're not "refining" anymore.
@@ -339,6 +342,7 @@ impl SplatTrainer {
         if pruned_count > 0 {
             // Sample weighted by opacity from splat visible during optimization.
             let resampled_weights = splats.opacities() * refiner.vis_mask().float();
+
             let resampled_weights = resampled_weights
                 .into_data_async()
                 .await
@@ -391,6 +395,14 @@ impl SplatTrainer {
         client.memory_cleanup();
 
         let splat_count = splats.num_splats();
+
+        // Back to autodiff.
+        let mut splats = splats.train();
+        splats.means = splats.means.map(|m| m.require_grad());
+        splats.rotations = splats.rotations.map(|m| m.require_grad());
+        splats.log_scales = splats.log_scales.map(|m| m.require_grad());
+        splats.raw_opacities = splats.raw_opacities.map(|m| m.require_grad());
+        splats.sh_coeffs = splats.sh_coeffs.map(|m| m.require_grad());
 
         (
             splats,
@@ -458,6 +470,7 @@ impl SplatTrainer {
                     IndexingUpdateOp::Add,
                 )
             });
+
             splats.log_scales = splats.log_scales.map(|s| {
                 let difference = new_log_scales.clone() - cur_log_scale.clone();
                 s.scatter(0, refine_inds_3.clone(), difference, IndexingUpdateOp::Add)
@@ -502,6 +515,7 @@ impl SplatTrainer {
         });
 
         self.optim = Some(create_default_optimizer().load_record(record));
+
         splats
     }
 }

@@ -14,7 +14,7 @@ use burn::{
     tensor::{Tensor, TensorData, TensorPrimitive},
 };
 use glam::{Quat, Vec3};
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 type DiffBackend = Autodiff<MainBackend>;
 

@@ -181,7 +181,7 @@ impl ScenePanel {
             egui::Window::new("Load from URL")
                 .resizable(false)
                 .collapsible(false)
-                .default_pos(ui.ctx().screen_rect().center())
+                .default_pos(ui.ctx().content_rect().center())
                 .pivot(Align2::CENTER_CENTER)
                 .show(ui.ctx(), |ui| {
                     ui.vertical(|ui| {

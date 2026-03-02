@@ -3,7 +3,7 @@ use brush_render::{
     MainBackend, MainBackendBase, TextureMode, camera::Camera, gaussian_splats::Splats,
     render_splats,
 };
-use burn::tensor::Tensor;
+use burn::{backend::Autodiff, module::AutodiffModule, tensor::Tensor};
 use egui::Rect;
 use glam::{UVec2, Vec3};
 use tokio::sync::mpsc;
@@ -13,7 +13,7 @@ use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 
 #[derive(Clone)]
 struct RenderRequest {
-    slot: Slot<Splats<MainBackend>>,
+    slot: Slot<Splats<Autodiff<MainBackend>>>,
     ctx: egui::Context,
     state: LastRenderState,
 }
@@ -64,7 +64,7 @@ impl SplatBackbuffer {
         &mut self,
         rect: Rect,
         ui: &egui::Ui,
-        slot: &Slot<Splats<MainBackend>>,
+        slot: &Slot<Splats<Autodiff<MainBackend>>>,
         camera: &Camera,
         frame: usize,
         background: Vec3,
@@ -105,8 +105,8 @@ impl SplatBackbuffer {
 
         if let Some(image) = &self.last_image {
             let shape = image.shape();
-            let img_height = shape.dims[0] as u32;
-            let img_width = shape.dims[1] as u32;
+            let img_height = shape[0] as u32;
+            let img_width = shape[1] as u32;
 
             ui.painter()
                 .add(eframe::egui_wgpu::Callback::new_paint_callback(
@@ -178,7 +178,7 @@ impl SplatBackbufferResources {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Splat Backbuffer Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Splat Backbuffer Pipeline"),
@@ -210,8 +210,8 @@ impl SplatBackbufferResources {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
             cache: None,
+            multiview_mask: None,
         });
 
         Self {
@@ -320,7 +320,7 @@ async fn render_worker(
             .slot
             .act(request.state.frame, async |splats| {
                 let (image, _) = render_splats(
-                    splats.clone(),
+                    splats.clone().valid(),
                     &request.state.camera,
                     request.state.img_size,
                     request.state.background,

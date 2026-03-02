@@ -310,7 +310,7 @@ impl eframe::App for App {
         eframe::set_value(storage, TREE_STORAGE_KEY, &self.tree);
     }
 
-    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         let _span = trace_span!("Update UI").entered();
         self.receive_messages();
 
@@ -382,8 +382,8 @@ impl eframe::App for App {
             let v = match tiles.get(id) {
                 Some(egui_tiles::Tile::Pane(p)) => p.borrow().as_pane().is_visible(process),
                 Some(egui_tiles::Tile::Container(c)) => c
-                    .active_children()
-                    .any(|&cid| is_visible(cid, tiles, process, cache)),
+                    .active_children(tiles)
+                    .any(|cid| is_visible(cid, tiles, process, cache)),
                 None => false,
             };
             cache.insert(id, v);
@@ -397,10 +397,11 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(ctx.style().as_ref()).inner_margin(0.0))
-            .show(ctx, |ui| self.tree.ui(&mut self.tree_ctx, ui));
+            .frame(egui::Frame::central_panel(ui.style().as_ref()).inner_margin(0.0))
+            .show_inside(ui, |ui| self.tree.ui(&mut self.tree_ctx, ui));
 
-        if ctx.input(|i| i.key_pressed(egui::Key::F)) && !ctx.wants_keyboard_input() {
+        if ui.ctx().input(|i| i.key_pressed(egui::Key::F)) && !ui.ctx().egui_wants_keyboard_input()
+        {
             let new_mode = match self.tree_ctx.process.ui_mode() {
                 UiMode::Default => UiMode::FullScreenSplat,
                 UiMode::FullScreenSplat => UiMode::Default,

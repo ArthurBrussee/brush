@@ -1,7 +1,7 @@
 use brush_wgsl::wgsl_kernel;
 
 use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
-use burn::tensor::{DType, Shape};
+use burn::tensor::{DType, Scalar, Shape};
 
 pub use burn_cubecl::cubecl::{CubeCount, CubeDim, client::ComputeClient, server::ComputeServer};
 pub use burn_cubecl::cubecl::{CubeTask, Runtime};
@@ -66,7 +66,8 @@ pub fn create_tensor<const D: usize>(
             buffer,
             DType::F32,
         );
-        let noised = CubeBackend::<WgpuRuntime, f32, i32, u32>::float_add_scalar(f, -12345.0);
+        let noised =
+            CubeBackend::<WgpuRuntime, f32, i32, u32>::float_add_scalar(f, Scalar::Float(-12345.0));
         buffer = noised.handle;
     }
     CubeTensor::new_contiguous(client, device.clone(), shape, buffer, dtype)

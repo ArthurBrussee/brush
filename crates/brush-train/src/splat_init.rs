@@ -6,7 +6,7 @@ use brush_render::{
 use brush_serde::SplatData;
 use burn::{config::Config, prelude::Backend};
 use glam::Vec3;
-use rand::Rng;
+use rand::{Rng, RngExt};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use tracing::trace_span;
 

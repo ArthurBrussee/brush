@@ -26,7 +26,13 @@ use burn::{
 pub fn splats_into_autodiff<B: Backend, BDiff: AutodiffBackend<InnerBackend = B>>(
     splats: Splats<B>,
 ) -> Splats<BDiff> {
-    let mode = splats.render_mode;
+    println!("Means grad: {}", splats.means.is_require_grad());
+    println!("rotation grad: {}", splats.rotations.is_require_grad());
+    println!("scales grad: {}", splats.log_scales.is_require_grad());
+    println!("coeffs grad: {}", splats.sh_coeffs.is_require_grad());
+    println!("opacity grad: {}", splats.raw_opacities.is_require_grad());
+
+    let mip = splats.render_mip;
     let (means_id, means, _) = splats.means.consume();
     let (rotation_id, rotation, _) = splats.rotations.consume();
     let (log_scales_id, log_scales, _) = splats.log_scales.consume();
@@ -45,6 +51,6 @@ pub fn splats_into_autodiff<B: Backend, BDiff: AutodiffBackend<InnerBackend = B>
             raw_opacity_id,
             Tensor::from_inner(raw_opacity).require_grad(),
         ),
-        render_mode: mode,
+        render_mip: mip,
     }
 }
