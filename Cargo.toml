@@ -99,7 +99,7 @@ burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
 ] }
 burn-fusion = { git = "https://github.com/tracel-ai/burn" }
-burn-store = { git = "https://github.com/tracel-ai/burn", default-features = false, features = [
+burn-store = { git = "https://github.com/tracel-ai/burn", features = [
     "pytorch",
 ] }
 
@@ -134,20 +134,13 @@ alphanumeric-sort = "1.5.3"
 # burn-fusion = { path = "../burn/crates/burn-fusion" }
 # burn-ir = { path = "../burn/crates/burn-ir" }
 
-# [patch."https://github.com/tracel-ai/cubecl"]
-# cubecl = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-# cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-# cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-# cubecl-core = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-# cubecl-runtime = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-# cubecl-zspace = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-
-# cubecl = { path = "../cubecl/crates/cubecl" }
-# cubecl-common = { path = "../cubecl/crates/cubecl-common" }
-# cubecl-std = { path = "../cubecl/crates/cubecl-std" }
-# cubecl-core = { path = "../cubecl/crates/cubecl-core" }
-# cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
-# cubecl-zspace = { path = "../cubecl/crates/cubecl-zspace" }
+[patch."https://github.com/tracel-ai/cubecl"]
+cubecl = { path = "../cubecl/crates/cubecl" }
+cubecl-common = { path = "../cubecl/crates/cubecl-common" }
+cubecl-std = { path = "../cubecl/crates/cubecl-std" }
+cubecl-core = { path = "../cubecl/crates/cubecl-core" }
+cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
+cubecl-zspace = { path = "../cubecl/crates/cubecl-zspace" }
 
 [patch.crates-io]
 egui = { git = "https://github.com/emilk/egui", rev = "refs/pull/7853/head"  }
