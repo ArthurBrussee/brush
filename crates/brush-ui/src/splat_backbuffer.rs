@@ -3,7 +3,7 @@ use brush_render::{
     MainBackend, MainBackendBase, TextureMode, camera::Camera, gaussian_splats::Splats,
     render_splats,
 };
-use burn::{backend::Autodiff, module::AutodiffModule, tensor::Tensor};
+use burn::tensor::Tensor;
 use egui::Rect;
 use glam::{UVec2, Vec3};
 use tokio::sync::mpsc;
@@ -13,7 +13,7 @@ use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 
 #[derive(Clone)]
 struct RenderRequest {
-    slot: Slot<Splats<Autodiff<MainBackend>>>,
+    slot: Slot<Splats<MainBackend>>,
     ctx: egui::Context,
     state: LastRenderState,
 }
@@ -64,7 +64,7 @@ impl SplatBackbuffer {
         &mut self,
         rect: Rect,
         ui: &egui::Ui,
-        slot: &Slot<Splats<Autodiff<MainBackend>>>,
+        slot: &Slot<Splats<MainBackend>>,
         camera: &Camera,
         frame: usize,
         background: Vec3,
@@ -320,7 +320,7 @@ async fn render_worker(
             .slot
             .act(request.state.frame, async |splats| {
                 let (image, _) = render_splats(
-                    splats.clone().valid(),
+                    splats.clone(),
                     &request.state.camera,
                     request.state.img_size,
                     request.state.background,

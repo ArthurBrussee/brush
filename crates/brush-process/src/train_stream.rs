@@ -19,7 +19,10 @@ use brush_train::{
     train::{BOUND_PERCENTILE, SplatTrainer, get_splat_bounds},
 };
 use brush_vfs::BrushVfs;
-use burn::{backend::Autodiff, module::AutodiffModule, prelude::Backend};
+use burn::{
+    module::{AutodiffModule, Module},
+    prelude::Backend,
+};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
@@ -37,7 +40,7 @@ pub(crate) async fn train_stream(
     train_stream_config: TrainStreamConfig,
     device: WgpuDevice,
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
-    splat_slot: Slot<Splats<Autodiff<MainBackend>>>,
+    splat_slot: Slot<Splats<MainBackend>>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
@@ -187,9 +190,17 @@ pub(crate) async fn train_stream(
             .await;
 
         let stats = splat_slot
-            .act(0, |splats| async {
+            .act(0, |splats: Splats<MainBackend>| async {
+                // // Back to autodiff.
+                let mut splats = splats.train();
+                splats.means = splats.means.map(|m| m.require_grad());
+                splats.rotations = splats.rotations.map(|m| m.require_grad());
+                splats.log_scales = splats.log_scales.map(|m| m.require_grad());
+                splats.raw_opacities = splats.raw_opacities.map(|m| m.require_grad());
+                splats.sh_coeffs = splats.sh_coeffs.map(|m| m.require_grad());
+
                 let (new_splats, stats) = trainer.step(batch, splats).await;
-                (new_splats, stats)
+                (new_splats.valid(), stats)
             })
             .await
             .unwrap();
@@ -235,7 +246,7 @@ pub(crate) async fn train_stream(
                 &device,
                 &emitter,
                 &visualize,
-                splat_slot.clone_main().await.unwrap().valid(),
+                splat_slot.clone_main().await.unwrap(),
                 iter,
                 eval_scene,
                 save_path,
@@ -251,7 +262,7 @@ pub(crate) async fn train_stream(
         #[cfg(not(target_family = "wasm"))]
         if iter % process_config.export_every == 0 || is_last_step {
             let res = export_checkpoint(
-                splat_slot.clone_main().await.unwrap().valid(),
+                splat_slot.clone_main().await.unwrap(),
                 &export_path,
                 &process_config.export_name,
                 iter,

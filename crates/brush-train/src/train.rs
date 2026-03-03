@@ -22,7 +22,7 @@ use burn::{
         LrScheduler,
         exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig},
     },
-    module::{AutodiffModule, Module, ParamId},
+    module::ParamId,
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
     prelude::Backend,
     tensor::{
@@ -291,8 +291,8 @@ impl SplatTrainer {
     pub async fn refine(
         &mut self,
         iter: u32,
-        splats: Splats<Autodiff<MainBackend>>,
-    ) -> (Splats<Autodiff<MainBackend>>, RefineStats) {
+        splats: Splats<MainBackend>,
+    ) -> (Splats<MainBackend>, RefineStats) {
         let device = splats.means.device();
         let client = WgpuRuntime::client(&device);
 
@@ -302,9 +302,6 @@ impl SplatTrainer {
             .expect("Can only refine if refine stats are initialized");
 
         let max_allowed_bounds = self.bounds.extent.max_element() * 100.0;
-
-        // Do this all on the non-diff backend.
-        let splats = splats.valid();
 
         // If not refining, update splat to step with gradients applied.
         // Prune dead splats. This ALWAYS happen even if we're not "refining" anymore.
@@ -397,14 +394,6 @@ impl SplatTrainer {
         client.memory_cleanup();
 
         let splat_count = splats.num_splats();
-
-        // Back to autodiff.
-        let mut splats = splats.train();
-        splats.means = splats.means.map(|m| m.require_grad());
-        splats.rotations = splats.rotations.map(|m| m.require_grad());
-        splats.log_scales = splats.log_scales.map(|m| m.require_grad());
-        splats.raw_opacities = splats.raw_opacities.map(|m| m.require_grad());
-        splats.sh_coeffs = splats.sh_coeffs.map(|m| m.require_grad());
 
         (
             splats,

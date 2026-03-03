@@ -3,7 +3,6 @@ use anyhow::Error;
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::{MainBackend, gaussian_splats::Splats};
-use burn::module::AutodiffModule;
 use egui::RichText;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_with_wasm::alias::task;
@@ -284,7 +283,7 @@ impl AppPane for TrainingPanel {
                                 return;
                             };
 
-                            if let Err(e) = export(splats.valid()).await {
+                            if let Err(e) = export(splats).await {
                                 let _ = sender.send(e);
                                 ctx.request_repaint();
                             }

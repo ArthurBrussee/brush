@@ -1,6 +1,5 @@
 #![recursion_limit = "256"]
 
-use burn::backend::Autodiff;
 use burn_wgpu::{
     RuntimeOptions, WgpuDevice,
     graphics::{AutoGraphicsApi, GraphicsApi},
@@ -63,7 +62,7 @@ impl<T> ProcessStream for T where T: Stream<Item = Result<ProcessMessage, Error>
 
 pub struct RunningProcess {
     pub stream: Pin<Box<dyn ProcessStream>>,
-    pub splat_view: Slot<Splats<Autodiff<MainBackend>>>,
+    pub splat_view: Slot<Splats<MainBackend>>,
 }
 
 use tokio::sync::SetOnce;
