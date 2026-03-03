@@ -19,6 +19,8 @@ mod datasets;
 mod training_panel;
 
 #[cfg(feature = "training")]
+mod settings_panel;
+#[cfg(feature = "training")]
 mod settings_popup;
 
 use eframe::egui_wgpu::WgpuConfiguration;
