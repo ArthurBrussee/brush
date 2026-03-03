@@ -12137,27 +12137,3 @@ checksum = "410e9ecef634c709e3831c2cfdb8d9c32164fae1c67496d5b68fff728eec37fe"
 dependencies = [
  "zune-core 0.5.1",
 ]
-
-[[patch.unused]]
-name = "cubecl"
-version = "0.10.0-pre.1"
-
-[[patch.unused]]
-name = "cubecl-common"
-version = "0.10.0-pre.1"
-
-[[patch.unused]]
-name = "cubecl-core"
-version = "0.10.0-pre.1"
-
-[[patch.unused]]
-name = "cubecl-runtime"
-version = "0.10.0-pre.1"
-
-[[patch.unused]]
-name = "cubecl-std"
-version = "0.10.0-pre.1"
-
-[[patch.unused]]
-name = "cubecl-zspace"
-version = "0.10.0-pre.1"
