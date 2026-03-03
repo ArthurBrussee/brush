@@ -48,7 +48,7 @@ serde = { version = "1.0.215", default-features = false, features = [
 ] }
 serde_json = { version = "1.0.133", default-features = false }
 
-rand = "0.9.0"
+rand = "0.10.0"
 tracing = "0.1.41"
 tracing-tracy = "0.11.3"
 tracing-subscriber = "0.3.19"
@@ -56,16 +56,15 @@ tracing-subscriber = "0.3.19"
 winapi = { version = "0.3", features = ["wincon"] }
 
 tokio = { version = "1.42.0", default-features = false }
-tokio_with_wasm = "0.8.2"
+tokio_with_wasm = "0.9"
 tokio-stream = "0.1"
 tokio-util = { version = "0.7.13", features = ["io"] }
 
 anyhow = "1.0.94"
 thiserror = "2.0"
 
-reqwest = { version = "0.12.9", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "stream",
-    "rustls-tls",
 ] }
 
 indicatif = "0.18"
@@ -80,14 +79,14 @@ safetensors = "0.7"
 log = "0.4.22"
 wasm-bindgen = "0.2.100"
 wasm-bindgen-futures = "0.4"
-wasm-streams = "0.4"
+wasm-streams = "0.5"
 
 rayon = "1.11"
 
-naga_oil = { version = "0.19", default-features = false }
+naga_oil = { version = "0.21", default-features = false }
 
 # Backends are chosen per platform.
-wgpu = { version = "26", default-features = false, features = ["naga-ir"] }
+wgpu = { version = "28", default-features = false, features = ["naga-ir"] }
 
 serde-ply = "0.2.1"
 
@@ -100,12 +99,12 @@ burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
 ] }
 burn-fusion = { git = "https://github.com/tracel-ai/burn" }
-burn-import = { git = "https://github.com/tracel-ai/burn", default-features = false, features = [
+burn-store = { git = "https://github.com/tracel-ai/burn", features = [
     "pytorch",
 ] }
 
-egui = { version = "0.32"  }
-eframe = { version = "0.32", default-features = false, features = [
+egui = { version = "0.33"  }
+eframe = { version = "0.33", default-features = false, features = [
     "wgpu",
     "android-game-activity",
     "wayland",
@@ -113,9 +112,9 @@ eframe = { version = "0.32", default-features = false, features = [
     "persistence",
 ] }
 
-egui_tiles = { version = "0.13.0", features = ["serde"] }
+egui_tiles = { version = "0.14", features = ["serde"] }
 
-rerun = { version = "0.27", default-features = false, features = [
+rerun = { version = "0.30", default-features = false, features = [
     'sdk',
     'glam',
 ] }
@@ -134,7 +133,6 @@ alphanumeric-sort = "1.5.3"
 # burn-wgpu = { path = "../burn/crates/burn-wgpu" }
 # burn-fusion = { path = "../burn/crates/burn-fusion" }
 # burn-ir = { path = "../burn/crates/burn-ir" }
-# burn-import = { path = "../burn/crates/burn-import" }
 
 # [patch."https://github.com/tracel-ai/cubecl"]
 # cubecl = { path = "../cubecl/crates/cubecl" }
@@ -142,19 +140,26 @@ alphanumeric-sort = "1.5.3"
 # cubecl-std = { path = "../cubecl/crates/cubecl-std" }
 # cubecl-core = { path = "../cubecl/crates/cubecl-core" }
 # cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
-# cubecl-quant = { path = "../cubecl/crates/cubecl-quant" }
+# cubecl-zspace = { path = "../cubecl/crates/cubecl-zspace" }
 
 [patch.crates-io]
-wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v26" }
-naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v26" }
+egui = { git = "https://github.com/emilk/egui", rev = "refs/pull/7853/head"  }
+eframe = {  git = "https://github.com/emilk/egui", rev = "refs/pull/7853/head" }
 
-egui = { git = "https://github.com/emilk/egui", rev = "c97c065a575ec6e657bb42872890a00d0fb391c1"  }
-eframe = { git = "https://github.com/emilk/egui", rev = "c97c065a575ec6e657bb42872890a00d0fb391c1" }
-emath = { git = "https://github.com/emilk/egui", rev = "c97c065a575ec6e657bb42872890a00d0fb391c1" }
-
+# Use 28.0.1, should be on crates.io any day now.
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "a6d9d3254e8d5ed7de08634cd9ddd7b63956f7f3" }
+naga = { git = "https://github.com/gfx-rs/wgpu", rev = "a6d9d3254e8d5ed7de08634cd9ddd7b63956f7f3" }
 # Uncomment this to use local wgpu and naga.
 # wgpu.path = "../wgpu/wgpu"
 # naga.path = "../wgpu/naga"
+
+cubecl = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
+cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
+cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
+cubecl-core = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
+cubecl-runtime = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
+cubecl-zspace = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
+
 
 [profile.dev]
 opt-level = 1

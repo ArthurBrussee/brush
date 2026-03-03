@@ -1,6 +1,6 @@
 use std::vec;
 
-use brush_render::gaussian_splats::{SplatRenderMode, Splats};
+use brush_render::gaussian_splats::Splats;
 use brush_render::sh::sh_coeffs_for_degree;
 use burn::prelude::Backend;
 use burn::tensor::Transaction;
@@ -158,13 +158,9 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
 pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, SerializeError> {
     let splats = splats.with_normed_rotations();
     let sh_degree = splats.sh_degree();
-    let render_mode = splats.render_mode;
     let ply = read_splat_data(splats.clone()).await;
 
-    let render_mode_str = match render_mode {
-        SplatRenderMode::Default => "default",
-        SplatRenderMode::Mip => "mip",
-    };
+    let render_mode_str = if splats.render_mip { "mip" } else { "default" };
 
     let comments = vec![
         "Exported from Brush".to_owned(),

@@ -15,11 +15,14 @@ use brush_train::{
     RandomSplatsConfig, create_random_splats,
     eval::eval_stats,
     msg::RefineStats,
-    splats_into_autodiff, to_init_splats,
+    to_init_splats,
     train::{BOUND_PERCENTILE, SplatTrainer, get_splat_bounds},
 };
 use brush_vfs::BrushVfs;
-use burn::{module::AutodiffModule, prelude::Backend};
+use burn::{
+    module::{AutodiffModule, Module},
+    prelude::Backend,
+};
 use burn_cubecl::cubecl::Runtime;
 use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use rand::SeedableRng;
@@ -187,8 +190,16 @@ pub(crate) async fn train_stream(
             .await;
 
         let stats = splat_slot
-            .act(0, |splats| async {
-                let (new_splats, stats) = trainer.step(batch, splats_into_autodiff(splats)).await;
+            .act(0, |splats: Splats<MainBackend>| async {
+                // // Back to autodiff.
+                let mut splats = splats.train();
+                splats.means = splats.means.map(|m| m.require_grad());
+                splats.rotations = splats.rotations.map(|m| m.require_grad());
+                splats.log_scales = splats.log_scales.map(|m| m.require_grad());
+                splats.raw_opacities = splats.raw_opacities.map(|m| m.require_grad());
+                splats.sh_coeffs = splats.sh_coeffs.map(|m| m.require_grad());
+
+                let (new_splats, stats) = trainer.step(batch, splats).await;
                 (new_splats.valid(), stats)
             })
             .await

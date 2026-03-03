@@ -263,8 +263,12 @@ where
         .into_primitive()
         .tensor()
         .into_primitive();
-    let render_mode = splats.render_mode;
 
+    let render_mode = if splats.render_mip {
+        SplatRenderMode::Mip
+    } else {
+        SplatRenderMode::Default
+    };
     let project_output = <B as SplatOps<B>>::project(
         camera,
         img_size,

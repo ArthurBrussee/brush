@@ -15,7 +15,7 @@ use brush_kernel::create_tensor;
 use brush_kernel::{CubeCount, calc_cube_count_1d};
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
-use burn::tensor::{DType, IntDType, Shape, ops::FloatTensor};
+use burn::tensor::{DType, IntDType, Shape, TensorMetadata, ops::FloatTensor};
 use burn::tensor::{
     FloatDType,
     ops::{FloatTensorOps, IntTensor, IntTensorOps},
@@ -71,8 +71,8 @@ impl SplatOps<Self> for MainBackendBase {
         let tile_bounds = calc_tile_bounds(img_size);
 
         // Tile rendering setup.
-        let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape.dims[1] as u32);
-        let total_splats = means.shape.dims[0];
+        let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
+        let total_splats = means.shape()[0];
 
         let project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
@@ -279,7 +279,7 @@ impl SplatOps<Self> for MainBackendBase {
         );
 
         // Get total_splats from the shape of projected_splats
-        let total_splats = project_output.projected_splats.shape.dims[0];
+        let total_splats = project_output.projected_splats.shape()[0];
 
         let (bindings, visible) = if bwd_info {
             let visible = Self::float_zeros([total_splats].into(), device, FloatDType::F32);

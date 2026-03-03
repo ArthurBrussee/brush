@@ -14,9 +14,7 @@ use crate::{
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
 
-#[derive(
-    Module, Clone, Copy, Debug, Eq, PartialEq, ValueEnum, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SplatRenderMode {
     Default,
@@ -37,7 +35,9 @@ pub struct Splats<B: Backend> {
     pub log_scales: Param<Tensor<B, 2>>,
     pub sh_coeffs: Param<Tensor<B, 3>>,
     pub raw_opacities: Param<Tensor<B, 1>>,
-    pub render_mode: SplatRenderMode,
+
+    #[module(skip)] // TODO: Should be SplatRenderMode but not supported atm..
+    pub render_mip: bool,
 }
 
 fn norm_vec<B: Backend>(vec: Tensor<B, 2>) -> Tensor<B, 2> {
@@ -123,7 +123,7 @@ impl<B: Backend> Splats<B> {
             rotations: Param::initialized(ParamId::new(), rotation.detach().require_grad()),
             raw_opacities: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
             log_scales: Param::initialized(ParamId::new(), log_scales.detach().require_grad()),
-            render_mode: mode,
+            render_mip: mode == SplatRenderMode::Mip,
         }
     }
 
@@ -266,7 +266,11 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
         splats.rotations.into_value().into_primitive().tensor(),
         splats.sh_coeffs.into_value().into_primitive().tensor(),
         splats.raw_opacities.into_value().into_primitive().tensor(),
-        splats.render_mode,
+        if splats.render_mip {
+            SplatRenderMode::Mip
+        } else {
+            SplatRenderMode::Default
+        },
     );
 
     project_output.validate();

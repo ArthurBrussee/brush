@@ -1,4 +1,3 @@
-use brush_render::MainBackend;
 use burn::{
     prelude::{Backend, Int},
     tensor::{Bool, Tensor},
@@ -26,21 +25,13 @@ impl<B: Backend> RefineRecord<B> {
             .greater_elem(threshold)
             .bool_and(self.vis_mask())
     }
-}
 
-impl RefineRecord<MainBackend> {
-    pub(crate) fn gather_stats(
-        &mut self,
-        refine_weight: Tensor<MainBackend, 1>,
-        visible: Tensor<MainBackend, 1>,
-    ) {
+    pub(crate) fn gather_stats(&mut self, refine_weight: Tensor<B, 1>, visible: Tensor<B, 1>) {
         let _span = trace_span!("Gather stats").entered();
         self.refine_weight_norm = refine_weight.max_pair(self.refine_weight_norm.clone());
         self.vis_weight = self.vis_weight.clone() + visible;
     }
-}
 
-impl<B: Backend> RefineRecord<B> {
     pub(crate) fn vis_mask(&self) -> Tensor<B, 1, Bool> {
         self.vis_weight.clone().greater_elem(0.0)
     }

@@ -41,7 +41,15 @@ skip = [
     { name = "bitflags" },
     { name = 'itertools' },
     { name = 'getrandom' },
-    { name = 'syn' },
+    { name = 'rand' },
+    { name = 'rand_core' },
+    { name = 'env_filter' },
+
+    { name = 'darling_macro' },
+    { name = 'darling' },
+    { name = 'darling_core' },
+
+    { name = 'cpufeatures' },
 
     { name = 'thiserror' },
     { name = 'thiserror-impl' },
@@ -54,10 +62,6 @@ skip = [
     { name = 'windows-sys' },         # Old version from winit.
 
     { name = 'windows-core' },      # Wgpu & rerun
-    { name = 'windows-strings' },   # Wgpu & rerun
-    { name = 'windows-result' },    # Wgpu & rerun
-    { name = 'windows-interface' }, # Wgpu & rerun
-    { name = 'windows-implement' }, # Wgpu & rerun
 
     { name = 'rustix' },        # Winit & clap
     { name = 'linux-raw-sys' }, # Winit & clap
@@ -81,13 +85,12 @@ skip = [
 
     { name = "zune-jpeg" },
     { name = "zune-core" },
-    { name = "webpki-roots" },
 
     { name = "convert_case" },
 
-    # Older versions in rerun.
-    { name = "prettyplease" },
     { name = "console" },
+
+    { name = "wasm-streams" },
 ]
 
 [licenses]

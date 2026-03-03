@@ -5,9 +5,9 @@ use brush_render::shaders::helpers::RasterizeUniforms;
 use brush_wgsl::wgsl_kernel;
 
 use brush_render::sh::sh_coeffs_for_degree;
-use burn::tensor::FloatDType;
 use burn::tensor::ops::IntTensor;
 use burn::tensor::ops::{FloatTensor, FloatTensorOps};
+use burn::tensor::{FloatDType, TensorMetadata};
 use burn_cubecl::cubecl::features::TypeUsage;
 use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType};
 use burn_cubecl::cubecl::server::Bindings;
@@ -53,7 +53,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let v_output = into_contiguous(v_output);
 
         let device = &out_img.device;
-        let num_points = projected_splats.shape.dims[0];
+        let num_points = projected_splats.shape()[0];
 
         let client = &projected_splats.client;
 
@@ -139,7 +139,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let raw_opac = into_contiguous(raw_opac);
 
         let device = &means.device;
-        let num_points = means.shape.dims[0];
+        let num_points = means.shape()[0];
         let client = &means.client;
 
         // Setup output tensors.

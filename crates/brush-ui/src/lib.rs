@@ -24,7 +24,7 @@ mod settings_popup;
 use eframe::egui_wgpu::WgpuConfiguration;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
-use wgpu::{Adapter, Features};
+use wgpu::{Adapter, ExperimentalFeatures, Features};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[wasm_bindgen]
@@ -51,6 +51,8 @@ pub fn create_egui_options() -> WgpuConfiguration {
                     required_limits: adapter.limits(),
                     memory_hints: wgpu::MemoryHints::MemoryUsage,
                     trace: wgpu::Trace::Off,
+                    // SAFETY: Passthrough shaders are allowed.
+                    experimental_features: unsafe { ExperimentalFeatures::enabled() },
                 }),
                 ..Default::default()
             },

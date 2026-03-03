@@ -502,6 +502,8 @@ fn generate_code(
             #get_shader_source
             #struct_def
 
+            use burn_cubecl::cubecl::prelude::*;
+
             impl #struct_name {
                 pub const WORKGROUP_SIZE: [u32; 3] = [#wg_x, #wg_y, #wg_z];
                 #(#const_defs)*
@@ -510,8 +512,12 @@ fn generate_code(
 
             impl<C: burn_cubecl::cubecl::Compiler> burn_cubecl::cubecl::CubeTask<C> for #struct_name {
                 fn compile(
-                    &self, _: &mut C, _: &C::CompilationOptions, _: burn_cubecl::cubecl::prelude::ExecutionMode,
-                ) -> Result<burn_cubecl::cubecl::prelude::CompiledKernel<C>, burn_cubecl::cubecl::CompilationError> {
+                    &self,
+                    _compiler: &mut C,
+                    _compiler_options: &C::CompilationOptions,
+                    _mode: ExecutionMode,
+                    _addr_type: StorageType,
+                ) -> Result<CompiledKernel<C>, burn_cubecl::cubecl::CompilationError> {
                     let source = #get_source_call;
 
                     #[cfg(target_family = "wasm")]
@@ -523,7 +529,7 @@ fn generate_code(
                         source.to_string()
                     };
 
-                    Ok(burn_cubecl::cubecl::prelude::CompiledKernel {
+                    Ok(CompiledKernel {
                         entrypoint_name: "main".to_owned(),
                         debug_name: Some(#struct_name_str),
                         source: source.to_owned(),
@@ -537,8 +543,12 @@ fn generate_code(
             }
 
             impl burn_cubecl::kernel::KernelMetadata for #struct_name {
-                fn id(&self) -> burn_cubecl::cubecl::prelude::KernelId {
-                    burn_cubecl::cubecl::prelude::KernelId::new::<Self>().info(vec![#(self.#field_idents),*] as Vec<bool>)
+                fn id(&self) -> KernelId {
+                    KernelId::new::<Self>().info(vec![#(self.#field_idents),*] as Vec<bool>)
+                }
+
+                fn address_type(&self) -> StorageType {
+                    StorageType::Scalar(burn_cubecl::cubecl::ir::ElemType::UInt(burn_cubecl::cubecl::ir::UIntKind::U32))
                 }
             }
         }

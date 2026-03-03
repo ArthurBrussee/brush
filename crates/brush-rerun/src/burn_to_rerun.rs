@@ -2,6 +2,7 @@ use burn::{
     prelude::Backend,
     tensor::{Bool, Int, Tensor},
 };
+use burn_cubecl::cubecl::future::block_on;
 use rerun::{ChannelDatatype, ColorModel};
 
 trait BurnToRerunData {
@@ -57,8 +58,11 @@ impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D, Bool> {
     }
 }
 
-pub trait BurnToRerun {
+pub trait BurnToRerun: Sized {
     fn into_rerun(self) -> impl Future<Output = rerun::Tensor>;
+    fn into_rerun_blocking(self) -> rerun::Tensor {
+        block_on(self.into_rerun())
+    }
 }
 
 impl<T: BurnToRerunData> BurnToRerun for T {
@@ -67,8 +71,12 @@ impl<T: BurnToRerunData> BurnToRerun for T {
     }
 }
 
-pub trait BurnToImage {
+pub trait BurnToImage: Sized {
     fn into_rerun_image(self) -> impl Future<Output = rerun::Image>;
+
+    fn into_rerun_image_blocking(self) -> rerun::Image {
+        block_on(self.into_rerun_image())
+    }
 }
 
 impl<B: Backend> BurnToImage for Tensor<B, 3> {

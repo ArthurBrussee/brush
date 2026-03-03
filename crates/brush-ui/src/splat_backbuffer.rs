@@ -105,8 +105,8 @@ impl SplatBackbuffer {
 
         if let Some(image) = &self.last_image {
             let shape = image.shape();
-            let img_height = shape.dims[0] as u32;
-            let img_width = shape.dims[1] as u32;
+            let img_height = shape[0] as u32;
+            let img_width = shape[1] as u32;
 
             ui.painter()
                 .add(eframe::egui_wgpu::Callback::new_paint_callback(
@@ -178,7 +178,7 @@ impl SplatBackbufferResources {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Splat Backbuffer Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Splat Backbuffer Pipeline"),
@@ -210,8 +210,8 @@ impl SplatBackbufferResources {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
             cache: None,
+            multiview_mask: None,
         });
 
         Self {

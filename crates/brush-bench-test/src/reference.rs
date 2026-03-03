@@ -14,6 +14,7 @@ use burn::{
 };
 
 use anyhow::{Context, Result};
+use burn_cubecl::cubecl::future::block_on;
 use glam::Vec3;
 use safetensors::SafeTensors;
 
@@ -61,8 +62,8 @@ fn compare<B: Backend, const D1: usize>(
     }
 }
 
-#[tokio::test]
-async fn test_reference() -> Result<()> {
+#[test]
+fn test_reference() -> Result<()> {
     let device = WgpuDevice::DefaultDevice;
 
     let crab_img = image::open("./test_cases/crab.png")?;
@@ -126,28 +127,27 @@ async fn test_reference() -> Result<()> {
             glam::vec2(0.5, 0.5),
         );
 
-        let diff_out = brush_render_bwd::render_splats(
+        let diff_out = block_on(brush_render_bwd::render_splats(
             splats.clone(),
             &cam,
             glam::uvec2(w as u32, h as u32),
             Vec3::ZERO,
-        )
-        .await;
+        ));
 
         let out: Tensor<DiffBack, 3> = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
         let render_aux = diff_out.render_aux;
 
         if let Some(rec) = rec.as_ref() {
             rec.set_time_sequence("test case", i as i64);
-            rec.log("img/render", &out.clone().into_rerun_image().await)?;
-            rec.log("img/ref", &img_ref.clone().into_rerun_image().await)?;
+            rec.log("img/render", &out.clone().into_rerun_image_blocking())?;
+            rec.log("img/ref", &img_ref.clone().into_rerun_image_blocking())?;
             rec.log(
                 "img/dif",
-                &(img_ref.clone() - out.clone()).into_rerun_image().await,
+                &(img_ref.clone() - out.clone()).into_rerun_image_blocking(),
             )?;
             rec.log(
                 "images/tile_depth",
-                &render_aux.calc_tile_depth().into_rerun().await,
+                &render_aux.calc_tile_depth().into_rerun_blocking(),
             )?;
         }
 

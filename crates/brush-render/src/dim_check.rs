@@ -1,3 +1,4 @@
+use burn::tensor::TensorMetadata;
 use burn_cubecl::CubeRuntime;
 use burn_wgpu::CubeTensor;
 use std::collections::HashMap;
@@ -23,7 +24,7 @@ impl<R: CubeRuntime> DimCheck<'_, R> {
     }
 
     pub fn check_dims(mut self, name: &str, tensor: &CubeTensor<R>, bounds: &[DimBound]) -> Self {
-        let dims = &tensor.shape.dims;
+        let shape = &tensor.shape();
 
         match self.device.as_ref() {
             None => self.device = Some(tensor.device.clone()),
@@ -34,12 +35,11 @@ impl<R: CubeRuntime> DimCheck<'_, R> {
         }
         assert!(
             tensor.is_contiguous(),
-            "Tensor {name} must be contiguous {:?} {:?}",
-            tensor.strides,
-            tensor.shape
+            "Tensor {name} must be contiguous {:?}",
+            tensor.shape()
         );
 
-        for (cur_dim, bound) in dims.iter().zip(bounds) {
+        for (cur_dim, bound) in shape.iter().zip(bounds) {
             match bound {
                 DimBound::Exact(dim) => {
                     assert_eq!(

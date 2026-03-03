@@ -12,5 +12,5 @@ path = "src/main.rs"
 
 [dependencies]
 burn.workspace = true
-burn-import.workspace = true
+burn-store.workspace = true
 lpips = { path = "../lpips" }

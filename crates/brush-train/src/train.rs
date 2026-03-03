@@ -162,12 +162,14 @@ impl SplatTrainer {
 
             // TODO: Support masked lpips.
             #[cfg(not(target_family = "wasm"))]
-            if let Some(lpips) = &self.lpips {
+            let loss = if let Some(lpips) = &self.lpips {
                 loss + lpips.lpips(pred_rgb.unsqueeze_dim(0), gt_rgb.unsqueeze_dim(0))
                     * self.config.lpips_loss_weight
             } else {
                 loss
-            }
+            };
+
+            loss
         });
 
         let mut grads = trace_span!("Backward pass").in_scope(|| loss.backward());
@@ -339,6 +341,7 @@ impl SplatTrainer {
         if pruned_count > 0 {
             // Sample weighted by opacity from splat visible during optimization.
             let resampled_weights = splats.opacities() * refiner.vis_mask().float();
+
             let resampled_weights = resampled_weights
                 .into_data_async()
                 .await
@@ -458,6 +461,7 @@ impl SplatTrainer {
                     IndexingUpdateOp::Add,
                 )
             });
+
             splats.log_scales = splats.log_scales.map(|s| {
                 let difference = new_log_scales.clone() - cur_log_scale.clone();
                 s.scatter(0, refine_inds_3.clone(), difference, IndexingUpdateOp::Add)
@@ -502,6 +506,7 @@ impl SplatTrainer {
         });
 
         self.optim = Some(create_default_optimizer().load_record(record));
+
         splats
     }
 }
