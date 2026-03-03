@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::{ProcessMessage, TrainMessage};
 
+use crate::UiMode;
 use crate::panels::AppPane;
 use crate::settings_popup::draw_settings;
 use crate::ui_process::UiProcess;
-use crate::UiMode;
 
 #[derive(Default)]
 pub struct SettingsPanel {
@@ -86,10 +86,7 @@ impl AppPane for SettingsPanel {
                     ));
                 }
                 Err(e) => {
-                    self.save_status = Some((
-                        format!("Failed: {e}"),
-                        web_time::Instant::now(),
-                    ));
+                    self.save_status = Some((format!("Failed: {e}"), web_time::Instant::now()));
                 }
             }
         }
