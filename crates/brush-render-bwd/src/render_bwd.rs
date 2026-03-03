@@ -1,4 +1,4 @@
-use brush_kernel::{CubeCount, calc_cube_count_1d, create_meta_binding};
+use brush_kernel::{calc_cube_count_1d, create_meta_binding};
 use brush_render::MainBackendBase;
 use brush_render::gaussian_splats::SplatRenderMode;
 use brush_render::shaders::helpers::RasterizeUniforms;
