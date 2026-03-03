@@ -28,10 +28,12 @@ var<workgroup> local_batch: array<helpers::ProjectedSplat, helpers::TILE_SIZE>;
 @compute
 @workgroup_size(helpers::TILE_SIZE, 1, 1)
 fn main(
-    @builtin(global_invocation_id) global_id: vec3u,
+    @builtin(workgroup_id) wg_id: vec3u,
+    @builtin(num_workgroups) num_wgs: vec3u,
     @builtin(local_invocation_index) local_idx: u32,
 ) {
-    let pix_loc = helpers::map_1d_to_2d(global_id.x, uniforms.tile_bounds.x);
+    let global_id = helpers::get_global_id(wg_id, num_wgs, local_idx, helpers::TILE_SIZE);
+    let pix_loc = helpers::map_1d_to_2d(global_id, uniforms.tile_bounds.x);
     let pix_id = pix_loc.x + pix_loc.y * uniforms.img_size.x;
     let pixel_coord = vec2f(pix_loc) + 0.5f;
     let tile_loc = vec2u(pix_loc.x / helpers::TILE_WIDTH, pix_loc.y / helpers::TILE_WIDTH);

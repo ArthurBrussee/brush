@@ -107,7 +107,7 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
 
     ui.heading("Dataset");
     ui.label("Max image resolution");
-    slider(ui, &mut args.load_config.max_resolution, 32..=2048, "", false, enabled);
+    slider(ui, &mut args.load_config.max_resolution, 32..=4096, "", false, enabled);
 
     let mut limit_frames = args.load_config.max_frames.is_some();
     ui.add_enabled(enabled, egui::Checkbox::new(&mut limit_frames, "Limit max frames"));
