@@ -3,6 +3,8 @@ use crate::UiMode;
 use crate::datasets::DatasetPanel;
 use crate::panels::AppPane;
 #[cfg(feature = "training")]
+use crate::settings_panel::SettingsPanel;
+#[cfg(feature = "training")]
 use crate::stats::StatsPanel;
 #[cfg(feature = "training")]
 use crate::training_panel::TrainingPanel;
@@ -30,6 +32,8 @@ pub enum Pane {
     Dataset(#[serde(skip)] DatasetPanel),
     #[cfg(feature = "training")]
     Training(#[serde(skip)] TrainingPanel),
+    #[cfg(feature = "training")]
+    Settings(#[serde(skip)] SettingsPanel),
 }
 
 impl Pane {
@@ -42,6 +46,8 @@ impl Pane {
             Self::Dataset(p) => p,
             #[cfg(feature = "training")]
             Self::Training(p) => p,
+            #[cfg(feature = "training")]
+            Self::Settings(p) => p,
         }
     }
 
@@ -54,6 +60,8 @@ impl Pane {
             Self::Dataset(p) => p,
             #[cfg(feature = "training")]
             Self::Training(p) => p,
+            #[cfg(feature = "training")]
+            Self::Settings(p) => p,
         }
     }
 
@@ -74,6 +82,10 @@ impl Pane {
 
     fn training() -> RefCell<Self> {
         RefCell::new(Self::Training(TrainingPanel::default()))
+    }
+
+    fn settings() -> RefCell<Self> {
+        RefCell::new(Self::Settings(SettingsPanel::default()))
     }
 }
 
@@ -173,12 +185,14 @@ impl App {
             let stats_pane = tiles.insert_pane(Pane::stats());
             let dataset_pane = tiles.insert_pane(Pane::dataset());
             let training_pane = tiles.insert_pane(Pane::training());
+            let settings_pane = tiles.insert_pane(Pane::settings());
             Self::build_default_layout(
                 &mut tiles,
                 scene_pane,
                 stats_pane,
                 dataset_pane,
                 training_pane,
+                settings_pane,
             )
         };
 
@@ -205,7 +219,10 @@ impl App {
             let has_training = tree.tiles.iter().any(|(_, tile)| {
                 matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Training(_)))
             });
-            has_scene && has_stats && has_dataset && has_training
+            let has_settings = tree.tiles.iter().any(|(_, tile)| {
+                matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Settings(_)))
+            });
+            has_scene && has_stats && has_dataset && has_training && has_settings
         }
 
         #[cfg(not(feature = "training"))]
@@ -266,14 +283,18 @@ impl App {
         stats_pane: TileId,
         dataset_pane: TileId,
         training_pane: TileId,
+        settings_pane: TileId,
     ) -> TileId {
+        // Stats and Settings share a tabbed area
+        let bottom_tabs = tiles.insert_tab_tile(vec![stats_pane, settings_pane]);
+
         let mut sidebar = egui_tiles::Linear::new(
             egui_tiles::LinearDir::Vertical,
-            vec![training_pane, dataset_pane, stats_pane],
+            vec![training_pane, dataset_pane, bottom_tabs],
         );
         sidebar.shares.set_share(training_pane, 0.12);
         sidebar.shares.set_share(dataset_pane, 0.53);
-        sidebar.shares.set_share(stats_pane, 0.35);
+        sidebar.shares.set_share(bottom_tabs, 0.35);
         let sidebar_id = tiles.insert_container(sidebar);
 
         let mut content = egui_tiles::Linear::new(
@@ -338,6 +359,7 @@ impl eframe::App for App {
             let stats_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Stats(_)));
             let dataset_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Dataset(_)));
             let training_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Training(_)));
+            let settings_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Settings(_)));
 
             // Remove all container tiles
             let container_ids: Vec<TileId> = tree
@@ -356,6 +378,7 @@ impl eframe::App for App {
                 stats_pane,
                 dataset_pane,
                 training_pane,
+                settings_pane,
             ));
         }
 
