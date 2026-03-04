@@ -317,7 +317,10 @@ impl SplatOps<Self> for MainBackendBase {
             client
                 .launch_unchecked(
                     raster_task,
-                    CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
+                    calc_cube_count_1d(
+                        num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
+                        shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
+                    ),
                     bindings,
                 )
                 .expect("Failed to render splats");

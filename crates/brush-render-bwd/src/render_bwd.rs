@@ -1,4 +1,4 @@
-use brush_kernel::{CubeCount, calc_cube_count_1d, create_meta_binding};
+use brush_kernel::{calc_cube_count_1d, create_meta_binding};
 use brush_render::MainBackendBase;
 use brush_render::gaussian_splats::SplatRenderMode;
 use brush_render::shaders::helpers::RasterizeUniforms;
@@ -91,7 +91,10 @@ impl SplatBwdOps<Self> for MainBackendBase {
                 client
                     .launch_unchecked(
                         RasterizeBackwards::task(hard_floats, webgpu),
-                        CubeCount::Static(tile_bounds.x * tile_bounds.y, 1, 1),
+                        calc_cube_count_1d(
+                            tile_bounds.x * tile_bounds.y * RasterizeBackwards::WORKGROUP_SIZE[0],
+                            RasterizeBackwards::WORKGROUP_SIZE[0],
+                        ),
                         Bindings::new()
                             .with_buffers(vec![
                                 compact_gid_from_isect.handle.binding(),

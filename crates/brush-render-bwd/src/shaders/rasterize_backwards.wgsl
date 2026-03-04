@@ -67,10 +67,12 @@ var<workgroup> range_uniform: vec2u;
 @compute
 @workgroup_size(THREAD_COUNT, 1, 1)
 fn main(
-    @builtin(global_invocation_id) global_id: vec3u,
+    @builtin(workgroup_id) wg_id: vec3u,
+    @builtin(num_workgroups) num_wgs: vec3u,
     @builtin(local_invocation_index) local_idx: u32,
     @builtin(subgroup_invocation_id) subgroup_invocation_id: u32
 ) {
+    let global_id = helpers::get_global_id(wg_id, num_wgs, local_idx, THREAD_COUNT);
     var pix_locs = array<vec2u, PIXELS_PER_THREAD>();
     var pix_ids = array<u32, PIXELS_PER_THREAD>();
     var v_outs = array<vec4f, PIXELS_PER_THREAD>();
@@ -80,7 +82,7 @@ fn main(
 
     for (var i = 0u; i < PIXELS_PER_THREAD; i++) {
         // Process 4 consecutive pixels in the original linear order
-        let thread_id = global_id.x * PIXELS_PER_THREAD + i;
+        let thread_id = global_id * PIXELS_PER_THREAD + i;
         pix_locs[i] = helpers::map_1d_to_2d(thread_id, uniforms.tile_bounds.x);
         let pix_id = pix_locs[i].x + pix_locs[i].y * uniforms.img_size.x;
         pix_ids[i] = pix_id;
