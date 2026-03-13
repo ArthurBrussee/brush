@@ -183,7 +183,7 @@ async fn test_training_step() {
 #[test]
 fn test_batch_generation() {
     let batch = generate_test_batch((256, 128));
-    let img_dims = batch.img_tensor.shape.clone();
+    let img_dims = batch.img_tensor.shape.dims();
     assert_eq!(img_dims, [128, 256, 3]);
     let img_data = batch.img_tensor.into_vec::<f32>().unwrap();
     assert!(img_data.iter().all(|&x| x.is_finite()));

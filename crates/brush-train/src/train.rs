@@ -106,7 +106,7 @@ impl SplatTrainer {
     ) -> (Splats<DiffBackend>, TrainStepStats<MainBackend>) {
         let mut splats = splats;
 
-        let [img_h, img_w, _] = batch.img_tensor.shape.clone().try_into().unwrap();
+        let [img_h, img_w, _] = batch.img_tensor.shape.dims();
         let camera = batch.camera.clone();
 
         // Upload tensor early.
