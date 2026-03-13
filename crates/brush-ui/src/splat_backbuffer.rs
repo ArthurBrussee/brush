@@ -260,7 +260,8 @@ impl CallbackTrait for SplatBackbufferPainter {
             .resolve_tensor_int::<MainBackendBase>(last_img);
         let img_res_handle = prim_tensor
             .client
-            .get_resource(prim_tensor.handle.binding());
+            .get_resource(prim_tensor.handle)
+            .expect("Failed to get img resource");
 
         // Create a new bind group with the current tensor buffer
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

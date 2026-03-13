@@ -205,8 +205,8 @@ async fn test_training_step() {
 #[wasm_bindgen_test(unsupported = test)]
 fn test_batch_generation() {
     let batch = generate_test_batch((256, 128));
-    let img_dims = batch.img_tensor.shape.clone();
-    assert_eq!(img_dims, vec![128, 256, 3]);
+    let img_dims = batch.img_tensor.shape.dims();
+    assert_eq!(img_dims, [128, 256, 3]);
     let img_data = batch.img_tensor.into_vec::<f32>().unwrap();
     assert!(img_data.iter().all(|&x| x.is_finite()));
     assert!(img_data.iter().all(|&x| (0.0..=1.1).contains(&x)));

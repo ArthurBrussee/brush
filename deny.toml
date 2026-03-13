@@ -83,14 +83,19 @@ skip = [
     { name = "calloop-wayland-source" },
     { name = "calloop" },
 
-    { name = "zune-jpeg" },
-    { name = "zune-core" },
-
     { name = "convert_case" },
 
     { name = "console" },
 
     { name = "wasm-streams" },
+
+    { name = "toml_datetime" },
+
+    { name = "jni-sys" },
+    { name = "jni" },
+
+    { name = "anstyle-parse" },
+    { name = "anstream" },
 ]
 
 [licenses]
