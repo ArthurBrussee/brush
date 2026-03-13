@@ -193,16 +193,18 @@ impl AppPane for StatsPanel {
             ui.heading("GPU");
             ui.separator();
 
-            stats_grid(ui, "memory_stats_grid", |ui, v| {
-                stat_row(ui, "Bytes in use", bytes_format(memory.bytes_in_use), v);
-                stat_row(ui, "Bytes reserved", bytes_format(memory.bytes_reserved), v);
-                stat_row(
-                    ui,
-                    "Active allocations",
-                    format!("{}", memory.number_allocs),
-                    v,
-                );
-            });
+            if let Ok(memory) = memory {
+                stats_grid(ui, "memory_stats_grid", |ui, v| {
+                    stat_row(ui, "Bytes in use", bytes_format(memory.bytes_in_use), v);
+                    stat_row(ui, "Bytes reserved", bytes_format(memory.bytes_reserved), v);
+                    stat_row(
+                        ui,
+                        "Active allocations",
+                        format!("{}", memory.number_allocs),
+                        v,
+                    );
+                });
+            }
 
             // On WASM, adapter info is mostly private, not worth showing.
             if !cfg!(target_family = "wasm")

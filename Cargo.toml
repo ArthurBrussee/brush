@@ -153,14 +153,6 @@ naga = { git = "https://github.com/gfx-rs/wgpu", rev = "a6d9d3254e8d5ed7de08634c
 # wgpu.path = "../wgpu/wgpu"
 # naga.path = "../wgpu/naga"
 
-cubecl = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-cubecl-core = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-cubecl-runtime = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-cubecl-zspace = { git = "https://github.com/ArthurBrussee/cubecl/", branch = "wasm-std-fix" }
-
-
 [profile.dev]
 opt-level = 1
 # Reduce debuginfo for faster linking
