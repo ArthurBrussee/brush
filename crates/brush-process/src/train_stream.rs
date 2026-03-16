@@ -12,7 +12,7 @@ use brush_render::{
 };
 use brush_rerun::visualize_tools::VisualizeTools;
 use brush_train::{
-    RandomSplatsConfig, create_random_splats,
+    RandomSplatsConfig, create_random_splats, decimate_to_count,
     eval::eval_stats,
     msg::RefineStats,
     to_init_splats,
@@ -339,6 +339,124 @@ pub(crate) async fn train_stream(
     emitter
         .emit(ProcessMessage::TrainMessage(TrainMessage::DoneTraining))
         .await;
+
+    // --- LOD generation ---
+    let lod_levels = train_stream_config.train_config.lod_levels;
+    if lod_levels > 0 {
+        let lod_keep_pct = train_stream_config.train_config.lod_decimation_keep;
+        let lod_img_pct = train_stream_config.train_config.lod_image_scale;
+        let lod_steps = train_stream_config.train_config.lod_refine_steps;
+        let total_steps = train_stream_config.train_config.total_steps;
+        let digits = ((total_steps as f64).log10().floor() as usize) + 1;
+
+        for lod in 0..lod_levels {
+            log::info!("LOD {}/{}: Decimating (keep {}%)", lod + 1, lod_levels, lod_keep_pct);
+
+            let before = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
+            let target = (before as f32 * lod_keep_pct as f32 / 100.0).max(1.0) as u32;
+            splat_slot
+                .act(0, |s: Splats<MainBackend>| async {
+                    (decimate_to_count(s, target).await, ())
+                })
+                .await
+                .unwrap();
+            let after = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
+            log::info!("LOD {}/{}: {} -> {} splats", lod + 1, lod_levels, before, after);
+
+            let client = WgpuRuntime::client(&device);
+            client.memory_cleanup();
+
+            let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(lod as i32 + 1);
+            let lod_scene = dataset.train.with_image_scale(cumulative_scale);
+            let mut lod_dataloader = SceneLoader::new(&lod_scene, 42);
+
+            let bounds = get_splat_bounds(
+                splat_slot.clone_main().await.unwrap(),
+                BOUND_PERCENTILE,
+            )
+            .await;
+            let mut lod_trainer =
+                SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
+            lod_trainer.allow_growth = false;
+
+            log::info!(
+                "LOD {}/{}: Training for {} steps (image scale {:.0}%)",
+                lod + 1, lod_levels, lod_steps, cumulative_scale * 100.0
+            );
+            for iter in 0..lod_steps {
+                let batch = lod_dataloader
+                    .next_batch()
+                    .instrument(trace_span!("Wait for next data batch"))
+                    .await;
+
+                splat_slot
+                    .act(0, |splats: Splats<MainBackend>| async {
+                        let mut splats = splats.train();
+                        splats.means = splats.means.map(|m| m.require_grad());
+                        splats.rotations = splats.rotations.map(|m| m.require_grad());
+                        splats.log_scales = splats.log_scales.map(|m| m.require_grad());
+                        splats.raw_opacities = splats.raw_opacities.map(|m| m.require_grad());
+                        splats.sh_coeffs = splats.sh_coeffs.map(|m| m.require_grad());
+
+                        let (new_splats, _stats) = lod_trainer.step(batch, splats).await;
+                        (new_splats.valid(), ())
+                    })
+                    .await
+                    .unwrap();
+
+                if iter > 0
+                    && iter.is_multiple_of(train_stream_config.train_config.refine_every)
+                {
+                    splat_slot
+                        .act(0, async |splats| {
+                            let (s, _) = lod_trainer.refine(iter, splats).await;
+                            (s, ())
+                        })
+                        .await
+                        .unwrap();
+                }
+
+                const LOD_UPDATE_EVERY: u32 = 5;
+                if iter % LOD_UPDATE_EVERY == 0 || iter + 1 == lod_steps {
+                    let num_splats = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
+                    emitter
+                        .emit(ProcessMessage::TrainMessage(TrainMessage::LodStatus {
+                            lod_level: lod + 1,
+                            total_levels: lod_levels,
+                            iter,
+                            total_steps: lod_steps,
+                            num_splats,
+                        }))
+                        .await;
+                }
+            }
+
+            #[cfg(not(target_family = "wasm"))]
+            {
+                let base_name = train_stream_config
+                    .process_config
+                    .export_name
+                    .replace("{iter}", &format!("{total_steps:0digits$}"));
+                let lod_name = base_name.replace(".ply", &format!("_lod{}.ply", lod + 1));
+                let res = export_checkpoint(
+                    splat_slot.clone_main().await.unwrap(),
+                    &export_path,
+                    &lod_name,
+                    total_steps,
+                    total_steps,
+                )
+                .await
+                .with_context(|| format!("LOD {} export failed", lod + 1));
+
+                if let Err(error) = res {
+                    emitter.emit(ProcessMessage::Warning { error }).await;
+                } else {
+                    log::info!("LOD {}/{}: Exported {}", lod + 1, lod_levels, lod_name);
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 

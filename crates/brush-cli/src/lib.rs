@@ -221,6 +221,19 @@ pub async fn run_cli_ui(
                     ));
                 }
                 TrainMessage::DoneTraining => {}
+                TrainMessage::LodStatus {
+                    lod_level,
+                    total_levels,
+                    iter,
+                    total_steps,
+                    num_splats,
+                } => {
+                    main_spinner.set_message(format!(
+                        "LOD {lod_level}/{total_levels} ({num_splats} splats)"
+                    ));
+                    train_progress.set_length(total_steps as u64);
+                    train_progress.set_position(iter as u64);
+                }
             },
             ProcessMessage::DoneLoading => {
                 log::info!("Completed loading.");

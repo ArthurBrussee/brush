@@ -37,6 +37,15 @@ pub enum TrainMessage {
         avg_ssim: f32,
     },
     DoneTraining,
+    /// LOD generation progress.
+    #[allow(unused)]
+    LodStatus {
+        lod_level: u32,
+        total_levels: u32,
+        iter: u32,
+        total_steps: u32,
+        num_splats: u32,
+    },
 }
 
 pub enum ProcessMessage {

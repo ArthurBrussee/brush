@@ -164,6 +164,33 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
         );
     });
 
+    ui.collapsing("LOD generation", |ui| {
+        let tc = &mut args.train_config;
+        slider(ui, &mut tc.lod_levels, 0..=8, "LOD levels", false, enabled);
+        if tc.lod_levels > 0 {
+            slider(
+                ui,
+                &mut tc.lod_refine_steps,
+                1000..=15000,
+                "Steps per LOD",
+                false,
+                enabled,
+            );
+            ui.add_enabled(
+                enabled,
+                Slider::new(&mut tc.lod_decimation_keep, 1..=100)
+                    .clamping(egui::SliderClamping::Never)
+                    .suffix("% splats kept"),
+            );
+            ui.add_enabled(
+                enabled,
+                Slider::new(&mut tc.lod_image_scale, 1..=100)
+                    .clamping(egui::SliderClamping::Never)
+                    .suffix("% image scale"),
+            );
+        }
+    });
+
     ui.collapsing("Losses", |ui| {
         let tc = &mut args.train_config;
         slider(

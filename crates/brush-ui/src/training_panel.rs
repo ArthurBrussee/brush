@@ -74,6 +74,11 @@ impl TrainingPanel {
                     self.train_progress = Some((total, total));
                 }
             }
+            TrainMessage::LodStatus {
+                iter, total_steps, ..
+            } => {
+                self.train_progress = Some((*iter, *total_steps));
+            }
             _ => {}
         }
     }

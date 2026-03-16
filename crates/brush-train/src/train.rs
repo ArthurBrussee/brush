@@ -51,6 +51,7 @@ pub struct SplatTrainer {
     optim: Option<OptimizerType>,
     ssim: Option<Ssim<DiffBackend>>,
     bounds: BoundingBox,
+    pub allow_growth: bool,
     #[cfg(not(target_family = "wasm"))]
     lpips: Option<lpips::LpipsModel<DiffBackend>>,
 }
@@ -94,6 +95,7 @@ impl SplatTrainer {
             refine_record: None,
             ssim,
             bounds,
+            allow_growth: true,
             #[cfg(not(target_family = "wasm"))]
             lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
         }
@@ -337,52 +339,54 @@ impl SplatTrainer {
             prune_points(splats, &mut record, refiner, prune_mask).await;
         let mut split_inds = HashSet::new();
 
-        // Replace dead gaussians.
-        if pruned_count > 0 {
-            // Sample weighted by opacity from splat visible during optimization.
-            let resampled_weights = splats.opacities() * refiner.vis_mask().float();
+        if self.allow_growth {
+            // Replace dead gaussians.
+            if pruned_count > 0 {
+                // Sample weighted by opacity from splat visible during optimization.
+                let resampled_weights = splats.opacities() * refiner.vis_mask().float();
 
-            let resampled_weights = resampled_weights
-                .into_data_async()
-                .await
-                .expect("Failed to get weights")
-                .into_vec::<f32>()
-                .expect("Failed to read weights");
-            let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
-            split_inds.extend(resampled_inds);
-        }
-
-        if iter < self.config.growth_stop_iter {
-            let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
-
-            let threshold_count = above_threshold
-                .clone()
-                .int()
-                .sum()
-                .into_scalar_async()
-                .await
-                .expect("Failed to get threshold") as u32;
-
-            let grow_count =
-                (threshold_count as f32 * self.config.growth_select_fraction).round() as u32;
-
-            let sample_high_grad = grow_count.saturating_sub(pruned_count);
-
-            // Only grow to the max nr. of splats.
-            let cur_splats = splats.num_splats() + split_inds.len() as u32;
-            let grow_count = sample_high_grad.min(self.config.max_splats - cur_splats);
-
-            // If still growing, sample from indices which are over the threshold.
-            if grow_count > 0 {
-                let weights = above_threshold.float() * refiner.refine_weight_norm;
-                let weights = weights
+                let resampled_weights = resampled_weights
                     .into_data_async()
                     .await
                     .expect("Failed to get weights")
                     .into_vec::<f32>()
                     .expect("Failed to read weights");
-                let growth_inds = multinomial_sample(&weights, grow_count);
-                split_inds.extend(growth_inds);
+                let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
+                split_inds.extend(resampled_inds);
+            }
+
+            if iter < self.config.growth_stop_iter {
+                let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
+
+                let threshold_count = above_threshold
+                    .clone()
+                    .int()
+                    .sum()
+                    .into_scalar_async()
+                    .await
+                    .expect("Failed to get threshold") as u32;
+
+                let grow_count =
+                    (threshold_count as f32 * self.config.growth_select_fraction).round() as u32;
+
+                let sample_high_grad = grow_count.saturating_sub(pruned_count);
+
+                // Only grow to the max nr. of splats.
+                let cur_splats = splats.num_splats() + split_inds.len() as u32;
+                let grow_count = sample_high_grad.min(self.config.max_splats - cur_splats);
+
+                // If still growing, sample from indices which are over the threshold.
+                if grow_count > 0 {
+                    let weights = above_threshold.float() * refiner.refine_weight_norm;
+                    let weights = weights
+                        .into_data_async()
+                        .await
+                        .expect("Failed to get weights")
+                        .into_vec::<f32>()
+                        .expect("Failed to read weights");
+                    let growth_inds = multinomial_sample(&weights, grow_count);
+                    split_inds.extend(growth_inds);
+                }
             }
         }
 
@@ -614,4 +618,70 @@ fn scale_down_largest_dim<B: Backend>(scales: Tensor<B, 2>, factor: f32) -> Tens
     let max_mask = scales.clone().equal(scales.clone().max_dim(1));
     let scale = Tensor::ones_like(&scales).mask_fill(max_mask, factor);
     scales.mul(scale)
+}
+
+/// Decimate splats to `target_count` by removing the least important ones.
+/// Importance is `opacity * geometric_mean(scales)`.
+pub async fn decimate_to_count(
+    mut splats: Splats<MainBackend>,
+    target_count: u32,
+) -> Splats<MainBackend> {
+    let num = splats.num_splats();
+    if target_count >= num {
+        return splats;
+    }
+
+    let opacities: Vec<f32> = splats
+        .opacities()
+        .into_data_async()
+        .await
+        .expect("Failed to read opacities")
+        .into_vec()
+        .expect("Failed to convert opacities");
+
+    let scales: Vec<f32> = splats
+        .scales()
+        .into_data_async()
+        .await
+        .expect("Failed to read scales")
+        .into_vec()
+        .expect("Failed to convert scales");
+
+    let mut indexed: Vec<(usize, f32)> = (0..num as usize)
+        .map(|i| {
+            let opacity = opacities[i];
+            let s0 = scales[i * 3];
+            let s1 = scales[i * 3 + 1];
+            let s2 = scales[i * 3 + 2];
+            let geo_mean = (s0 * s1 * s2).cbrt();
+            (i, opacity * geo_mean)
+        })
+        .collect();
+
+    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let keep_indices: Vec<i32> = indexed[..target_count as usize]
+        .iter()
+        .map(|(i, _)| *i as i32)
+        .collect();
+
+    let device = splats.device();
+    let keep_tensor = Tensor::from_data(
+        TensorData::new(keep_indices, [target_count as usize]),
+        &device,
+    );
+
+    splats.means = splats.means.map(|m| m.select(0, keep_tensor.clone()));
+    splats.rotations = splats.rotations.map(|r| r.select(0, keep_tensor.clone()));
+    splats.log_scales = splats
+        .log_scales
+        .map(|s| s.select(0, keep_tensor.clone()));
+    splats.sh_coeffs = splats
+        .sh_coeffs
+        .map(|c| c.select(0, keep_tensor.clone()));
+    splats.raw_opacities = splats
+        .raw_opacities
+        .map(|o| o.select(0, keep_tensor.clone()));
+
+    splats
 }

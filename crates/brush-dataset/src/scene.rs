@@ -23,6 +23,7 @@ pub struct LoadImage {
     mask_path: Option<PathBuf>,
     max_resolution: u32,
     alpha_mode: AlphaMode,
+    scale: f32,
 }
 
 impl PartialEq for LoadImage {
@@ -30,6 +31,7 @@ impl PartialEq for LoadImage {
         self.path == other.path
             && self.mask_path == other.mask_path
             && self.max_resolution == other.max_resolution
+            && self.scale == other.scale
     }
 }
 
@@ -55,6 +57,7 @@ impl LoadImage {
             mask_path,
             max_resolution,
             alpha_mode,
+            scale: 1.0,
         }
     }
 
@@ -102,18 +105,32 @@ impl LoadImage {
 
             img = masked_img.into();
         }
-        if img.width() <= self.max_resolution && img.height() <= self.max_resolution {
-            return Ok(img);
+        let img = if img.width() <= self.max_resolution && img.height() <= self.max_resolution {
+            img
+        } else {
+            img.resize(
+                self.max_resolution,
+                self.max_resolution,
+                image::imageops::FilterType::Triangle,
+            )
+        };
+        if self.scale < 1.0 {
+            let new_w = (img.width() as f32 * self.scale).max(1.0) as u32;
+            let new_h = (img.height() as f32 * self.scale).max(1.0) as u32;
+            Ok(img.resize_exact(new_w, new_h, image::imageops::FilterType::Triangle))
+        } else {
+            Ok(img)
         }
-        Ok(img.resize(
-            self.max_resolution,
-            self.max_resolution,
-            image::imageops::FilterType::Triangle,
-        ))
     }
 
     pub fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
+    }
+
+    pub fn with_scale(&self, scale: f32) -> Self {
+        let mut copy = self.clone();
+        copy.scale = scale;
+        copy
     }
 
     pub fn img_name(&self) -> String {
@@ -168,6 +185,18 @@ impl Scene {
             },
         );
         BoundingBox::from_min_max(min, max)
+    }
+
+    pub fn with_image_scale(&self, scale: f32) -> Self {
+        let views = self
+            .views
+            .iter()
+            .map(|v| SceneView {
+                image: v.image.with_scale(scale),
+                camera: v.camera.clone(),
+            })
+            .collect();
+        Scene::new(views)
     }
 
     pub fn get_nearest_view(&self, reference: Affine3A) -> Option<usize> {

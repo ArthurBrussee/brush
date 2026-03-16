@@ -17,6 +17,8 @@ pub struct StatsPanel {
     training_complete: bool,
     num_splats: u32,
     sh_degree: u32,
+    lod_levels: u32,
+    lod_status: Option<(u32, u32)>,
 }
 
 fn bytes_format(bytes: u64) -> String {
@@ -95,6 +97,8 @@ impl AppPane for StatsPanel {
                 self.training_complete = false;
                 self.num_splats = 0;
                 self.sh_degree = 0;
+                self.lod_levels = 0;
+                self.lod_status = None;
             }
             ProcessMessage::StartLoading { .. } => {
                 self.last_eval = None;
@@ -108,12 +112,22 @@ impl AppPane for StatsPanel {
                 self.sh_degree = *sh_degree;
             }
             ProcessMessage::TrainMessage(train) => match train {
+                TrainMessage::TrainConfig { config } => {
+                    self.lod_levels = config.train_config.lod_levels;
+                }
                 TrainMessage::TrainStep {
                     iter,
                     total_elapsed,
                     ..
                 } => {
                     self.last_train_step = (*total_elapsed, *iter);
+                }
+                TrainMessage::LodStatus {
+                    lod_level,
+                    total_levels,
+                    ..
+                } => {
+                    self.lod_status = Some((*lod_level, *total_levels));
                 }
                 TrainMessage::Dataset { dataset } => {
                     self.train_eval_views = (
@@ -176,7 +190,17 @@ impl AppPane for StatsPanel {
                 let train_step = self.last_train_step.1;
                 let (train_views, eval_views) = self.train_eval_views;
 
+                let lod_levels = self.lod_levels;
+                let lod_status = self.lod_status;
                 stats_grid(ui, "training_stats_grid", |ui, v| {
+                    if lod_levels > 0 {
+                        let lod_text = if let Some((current, total)) = lod_status {
+                            format!("{current}/{total}")
+                        } else {
+                            "--".to_owned()
+                        };
+                        stat_row(ui, "LOD", lod_text, v);
+                    }
                     stat_row(ui, "Train step", format!("{train_step}"), v);
                     stat_row(ui, "Last eval", last_eval, v);
                     stat_row(ui, "Training time", training_time, v);
