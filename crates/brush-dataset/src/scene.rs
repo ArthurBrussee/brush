@@ -196,7 +196,7 @@ impl Scene {
                 camera: v.camera.clone(),
             })
             .collect();
-        Scene::new(views)
+        Self::new(views)
     }
 
     pub fn get_nearest_view(&self, reference: Affine3A) -> Option<usize> {
