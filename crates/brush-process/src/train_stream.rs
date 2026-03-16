@@ -350,7 +350,12 @@ pub(crate) async fn train_stream(
         let digits = ((total_steps as f64).log10().floor() as usize) + 1;
 
         for lod in 0..lod_levels {
-            log::info!("LOD {}/{}: Decimating (keep {}%)", lod + 1, lod_levels, lod_keep_pct);
+            log::info!(
+                "LOD {}/{}: Decimating (keep {}%)",
+                lod + 1,
+                lod_levels,
+                lod_keep_pct
+            );
 
             let before = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
             let target = (before as f32 * lod_keep_pct as f32 / 100.0).max(1.0) as u32;
@@ -361,7 +366,13 @@ pub(crate) async fn train_stream(
                 .await
                 .unwrap();
             let after = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
-            log::info!("LOD {}/{}: {} -> {} splats", lod + 1, lod_levels, before, after);
+            log::info!(
+                "LOD {}/{}: {} -> {} splats",
+                lod + 1,
+                lod_levels,
+                before,
+                after
+            );
 
             let client = WgpuRuntime::client(&device);
             client.memory_cleanup();
@@ -370,18 +381,18 @@ pub(crate) async fn train_stream(
             let lod_scene = dataset.train.with_image_scale(cumulative_scale);
             let mut lod_dataloader = SceneLoader::new(&lod_scene, 42);
 
-            let bounds = get_splat_bounds(
-                splat_slot.clone_main().await.unwrap(),
-                BOUND_PERCENTILE,
-            )
-            .await;
+            let bounds =
+                get_splat_bounds(splat_slot.clone_main().await.unwrap(), BOUND_PERCENTILE).await;
             let mut lod_trainer =
                 SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
             lod_trainer.allow_growth = false;
 
             log::info!(
                 "LOD {}/{}: Training for {} steps (image scale {:.0}%)",
-                lod + 1, lod_levels, lod_steps, cumulative_scale * 100.0
+                lod + 1,
+                lod_levels,
+                lod_steps,
+                cumulative_scale * 100.0
             );
             for iter in 0..lod_steps {
                 let batch = lod_dataloader
@@ -404,9 +415,7 @@ pub(crate) async fn train_stream(
                     .await
                     .unwrap();
 
-                if iter > 0
-                    && iter.is_multiple_of(train_stream_config.train_config.refine_every)
-                {
+                if iter > 0 && iter.is_multiple_of(train_stream_config.train_config.refine_every) {
                     splat_slot
                         .act(0, async |splats| {
                             let (s, _) = lod_trainer.refine(iter, splats).await;
