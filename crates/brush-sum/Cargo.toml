@@ -1,0 +1,28 @@
+[package]
+name        = "brush-sfm"
+version     = "0.3.0"
+edition     = "2021"
+description = "Drone SfM pipeline for brush_pbl — CSV+MP4 → COLMAP → Brush"
+build       = "build.rs"
+
+[dependencies]
+# Already in brush workspace
+glam      = "0.30"
+tracing   = "0.1"
+anyhow    = "1"
+thiserror = "1"
+serde     = { version = "1", features = ["derive"] }
+
+# Android JNI for MediaMetadataRetriever bridge
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[build-dependencies]
+# Compiles cpp/opencv_sfm_wrapper.cpp when opencv-sfm feature is on
+cc = "1"
+
+[features]
+default    = []
+# Enable OpenCV C++ SfM via FFI (desktop + Android with NDK cross-compile)
+# Requires: OPENCV_ANDROID_DIR env var pointing at build_opencv_arm64.sh output
+opencv-sfm = []
