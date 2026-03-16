@@ -36,6 +36,7 @@ use tokio_with_wasm::alias as tokio_wasm;
 use tracing::{Instrument, trace_span};
 use web_time::{Duration, Instant};
 
+#[allow(clippy::large_stack_frames)]
 pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
     train_stream_config: TrainStreamConfig,
