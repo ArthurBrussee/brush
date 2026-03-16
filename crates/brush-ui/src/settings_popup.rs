@@ -188,6 +188,10 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
                     .clamping(egui::SliderClamping::Never)
                     .suffix("% image scale"),
             );
+            ui.add_enabled(
+                enabled,
+                egui::Checkbox::new(&mut tc.lod_sensitivity_pruning, "Sensitivity-based pruning"),
+            );
         }
     });
 

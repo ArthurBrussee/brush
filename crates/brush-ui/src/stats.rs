@@ -125,9 +125,12 @@ impl AppPane for StatsPanel {
                 TrainMessage::LodStatus {
                     lod_level,
                     total_levels,
+                    iter,
+                    elapsed,
                     ..
                 } => {
                     self.lod_status = Some((*lod_level, *total_levels));
+                    self.last_train_step = (*elapsed, *iter);
                 }
                 TrainMessage::Dataset { dataset } => {
                     self.train_eval_views = (

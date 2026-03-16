@@ -45,6 +45,7 @@ pub enum TrainMessage {
         iter: u32,
         total_steps: u32,
         num_splats: u32,
+        elapsed: web_time::Duration,
     },
 }
 

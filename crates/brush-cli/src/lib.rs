@@ -227,6 +227,7 @@ pub async fn run_cli_ui(
                     iter,
                     total_steps,
                     num_splats,
+                    ..
                 } => {
                     main_spinner.set_message(format!(
                         "LOD {lod_level}/{total_levels} ({num_splats} splats)"

@@ -108,6 +108,10 @@ pub struct TrainConfig {
     /// Percentage to scale source images at each LOD level (1-100).
     #[arg(long, help_heading = "LOD options", default_value = "50")]
     pub lod_image_scale: u32,
+
+    /// Use sensitivity-based pruning for LOD decimation (higher quality).
+    #[arg(long, help_heading = "LOD options", default_value = "false")]
+    pub lod_sensitivity_pruning: bool,
 }
 
 impl Default for TrainConfig {

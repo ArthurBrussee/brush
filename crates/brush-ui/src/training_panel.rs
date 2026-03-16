@@ -16,6 +16,8 @@ pub struct TrainingPanel {
     train_config: Option<TrainStreamConfig>,
     manual_export_iters: Vec<u32>,
     export_channel: (UnboundedSender<Error>, UnboundedReceiver<Error>),
+    training_done: bool,
+    lod_preparing: bool,
 }
 
 impl Default for TrainingPanel {
@@ -28,6 +30,8 @@ impl Default for TrainingPanel {
             train_config: None,
             manual_export_iters: Vec::new(),
             export_channel: tokio::sync::mpsc::unbounded_channel(),
+            training_done: false,
+            lod_preparing: false,
         }
     }
 }
@@ -40,6 +44,8 @@ impl TrainingPanel {
         self.iter_per_s_samples = 0;
         self.train_config = None;
         self.manual_export_iters.clear();
+        self.training_done = false;
+        self.lod_preparing = false;
     }
 
     fn on_train_message(&mut self, message: &TrainMessage) {
@@ -70,6 +76,8 @@ impl TrainingPanel {
                 self.last_train_step = Some((*total_elapsed, *iter));
             }
             TrainMessage::DoneTraining => {
+                self.training_done = true;
+                self.lod_preparing = false;
                 if let Some((_, total)) = self.train_progress {
                     self.train_progress = Some((total, total));
                 }
@@ -77,6 +85,7 @@ impl TrainingPanel {
             TrainMessage::LodStatus {
                 iter, total_steps, ..
             } => {
+                self.lod_preparing = *iter == 0;
                 self.train_progress = Some((*iter, *total_steps));
             }
             _ => {}
@@ -215,7 +224,7 @@ impl AppPane for TrainingPanel {
         };
 
         let progress = iter as f32 / total as f32;
-        let is_complete = iter == total;
+        let is_complete = self.training_done;
         let padding = 8.0;
 
         // Buttons row above progress bar
@@ -356,22 +365,19 @@ impl AppPane for TrainingPanel {
         // Progress text overlay - right aligned
         let text_color = egui::Color32::WHITE;
 
-        if is_complete {
-            ui.painter().text(
-                egui::pos2(bar_rect.right() - padding, bar_rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                "Complete!",
-                egui::FontId::new(13.0, egui::FontFamily::Proportional),
-                egui::Color32::WHITE,
-            );
+        let bar_text = if is_complete {
+            "Complete!".to_owned()
+        } else if self.lod_preparing {
+            "Preparing LOD...".to_owned()
         } else {
-            ui.painter().text(
-                egui::pos2(bar_rect.right() - padding, bar_rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                format!("{iter}/{total}"),
-                egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                text_color,
-            );
-        }
+            format!("{iter}/{total}")
+        };
+        ui.painter().text(
+            egui::pos2(bar_rect.right() - padding, bar_rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            bar_text,
+            egui::FontId::new(12.0, egui::FontFamily::Proportional),
+            text_color,
+        );
     }
 }
