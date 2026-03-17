@@ -10,6 +10,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
@@ -18,6 +19,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
+import android.provider.OpenableColumns;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.view.Gravity;
@@ -31,6 +33,18 @@ import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.Locale;
+
+import kotlinx.coroutines.GlobalScope;
+
+import com.splats.app.telemetry.TelemetryPreprocessor;
+import com.splats.app.telemetry.TelemetryPreprocessorCallback;
+import com.splats.app.telemetry.ProcessingStage;
+import com.splats.app.telemetry.PoseStampSequence;
+import com.splats.app.telemetry.TelemetryProcessingReport;
+import com.splats.app.telemetry.KeyframeSelectionConfig;
 
 public class MainActivity extends GameActivity {
 
@@ -42,9 +56,15 @@ public class MainActivity extends GameActivity {
     public static MainActivity instance;
 
     private static final int REQUEST_CODE_EXTRACT_FRAMES = 1001;
+    private static final int REQUEST_CODE_PICK_CSV = 1002;
     private static final int FRAME_COUNT = 100;
     // Maximum width/height to avoid OOM. Adjust if you want larger. Set high to preserve quality on modern devices.
     private static final int MAX_DIMENSION = 4096;
+    private static final String TAG = "MainActivity";
+
+    private File selectedCsvFile = null;
+    private File selectedVideoFile = null;
+    private boolean telemetryRunning = false;
 
     private void hideSystemUI() {
         getWindow().getAttributes().layoutInDisplayCutoutMode =
@@ -85,20 +105,80 @@ public class MainActivity extends GameActivity {
         lp.gravity = Gravity.BOTTOM | Gravity.END;
         lp.setMargins(0, 0, 48, 48);
 
+        LinearLayout buttonColumn = new LinearLayout(this);
+        buttonColumn.setOrientation(LinearLayout.VERTICAL);
+
         Button extractButton = new Button(this);
         extractButton.setText("Extract frames");
 
         extractButton.setOnClickListener(v -> {
-            Log.i("MainActivity", "Extract frames button clicked");
+            Log.i(TAG, "Extract frames button clicked");
             // Use the dedicated request code so onActivityResult can differentiate this use-case
             FilePicker.startFilePicker(REQUEST_CODE_EXTRACT_FRAMES);
         });
 
-        addContentView(extractButton, lp);
+        Button csvButton = new Button(this);
+        csvButton.setText("Select telemetry CSV");
+        csvButton.setOnClickListener(v -> {
+            Log.i(TAG, "Select telemetry CSV clicked");
+            FilePicker.startCsvPicker(REQUEST_CODE_PICK_CSV);
+        });
+
+        buttonColumn.addView(extractButton);
+        buttonColumn.addView(csvButton);
+
+        addContentView(buttonColumn, lp);
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+
+        if (requestCode == REQUEST_CODE_PICK_CSV) {
+            try {
+                if (resultCode == Activity.RESULT_OK && data != null) {
+                    Uri uri = data.getData();
+                    if (uri != null) {
+                        try {
+                            int takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
+                            if ((data.getFlags() & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
+                                takeFlags |= Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+                            }
+                            getContentResolver().takePersistableUriPermission(uri, takeFlags);
+                        } catch (Exception e) {
+                            Log.i(TAG, "Could not take persistable permission: " + e);
+                        }
+
+                        String displayName = queryDisplayName(uri);
+                        if (!isCsvName(displayName)) {
+                            Log.w(TAG, "Rejected non-CSV telemetry file: " + displayName);
+                            Toast.makeText(this,
+                                    "Only CSV telemetry logs are supported",
+                                    Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+
+                        selectedCsvFile = ensureLocalFileForUri(uri, "telemetry_csv_", ".csv");
+
+                        if (selectedCsvFile != null) {
+                            Toast.makeText(this,
+                                    "Telemetry CSV selected: " + selectedCsvFile.getName(),
+                                    Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(this,
+                                    "Failed to read telemetry CSV",
+                                    Toast.LENGTH_SHORT).show();
+                        }
+
+                        startTelemetryPreprocessIfReady();
+                    }
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "CSV pick error", e);
+            }
+
+            super.onActivityResult(requestCode, resultCode, data);
+            return;
+        }
 
         // Keep original handling for the app's FilePicker-based flows
         if (requestCode == FilePicker.REQUEST_CODE_PICK_FILE || requestCode == REQUEST_CODE_EXTRACT_FRAMES) {
@@ -114,8 +194,10 @@ public class MainActivity extends GameActivity {
                     if (uri != null) {
                         // Persist read permission so MediaMetadataRetriever can read later
                         try {
-                            final int takeFlags = (data.getFlags()
-                                    & (Intent.FLAG_GRANT_READ_URI_PERMISSION));
+                            int takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
+                            if ((data.getFlags() & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
+                                takeFlags |= Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+                            }
                             getContentResolver().takePersistableUriPermission(uri, takeFlags);
                         } catch (Exception e) {
                             // Not all URIs allow persistable permission; ignore safely
@@ -138,6 +220,9 @@ public class MainActivity extends GameActivity {
                             // keep original behavior for native side
                             FilePicker.onPicked(uri, fd);
 
+                            selectedVideoFile = ensureLocalFileForUri(uri, "telemetry_video_", ".mp4");
+                            startTelemetryPreprocessIfReady();
+
                             // return after we've done both actions
                             return;
                         } else {
@@ -146,6 +231,8 @@ public class MainActivity extends GameActivity {
                                 extractFrames(uri);
                                 // call native with invalid fd to preserve previous behavior
                                 FilePicker.onPicked(uri, -1);
+                                selectedVideoFile = ensureLocalFileForUri(uri, "telemetry_video_", ".mp4");
+                                startTelemetryPreprocessIfReady();
                                 return;
                             }
                         }
@@ -161,6 +248,117 @@ public class MainActivity extends GameActivity {
         }
 
         super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    private void startTelemetryPreprocessIfReady() {
+        if (telemetryRunning) return;
+        if (selectedCsvFile == null || selectedVideoFile == null) return;
+        if (!selectedCsvFile.exists() || !selectedVideoFile.exists()) return;
+
+        telemetryRunning = true;
+        Toast.makeText(this, "Starting telemetry preprocess...", Toast.LENGTH_SHORT).show();
+
+        TelemetryPreprocessorCallback callback = new TelemetryPreprocessorCallback() {
+            @Override
+            public void onProgress(ProcessingStage stage, float fraction) {
+                Log.i(TAG, "Telemetry progress: " + stage + " " + fraction);
+            }
+
+            @Override
+            public void onComplete(PoseStampSequence sequence,
+                                   Throwable error,
+                                   TelemetryProcessingReport report) {
+                telemetryRunning = false;
+                if (error == null) {
+                    Toast.makeText(MainActivity.this, "Telemetry preprocess complete", Toast.LENGTH_SHORT).show();
+                    if (sequence != null) {
+                        Toast.makeText(
+                                MainActivity.this,
+                                "Output: " + sequence.getLogPath().getParent(),
+                                Toast.LENGTH_LONG
+                        ).show();
+                    }
+                } else {
+                    Log.e(TAG, "Telemetry preprocess failed", error);
+                    String msg = error.getMessage() != null ? error.getMessage() : "Telemetry preprocess failed";
+                    Toast.makeText(MainActivity.this, "Telemetry preprocess failed", Toast.LENGTH_LONG).show();
+                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+                }
+            }
+        };
+
+        File outDir = getExternalFilesDir("telemetry");
+        if (outDir == null) {
+            outDir = getCacheDir();
+        }
+        if (!outDir.exists()) {
+            outDir.mkdirs();
+        }
+        String sessionId = "session_" + System.currentTimeMillis();
+
+        TelemetryPreprocessor preprocessor =
+                new TelemetryPreprocessor(
+                        selectedCsvFile,
+                        selectedVideoFile,
+                        new long[0],
+                        callback,
+                        new KeyframeSelectionConfig(),
+                        outDir,
+                        sessionId
+                );
+        preprocessor.start(GlobalScope.INSTANCE);
+    }
+
+    private File ensureLocalFileForUri(Uri uri, String prefix, String fallbackExt) {
+        try {
+            if (uri == null) return null;
+
+            String name = queryDisplayName(uri);
+            String ext = fallbackExt;
+            if (name != null && name.contains(".")) {
+                ext = name.substring(name.lastIndexOf('.'));
+            }
+            File out = new File(getCacheDir(), prefix + System.currentTimeMillis() + ext);
+
+            try (InputStream in = getContentResolver().openInputStream(uri);
+                 OutputStream outStream = new FileOutputStream(out)) {
+                if (in == null) return null;
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    outStream.write(buffer, 0, read);
+                }
+            }
+
+            return out;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to cache uri " + uri, e);
+            return null;
+        }
+    }
+
+    private boolean isCsvName(String name) {
+        if (name == null) return false;
+        return name.toLowerCase(Locale.US).endsWith(".csv");
+    }
+
+    private String queryDisplayName(Uri uri) {
+        if (uri == null) return null;
+        Cursor cursor = null;
+        try {
+            cursor = getContentResolver().query(uri, null, null, null, null);
+            if (cursor != null) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (nameIndex >= 0 && cursor.moveToFirst()) {
+                    return cursor.getString(nameIndex);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to get display name", e);
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+        return null;
     }
 
     private void extractFrames(Uri videoUri) {

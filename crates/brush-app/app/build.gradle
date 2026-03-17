@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {
@@ -32,6 +33,9 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
     namespace 'com.splats.app'
 }
 
@@ -50,6 +54,13 @@ dependencies {
     // NB: This has to be EXACTLY the version specified in
     // https://github.com/rust-mobile/android-activity/blob/0d299300f4120821ae1fcaaf0276129c512c2c96/android-activity/game-activity-csrc/game-activity/GameActivity.h#L24
     implementation "androidx.games:games-activity:2.0.2"
+
+    // Kotlin + coroutines for telemetry pipeline
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.24"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+
+    // JSON output for telemetry
+    implementation "com.google.code.gson:gson:2.10.1"
 
     // To use the Games Controller Library
     //implementation "androidx.games:games-controller:1.1.0"
