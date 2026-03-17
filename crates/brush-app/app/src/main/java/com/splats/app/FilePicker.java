@@ -14,6 +14,7 @@ public class FilePicker {
     private static Activity _activity;
 
     public static final int REQUEST_CODE_PICK_FILE = 1;
+    public static final int REQUEST_CODE_PICK_CSV = 2;
 
     // native callback kept as before
     private static native void onFilePickerResult(int fd, String name);
@@ -44,6 +45,31 @@ public class FilePicker {
         intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
 
         Log.i("FilePicker", "Starting file picker (requestCode=" + requestCode + ")");
+        _activity.startActivityForResult(intent, requestCode);
+    }
+
+    // CSV picker for telemetry ingest
+    public static void startCsvPicker(int requestCode) {
+        if (_activity == null) {
+            Log.e("FilePicker", "No activity registered");
+            return;
+        }
+
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
+                "text/csv",
+                "text/comma-separated-values",
+                "application/vnd.ms-excel",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "text/plain"
+        });
+
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+
+        Log.i("FilePicker", "Starting CSV picker (requestCode=" + requestCode + ")");
         _activity.startActivityForResult(intent, requestCode);
     }
 
