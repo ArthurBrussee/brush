@@ -62,10 +62,6 @@ dependencies {
     // JSON output for telemetry
     implementation "com.google.code.gson:gson:2.10.1"
 
-    // XLSX support for telemetry ingest
-    implementation "org.apache.poi:poi:5.2.5"
-    implementation "org.apache.poi:poi-ooxml:5.2.5"
-
     // To use the Games Controller Library
     //implementation "androidx.games:games-controller:1.1.0"
 

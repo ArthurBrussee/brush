@@ -61,8 +61,6 @@ public class FilePicker {
         intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
                 "text/csv",
                 "text/comma-separated-values",
-                "application/vnd.ms-excel",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "text/plain"
         });
 

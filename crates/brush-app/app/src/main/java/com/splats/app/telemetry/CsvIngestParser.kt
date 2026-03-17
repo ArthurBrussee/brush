@@ -4,9 +4,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
-import org.apache.poi.ss.usermodel.DataFormatter
-import org.apache.poi.xssf.usermodel.XSSFWorkbook
-import kotlin.math.max
 import android.util.Log
 
 // ─── Column name mapping ──────────────────────────────────────────────────────
@@ -48,40 +45,52 @@ internal object CsvIngest {
     fun read(file: File): Pair<List<String>, List<List<String>>> {
         if (!file.exists()) throw TelemetryError.CsvNotFound(file.absolutePath)
 
-        return if (file.extension.lowercase() == "xlsx") {
-            readXlsx(file)
-        } else {
-            readCsv(file)
+        val ext = file.extension.lowercase()
+        if (ext != "csv") {
+            val label = if (ext.isBlank()) "unknown" else ext
+            throw TelemetryError.UnsupportedFormat(label)
         }
+        return readCsv(file)
     }
 
     private fun readCsv(file: File): Pair<List<String>, List<List<String>>> {
-        val raw = file.readText(Charsets.UTF_8)
-            .removePrefix("\uFEFF")             // strip UTF-8 BOM
-            .replace("\r\n", "\n")             // normalise CRLF → LF
-            .replace('\r', '\n')               // normalise lone CR
+        val dataRows = mutableListOf<List<String>>()
+        var headers: List<String>? = null
+        var firstNonEmpty: String? = null
 
-        val lines = raw.split('\n')
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
+        file.inputStream().bufferedReader(Charsets.UTF_8).use { reader ->
+            while (true) {
+                val rawLine = reader.readLine() ?: break
+                var line = rawLine.trim()
+                if (line.isEmpty()) continue
+                if (firstNonEmpty == null) {
+                    line = line.removePrefix("\uFEFF") // strip UTF-8 BOM on first line
+                    firstNonEmpty = line
+                }
 
-        // Locate the header row: first line that looks like a CSV header
-        // (contains a comma and at least one recognisable keyword).
-        val headerIndex = lines.indexOfFirst { line ->
-            line.contains(',') && looksLikeHeader(line)
+                // Locate the header row: first line that looks like a CSV header
+                // (contains a comma and at least one recognisable keyword).
+                if (headers == null) {
+                    if (line.contains(',') && looksLikeHeader(line)) {
+                        val headerLine = splitCsvLine(line)
+                        headers = headerLine
+                        Log.i(TAG, "CSV headers: ${headerLine.joinToString("|")}")
+                    }
+                    continue
+                }
+
+                if (line.contains(',')) {
+                    dataRows += splitCsvLine(line)
+                }
+            }
         }
-        if (headerIndex < 0) {
-            Log.e(TAG, "CSV: could not find header row. First line: ${lines.firstOrNull()}")
+
+        val headersFinal = headers ?: run {
+            Log.e(TAG, "CSV: could not find header row. First line: $firstNonEmpty")
             throw TelemetryError.InsufficientRecords(0)
         }
 
-        val headers = splitCsvLine(lines[headerIndex])
-        Log.i(TAG, "CSV headers: ${headers.joinToString("|")}")
-        val dataRows = lines.drop(headerIndex + 1)
-            .filter { it.contains(',') }
-            .map { splitCsvLine(it) }
-
-        return Pair(headers, dataRows)
+        return Pair(headersFinal, dataRows)
     }
 
     // A line "looks like" a CSV header if it has at least one recognisable keyword.
@@ -93,53 +102,6 @@ internal object CsvIngest {
     private fun splitCsvLine(line: String): List<String> =
         line.split(',').map { it.trim() }
 
-    private fun readXlsx(file: File): Pair<List<String>, List<List<String>>> {
-        val formatter = DataFormatter()
-        var headers: List<String>? = null
-        val dataRows = mutableListOf<List<String>>()
-        var debugRowsLogged = 0
-
-        file.inputStream().use { input ->
-            XSSFWorkbook(input).use { workbook ->
-                val sheet = workbook.getSheetAt(0) ?: throw TelemetryError.InsufficientRecords(0)
-                val rowIterator = sheet.iterator()
-                while (rowIterator.hasNext()) {
-                    val row = rowIterator.next()
-                    val lastCell = max(0, row.lastCellNum.toInt())
-                    val cells = MutableList(lastCell) { "" }
-                    for (i in 0 until lastCell) {
-                        val cell = row.getCell(i)
-                        cells[i] = if (cell != null) formatter.formatCellValue(cell).trim() else ""
-                    }
-                    if (cells.all { it.isBlank() }) continue
-
-                    if (debugRowsLogged < 5) {
-                        Log.i(TAG, "XLSX row ${row.rowNum}: ${cells.joinToString("|")}")
-                        debugRowsLogged++
-                    }
-
-                    if (headers == null) {
-                        if (looksLikeHeaderCells(cells)) {
-                            headers = cells
-                            Log.i(TAG, "XLSX headers: ${cells.joinToString("|")}")
-                            continue
-                        }
-                    }
-
-                    dataRows += cells
-                }
-            }
-        }
-
-        val headerRow = headers ?: dataRows.firstOrNull()
-        if (headerRow == null) throw TelemetryError.InsufficientRecords(0)
-        val hadExplicitHeader = headers != null
-        if (!hadExplicitHeader && dataRows.isNotEmpty()) {
-            Log.i(TAG, "XLSX header fallback (first non-empty row): ${headerRow.joinToString("|")}")
-            dataRows.removeAt(0)
-        }
-        return Pair(headerRow, dataRows)
-    }
 }
 
 // ─── CSV Parser ───────────────────────────────────────────────────────────────

@@ -8,6 +8,10 @@ sealed class TelemetryError(message: String) : Exception(message) {
     data class CsvNotFound(val path: String)
         : TelemetryError("CSV file not found: $path")
 
+    /** Telemetry logs must be CSV; other formats are not supported. */
+    data class UnsupportedFormat(val extension: String)
+        : TelemetryError("Unsupported telemetry format: $extension. Please use CSV.")
+
     /** MP4 video file could not be found at the supplied path. */
     data class VideoNotFound(val path: String)
         : TelemetryError("Video file not found: $path")

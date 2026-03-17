@@ -35,6 +35,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Locale;
 
 import kotlinx.coroutines.GlobalScope;
 
@@ -145,6 +146,15 @@ public class MainActivity extends GameActivity {
                             getContentResolver().takePersistableUriPermission(uri, takeFlags);
                         } catch (Exception e) {
                             Log.i(TAG, "Could not take persistable permission: " + e);
+                        }
+
+                        String displayName = queryDisplayName(uri);
+                        if (!isCsvName(displayName)) {
+                            Log.w(TAG, "Rejected non-CSV telemetry file: " + displayName);
+                            Toast.makeText(this,
+                                    "Only CSV telemetry logs are supported",
+                                    Toast.LENGTH_SHORT).show();
+                            return;
                         }
 
                         selectedCsvFile = ensureLocalFileForUri(uri, "telemetry_csv_", ".csv");
@@ -328,6 +338,11 @@ public class MainActivity extends GameActivity {
             Log.e(TAG, "Failed to cache uri " + uri, e);
             return null;
         }
+    }
+
+    private boolean isCsvName(String name) {
+        if (name == null) return false;
+        return name.toLowerCase(Locale.US).endsWith(".csv");
     }
 
     private String queryDisplayName(Uri uri) {
