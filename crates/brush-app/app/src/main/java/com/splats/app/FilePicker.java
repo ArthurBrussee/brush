@@ -15,24 +15,46 @@ public class FilePicker {
 
     public static final int REQUEST_CODE_PICK_FILE = 1;
 
-    // ✅ Now passes fd + filename
+    // native callback kept as before
     private static native void onFilePickerResult(int fd, String name);
 
     public static void Register(Activity activity) {
         _activity = activity;
     }
 
+    // original convenience method (keeps compatibility)
     public static void startFilePicker() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-
-        Log.i("FilePicker", "Starting file picker");
-        _activity.startActivityForResult(intent, REQUEST_CODE_PICK_FILE);
+        startFilePicker(REQUEST_CODE_PICK_FILE);
     }
 
+    // new overload to supply distinct request codes (so callers can differentiate)
+    public static void startFilePicker(int requestCode) {
+        if (_activity == null) {
+            Log.e("FilePicker", "No activity registered");
+            return;
+        }
+
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+
+        // restrict to videos so users pick MP4/other video types
+        intent.setType("video/*");
+
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+
+        Log.i("FilePicker", "Starting file picker (requestCode=" + requestCode + ")");
+        _activity.startActivityForResult(intent, requestCode);
+    }
+
+    // Called by MainActivity; ensures null-check and preserves old native-callback behavior
     public static void onPicked(Uri uri, int fd) {
+        if (uri == null) {
+            Log.e("FilePicker", "onPicked: null uri");
+            onFilePickerResult(-1, "invalid");
+            return;
+        }
+
         String name = "file";
 
         try {
