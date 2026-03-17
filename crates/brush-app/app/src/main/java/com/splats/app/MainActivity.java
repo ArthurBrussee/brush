@@ -312,9 +312,6 @@ public class MainActivity extends GameActivity {
     private File ensureLocalFileForUri(Uri uri, String prefix, String fallbackExt) {
         try {
             if (uri == null) return null;
-            if ("file".equalsIgnoreCase(uri.getScheme())) {
-                return new File(uri.getPath());
-            }
 
             String name = queryDisplayName(uri);
             String ext = fallbackExt;
