@@ -5,79 +5,176 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.google.androidgamesdk.GameActivity;
+
 import android.app.Activity;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.view.View;
 import android.view.WindowManager;
-
-import java.io.IOException;
 import android.util.Log;
 
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.view.Gravity;
+import android.view.ViewGroup.LayoutParams;
+
+import java.io.File;
+import java.io.FileOutputStream;
+
 public class MainActivity extends GameActivity {
+
     static {
         System.loadLibrary("brush_app");
     }
 
+    public static MainActivity instance;
+
     private void hideSystemUI() {
-        // This will put the game behind any cutouts and waterfalls on devices which have
-        // them, so the corresponding insets will be non-zero.
-        getWindow().getAttributes().layoutInDisplayCutoutMode
-                = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
-        // From API 30 onwards, this is the recommended way to hide the system UI, rather than
-        // using View.setSystemUiVisibility.
+
+        getWindow().getAttributes().layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+
         View decorView = getWindow().getDecorView();
-        WindowInsetsControllerCompat controller = new WindowInsetsControllerCompat(getWindow(),
-                decorView);
+
+        WindowInsetsControllerCompat controller =
+                new WindowInsetsControllerCompat(getWindow(), decorView);
+
         controller.hide(WindowInsetsCompat.Type.systemBars());
         controller.hide(WindowInsetsCompat.Type.displayCutout());
+
         controller.setSystemBarsBehavior(
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        );
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+
+        super.onCreate(savedInstanceState);
+
+        instance = this;
+
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+
+        hideSystemUI();
+
+        FilePicker.Register(this);
+
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                LayoutParams.WRAP_CONTENT,
+                LayoutParams.WRAP_CONTENT
+        );
+
+        lp.gravity = Gravity.BOTTOM | Gravity.END;
+        lp.setMargins(0, 0, 48, 48);
+
+        Button extractButton = new Button(this);
+        extractButton.setText("Extract frames");
+
+        extractButton.setOnClickListener(v -> {
+            Log.i("Brush", "Picking video");
+            FilePicker.startFilePicker();
+        });
+
+        addContentView(extractButton, lp);
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+
         if (requestCode == FilePicker.REQUEST_CODE_PICK_FILE) {
-            int fd = -1;
 
             try {
+
                 if (resultCode == Activity.RESULT_OK && data != null) {
+
                     Uri uri = data.getData();
 
                     if (uri != null) {
-                        ParcelFileDescriptor parcelFileDescriptor =
-                                getContentResolver().openFileDescriptor(uri, "r");
 
-                        if (parcelFileDescriptor != null) {
-                            fd = parcelFileDescriptor.detachFd();
-                            FilePicker.onPicked(uri, fd);
-                            return;
-                        }
+                        extractFrames(uri);
                     }
                 }
-            } catch (Exception ignored) {
-            }
 
-            FilePicker.onPicked(null, -1);
+            } catch (Exception e) {
+
+                Log.e("Brush", "Picker error", e);
+            }
         }
 
         super.onActivityResult(requestCode, resultCode, data);
     }
 
+    private void extractFrames(Uri videoUri) {
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+        new Thread(() -> {
 
-        // Keep the screen on
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            try {
 
-        // When true, the app will fit inside any system UI windows.
-        // When false, we render behind any system UI windows.
-        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
-        hideSystemUI();
-        FilePicker.Register(this);
+                MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+
+                retriever.setDataSource(this, videoUri);
+
+                String durationStr =
+                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+
+                long durationMs = Long.parseLong(durationStr);
+
+                long durationUs = durationMs * 1000;
+
+                int frameCount = 100;
+
+                long step = durationUs / frameCount;
+
+                File outputDir =
+                        getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+
+                if (outputDir != null && !outputDir.exists()) {
+                    outputDir.mkdirs();
+                }
+
+                for (int i = 0; i < frameCount; i++) {
+
+                    long timeUs = i * step;
+
+                    Bitmap bitmap =
+                            retriever.getFrameAtTime(
+                                    timeUs,
+                                    MediaMetadataRetriever.OPTION_CLOSEST
+                            );
+
+                    if (bitmap == null) continue;
+
+                    File file =
+                            new File(outputDir,
+                                    String.format("frame_%03d.jpg", i));
+
+                    FileOutputStream out = new FileOutputStream(file);
+
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out);
+
+                    out.flush();
+                    out.close();
+
+                    bitmap.recycle();
+                }
+
+                retriever.release();
+
+                Log.i("Brush", "Frame extraction finished");
+
+            } catch (Exception e) {
+
+                Log.e("Brush", "Extraction failed", e);
+            }
+
+        }).start();
     }
 }
