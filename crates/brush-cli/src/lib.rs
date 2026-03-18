@@ -106,7 +106,9 @@ pub async fn run_cli_ui(
 
     #[cfg(feature = "training")]
     let train_progress = {
-        let bar = ProgressBar::new(train_stream_config.train_config.total_steps as u64)
+        let tc = &train_stream_config.train_config;
+        let effective_total = tc.total_steps + tc.lod_levels * tc.lod_refine_steps;
+        let bar = ProgressBar::new(effective_total as u64)
         .with_style(
             ProgressStyle::with_template(
                 "[{elapsed}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} ({per_sec}, {eta} remaining)",
@@ -195,9 +197,14 @@ pub async fn run_cli_ui(
                 TrainMessage::TrainStep {
                     iter,
                     total_elapsed,
+                    lod_progress,
                     ..
                 } => {
-                    main_spinner.set_message("Training");
+                    if let Some((lod, total_lods)) = lod_progress {
+                        main_spinner.set_message(format!("LOD {lod}/{total_lods}"));
+                    } else {
+                        main_spinner.set_message("Training");
+                    }
                     train_progress.set_position(iter as u64);
                     duration = total_elapsed;
                 }
@@ -221,20 +228,6 @@ pub async fn run_cli_ui(
                     ));
                 }
                 TrainMessage::DoneTraining => {}
-                TrainMessage::LodStatus {
-                    lod_level,
-                    total_levels,
-                    iter,
-                    total_steps,
-                    num_splats,
-                    ..
-                } => {
-                    main_spinner.set_message(format!(
-                        "LOD {lod_level}/{total_levels} ({num_splats} splats)"
-                    ));
-                    train_progress.set_length(total_steps as u64);
-                    train_progress.set_position(iter as u64);
-                }
             },
             ProcessMessage::DoneLoading => {
                 log::info!("Completed loading.");

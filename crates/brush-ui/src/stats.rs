@@ -118,19 +118,11 @@ impl AppPane for StatsPanel {
                 TrainMessage::TrainStep {
                     iter,
                     total_elapsed,
+                    lod_progress,
                     ..
                 } => {
                     self.last_train_step = (*total_elapsed, *iter);
-                }
-                TrainMessage::LodStatus {
-                    lod_level,
-                    total_levels,
-                    iter,
-                    elapsed,
-                    ..
-                } => {
-                    self.lod_status = Some((*lod_level, *total_levels));
-                    self.last_train_step = (*elapsed, *iter);
+                    self.lod_status = *lod_progress;
                 }
                 TrainMessage::Dataset { dataset } => {
                     self.train_eval_views = (

@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod eval;
+pub mod lod;
 pub mod msg;
 pub mod train;
 
@@ -13,8 +14,8 @@ mod stats;
 
 mod splat_init;
 
+pub use lod::{compute_pup_scores, decimate_to_count_scored};
 pub use splat_init::{RandomSplatsConfig, create_random_splats, to_init_splats};
-pub use train::{compute_pup_scores, decimate_to_count, decimate_to_count_scored};
 
 use brush_render::gaussian_splats::Splats;
 use burn::{

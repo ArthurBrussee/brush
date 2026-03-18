@@ -25,7 +25,6 @@ use burn::{
     module::ParamId,
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
     prelude::Backend,
-    prelude::Module,
     tensor::{
         Bool, Distribution, IndexingUpdateOp, Tensor, TensorData, TensorPrimitive,
         activation::sigmoid, backend::AutodiffBackend, s,
@@ -52,7 +51,6 @@ pub struct SplatTrainer {
     optim: Option<OptimizerType>,
     ssim: Option<Ssim<DiffBackend>>,
     bounds: BoundingBox,
-    pub allow_growth: bool,
     #[cfg(not(target_family = "wasm"))]
     lpips: Option<lpips::LpipsModel<DiffBackend>>,
 }
@@ -96,7 +94,6 @@ impl SplatTrainer {
             refine_record: None,
             ssim,
             bounds,
-            allow_growth: true,
             #[cfg(not(target_family = "wasm"))]
             lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
         }
@@ -340,54 +337,50 @@ impl SplatTrainer {
             prune_points(splats, &mut record, refiner, prune_mask).await;
         let mut split_inds = HashSet::new();
 
-        if self.allow_growth {
-            // Replace dead gaussians.
-            if pruned_count > 0 {
-                // Sample weighted by opacity from splat visible during optimization.
-                let resampled_weights = splats.opacities() * refiner.vis_mask().float();
+        // Always replace dead gaussians so pruned budget is reused.
+        if pruned_count > 0 {
+            let resampled_weights = splats.opacities() * refiner.vis_mask().float();
 
-                let resampled_weights = resampled_weights
+            let resampled_weights = resampled_weights
+                .into_data_async()
+                .await
+                .expect("Failed to get weights")
+                .into_vec::<f32>()
+                .expect("Failed to read weights");
+            let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
+            split_inds.extend(resampled_inds);
+        }
+
+        if iter < self.config.growth_stop_iter {
+            let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
+
+            let threshold_count = above_threshold
+                .clone()
+                .int()
+                .sum()
+                .into_scalar_async()
+                .await
+                .expect("Failed to get threshold") as u32;
+
+            let grow_count =
+                (threshold_count as f32 * self.config.growth_select_fraction).round() as u32;
+
+            let sample_high_grad = grow_count.saturating_sub(pruned_count);
+
+            // Only grow to the max nr. of splats.
+            let cur_splats = splats.num_splats() + split_inds.len() as u32;
+            let grow_count = sample_high_grad.min(self.config.max_splats - cur_splats);
+
+            if grow_count > 0 {
+                let weights = above_threshold.float() * refiner.refine_weight_norm;
+                let weights = weights
                     .into_data_async()
                     .await
                     .expect("Failed to get weights")
                     .into_vec::<f32>()
                     .expect("Failed to read weights");
-                let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
-                split_inds.extend(resampled_inds);
-            }
-
-            if iter < self.config.growth_stop_iter {
-                let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
-
-                let threshold_count = above_threshold
-                    .clone()
-                    .int()
-                    .sum()
-                    .into_scalar_async()
-                    .await
-                    .expect("Failed to get threshold") as u32;
-
-                let grow_count =
-                    (threshold_count as f32 * self.config.growth_select_fraction).round() as u32;
-
-                let sample_high_grad = grow_count.saturating_sub(pruned_count);
-
-                // Only grow to the max nr. of splats.
-                let cur_splats = splats.num_splats() + split_inds.len() as u32;
-                let grow_count = sample_high_grad.min(self.config.max_splats - cur_splats);
-
-                // If still growing, sample from indices which are over the threshold.
-                if grow_count > 0 {
-                    let weights = above_threshold.float() * refiner.refine_weight_norm;
-                    let weights = weights
-                        .into_data_async()
-                        .await
-                        .expect("Failed to get weights")
-                        .into_vec::<f32>()
-                        .expect("Failed to read weights");
-                    let growth_inds = multinomial_sample(&weights, grow_count);
-                    split_inds.extend(growth_inds);
-                }
+                let growth_inds = multinomial_sample(&weights, grow_count);
+                split_inds.extend(growth_inds);
             }
         }
 
@@ -621,221 +614,4 @@ fn scale_down_largest_dim<B: Backend>(scales: Tensor<B, 2>, factor: f32) -> Tens
     scales.mul(scale)
 }
 
-/// Decimate splats to `target_count` using pre-computed per-Gaussian scores.
-/// Higher scores are considered more important and kept.
-pub async fn decimate_to_count_scored(
-    mut splats: Splats<MainBackend>,
-    scores: &[f32],
-    target_count: u32,
-) -> Splats<MainBackend> {
-    let num = splats.num_splats();
-    if target_count >= num {
-        return splats;
-    }
 
-    let mut indexed: Vec<(usize, f32)> = scores.iter().copied().enumerate().collect();
-    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-    let keep_indices: Vec<i32> = indexed[..target_count as usize]
-        .iter()
-        .map(|(i, _)| *i as i32)
-        .collect();
-
-    let device = splats.device();
-    let keep_tensor = Tensor::from_data(
-        TensorData::new(keep_indices, [target_count as usize]),
-        &device,
-    );
-
-    splats.means = splats.means.map(|m| m.select(0, keep_tensor.clone()));
-    splats.rotations = splats.rotations.map(|r| r.select(0, keep_tensor.clone()));
-    splats.log_scales = splats.log_scales.map(|s| s.select(0, keep_tensor.clone()));
-    splats.sh_coeffs = splats.sh_coeffs.map(|c| c.select(0, keep_tensor.clone()));
-    splats.raw_opacities = splats
-        .raw_opacities
-        .map(|o| o.select(0, keep_tensor.clone()));
-
-    splats
-}
-
-/// Log-determinant of a 6x6 positive semi-definite matrix via Cholesky decomposition.
-/// Returns `f32::NEG_INFINITY` if the matrix is not positive definite.
-fn log_det_6x6(m: &[f32; 36]) -> f32 {
-    let mut l = [0.0f32; 36];
-    for j in 0..6 {
-        let mut sum = 0.0;
-        for k in 0..j {
-            sum += l[j * 6 + k] * l[j * 6 + k];
-        }
-        let diag = m[j * 6 + j] - sum;
-        if diag <= 0.0 {
-            return f32::NEG_INFINITY;
-        }
-        l[j * 6 + j] = diag.sqrt();
-        for i in (j + 1)..6 {
-            let mut sum = 0.0;
-            for k in 0..j {
-                sum += l[i * 6 + k] * l[j * 6 + k];
-            }
-            l[i * 6 + j] = (m[i * 6 + j] - sum) / l[j * 6 + j];
-        }
-    }
-    let mut log_det = 0.0f32;
-    for i in 0..6 {
-        log_det += l[i * 6 + i].ln();
-    }
-    2.0 * log_det
-}
-
-/// Compute sensitivity-based pruning scores for all Gaussians.
-///
-/// Inspired by PUP 3D-GS (Hanson et al., CVPR 2025): <https://pup3dgs.github.io/>
-///
-/// Runs a single forward+backward pass over every training view, accumulating
-/// the per-Gaussian Hessian approximation `H_i = sum(J_i * J_i^T)` where `J_i` is
-/// the 6-element gradient vector `[d_mean, d_log_scale]`. The score is `log|det(H_i)|`.
-pub async fn compute_pup_scores(
-    splats: Splats<MainBackend>,
-    scene: &brush_dataset::scene::Scene,
-    device: &WgpuDevice,
-) -> Vec<f32> {
-    use brush_dataset::scene::{sample_to_tensor_data, view_to_sample_image};
-
-    let num_splats = splats.num_splats() as usize;
-    let num_views = scene.views.len();
-
-    // Accumulator [num_splats, 6, 6] on GPU.
-    let mut hessian_accum: Tensor<MainBackend, 3> = Tensor::zeros([num_splats, 6, 6], device);
-
-    for (vi, view) in scene.views.iter().enumerate() {
-        log::info!("PUP scoring: view {}/{}", vi + 1, num_views);
-
-        let image = view
-            .image
-            .load()
-            .await
-            .expect("Failed to load image for PUP scoring");
-        let sample = view_to_sample_image(image, view.image.alpha_mode());
-        let img_size = glam::uvec2(sample.width(), sample.height());
-        let img_tensor = sample_to_tensor_data(sample);
-
-        // Set up autodiff splats with gradients only on means and log_scales.
-        let mut splats_ad: Splats<DiffBackend> = splats.clone().train();
-        splats_ad.means = splats_ad
-            .means
-            .map(|m: Tensor<DiffBackend, 2>| m.require_grad());
-        splats_ad.log_scales = splats_ad
-            .log_scales
-            .map(|m: Tensor<DiffBackend, 2>| m.require_grad());
-
-        let means_tensor = splats_ad.means.val();
-        let scales_tensor = splats_ad.log_scales.val();
-
-        let diff_out = render_splats(splats_ad, &view.camera, img_size, Vec3::ZERO).await;
-        let pred_image = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-
-        let gt_tensor: Tensor<DiffBackend, 3> = Tensor::from_data(img_tensor, device);
-        let channels = pred_image.dims()[2].min(gt_tensor.dims()[2]);
-        let pred_rgb = pred_image.slice(s![.., .., 0..channels]);
-        let gt_rgb = gt_tensor.slice(s![.., .., 0..channels]);
-
-        let loss = (pred_rgb - gt_rgb).abs().mean();
-        let mut grads = loss.backward();
-
-        let mean_grad = means_tensor
-            .grad_remove(&mut grads)
-            .expect("Mean gradients required for PUP scoring");
-        let scale_grad = scales_tensor
-            .grad_remove(&mut grads)
-            .expect("Scale gradients required for PUP scoring");
-
-        // j: [N, 6] -- grad_remove returns Tensor<MainBackend, 2> already
-        let j: Tensor<MainBackend, 2> = Tensor::cat(vec![mean_grad, scale_grad], 1);
-        // outer product: [N, 6, 1] * [N, 1, 6] = [N, 6, 6]
-        let j_col = j.clone().unsqueeze_dim(2); // [N, 6, 1]
-        let j_row = j.unsqueeze_dim(1); // [N, 1, 6]
-        let outer = j_col.mul(j_row); // [N, 6, 6]
-
-        hessian_accum = hessian_accum + outer;
-    }
-
-    // Read accumulated Hessians to CPU and compute log-det per Gaussian.
-    let hessian_data: Vec<f32> = hessian_accum
-        .into_data_async()
-        .await
-        .expect("Failed to read Hessian accumulator")
-        .into_vec()
-        .expect("Failed to convert Hessian data");
-
-    let mut scores = Vec::with_capacity(num_splats);
-    for i in 0..num_splats {
-        let offset = i * 36;
-        let mut mat = [0.0f32; 36];
-        mat.copy_from_slice(&hessian_data[offset..offset + 36]);
-        scores.push(log_det_6x6(&mat));
-    }
-
-    scores
-}
-
-/// Decimate splats to `target_count` by removing the least important ones.
-/// Importance is `opacity * geometric_mean(scales)`.
-pub async fn decimate_to_count(
-    mut splats: Splats<MainBackend>,
-    target_count: u32,
-) -> Splats<MainBackend> {
-    let num = splats.num_splats();
-    if target_count >= num {
-        return splats;
-    }
-
-    let opacities: Vec<f32> = splats
-        .opacities()
-        .into_data_async()
-        .await
-        .expect("Failed to read opacities")
-        .into_vec()
-        .expect("Failed to convert opacities");
-
-    let scales: Vec<f32> = splats
-        .scales()
-        .into_data_async()
-        .await
-        .expect("Failed to read scales")
-        .into_vec()
-        .expect("Failed to convert scales");
-
-    let mut indexed: Vec<(usize, f32)> = (0..num as usize)
-        .map(|i| {
-            let opacity = opacities[i];
-            let s0 = scales[i * 3];
-            let s1 = scales[i * 3 + 1];
-            let s2 = scales[i * 3 + 2];
-            let geo_mean = (s0 * s1 * s2).cbrt();
-            (i, opacity * geo_mean)
-        })
-        .collect();
-
-    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-    let keep_indices: Vec<i32> = indexed[..target_count as usize]
-        .iter()
-        .map(|(i, _)| *i as i32)
-        .collect();
-
-    let device = splats.device();
-    let keep_tensor = Tensor::from_data(
-        TensorData::new(keep_indices, [target_count as usize]),
-        &device,
-    );
-
-    splats.means = splats.means.map(|m| m.select(0, keep_tensor.clone()));
-    splats.rotations = splats.rotations.map(|r| r.select(0, keep_tensor.clone()));
-    splats.log_scales = splats.log_scales.map(|s| s.select(0, keep_tensor.clone()));
-    splats.sh_coeffs = splats.sh_coeffs.map(|c| c.select(0, keep_tensor.clone()));
-    splats.raw_opacities = splats
-        .raw_opacities
-        .map(|o| o.select(0, keep_tensor.clone()));
-
-    splats
-}

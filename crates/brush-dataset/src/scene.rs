@@ -105,18 +105,12 @@ impl LoadImage {
 
             img = masked_img.into();
         }
-        let img = if img.width() <= self.max_resolution && img.height() <= self.max_resolution {
-            img
-        } else {
-            img.resize(
-                self.max_resolution,
-                self.max_resolution,
-                image::imageops::FilterType::Triangle,
-            )
-        };
-        if self.scale < 1.0 {
-            let new_w = (img.width() as f32 * self.scale).max(1.0) as u32;
-            let new_h = (img.height() as f32 * self.scale).max(1.0) as u32;
+        let max = self.max_resolution;
+        let cap = max as f32 / img.width().max(img.height()).max(max) as f32;
+        let scale = (cap * self.scale).min(1.0);
+        if scale < 1.0 {
+            let new_w = (img.width() as f32 * scale).max(1.0) as u32;
+            let new_h = (img.height() as f32 * scale).max(1.0) as u32;
             Ok(img.resize_exact(new_w, new_h, image::imageops::FilterType::Triangle))
         } else {
             Ok(img)
@@ -127,10 +121,9 @@ impl LoadImage {
         self.alpha_mode
     }
 
-    pub fn with_scale(&self, scale: f32) -> Self {
-        let mut copy = self.clone();
-        copy.scale = scale;
-        copy
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
+        self
     }
 
     pub fn img_name(&self) -> String {
@@ -187,13 +180,12 @@ impl Scene {
         BoundingBox::from_min_max(min, max)
     }
 
-    pub fn with_image_scale(&self, scale: f32) -> Self {
-        let views = self
-            .views
-            .iter()
+    pub fn with_image_scale(self, scale: f32) -> Self {
+        let views = Arc::unwrap_or_clone(self.views)
+            .into_iter()
             .map(|v| SceneView {
                 image: v.image.with_scale(scale),
-                camera: v.camera.clone(),
+                camera: v.camera,
             })
             .collect();
         Self::new(views)

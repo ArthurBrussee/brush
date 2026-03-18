@@ -22,6 +22,8 @@ pub enum TrainMessage {
         iter: u32,
         total_steps: u32,
         total_elapsed: web_time::Duration,
+        /// If in LOD phase: `(current_lod_1_based, total_lod_levels)`.
+        lod_progress: Option<(u32, u32)>,
     },
     /// Some number of training steps are done.
     #[allow(unused)]
@@ -37,16 +39,6 @@ pub enum TrainMessage {
         avg_ssim: f32,
     },
     DoneTraining,
-    /// LOD generation progress.
-    #[allow(unused)]
-    LodStatus {
-        lod_level: u32,
-        total_levels: u32,
-        iter: u32,
-        total_steps: u32,
-        num_splats: u32,
-        elapsed: web_time::Duration,
-    },
 }
 
 pub enum ProcessMessage {

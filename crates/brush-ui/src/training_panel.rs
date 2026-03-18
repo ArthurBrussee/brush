@@ -17,7 +17,7 @@ pub struct TrainingPanel {
     manual_export_iters: Vec<u32>,
     export_channel: (UnboundedSender<Error>, UnboundedReceiver<Error>),
     training_done: bool,
-    lod_preparing: bool,
+    lod_progress: Option<(u32, u32)>,
 }
 
 impl Default for TrainingPanel {
@@ -31,7 +31,7 @@ impl Default for TrainingPanel {
             manual_export_iters: Vec::new(),
             export_channel: tokio::sync::mpsc::unbounded_channel(),
             training_done: false,
-            lod_preparing: false,
+            lod_progress: None,
         }
     }
 }
@@ -45,7 +45,7 @@ impl TrainingPanel {
         self.train_config = None;
         self.manual_export_iters.clear();
         self.training_done = false;
-        self.lod_preparing = false;
+        self.lod_progress = None;
     }
 
     fn on_train_message(&mut self, message: &TrainMessage) {
@@ -57,9 +57,10 @@ impl TrainingPanel {
                 iter,
                 total_steps,
                 total_elapsed,
-                ..
+                lod_progress,
             } => {
                 self.train_progress = Some((*iter, *total_steps));
+                self.lod_progress = *lod_progress;
 
                 if let Some((last_elapsed, last_iter)) = self.last_train_step
                     && let Some(elapsed_diff) = total_elapsed.checked_sub(last_elapsed)
@@ -77,16 +78,10 @@ impl TrainingPanel {
             }
             TrainMessage::DoneTraining => {
                 self.training_done = true;
-                self.lod_preparing = false;
+                self.lod_progress = None;
                 if let Some((_, total)) = self.train_progress {
                     self.train_progress = Some((total, total));
                 }
-            }
-            TrainMessage::LodStatus {
-                iter, total_steps, ..
-            } => {
-                self.lod_preparing = *iter == 0;
-                self.train_progress = Some((*iter, *total_steps));
             }
             _ => {}
         }
@@ -209,8 +204,9 @@ impl AppPane for TrainingPanel {
         let (iter, total) = if let Some((iter, total)) = self.train_progress {
             (iter, total)
         } else if let Some(config) = &self.train_config {
-            // We have settings but no train steps yet - show 0% progress
-            (0, config.train_config.total_steps)
+            let tc = &config.train_config;
+            let effective_total = tc.total_steps + tc.lod_levels * tc.lod_refine_steps;
+            (0, effective_total)
         } else {
             ui.centered_and_justified(|ui| {
                 ui.label(
@@ -331,6 +327,11 @@ impl AppPane for TrainingPanel {
             let next_export = ((iter / export_every) + 1) * export_every;
             let row_top = bar_rect.bottom() - 3.0;
 
+            let tc = &config.train_config;
+            let training_steps = tc.total_steps;
+            let lod_levels = tc.lod_levels;
+            let lod_refine_steps = tc.lod_refine_steps;
+
             let mut export_iter = export_every;
             while export_iter <= total {
                 let x = bar_rect.left() + (export_iter as f32 / total as f32) * bar_rect.width();
@@ -347,6 +348,34 @@ impl AppPane for TrainingPanel {
                     &format!("Auto-save at iteration {export_iter}"),
                 );
                 export_iter += export_every;
+            }
+
+            if lod_levels > 0 {
+                let lod_color = egui::Color32::from_rgb(220, 160, 60);
+                let effective_total = training_steps + lod_levels * lod_refine_steps;
+                for lod in 0..=lod_levels {
+                    let boundary = if lod == 0 {
+                        training_steps
+                    } else {
+                        training_steps + lod * lod_refine_steps
+                    };
+                    if boundary == 0 || boundary > effective_total {
+                        continue;
+                    }
+                    if boundary % export_every == 0 && boundary <= total {
+                        continue;
+                    }
+                    let x =
+                        bar_rect.left() + (boundary as f32 / total as f32) * bar_rect.width();
+                    let completed = iter >= boundary;
+                    let alpha = if completed { 1.0 } else { 0.4 };
+                    let label = if lod == 0 {
+                        format!("Main model export at iteration {boundary}")
+                    } else {
+                        format!("LOD {lod} export at iteration {boundary}")
+                    };
+                    draw_pin(ui, x, row_top, lod_color.gamma_multiply(alpha), completed, &label);
+                }
             }
 
             for &manual_iter in &self.manual_export_iters {
@@ -367,8 +396,8 @@ impl AppPane for TrainingPanel {
 
         let bar_text = if is_complete {
             "Complete!".to_owned()
-        } else if self.lod_preparing {
-            "Preparing LOD...".to_owned()
+        } else if let Some((lod, total_lods)) = self.lod_progress {
+            format!("{iter}/{total} (LOD {lod}/{total_lods})")
         } else {
             format!("{iter}/{total}")
         };

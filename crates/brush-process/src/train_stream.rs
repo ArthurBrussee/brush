@@ -12,8 +12,7 @@ use brush_render::{
 };
 use brush_rerun::visualize_tools::VisualizeTools;
 use brush_train::{
-    RandomSplatsConfig, compute_pup_scores, create_random_splats, decimate_to_count,
-    decimate_to_count_scored,
+    RandomSplatsConfig, compute_pup_scores, create_random_splats, decimate_to_count_scored,
     eval::eval_stats,
     msg::RefineStats,
     to_init_splats,
@@ -179,13 +178,93 @@ pub(crate) async fn train_stream(
     let export_path: PathBuf = export_path.components().collect();
     let sh_degree = init_splats.sh_degree();
 
+    let training_steps = train_stream_config.train_config.total_steps;
+    let lod_levels = train_stream_config.train_config.lod_levels;
+    let lod_refine_steps = train_stream_config.train_config.lod_refine_steps;
+    let effective_total = training_steps + lod_levels * lod_refine_steps;
+    let mut current_lod: u32 = 0;
+
     log::info!("Start training loop.");
-    for iter in
-        train_stream_config.process_config.start_iter..train_stream_config.train_config.total_steps
-    {
+    for iter in train_stream_config.process_config.start_iter..effective_total {
+        // --- Phase transition: enter LOD phase when crossing a boundary ---
+        let target_lod = if lod_levels == 0 || iter < training_steps {
+            0u32
+        } else {
+            ((iter - training_steps) / lod_refine_steps + 1).min(lod_levels)
+        };
+
+        if target_lod > current_lod {
+            #[cfg(not(target_family = "wasm"))]
+            {
+                let (name, exp_iter, exp_total) = if current_lod == 0 {
+                    (process_config.export_name.clone(), iter, training_steps)
+                } else {
+                    let lod_name = process_config
+                        .export_name
+                        .replace(".ply", &format!("_lod{current_lod}.ply"));
+                    (lod_name, lod_refine_steps, lod_refine_steps)
+                };
+                let res = export_checkpoint(
+                    splat_slot.clone_main().await.unwrap(),
+                    &export_path,
+                    &name,
+                    exp_iter,
+                    exp_total,
+                )
+                .await
+                .with_context(|| "Export at LOD boundary failed");
+
+                if let Err(error) = res {
+                    emitter.emit(ProcessMessage::Warning { error }).await;
+                }
+            }
+
+            current_lod = target_lod;
+            let lod_keep_pct = train_stream_config.train_config.lod_decimation_keep;
+            let lod_img_pct = train_stream_config.train_config.lod_image_scale;
+
+            log::info!("LOD {current_lod}/{lod_levels}: Decimating (keep {lod_keep_pct}%)");
+
+            let before = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
+            let target_count = (before as f32 * lod_keep_pct as f32 / 100.0).max(1.0) as u32;
+
+            log::info!("LOD {current_lod}/{lod_levels}: Computing sensitivity scores...");
+            let splats = splat_slot.clone_main().await.unwrap();
+            let scores = compute_pup_scores(splats, &dataset.train, &device).await;
+            splat_slot
+                .act(0, |s: Splats<MainBackend>| async {
+                    (decimate_to_count_scored(s, &scores, target_count).await, ())
+                })
+                .await
+                .unwrap();
+
+            let after = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
+            log::info!("LOD {current_lod}/{lod_levels}: {before} -> {after} splats");
+
+            let client = WgpuRuntime::client(&device);
+            client.memory_cleanup();
+
+            let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(current_lod as i32);
+            dataloader = if lod_img_pct < 100 {
+                let lod_scene = dataset.train.clone().with_image_scale(cumulative_scale);
+                SceneLoader::new(&lod_scene, 42)
+            } else {
+                SceneLoader::new(&dataset.train, 42)
+            };
+
+            let bounds =
+                get_splat_bounds(splat_slot.clone_main().await.unwrap(), BOUND_PERCENTILE).await;
+            trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
+
+            log::info!(
+                "LOD {current_lod}/{lod_levels}: Training for {lod_refine_steps} steps (image scale {:.0}%)",
+                cumulative_scale * 100.0
+            );
+        }
+
+        // --- Training step ---
         let step_time = Instant::now();
 
-        // Wait for next batch.
         let batch = dataloader
             .next_batch()
             .instrument(trace_span!("Wait for next data batch"))
@@ -193,7 +272,6 @@ pub(crate) async fn train_stream(
 
         let stats = splat_slot
             .act(0, |splats: Splats<MainBackend>| async {
-                // // Back to autodiff.
                 let mut splats = splats.train();
                 splats.means = splats.means.map(|m| m.require_grad());
                 splats.rotations = splats.rotations.map(|m| m.require_grad());
@@ -207,12 +285,22 @@ pub(crate) async fn train_stream(
             .await
             .unwrap();
 
-        let train_t =
-            (iter as f32 / train_stream_config.train_config.total_steps as f32).clamp(0.0, 1.0);
+        // Phase-local iteration for refine gating
+        let phase_iter = if current_lod == 0 {
+            iter
+        } else {
+            (iter - training_steps) % lod_refine_steps
+        };
+        let phase_total = if current_lod == 0 {
+            training_steps
+        } else {
+            lod_refine_steps
+        };
+        let phase_progress = (phase_iter as f32 / phase_total as f32).clamp(0.0, 1.0);
 
-        let refine = if iter > 0
-            && iter.is_multiple_of(train_stream_config.train_config.refine_every)
-            && train_t <= 0.95
+        let refine = if phase_iter > 0
+            && phase_iter.is_multiple_of(train_stream_config.train_config.refine_every)
+            && phase_progress <= 0.95
         {
             splat_slot
                 .act(0, async |splats| trainer.refine(iter, splats).await)
@@ -229,14 +317,13 @@ pub(crate) async fn train_stream(
 
         // We just finished iter 'iter', now starting iter + 1.
         let iter = iter + 1;
-        let is_last_step = iter == train_stream_config.train_config.total_steps;
+        let is_last_step = iter == effective_total;
 
-        // Add up time from this step.
         train_duration += step_time.elapsed();
 
-        // Check if we want to evaluate _next iteration_. Small detail, but this ensures we evaluate
-        // before doing a refine.
-        if (iter % process_config.eval_every == 0 || is_last_step)
+        // --- Eval (main training phase only) ---
+        if current_lod == 0
+            && (iter % process_config.eval_every == 0 || iter == training_steps)
             && let Some(eval_scene) = eval_scene.as_mut()
         {
             let save_path = train_stream_config
@@ -261,23 +348,40 @@ pub(crate) async fn train_stream(
             }
         }
 
+        // --- Export checkpoints ---
         #[cfg(not(target_family = "wasm"))]
-        if iter % process_config.export_every == 0 || is_last_step {
-            let res = export_checkpoint(
-                splat_slot.clone_main().await.unwrap(),
-                &export_path,
-                &process_config.export_name,
-                iter,
-                train_stream_config.train_config.total_steps,
-            )
-            .await
-            .with_context(|| format!("Export at iteration {iter} failed"));
+        {
+            let should_export = if current_lod == 0 {
+                iter % process_config.export_every == 0 || (is_last_step && lod_levels == 0)
+            } else {
+                is_last_step
+            };
+            if should_export {
+                let (name, exp_iter, exp_total) = if current_lod == 0 {
+                    (process_config.export_name.clone(), iter, training_steps)
+                } else {
+                    let lod_name = process_config
+                        .export_name
+                        .replace(".ply", &format!("_lod{current_lod}.ply"));
+                    (lod_name, lod_refine_steps, lod_refine_steps)
+                };
+                let res = export_checkpoint(
+                    splat_slot.clone_main().await.unwrap(),
+                    &export_path,
+                    &name,
+                    exp_iter,
+                    exp_total,
+                )
+                .await
+                .with_context(|| format!("Export at iteration {iter} failed"));
 
-            if let Err(error) = res {
-                emitter.emit(ProcessMessage::Warning { error }).await;
+                if let Err(error) = res {
+                    emitter.emit(ProcessMessage::Warning { error }).await;
+                }
             }
         }
 
+        // --- Rerun logging ---
         {
             let rerun_config = &train_stream_config.rerun_config;
             visualize
@@ -291,7 +395,6 @@ pub(crate) async fn train_stream(
                 visualize.log_splats(iter, splats).await.unwrap();
             }
 
-            // Log out train stats.
             if iter.is_multiple_of(rerun_config.rerun_log_train_stats_every) || is_last_step {
                 visualize
                     .log_train_stats(iter, stats.clone())
@@ -314,7 +417,7 @@ pub(crate) async fn train_stream(
                 .await;
         }
 
-        // How frequently to update the UI after a training step.
+        // --- UI update ---
         const UPDATE_EVERY: u32 = 5;
         if iter % UPDATE_EVERY == 0 || is_last_step {
             emitter
@@ -327,189 +430,23 @@ pub(crate) async fn train_stream(
                 })
                 .await;
 
-            // Send lightweight message with training progress.
+            let lod_progress = if current_lod > 0 {
+                Some((current_lod, lod_levels))
+            } else {
+                None
+            };
+
             emitter
                 .emit(ProcessMessage::TrainMessage(TrainMessage::TrainStep {
                     iter,
-                    total_steps: train_stream_config.train_config.total_steps,
+                    total_steps: effective_total,
                     total_elapsed: train_duration,
+                    lod_progress,
                 }))
                 .await;
         }
-    }
 
-    // --- LOD generation ---
-    let lod_levels = train_stream_config.train_config.lod_levels;
-    if lod_levels > 0 {
-        let lod_keep_pct = train_stream_config.train_config.lod_decimation_keep;
-        let lod_img_pct = train_stream_config.train_config.lod_image_scale;
-        let lod_steps = train_stream_config.train_config.lod_refine_steps;
-
-        for lod in 0..lod_levels {
-            let num_splats = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
-            emitter
-                .emit(ProcessMessage::TrainMessage(TrainMessage::LodStatus {
-                    lod_level: lod + 1,
-                    total_levels: lod_levels,
-                    iter: 0,
-                    total_steps: lod_steps,
-                    num_splats,
-                    elapsed: Duration::from_secs(0),
-                }))
-                .await;
-
-            log::info!(
-                "LOD {}/{}: Decimating (keep {}%)",
-                lod + 1,
-                lod_levels,
-                lod_keep_pct
-            );
-
-            let before = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
-            let target = (before as f32 * lod_keep_pct as f32 / 100.0).max(1.0) as u32;
-
-            if train_stream_config.train_config.lod_sensitivity_pruning {
-                log::info!(
-                    "LOD {}/{}: Computing PUP sensitivity scores...",
-                    lod + 1,
-                    lod_levels
-                );
-                let splats = splat_slot.clone_main().await.unwrap();
-                let scores = compute_pup_scores(splats, &dataset.train, &device).await;
-                splat_slot
-                    .act(0, |s: Splats<MainBackend>| async {
-                        (decimate_to_count_scored(s, &scores, target).await, ())
-                    })
-                    .await
-                    .unwrap();
-            } else {
-                splat_slot
-                    .act(0, |s: Splats<MainBackend>| async {
-                        (decimate_to_count(s, target).await, ())
-                    })
-                    .await
-                    .unwrap();
-            }
-
-            let after = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
-            log::info!(
-                "LOD {}/{}: {} -> {} splats",
-                lod + 1,
-                lod_levels,
-                before,
-                after
-            );
-
-            let client = WgpuRuntime::client(&device);
-            client.memory_cleanup();
-
-            let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(lod as i32 + 1);
-            let mut lod_dataloader = if lod_img_pct < 100 {
-                let lod_scene = dataset.train.with_image_scale(cumulative_scale);
-                SceneLoader::new(&lod_scene, 42)
-            } else {
-                SceneLoader::new(&dataset.train, 42)
-            };
-
-            let bounds =
-                get_splat_bounds(splat_slot.clone_main().await.unwrap(), BOUND_PERCENTILE).await;
-            let mut lod_trainer =
-                SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
-            lod_trainer.allow_growth = false;
-
-            log::info!(
-                "LOD {}/{}: Training for {} steps (image scale {:.0}%)",
-                lod + 1,
-                lod_levels,
-                lod_steps,
-                cumulative_scale * 100.0
-            );
-            let mut lod_duration = Duration::from_secs(0);
-            for iter in 0..lod_steps {
-                let lod_step_time = Instant::now();
-                let batch = lod_dataloader
-                    .next_batch()
-                    .instrument(trace_span!("Wait for next data batch"))
-                    .await;
-
-                splat_slot
-                    .act(0, |splats: Splats<MainBackend>| async {
-                        let mut splats = splats.train();
-                        splats.means = splats.means.map(|m| m.require_grad());
-                        splats.rotations = splats.rotations.map(|m| m.require_grad());
-                        splats.log_scales = splats.log_scales.map(|m| m.require_grad());
-                        splats.raw_opacities = splats.raw_opacities.map(|m| m.require_grad());
-                        splats.sh_coeffs = splats.sh_coeffs.map(|m| m.require_grad());
-
-                        let (new_splats, _stats) = lod_trainer.step(batch, splats).await;
-                        (new_splats.valid(), ())
-                    })
-                    .await
-                    .unwrap();
-
-                lod_duration += lod_step_time.elapsed();
-                tokio_wasm::task::yield_now().await;
-
-                if iter > 0 && iter.is_multiple_of(train_stream_config.train_config.refine_every) {
-                    splat_slot
-                        .act(0, async |splats| {
-                            let (s, _) = lod_trainer.refine(iter, splats).await;
-                            (s, ())
-                        })
-                        .await
-                        .unwrap();
-                }
-
-                const LOD_UPDATE_EVERY: u32 = 5;
-                if iter % LOD_UPDATE_EVERY == 0 || iter + 1 == lod_steps {
-                    let num_splats = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
-                    emitter
-                        .emit(ProcessMessage::SplatsUpdated {
-                            up_axis: None,
-                            frame: 0,
-                            total_frames: 1,
-                            num_splats,
-                            sh_degree,
-                        })
-                        .await;
-                    emitter
-                        .emit(ProcessMessage::TrainMessage(TrainMessage::LodStatus {
-                            lod_level: lod + 1,
-                            total_levels: lod_levels,
-                            iter,
-                            total_steps: lod_steps,
-                            num_splats,
-                            elapsed: lod_duration,
-                        }))
-                        .await;
-                }
-            }
-
-            #[cfg(not(target_family = "wasm"))]
-            {
-                let lod_digits = ((lod_steps as f64).log10().floor() as usize) + 1;
-                let base_name = train_stream_config
-                    .process_config
-                    .export_name
-                    .replace("{iter}", &format!("{lod_steps:0lod_digits$}"));
-                let lod_name = base_name.replace(".ply", &format!("_lod{}.ply", lod + 1));
-                let res = export_checkpoint(
-                    splat_slot.clone_main().await.unwrap(),
-                    &export_path,
-                    &lod_name,
-                    lod_steps,
-                    lod_steps,
-                )
-                .await
-                .with_context(|| format!("LOD {} export failed", lod + 1));
-
-                if let Err(error) = res {
-                    emitter.emit(ProcessMessage::Warning { error }).await;
-                } else {
-                    log::info!("LOD {}/{}: Exported {}", lod + 1, lod_levels, lod_name);
-                }
-            }
-        }
+        tokio_wasm::task::yield_now().await;
     }
 
     emitter

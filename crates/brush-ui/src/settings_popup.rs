@@ -171,7 +171,7 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             slider(
                 ui,
                 &mut tc.lod_refine_steps,
-                1000..=15000,
+                1..=50000,
                 "Steps per LOD",
                 false,
                 enabled,
@@ -187,10 +187,6 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
                 Slider::new(&mut tc.lod_image_scale, 1..=100)
                     .clamping(egui::SliderClamping::Never)
                     .suffix("% image scale"),
-            );
-            ui.add_enabled(
-                enabled,
-                egui::Checkbox::new(&mut tc.lod_sensitivity_pruning, "Sensitivity-based pruning"),
             );
         }
     });
