@@ -613,5 +613,3 @@ fn scale_down_largest_dim<B: Backend>(scales: Tensor<B, 2>, factor: f32) -> Tens
     let scale = Tensor::ones_like(&scales).mask_fill(max_mask, factor);
     scales.mul(scale)
 }
-
-

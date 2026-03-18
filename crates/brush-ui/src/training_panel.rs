@@ -365,8 +365,7 @@ impl AppPane for TrainingPanel {
                     if boundary % export_every == 0 && boundary <= total {
                         continue;
                     }
-                    let x =
-                        bar_rect.left() + (boundary as f32 / total as f32) * bar_rect.width();
+                    let x = bar_rect.left() + (boundary as f32 / total as f32) * bar_rect.width();
                     let completed = iter >= boundary;
                     let alpha = if completed { 1.0 } else { 0.4 };
                     let label = if lod == 0 {
@@ -374,7 +373,14 @@ impl AppPane for TrainingPanel {
                     } else {
                         format!("LOD {lod} export at iteration {boundary}")
                     };
-                    draw_pin(ui, x, row_top, lod_color.gamma_multiply(alpha), completed, &label);
+                    draw_pin(
+                        ui,
+                        x,
+                        row_top,
+                        lod_color.gamma_multiply(alpha),
+                        completed,
+                        &label,
+                    );
                 }
             }
 
