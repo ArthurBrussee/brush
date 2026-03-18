@@ -339,6 +339,7 @@ impl SplatTrainer {
 
         // Always replace dead gaussians so pruned budget is reused.
         if pruned_count > 0 {
+            // Sample weighted by opacity from splat visible during optimization.
             let resampled_weights = splats.opacities() * refiner.vis_mask().float();
 
             let resampled_weights = resampled_weights
@@ -371,6 +372,7 @@ impl SplatTrainer {
             let cur_splats = splats.num_splats() + split_inds.len() as u32;
             let grow_count = sample_high_grad.min(self.config.max_splats - cur_splats);
 
+            // If still growing, sample from indices which are over the threshold.
             if grow_count > 0 {
                 let weights = above_threshold.float() * refiner.refine_weight_norm;
                 let weights = weights
