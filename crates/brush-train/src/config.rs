@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct TrainConfig {
     /// Total number of steps to train for.
     #[arg(long, help_heading = "Training options", default_value = "30000")]
-    pub total_steps: u32,
+    pub total_train_iters: u32,
 
     #[arg(long, help_heading = "Training options")]
     pub render_mode: Option<SplatRenderMode>,
@@ -92,10 +92,32 @@ pub struct TrainConfig {
 
     #[arg(long, help_heading = "Refine options", default_value = "0.0")]
     pub lpips_loss_weight: f32,
+
+    /// Number of LOD levels to generate after initial training (0 = disabled).
+    #[arg(long, help_heading = "LOD options", default_value = "0")]
+    pub lod_levels: u32,
+
+    /// Number of refinement training steps per LOD level.
+    #[arg(long, help_heading = "LOD options", default_value = "5000")]
+    pub lod_refine_steps: u32,
+
+    /// Percentage of gaussians to keep at each LOD level (1-100).
+    #[arg(long, help_heading = "LOD options", default_value = "50")]
+    pub lod_decimation_keep: u32,
+
+    /// Percentage to scale source images at each LOD level (1-100).
+    #[arg(long, help_heading = "LOD options", default_value = "50")]
+    pub lod_image_scale: u32,
 }
 
 impl Default for TrainConfig {
     fn default() -> Self {
         Self::parse_from([""])
+    }
+}
+
+impl TrainConfig {
+    pub fn total_iters(&self) -> u32 {
+        self.total_train_iters + self.lod_levels * self.lod_refine_steps
     }
 }

@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn test_config_to_args_only_includes_changes() {
         let mut config = TrainStreamConfig::default();
-        config.train_config.total_steps = 5000;
+        config.train_config.total_train_iters = 5000;
         config.model_config.sh_degree = 2;
         config.load_config.max_frames = Some(10);
         let args = config_to_args(&config);
@@ -141,8 +141,8 @@ mod tests {
         // Verify they contain the right values
         let args_str = args.join(" ");
         assert!(
-            args_str.contains("--total-steps 5000"),
-            "Missing total-steps"
+            args_str.contains("--total-train-iters 5000"),
+            "Missing total-train-iters"
         );
         assert!(args_str.contains("--sh-degree 2"), "Missing sh-degree");
         assert!(args_str.contains("--max-frames 10"), "Missing max-frames");
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn test_config_round_trip() {
         let mut original = TrainStreamConfig::default();
-        original.train_config.total_steps = 5000;
+        original.train_config.total_train_iters = 5000;
         original.model_config.sh_degree = 2;
         original.load_config.max_frames = Some(10);
         original.process_config.seed = 123;
@@ -166,7 +166,7 @@ mod tests {
         }
 
         let parsed = TrainStreamConfig::try_parse_from(&cli_args).expect("Should parse");
-        assert_eq!(parsed.train_config.total_steps, 5000);
+        assert_eq!(parsed.train_config.total_train_iters, 5000);
         assert_eq!(parsed.model_config.sh_degree, 2);
         assert_eq!(parsed.load_config.max_frames, Some(10));
         assert_eq!(parsed.process_config.seed, 123);

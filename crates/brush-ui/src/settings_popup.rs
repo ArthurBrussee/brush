@@ -45,7 +45,7 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
     ui.heading("Training");
     slider(
         ui,
-        &mut args.train_config.total_steps,
+        &mut args.train_config.total_train_iters,
         1..=50000,
         " steps",
         false,
@@ -199,6 +199,38 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             enabled,
         );
     });
+
+    {
+        let tc = &mut args.train_config;
+        let lod_label = if tc.lod_levels == 1 {
+            "LOD level"
+        } else {
+            "LOD levels"
+        };
+        slider(ui, &mut tc.lod_levels, 0..=8, lod_label, false, enabled);
+        if tc.lod_levels > 0 {
+            slider(
+                ui,
+                &mut tc.lod_refine_steps,
+                1..=50000,
+                "Refine steps per LOD",
+                false,
+                enabled,
+            );
+            ui.add_enabled(
+                enabled,
+                Slider::new(&mut tc.lod_decimation_keep, 1..=100)
+                    .clamping(egui::SliderClamping::Never)
+                    .suffix("% splats / level"),
+            );
+            ui.add_enabled(
+                enabled,
+                Slider::new(&mut tc.lod_image_scale, 1..=100)
+                    .clamping(egui::SliderClamping::Never)
+                    .suffix("% image scale / level"),
+            );
+        }
+    }
 
     ui.add_space(16.0);
 
@@ -493,7 +525,7 @@ impl SettingsPopup {
             .resizable(true)
             .collapsible(false)
             .default_pos(center)
-            .default_size([300.0, 750.0])
+            .default_size([350.0, 800.0])
             .pivot(Align2::CENTER_CENTER)
             .title_bar(false)
             .show(ui.ctx(), |ui| {

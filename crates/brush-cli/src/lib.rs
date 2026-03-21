@@ -106,7 +106,8 @@ pub async fn run_cli_ui(
 
     #[cfg(feature = "training")]
     let train_progress = {
-        let bar = ProgressBar::new(train_stream_config.train_config.total_steps as u64)
+        let tc = &train_stream_config.train_config;
+        let bar = ProgressBar::new(tc.total_iters() as u64)
         .with_style(
             ProgressStyle::with_template(
                 "[{elapsed}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} ({per_sec}, {eta} remaining)",
@@ -195,9 +196,14 @@ pub async fn run_cli_ui(
                 TrainMessage::TrainStep {
                     iter,
                     total_elapsed,
+                    lod_progress,
                     ..
                 } => {
-                    main_spinner.set_message("Training");
+                    if let Some((lod, total_lods)) = lod_progress {
+                        main_spinner.set_message(format!("LOD {lod}/{total_lods}"));
+                    } else {
+                        main_spinner.set_message("Training");
+                    }
                     train_progress.set_position(iter as u64);
                     duration = total_elapsed;
                 }
