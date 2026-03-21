@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct TrainConfig {
     /// Total number of steps to train for.
     #[arg(long, help_heading = "Training options", default_value = "30000")]
-    pub total_steps: u32,
+    pub total_train_iters: u32,
 
     #[arg(long, help_heading = "Training options")]
     pub render_mode: Option<SplatRenderMode>,
@@ -113,5 +113,11 @@ pub struct TrainConfig {
 impl Default for TrainConfig {
     fn default() -> Self {
         Self::parse_from([""])
+    }
+}
+
+impl TrainConfig {
+    pub fn total_iters(&self) -> u32 {
+        self.total_train_iters + self.lod_levels * self.lod_refine_steps
     }
 }

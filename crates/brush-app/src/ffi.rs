@@ -41,7 +41,7 @@ impl TryFrom<ProcessMessage> for ProgressMessage {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct TrainOptions {
-    pub total_steps: u32,
+    pub total_train_steps: u32,
     pub refine_every: u32,
     pub max_resolution: u32,
     pub export_every: u32,
@@ -63,7 +63,7 @@ impl TrainOptions {
                     .into_owned()
             };
         }
-        process_args.train_config.total_steps = self.total_steps;
+        process_args.train_config.total_train_iters = self.total_train_steps;
         process_args.train_config.refine_every = self.refine_every;
         process_args.load_config.max_resolution = self.max_resolution;
         process_args.process_config.export_every = self.export_every;

@@ -13,7 +13,7 @@ type DiffBackend = Autodiff<MainBackend>;
 
 /// Decimate splats to `target_count` using pre-computed per-Gaussian scores.
 /// Higher scores are considered more important and kept.
-pub async fn decimate_to_count_scored(
+pub async fn decimate_to_count(
     mut splats: Splats<MainBackend>,
     scores: &[f32],
     target_count: u32,
@@ -90,12 +90,10 @@ pub async fn compute_pup_scores(
     device: &WgpuDevice,
 ) -> Vec<f32> {
     let num_splats = splats.num_splats() as usize;
-    let num_views = scene.views.len();
-
     let mut hessian_accum: Tensor<MainBackend, 3> = Tensor::zeros([num_splats, 6, 6], device);
 
     for (vi, view) in scene.views.iter().enumerate() {
-        log::info!("PUP scoring: view {}/{}", vi + 1, num_views);
+        log::info!("PUP scoring: view {}/{}", vi + 1, scene.views.len());
 
         let image = view
             .image
@@ -106,18 +104,15 @@ pub async fn compute_pup_scores(
         let img_size = glam::uvec2(sample.width(), sample.height());
         let gt_data = sample_to_tensor_data(sample);
 
-        let mut splats_ad: Splats<DiffBackend> = splats.clone().train();
-        splats_ad.means = splats_ad
+        let mut splats: Splats<DiffBackend> = splats.clone().train();
+        splats.means = splats
             .means
             .map(|m: Tensor<DiffBackend, 2>| m.require_grad());
-        splats_ad.log_scales = splats_ad
+        splats.log_scales = splats
             .log_scales
             .map(|m: Tensor<DiffBackend, 2>| m.require_grad());
 
-        let means_tensor = splats_ad.means.val();
-        let scales_tensor = splats_ad.log_scales.val();
-
-        let diff_out = render_splats(splats_ad, &view.camera, img_size, Vec3::ZERO).await;
+        let diff_out = render_splats(splats.clone(), &view.camera, img_size, Vec3::ZERO).await;
         let pred_image = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
 
         let gt_tensor: Tensor<DiffBackend, 3> = Tensor::from_data(gt_data, device);
@@ -128,22 +123,25 @@ pub async fn compute_pup_scores(
         let loss = (pred_rgb - gt_rgb).abs().mean();
         let mut grads = loss.backward();
 
-        let mean_grad = means_tensor
+        let mean_grad = splats
+            .means
+            .val()
             .grad_remove(&mut grads)
             .expect("Mean gradients required for PUP scoring");
-        let scale_grad = scales_tensor
+        let scale_grad = splats
+            .log_scales
+            .val()
             .grad_remove(&mut grads)
             .expect("Scale gradients required for PUP scoring");
 
-        let j: Tensor<MainBackend, 2> = Tensor::cat(vec![mean_grad, scale_grad], 1);
+        let j = Tensor::cat(vec![mean_grad, scale_grad], 1);
         let j_col = j.clone().unsqueeze_dim(2);
         let j_row = j.unsqueeze_dim(1);
         let outer = j_col.mul(j_row);
-
         hessian_accum = hessian_accum + outer;
     }
 
-    let hessian_data: Vec<f32> = hessian_accum
+    let hessian_data = hessian_accum
         .into_data_async()
         .await
         .expect("Failed to read Hessian accumulator")
@@ -151,7 +149,9 @@ pub async fn compute_pup_scores(
         .expect("Failed to convert Hessian data");
 
     hessian_data
-        .chunks_exact(36)
-        .map(|chunk| log_det_6x6(chunk.try_into().unwrap()))
+        .as_chunks::<36>()
+        .0
+        .iter()
+        .map(log_det_6x6)
         .collect()
 }

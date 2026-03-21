@@ -60,7 +60,7 @@ fn test_train_and_save_ffi_short() {
     };
 
     let options = TrainOptions {
-        total_steps: 10,
+        total_train_steps: 10,
         refine_every: 5,
         export_every: 10,
         max_resolution: 50,
@@ -104,7 +104,7 @@ fn test_train_and_save_ffi_invalid_path() {
     };
 
     let options = TrainOptions {
-        total_steps: 10,
+        total_train_steps: 10,
         refine_every: 5,
         export_every: 10,
         max_resolution: 50,
@@ -162,7 +162,7 @@ fn test_train_and_save_ffi_null_dataset() {
     let output_path_cstr = CString::new(output_path).unwrap();
 
     let options = TrainOptions {
-        total_steps: 10,
+        total_train_steps: 10,
         refine_every: 5,
         export_every: 10,
         max_resolution: 50,

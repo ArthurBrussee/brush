@@ -9,7 +9,7 @@ use tokio_with_wasm::alias::task;
 use web_time::Duration;
 
 pub struct TrainingPanel {
-    train_progress: Option<(u32, u32)>,
+    train_progress: Option<u32>,
     last_train_step: Option<(Duration, u32)>,
     train_iter_per_s: f32,
     iter_per_s_samples: u32,
@@ -55,11 +55,10 @@ impl TrainingPanel {
             }
             TrainMessage::TrainStep {
                 iter,
-                total_steps,
                 total_elapsed,
                 lod_progress,
             } => {
-                self.train_progress = Some((*iter, *total_steps));
+                self.train_progress = Some(*iter);
                 self.lod_progress = *lod_progress;
 
                 if let Some((last_elapsed, last_iter)) = self.last_train_step
@@ -79,9 +78,6 @@ impl TrainingPanel {
             TrainMessage::DoneTraining => {
                 self.training_done = true;
                 self.lod_progress = None;
-                if let Some((_, total)) = self.train_progress {
-                    self.train_progress = Some((total, total));
-                }
             }
             _ => {}
         }
@@ -165,9 +161,10 @@ impl AppPane for TrainingPanel {
 
         // Show iter/s and ETA
         if self.train_iter_per_s > 0.0
-            && let Some((iter, total)) = self.train_progress
+            && let Some(iter) = self.train_progress
+            && let Some(tc) = self.train_config.as_ref()
         {
-            let remaining_iters = total.saturating_sub(iter);
+            let remaining_iters = tc.train_config.total_iters().saturating_sub(iter);
             let remaining_secs = (remaining_iters as f32 / self.train_iter_per_s) as u64;
             let remaining = Duration::from_secs(remaining_secs);
 
@@ -201,13 +198,13 @@ impl AppPane for TrainingPanel {
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
         // Show progress bar as soon as settings are available, even before first train step
-        let (iter, total) = if let Some((iter, total)) = self.train_progress {
-            (iter, total)
-        } else if let Some(config) = &self.train_config {
-            let tc = &config.train_config;
-            let effective_total = tc.total_steps + tc.lod_levels * tc.lod_refine_steps;
-            (0, effective_total)
-        } else {
+        let iter = self.train_progress.unwrap_or(0);
+        let total = self
+            .train_config
+            .as_ref()
+            .map_or(0, |tc| tc.train_config.total_iters());
+
+        if iter == 0 && total == 0 {
             ui.centered_and_justified(|ui| {
                 ui.label(
                     RichText::new("Waiting for training to start")
@@ -328,12 +325,12 @@ impl AppPane for TrainingPanel {
             let row_top = bar_rect.bottom() - 3.0;
 
             let tc = &config.train_config;
-            let training_steps = tc.total_steps;
+            let training_steps = tc.total_train_iters;
             let lod_levels = tc.lod_levels;
             let lod_refine_steps = tc.lod_refine_steps;
 
             let mut export_iter = export_every;
-            while export_iter <= total {
+            while export_iter <= training_steps {
                 let x = bar_rect.left() + (export_iter as f32 / total as f32) * bar_rect.width();
                 let completed = iter >= export_iter;
                 let is_next = export_iter == next_export;
@@ -352,27 +349,18 @@ impl AppPane for TrainingPanel {
 
             if lod_levels > 0 {
                 let lod_color = egui::Color32::from_rgb(220, 160, 60);
-                let effective_total = training_steps + lod_levels * lod_refine_steps;
-                for lod in 0..=lod_levels {
-                    let boundary = if lod == 0 {
-                        training_steps
-                    } else {
-                        training_steps + lod * lod_refine_steps
-                    };
-                    if boundary == 0 || boundary > effective_total {
-                        continue;
-                    }
-                    if boundary % export_every == 0 && boundary <= total {
+                for lod in 1..=lod_levels {
+                    let boundary = training_steps + lod * lod_refine_steps;
+                    if boundary == 0
+                        || boundary > tc.total_iters()
+                        || boundary % export_every == 0 && boundary <= training_steps
+                    {
                         continue;
                     }
                     let x = bar_rect.left() + (boundary as f32 / total as f32) * bar_rect.width();
                     let completed = iter >= boundary;
                     let alpha = if completed { 1.0 } else { 0.4 };
-                    let label = if lod == 0 {
-                        format!("Main model export at iteration {boundary}")
-                    } else {
-                        format!("LOD {lod} export at iteration {boundary}")
-                    };
+                    let label = format!("LOD {lod} export at iteration {boundary}");
                     draw_pin(
                         ui,
                         x,

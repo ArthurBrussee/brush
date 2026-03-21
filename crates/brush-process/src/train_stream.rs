@@ -12,8 +12,9 @@ use brush_render::{
 };
 use brush_rerun::visualize_tools::VisualizeTools;
 use brush_train::{
-    RandomSplatsConfig, compute_pup_scores, create_random_splats, decimate_to_count_scored,
+    RandomSplatsConfig, create_random_splats,
     eval::eval_stats,
+    lod::{compute_pup_scores, decimate_to_count},
     msg::RefineStats,
     to_init_splats,
     train::{BOUND_PERCENTILE, SplatTrainer, get_splat_bounds},
@@ -178,15 +179,15 @@ pub(crate) async fn train_stream(
     let export_path: PathBuf = export_path.components().collect();
     let sh_degree = init_splats.sh_degree();
 
-    let training_steps = train_stream_config.train_config.total_steps;
+    let training_steps = train_stream_config.train_config.total_train_iters;
     let lod_levels = train_stream_config.train_config.lod_levels;
     let lod_refine_steps = train_stream_config.train_config.lod_refine_steps;
-    let effective_total = training_steps + lod_levels * lod_refine_steps;
     let mut current_lod: u32 = 0;
 
+    let process_config = &train_stream_config.process_config;
+
     log::info!("Start training loop.");
-    for iter in train_stream_config.process_config.start_iter..effective_total {
-        // --- Phase transition: enter LOD phase when crossing a boundary ---
+    for iter in process_config.start_iter..train_stream_config.train_config.total_iters() {
         let target_lod = if lod_levels == 0 || iter < training_steps {
             0u32
         } else {
@@ -229,11 +230,10 @@ pub(crate) async fn train_stream(
             let target_count = (before as f32 * lod_keep_pct as f32 / 100.0).max(1.0) as u32;
 
             log::info!("LOD {current_lod}/{lod_levels}: Computing sensitivity scores...");
-            let splats = splat_slot.clone_main().await.unwrap();
-            let scores = compute_pup_scores(splats, &dataset.train, &device).await;
             splat_slot
                 .act(0, |s: Splats<MainBackend>| async {
-                    (decimate_to_count_scored(s, &scores, target_count).await, ())
+                    let scores = compute_pup_scores(s.clone(), &dataset.train, &device).await;
+                    (decimate_to_count(s, &scores, target_count).await, ())
                 })
                 .await
                 .unwrap();
@@ -262,7 +262,6 @@ pub(crate) async fn train_stream(
             );
         }
 
-        // --- Training step ---
         let step_time = Instant::now();
 
         let batch = dataloader
@@ -317,11 +316,12 @@ pub(crate) async fn train_stream(
 
         // We just finished iter 'iter', now starting iter + 1.
         let iter = iter + 1;
-        let is_last_step = iter == effective_total;
+        let is_last_step = iter == train_stream_config.train_config.total_iters();
 
         train_duration += step_time.elapsed();
 
-        // --- Eval (main training phase only) ---
+        // Do evals. We skip this for LODs as it'd be confusing for rerun, but, could
+        // revisit this.
         if current_lod == 0
             && (iter % process_config.eval_every == 0 || iter == training_steps)
             && let Some(eval_scene) = eval_scene.as_mut()
@@ -348,7 +348,7 @@ pub(crate) async fn train_stream(
             }
         }
 
-        // --- Export checkpoints ---
+        // Export checkpoints
         #[cfg(not(target_family = "wasm"))]
         {
             let should_export = if current_lod == 0 {
@@ -417,7 +417,6 @@ pub(crate) async fn train_stream(
                 .await;
         }
 
-        // --- UI update ---
         const UPDATE_EVERY: u32 = 5;
         if iter % UPDATE_EVERY == 0 || is_last_step {
             emitter
@@ -439,7 +438,6 @@ pub(crate) async fn train_stream(
             emitter
                 .emit(ProcessMessage::TrainMessage(TrainMessage::TrainStep {
                     iter,
-                    total_steps: effective_total,
                     total_elapsed: train_duration,
                     lod_progress,
                 }))

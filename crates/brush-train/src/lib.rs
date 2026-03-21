@@ -14,7 +14,6 @@ mod stats;
 
 mod splat_init;
 
-pub use lod::{compute_pup_scores, decimate_to_count_scored};
 pub use splat_init::{RandomSplatsConfig, create_random_splats, to_init_splats};
 
 use brush_render::gaussian_splats::Splats;

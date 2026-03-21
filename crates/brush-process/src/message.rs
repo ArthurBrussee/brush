@@ -20,7 +20,6 @@ pub enum TrainMessage {
     #[allow(unused)]
     TrainStep {
         iter: u32,
-        total_steps: u32,
         total_elapsed: web_time::Duration,
         /// If in LOD phase: `(current_lod_1_based, total_lod_levels)`.
         lod_progress: Option<(u32, u32)>,

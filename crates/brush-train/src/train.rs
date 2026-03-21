@@ -77,10 +77,12 @@ pub async fn get_splat_bounds<B: Backend>(splats: Splats<B>, percentile: f32) ->
 
 impl SplatTrainer {
     pub fn new(config: &TrainConfig, device: &WgpuDevice, bounds: BoundingBox) -> Self {
-        let decay = (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_steps as f64);
+        let decay =
+            (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_train_iters as f64);
         let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean, decay);
 
-        let decay = (config.lr_scale_end / config.lr_scale).powf(1.0 / config.total_steps as f64);
+        let decay =
+            (config.lr_scale_end / config.lr_scale).powf(1.0 / config.total_train_iters as f64);
         let lr_scale = ExponentialLrSchedulerConfig::new(config.lr_scale, decay);
 
         const SSIM_WINDOW_SIZE: usize = 11; // Could be configurable but meh, rather keep consistent.
@@ -337,7 +339,7 @@ impl SplatTrainer {
             prune_points(splats, &mut record, refiner, prune_mask).await;
         let mut split_inds = HashSet::new();
 
-        // Always replace dead gaussians so pruned budget is reused.
+        // Always replace dead gaussians, so that the pruned budget is reused.
         if pruned_count > 0 {
             // Sample weighted by opacity from splat visible during optimization.
             let resampled_weights = splats.opacities() * refiner.vis_mask().float();
@@ -489,7 +491,7 @@ impl SplatTrainer {
             );
         }
 
-        let train_t = (iter as f32 / self.config.total_steps as f32).clamp(0.0, 1.0);
+        let train_t = (iter as f32 / self.config.total_train_iters as f32).clamp(0.0, 1.0);
         let t_shrink_strength = 1.0 - train_t;
         let minus_opac = self.config.opac_decay * t_shrink_strength;
         let scale_scaling = 1.0 - self.config.scale_decay * t_shrink_strength;

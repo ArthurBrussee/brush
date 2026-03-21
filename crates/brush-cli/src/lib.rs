@@ -107,8 +107,7 @@ pub async fn run_cli_ui(
     #[cfg(feature = "training")]
     let train_progress = {
         let tc = &train_stream_config.train_config;
-        let effective_total = tc.total_steps + tc.lod_levels * tc.lod_refine_steps;
-        let bar = ProgressBar::new(effective_total as u64)
+        let bar = ProgressBar::new(tc.total_iters() as u64)
         .with_style(
             ProgressStyle::with_template(
                 "[{elapsed}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} ({per_sec}, {eta} remaining)",
