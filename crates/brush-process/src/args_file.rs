@@ -141,8 +141,8 @@ mod tests {
         // Verify they contain the right values
         let args_str = args.join(" ");
         assert!(
-            args_str.contains("--total-steps 5000"),
-            "Missing total-steps"
+            args_str.contains("--total-train-iters 5000"),
+            "Missing total-train-iters"
         );
         assert!(args_str.contains("--sh-degree 2"), "Missing sh-degree");
         assert!(args_str.contains("--max-frames 10"), "Missing max-frames");
