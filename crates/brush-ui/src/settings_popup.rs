@@ -202,7 +202,11 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
 
     {
         let tc = &mut args.train_config;
-        let lod_label = if tc.lod_levels == 1 { "LOD level" } else { "LOD levels" };
+        let lod_label = if tc.lod_levels == 1 {
+            "LOD level"
+        } else {
+            "LOD levels"
+        };
         slider(ui, &mut tc.lod_levels, 0..=8, lod_label, false, enabled);
         if tc.lod_levels > 0 {
             slider(
