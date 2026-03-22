@@ -28,22 +28,18 @@ pub enum TextureMode {
     Float,
 }
 
+/// Gaussian splat parameters.
+///
+/// `transforms` stores means(3) + rotations(4) + log scales(3) = 10 floats per splat
+/// as a single contiguous [N, 10] tensor to minimize GPU shader bindings.
 #[derive(Module, Debug)]
 pub struct Splats<B: Backend> {
-    pub means: Param<Tensor<B, 2>>,
-    pub rotations: Param<Tensor<B, 2>>,
-    pub log_scales: Param<Tensor<B, 2>>,
+    pub transforms: Param<Tensor<B, 2>>,
     pub sh_coeffs: Param<Tensor<B, 3>>,
     pub raw_opacities: Param<Tensor<B, 1>>,
 
     #[module(skip)] // TODO: Should be SplatRenderMode but not supported atm..
     pub render_mip: bool,
-}
-
-fn norm_vec<B: Backend>(vec: Tensor<B, 2>) -> Tensor<B, 2> {
-    let magnitudes =
-        Tensor::clamp_min(Tensor::sum_dim(vec.clone().powi_scalar(2), 1).sqrt(), 1e-32);
-    vec / magnitudes
 }
 
 pub fn inverse_sigmoid(x: f32) -> f32 {
@@ -117,14 +113,29 @@ impl<B: Backend> Splats<B> {
         assert_eq!(rotation.dims()[1], 4, "Rotation must be 4D");
         assert_eq!(log_scales.dims()[1], 3, "Scales must be 3D");
 
+        let transforms = Tensor::cat(vec![means, rotation, log_scales], 1);
+
         Self {
-            means: Param::initialized(ParamId::new(), means.detach().require_grad()),
+            transforms: Param::initialized(ParamId::new(), transforms.detach().require_grad()),
             sh_coeffs: Param::initialized(ParamId::new(), sh_coeffs.detach().require_grad()),
-            rotations: Param::initialized(ParamId::new(), rotation.detach().require_grad()),
             raw_opacities: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
-            log_scales: Param::initialized(ParamId::new(), log_scales.detach().require_grad()),
             render_mip: mode == SplatRenderMode::Mip,
         }
+    }
+
+    /// Get means (positions) — slice of transforms columns 0..3.
+    pub fn means(&self) -> Tensor<B, 2> {
+        self.transforms.val().slice(s![.., 0..3])
+    }
+
+    /// Get rotation quaternions — slice of transforms columns 3..7.
+    pub fn rotations(&self) -> Tensor<B, 2> {
+        self.transforms.val().slice(s![.., 3..7])
+    }
+
+    /// Get log-space scales — slice of transforms columns 7..10.
+    pub fn log_scales(&self) -> Tensor<B, 2> {
+        self.transforms.val().slice(s![.., 7..10])
     }
 
     pub fn opacities(&self) -> Tensor<B, 1> {
@@ -132,20 +143,11 @@ impl<B: Backend> Splats<B> {
     }
 
     pub fn scales(&self) -> Tensor<B, 2> {
-        self.log_scales.val().exp()
+        self.log_scales().exp()
     }
 
     pub fn num_splats(&self) -> u32 {
-        self.means.dims()[0] as u32
-    }
-
-    pub fn rotations_normed(&self) -> Tensor<B, 2> {
-        norm_vec(self.rotations.val())
-    }
-
-    pub fn with_normed_rotations(mut self) -> Self {
-        self.rotations = self.rotations.map(|r| norm_vec(r));
-        self
+        self.transforms.dims()[0] as u32
     }
 
     pub fn sh_degree(&self) -> u32 {
@@ -154,7 +156,7 @@ impl<B: Backend> Splats<B> {
     }
 
     pub fn device(&self) -> B::Device {
-        self.means.device()
+        self.transforms.device()
     }
 
     pub fn validate_values(&self) {
@@ -169,18 +171,11 @@ impl<B: Backend> Splats<B> {
             let num_splats = self.num_splats();
 
             // Validate means (positions)
-            validate_tensor_val(&self.means.val(), "means", None, None);
-            // Validate raw rotations and normalized rotations
-            validate_tensor_val(&self.rotations.val(), "raw_rotations", None, None);
-            let rotations = self.rotations_normed();
-            validate_tensor_val(&rotations, "normalized_rotations", None, None);
+            validate_tensor_val(&self.means(), "means", None, None);
+            // Validate rotations
+            validate_tensor_val(&self.rotations(), "rotations", None, None);
             // Validate pre-activation scales (log_scales) and post-activation scales
-            validate_tensor_val(
-                &self.log_scales.val(),
-                "log_scales",
-                Some(-10.0),
-                Some(10.0),
-            );
+            validate_tensor_val(&self.log_scales(), "log_scales", Some(-10.0), Some(10.0));
             let scales = self.scales();
             validate_tensor_val(&scales, "scales", Some(1e-20), Some(10000.0));
             // Validate SH coefficients
@@ -197,29 +192,17 @@ impl<B: Backend> Splats<B> {
             // Range validation if requested
             // Scales should be positive and reasonable
             validate_tensor_val(&scales, "scales", Some(1e-6), Some(100.0));
-            // Normalized rotations should have unit magnitude (quaternion)
-            let rot_norms = rotations.powi_scalar(2).sum_dim(1).sqrt();
-            validate_tensor_val(&rot_norms, "rotation_magnitudes", Some(1e-12), Some(1000.0));
 
             assert!(num_splats > 0, "Splats must contain at least one splat");
 
-            let [n_means, dims] = self.means.dims();
-            assert_eq!(dims, 3, "Means must be 3D coordinates");
+            let [n_transforms, t_dims] = self.transforms.dims();
             assert_eq!(
-                n_means, num_splats as usize,
-                "Inconsistent number of splats in means"
+                t_dims, 10,
+                "Transforms must be 10D (means(3) + quats(4) + log_scales(3))"
             );
-            let [n_rot, rot_dims] = self.rotations.dims();
-            assert_eq!(rot_dims, 4, "Rotations must be quaternions (4D)");
             assert_eq!(
-                n_rot, num_splats as usize,
-                "Inconsistent number of splats in rotations"
-            );
-            let [n_scales, scale_dims] = self.log_scales.dims();
-            assert_eq!(scale_dims, 3, "Scales must be 3D");
-            assert_eq!(
-                n_scales, num_splats as usize,
-                "Inconsistent number of splats in scales"
+                n_transforms, num_splats as usize,
+                "Inconsistent number of splats in transforms"
             );
             let [n_opacity] = self.raw_opacities.dims();
             assert_eq!(
@@ -252,18 +235,19 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
 ) -> (Tensor<B, 3>, RenderAux<B>) {
     splats.validate_values();
 
-    let mut scales = splats.log_scales.into_value();
-
-    if let Some(scale) = splat_scale {
-        scales = scales + scale.ln();
+    let transforms = if let Some(scale) = splat_scale {
+        // Apply splat_scale offset to the log_scales portion (columns 7..10)
+        let means_rots = splats.transforms.val().slice(s![.., 0..7]);
+        let log_scales = splats.transforms.val().slice(s![.., 7..10]) + scale.ln();
+        Tensor::cat(vec![means_rots, log_scales], 1)
+    } else {
+        splats.transforms.into_value()
     };
 
     let project_output = B::project(
         camera,
         img_size,
-        splats.means.into_value().into_primitive().tensor(),
-        scales.into_primitive().tensor(),
-        splats.rotations.into_value().into_primitive().tensor(),
+        transforms.into_primitive().tensor(),
         splats.sh_coeffs.into_value().into_primitive().tensor(),
         splats.raw_opacities.into_value().into_primitive().tensor(),
         if splats.render_mip {

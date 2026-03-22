@@ -31,22 +31,21 @@ use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorI
 use glam::Vec3;
 
 /// Intermediate gradients from the rasterize backward pass.
+///
+/// Combined buffer of shape [`num_points`, 10]:
+///   [0..8]: projected splat gradients
+///   [8]:    raw opacity gradient
+///   [9]:    refinement weight
 #[derive(Debug, Clone)]
 pub struct RasterizeGrads<B: Backend> {
-    /// Gradients w.r.t. projected splat data [`num_points`, 8].
-    pub v_projected_splats: FloatTensor<B>,
-    /// Gradients w.r.t. raw opacity from rasterization [`num_points`].
-    pub v_raw_opac: FloatTensor<B>,
-    /// Refinement weights for densification [`num_points`].
-    pub v_refine_weight: FloatTensor<B>,
+    pub v_combined: FloatTensor<B>,
 }
 
 /// Final gradients w.r.t. splat inputs from the project backward pass.
 #[derive(Debug, Clone)]
 pub struct SplatGrads<B: Backend> {
-    pub v_means: FloatTensor<B>,
-    pub v_quats: FloatTensor<B>,
-    pub v_scales: FloatTensor<B>,
+    /// Gradients w.r.t. transforms [`num_points`, 10] = means(3) + quats(4) + log scales(3).
+    pub v_transforms: FloatTensor<B>,
     pub v_coeffs: FloatTensor<B>,
     pub v_raw_opac: FloatTensor<B>,
     pub v_refine_weight: FloatTensor<B>,
@@ -70,9 +69,7 @@ pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
     /// Backward pass for projection.
     #[allow(clippy::too_many_arguments)]
     fn project_bwd(
-        means: FloatTensor<B>,
-        log_scales: FloatTensor<B>,
-        quats: FloatTensor<B>,
+        transforms: FloatTensor<B>,
         raw_opac: FloatTensor<B>,
         num_visible: IntTensor<B>,
         global_from_compact_gid: IntTensor<B>,
@@ -86,9 +83,7 @@ pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
 /// State saved during forward pass for backward computation.
 #[derive(Debug, Clone)]
 struct GaussianBackwardState<B: Backend> {
-    means: FloatTensor<B>,
-    quats: FloatTensor<B>,
-    log_scales: FloatTensor<B>,
+    transforms: FloatTensor<B>,
     raw_opac: FloatTensor<B>,
 
     projected_splats: FloatTensor<B>,
@@ -109,7 +104,7 @@ struct GaussianBackwardState<B: Backend> {
 #[derive(Debug)]
 struct RenderBackwards;
 
-const NUM_BWD_ARGS: usize = 6;
+const NUM_BWD_ARGS: usize = 4;
 
 // Implement gradient registration when rendering backwards.
 impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
@@ -129,10 +124,8 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
         // Register gradients for parent nodes (This code is already skipped entirely
         // if no parent nodes require gradients).
         let [
-            mean_parent,
+            transforms_parent,
             refine_weight,
-            log_scales_parent,
-            quats_parent,
             coeffs_parent,
             raw_opacity_parent,
         ] = ops.parents;
@@ -151,9 +144,7 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
 
         // Step 2: Project backward
         let splat_grads = B::project_bwd(
-            state.means,
-            state.log_scales,
-            state.quats,
+            state.transforms,
             state.raw_opac,
             state.num_visible,
             state.global_from_compact_gid,
@@ -163,21 +154,13 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
             rasterize_grads,
         );
 
-        if let Some(node) = mean_parent {
-            grads.register::<B>(node.id, splat_grads.v_means);
+        if let Some(node) = transforms_parent {
+            grads.register::<B>(node.id, splat_grads.v_transforms);
         }
 
         // Register the gradients for the dummy xy input.
         if let Some(node) = refine_weight {
             grads.register::<B>(node.id, splat_grads.v_refine_weight);
-        }
-
-        if let Some(node) = log_scales_parent {
-            grads.register::<B>(node.id, splat_grads.v_scales);
-        }
-
-        if let Some(node) = quats_parent {
-            grads.register::<B>(node.id, splat_grads.v_quats);
         }
 
         if let Some(node) = coeffs_parent {
@@ -215,41 +198,21 @@ where
     splats.validate_values();
 
     let device = Tensor::<Autodiff<B, C>, 2>::from_primitive(TensorPrimitive::Float(
-        splats.means.val().into_primitive().tensor(),
+        splats.transforms.val().into_primitive().tensor(),
     ))
     .device();
     let refine_weight_holder = Tensor::<Autodiff<B, C>, 1>::zeros([1], &device).require_grad();
 
     let prep_nodes = RenderBackwards
         .prepare::<C>([
-            splats.means.val().into_primitive().tensor().node,
+            splats.transforms.val().into_primitive().tensor().node,
             refine_weight_holder.clone().into_primitive().tensor().node,
-            splats.log_scales.val().into_primitive().tensor().node,
-            splats.rotations.val().into_primitive().tensor().node,
             splats.sh_coeffs.val().into_primitive().tensor().node,
             splats.raw_opacities.val().into_primitive().tensor().node,
         ])
         .compute_bound()
         .stateful();
 
-    let means = splats
-        .means
-        .val()
-        .into_primitive()
-        .tensor()
-        .into_primitive();
-    let log_scales = splats
-        .log_scales
-        .val()
-        .into_primitive()
-        .tensor()
-        .into_primitive();
-    let quats = splats
-        .rotations
-        .val()
-        .into_primitive()
-        .tensor()
-        .into_primitive();
     let sh_coeffs_dims = splats.sh_coeffs.dims();
     let sh_coeffs = splats
         .sh_coeffs
@@ -264,6 +227,13 @@ where
         .tensor()
         .into_primitive();
 
+    let transforms = splats
+        .transforms
+        .val()
+        .into_primitive()
+        .tensor()
+        .into_primitive();
+
     let render_mode = if splats.render_mip {
         SplatRenderMode::Mip
     } else {
@@ -272,9 +242,7 @@ where
     let project_output = <B as SplatOps<B>>::project(
         camera,
         img_size,
-        means.clone(),
-        log_scales.clone(),
-        quats.clone(),
+        transforms.clone(),
         sh_coeffs,
         raw_opacity.clone(),
         render_mode,
@@ -299,9 +267,7 @@ where
     match prep_nodes {
         OpsKind::Tracked(prep) => {
             let state = GaussianBackwardState {
-                means,
-                log_scales,
-                quats,
+                transforms,
                 raw_opac: raw_opacity,
                 sh_degree,
                 out_img: out_img.clone(),
@@ -373,7 +339,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                     tile_offsets,
                 ] = inputs;
 
-                let [v_projected_splats, v_raw_opac, v_refine_weight] = outputs;
+                let [v_combined] = outputs;
 
                 let grads = <MainBackendBase as SplatBwdOps<MainBackendBase>>::rasterize_bwd(
                     h.get_float_tensor::<MainBackendBase>(out_img),
@@ -386,34 +352,16 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                     h.get_float_tensor::<MainBackendBase>(v_output),
                 );
 
-                h.register_float_tensor::<MainBackendBase>(
-                    &v_projected_splats.id,
-                    grads.v_projected_splats,
-                );
-                h.register_float_tensor::<MainBackendBase>(&v_raw_opac.id, grads.v_raw_opac);
-                h.register_float_tensor::<MainBackendBase>(
-                    &v_refine_weight.id,
-                    grads.v_refine_weight,
-                );
+                h.register_float_tensor::<MainBackendBase>(&v_combined.id, grads.v_combined);
             }
         }
 
         let client = v_output.client.clone();
         let num_points = projected_splats.shape[0];
 
-        let v_projected_splats_out = TensorIr::uninit(
+        let v_combined_out = TensorIr::uninit(
             client.create_empty_handle(),
-            Shape::new([num_points, 8]),
-            DType::F32,
-        );
-        let v_raw_opac = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_points]),
-            DType::F32,
-        );
-        let v_refine_weight = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_points]),
+            Shape::new([num_points, 10]),
             DType::F32,
         );
 
@@ -430,7 +378,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         let desc = CustomOpIr::new(
             "rasterize_bwd",
             &input_tensors.map(|t| t.into_ir()),
-            &[v_projected_splats_out, v_raw_opac, v_refine_weight],
+            &[v_combined_out],
         );
         let op = CustomOp {
             desc: desc.clone(),
@@ -442,20 +390,14 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             .register(stream, OperationIr::Custom(desc), op)
             .outputs();
 
-        let [v_projected_splats, v_raw_opac, v_refine_weight] = outputs;
+        let [v_combined] = outputs;
 
-        RasterizeGrads {
-            v_projected_splats,
-            v_raw_opac,
-            v_refine_weight,
-        }
+        RasterizeGrads { v_combined }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn project_bwd(
-        means: FloatTensor<Self>,
-        log_scales: FloatTensor<Self>,
-        quats: FloatTensor<Self>,
+        transforms: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
         num_visible: IntTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
@@ -480,36 +422,21 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 let (inputs, outputs) = self.desc.as_fixed();
 
                 let [
-                    means,
-                    log_scales,
-                    quats,
+                    transforms,
                     raw_opac,
                     num_visible,
                     global_from_compact_gid,
-                    v_projected_splats,
-                    v_raw_opac_in,
-                    v_refine_weight_in,
+                    v_combined_in,
                 ] = inputs;
 
-                let [
-                    v_means,
-                    v_quats,
-                    v_scales,
-                    v_coeffs,
-                    v_raw_opac,
-                    v_refine_weight,
-                ] = outputs;
+                let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
 
                 let inner_rasterize_grads = RasterizeGrads {
-                    v_projected_splats: h.get_float_tensor::<MainBackendBase>(v_projected_splats),
-                    v_raw_opac: h.get_float_tensor::<MainBackendBase>(v_raw_opac_in),
-                    v_refine_weight: h.get_float_tensor::<MainBackendBase>(v_refine_weight_in),
+                    v_combined: h.get_float_tensor::<MainBackendBase>(v_combined_in),
                 };
 
                 let grads = <MainBackendBase as SplatBwdOps<MainBackendBase>>::project_bwd(
-                    h.get_float_tensor::<MainBackendBase>(means),
-                    h.get_float_tensor::<MainBackendBase>(log_scales),
-                    h.get_float_tensor::<MainBackendBase>(quats),
+                    h.get_float_tensor::<MainBackendBase>(transforms),
                     h.get_float_tensor::<MainBackendBase>(raw_opac),
                     h.get_int_tensor::<MainBackendBase>(num_visible),
                     h.get_int_tensor::<MainBackendBase>(global_from_compact_gid),
@@ -519,9 +446,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                     inner_rasterize_grads,
                 );
 
-                h.register_float_tensor::<MainBackendBase>(&v_means.id, grads.v_means);
-                h.register_float_tensor::<MainBackendBase>(&v_quats.id, grads.v_quats);
-                h.register_float_tensor::<MainBackendBase>(&v_scales.id, grads.v_scales);
+                h.register_float_tensor::<MainBackendBase>(&v_transforms.id, grads.v_transforms);
                 h.register_float_tensor::<MainBackendBase>(&v_coeffs.id, grads.v_coeffs);
                 h.register_float_tensor::<MainBackendBase>(&v_raw_opac.id, grads.v_raw_opac);
                 h.register_float_tensor::<MainBackendBase>(
@@ -531,23 +456,13 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             }
         }
 
-        let client = means.client.clone();
-        let num_points = means.shape[0];
+        let client = transforms.client.clone();
+        let num_points = transforms.shape[0];
         let coeffs = sh_coeffs_for_degree(sh_degree) as usize;
 
-        let v_means_out = TensorIr::uninit(
+        let v_transforms_out = TensorIr::uninit(
             client.create_empty_handle(),
-            Shape::new([num_points, 3]),
-            DType::F32,
-        );
-        let v_scales_out = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_points, 3]),
-            DType::F32,
-        );
-        let v_quats_out = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_points, 4]),
+            Shape::new([num_points, 10]),
             DType::F32,
         );
         let v_coeffs_out = TensorIr::uninit(
@@ -567,15 +482,11 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         );
 
         let input_tensors = [
-            means,
-            log_scales,
-            quats,
+            transforms,
             raw_opac,
             num_visible,
             global_from_compact_gid,
-            rasterize_grads.v_projected_splats,
-            rasterize_grads.v_raw_opac,
-            rasterize_grads.v_refine_weight,
+            rasterize_grads.v_combined,
         ];
 
         let stream = OperationStreams::with_inputs(&input_tensors);
@@ -583,9 +494,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             "project_bwd",
             &input_tensors.map(|t| t.into_ir()),
             &[
-                v_means_out,
-                v_quats_out,
-                v_scales_out,
+                v_transforms_out,
                 v_coeffs_out,
                 v_raw_opac_out,
                 v_refine_weight_out,
@@ -605,19 +514,10 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             )
             .outputs();
 
-        let [
-            v_means,
-            v_quats,
-            v_scales,
-            v_coeffs,
-            v_raw_opac,
-            v_refine_weight,
-        ] = outputs;
+        let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
 
         SplatGrads {
-            v_means,
-            v_scales,
-            v_quats,
+            v_transforms,
             v_coeffs,
             v_raw_opac,
             v_refine_weight,

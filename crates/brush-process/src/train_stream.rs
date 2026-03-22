@@ -272,9 +272,7 @@ pub(crate) async fn train_stream(
         let stats = splat_slot
             .act(0, |splats: Splats<MainBackend>| async {
                 let mut splats = splats.train();
-                splats.means = splats.means.map(|m| m.require_grad());
-                splats.rotations = splats.rotations.map(|m| m.require_grad());
-                splats.log_scales = splats.log_scales.map(|m| m.require_grad());
+                splats.transforms = splats.transforms.map(|m| m.require_grad());
                 splats.raw_opacities = splats.raw_opacities.map(|m| m.require_grad());
                 splats.sh_coeffs = splats.sh_coeffs.map(|m| m.require_grad());
 

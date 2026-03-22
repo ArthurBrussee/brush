@@ -7,26 +7,20 @@
 @group(0) @binding(4) var<storage, read> output: array<vec4f>;
 @group(0) @binding(5) var<storage, read> v_output: array<vec4f>;
 
+// v_splats layout per splat (stride 10):
+// [0..7]: projected splat grads (xy, conic, rgb)
+// [8]: opacity grad
+// [9]: refine weight
 #ifdef HARD_FLOAT
     @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<f32>>;
-    @group(0) @binding(7) var<storage, read_write> v_opacs: array<atomic<f32>>;
-    @group(0) @binding(8) var<storage, read_write> v_refines: array<atomic<f32>>;
-    @group(0) @binding(9) var<storage, read> uniforms: helpers::RasterizeUniforms;
+    @group(0) @binding(7) var<storage, read> uniforms: helpers::RasterizeUniforms;
 
     fn write_grads_atomic(id: u32, grads: f32) {
         atomicAdd(&v_splats[id], grads);
     }
-    fn write_refine_atomic(id: u32, grads: f32) {
-        atomicAdd(&v_refines[id], grads);
-    }
-    fn write_opac_atomic(id: u32, grads: f32) {
-        atomicAdd(&v_opacs[id], grads);
-    }
 #else
     @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<u32>>;
-    @group(0) @binding(7) var<storage, read_write> v_opacs: array<atomic<u32>>;
-    @group(0) @binding(8) var<storage, read_write> v_refines: array<atomic<u32>>;
-    @group(0) @binding(9) var<storage, read> uniforms: helpers::RasterizeUniforms;
+    @group(0) @binding(7) var<storage, read> uniforms: helpers::RasterizeUniforms;
 
     fn add_bitcast(cur: u32, add: f32) -> u32 {
         return bitcast<u32>(bitcast<f32>(cur) + add);
@@ -35,20 +29,6 @@
         var old_value = atomicLoad(&v_splats[id]);
         loop {
             let cas = atomicCompareExchangeWeak(&v_splats[id], old_value, add_bitcast(old_value, grads));
-            if cas.exchanged { break; } else { old_value = cas.old_value; }
-        }
-    }
-    fn write_refine_atomic(id: u32, grads: f32) {
-        var old_value = atomicLoad(&v_refines[id]);
-        loop {
-            let cas = atomicCompareExchangeWeak(&v_refines[id], old_value, add_bitcast(old_value, grads));
-            if cas.exchanged { break; } else { old_value = cas.old_value; }
-        }
-    }
-    fn write_opac_atomic(id: u32, grads: f32) {
-        var old_value = atomicLoad(&v_opacs[id]);
-        loop {
-            let cas = atomicCompareExchangeWeak(&v_opacs[id], old_value, add_bitcast(old_value, grads));
             if cas.exchanged { break; } else { old_value = cas.old_value; }
         }
     }
@@ -218,17 +198,18 @@ fn main(
 
                 if doAdd {
                     let global_gid = load_gid[t];
+                    let base = global_gid * 10u;
 
-                    write_grads_atomic(global_gid * 8 + 0, sum_xy.x);
-                    write_grads_atomic(global_gid * 8 + 1, sum_xy.y);
-                    write_grads_atomic(global_gid * 8 + 2, sum_conic.x);
-                    write_grads_atomic(global_gid * 8 + 3, sum_conic.y);
-                    write_grads_atomic(global_gid * 8 + 4, sum_conic.z);
-                    write_grads_atomic(global_gid * 8 + 5, sum_rgb.x);
-                    write_grads_atomic(global_gid * 8 + 6, sum_rgb.y);
-                    write_grads_atomic(global_gid * 8 + 7, sum_rgb.z);
-                    write_opac_atomic(global_gid, sum_alpha);
-                    write_refine_atomic(global_gid, sum_refine);
+                    write_grads_atomic(base + 0u, sum_xy.x);
+                    write_grads_atomic(base + 1u, sum_xy.y);
+                    write_grads_atomic(base + 2u, sum_conic.x);
+                    write_grads_atomic(base + 3u, sum_conic.y);
+                    write_grads_atomic(base + 4u, sum_conic.z);
+                    write_grads_atomic(base + 5u, sum_rgb.x);
+                    write_grads_atomic(base + 6u, sum_rgb.y);
+                    write_grads_atomic(base + 7u, sum_rgb.z);
+                    write_grads_atomic(base + 8u, sum_alpha);
+                    write_grads_atomic(base + 9u, sum_refine);
                 }
             }
         }

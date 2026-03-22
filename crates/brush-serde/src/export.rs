@@ -71,10 +71,8 @@ struct DynamicPly {
 pub use burn_cubecl::{CubeRuntime, cubecl::Compiler, tensor::CubeTensor};
 
 async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
-    let [means, log_scales, rotations, raw_opacities, sh_coeffs] = Transaction::default()
-        .register(splats.means.val())
-        .register(splats.log_scales.val())
-        .register(splats.rotations.val())
+    let [transforms, raw_opacities, sh_coeffs] = Transaction::default()
+        .register(splats.transforms.val())
         .register(splats.raw_opacities.val())
         .register(splats.sh_coeffs.val().permute([0, 2, 1])) // Permute to inria format ([n, channel, coeffs]).)
         .execute_async()
@@ -133,17 +131,22 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
             };
 
             let rest_coeffs = [sh_red_rest, sh_green_rest, sh_blue_rest].concat();
+            // transforms layout: means(3) + rotations(4) + log_scales(3) = stride 10
+            let t = i * 10;
+            // Normalize the quaternion before export.
+            let (r0, r1, r2, r3): (f32, f32, f32, f32) = (transforms[t + 3], transforms[t + 4], transforms[t + 5], transforms[t + 6]);
+            let rn = (r0 * r0 + r1 * r1 + r2 * r2 + r3 * r3).sqrt().max(1e-12);
             DynamicPlyGaussian {
-                x: means[i * 3],
-                y: means[i * 3 + 1],
-                z: means[i * 3 + 2],
-                scale_0: log_scales[i * 3],
-                scale_1: log_scales[i * 3 + 1],
-                scale_2: log_scales[i * 3 + 2],
-                rot_0: rotations[i * 4],
-                rot_1: rotations[i * 4 + 1],
-                rot_2: rotations[i * 4 + 2],
-                rot_3: rotations[i * 4 + 3],
+                x: transforms[t],
+                y: transforms[t + 1],
+                z: transforms[t + 2],
+                scale_0: transforms[t + 7],
+                scale_1: transforms[t + 8],
+                scale_2: transforms[t + 9],
+                rot_0: r0 / rn,
+                rot_1: r1 / rn,
+                rot_2: r2 / rn,
+                rot_3: r3 / rn,
                 opacity: raw_opacities[i],
                 f_dc_0: sh_red[0],
                 f_dc_1: sh_green[0],
@@ -156,7 +159,6 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
 }
 
 pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, SerializeError> {
-    let splats = splats.with_normed_rotations();
     let sh_degree = splats.sh_degree();
     let ply = read_splat_data(splats.clone()).await;
 

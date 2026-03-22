@@ -27,25 +27,19 @@ use burn::{
 pub fn splats_into_autodiff<B: Backend, BDiff: AutodiffBackend<InnerBackend = B>>(
     splats: Splats<B>,
 ) -> Splats<BDiff> {
-    println!("Means grad: {}", splats.means.is_require_grad());
-    println!("rotation grad: {}", splats.rotations.is_require_grad());
-    println!("scales grad: {}", splats.log_scales.is_require_grad());
+    println!("Transforms grad: {}", splats.transforms.is_require_grad());
     println!("coeffs grad: {}", splats.sh_coeffs.is_require_grad());
     println!("opacity grad: {}", splats.raw_opacities.is_require_grad());
 
     let mip = splats.render_mip;
-    let (means_id, means, _) = splats.means.consume();
-    let (rotation_id, rotation, _) = splats.rotations.consume();
-    let (log_scales_id, log_scales, _) = splats.log_scales.consume();
+    let (transforms_id, transforms, _) = splats.transforms.consume();
     let (sh_coeffs_id, sh_coeffs, _) = splats.sh_coeffs.consume();
     let (raw_opacity_id, raw_opacity, _) = splats.raw_opacities.consume();
 
     Splats::<BDiff> {
-        means: Param::initialized(means_id, Tensor::from_inner(means).require_grad()),
-        rotations: Param::initialized(rotation_id, Tensor::from_inner(rotation).require_grad()),
-        log_scales: Param::initialized(
-            log_scales_id,
-            Tensor::from_inner(log_scales).require_grad(),
+        transforms: Param::initialized(
+            transforms_id,
+            Tensor::from_inner(transforms).require_grad(),
         ),
         sh_coeffs: Param::initialized(sh_coeffs_id, Tensor::from_inner(sh_coeffs).require_grad()),
         raw_opacities: Param::initialized(

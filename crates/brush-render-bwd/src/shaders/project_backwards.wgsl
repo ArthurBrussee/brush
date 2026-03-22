@@ -1,22 +1,14 @@
 #import helpers;
 
 @group(0) @binding(0) var<storage, read> num_visible: u32;
-
-@group(0) @binding(1) var<storage, read> means: array<helpers::PackedVec3>;
-@group(0) @binding(2) var<storage, read> log_scales: array<helpers::PackedVec3>;
-@group(0) @binding(3) var<storage, read> quats: array<vec4f>;
-@group(0) @binding(4) var<storage, read> raw_opac: array<f32>;
-
-@group(0) @binding(5) var<storage, read> global_from_compact_gid: array<u32>;
-
-@group(0) @binding(6) var<storage, read> v_grads: array<vec4f>;
-
-@group(0) @binding(7) var<storage, read_write> v_means: array<helpers::PackedVec3>;
-@group(0) @binding(8) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
-@group(0) @binding(9) var<storage, read_write> v_quats: array<vec4f>;
-@group(0) @binding(10) var<storage, read_write> v_coeffs: array<f32>;
-@group(0) @binding(11) var<storage, read_write> v_opacs: array<f32>;
-@group(0) @binding(12) var<storage, read> uniforms: helpers::ProjectUniforms;
+@group(0) @binding(1) var<storage, read> transforms: array<f32>;
+@group(0) @binding(2) var<storage, read> raw_opac: array<f32>;
+@group(0) @binding(3) var<storage, read> global_from_compact_gid: array<u32>;
+// Combined rasterize grads: projected_splat_grads(8) + opac_grad(1) + refine_weight(1) per splat, stride 10
+@group(0) @binding(4) var<storage, read_write> v_rasterize_grads: array<f32>;
+@group(0) @binding(5) var<storage, read_write> v_transforms: array<f32>;
+@group(0) @binding(6) var<storage, read_write> v_coeffs: array<f32>;
+@group(0) @binding(7) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 const SH_C0: f32 = 0.2820947917738781f;
 
@@ -311,18 +303,19 @@ fn main(
     let img_size = uniforms.img_size;
     let pixel_center = uniforms.pixel_center;
 
-    let mean = helpers::as_vec(means[global_gid]);
-    let scale = exp(helpers::as_vec(log_scales[global_gid]));
-    let quat_unorm = quats[global_gid];
+    // Read transform data: means(3) + quats(4) + log_scales(3)
+    let tbase = global_gid * 10u;
+    let mean = vec3f(transforms[tbase], transforms[tbase + 1u], transforms[tbase + 2u]);
+    let scale = exp(vec3f(transforms[tbase + 7u], transforms[tbase + 8u], transforms[tbase + 9u]));
+    let quat_unorm = vec4f(transforms[tbase + 3u], transforms[tbase + 4u], transforms[tbase + 5u], transforms[tbase + 6u]);
     // Safe to normalize, quats with norm 0 are invisible.
     let quat = normalize(quat_unorm);
 
-    let grad0 = v_grads[global_gid * 2];
-    let grad1 = v_grads[global_gid * 2 + 1];
-
-    let v_mean2d = vec2f(grad0.x, grad0.y);
-    let v_conics = vec3f(grad0.z, grad0.w, grad1.x);
-    let v_color = vec3f(grad1.y, grad1.z, grad1.w);
+    // Read from combined rasterize grads buffer (stride 10 per splat).
+    let rg_base = global_gid * 10u;
+    let v_mean2d = vec2f(v_rasterize_grads[rg_base], v_rasterize_grads[rg_base + 1u]);
+    let v_conics = vec3f(v_rasterize_grads[rg_base + 2u], v_rasterize_grads[rg_base + 3u], v_rasterize_grads[rg_base + 4u]);
+    let v_color = vec3f(v_rasterize_grads[rg_base + 5u], v_rasterize_grads[rg_base + 6u], v_rasterize_grads[rg_base + 7u]);
 
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
 
@@ -380,7 +373,8 @@ fn main(
 
     let filter_comp = helpers::compensate_cov2d(&cov2d);
     let opac = helpers::sigmoid(raw_opac[global_gid]);
-    v_opacs[global_gid] = filter_comp * v_opacs[global_gid] * opac * (1.0f - opac);
+    // Modify opacity gradient in-place within the combined rasterize grads buffer (index 8).
+    v_rasterize_grads[rg_base + 8u] = filter_comp * v_rasterize_grads[rg_base + 8u] * opac * (1.0f - opac);
 
     let covar2d_inv = helpers::inverse(cov2d);
     let v_covar2d_inv = mat2x2f(vec2f(v_conics.x, v_conics.y * 0.5f), vec2f(v_conics.y * 0.5f, v_conics.z));
@@ -436,7 +430,16 @@ fn main(
     // grad for (quat, scale) from covar
     let v_quat = normalize_vjp(quat_unorm) * quat_to_mat_vjp(quat, v_M * S);
 
-    v_means[global_gid] = helpers::as_packed(v_mean);
-    v_scales[global_gid] = helpers::as_packed(v_scale_exp);
-    v_quats[global_gid] = v_quat;
+    // Write gradients to v_transforms: means(3) + quats(4) + log_scales(3)
+    let vbase = global_gid * 10u;
+    v_transforms[vbase]      = v_mean.x;
+    v_transforms[vbase + 1u] = v_mean.y;
+    v_transforms[vbase + 2u] = v_mean.z;
+    v_transforms[vbase + 3u] = v_quat.x;
+    v_transforms[vbase + 4u] = v_quat.y;
+    v_transforms[vbase + 5u] = v_quat.z;
+    v_transforms[vbase + 6u] = v_quat.w;
+    v_transforms[vbase + 7u] = v_scale_exp.x;
+    v_transforms[vbase + 8u] = v_scale_exp.y;
+    v_transforms[vbase + 9u] = v_scale_exp.z;
 }
