@@ -134,7 +134,12 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
             // transforms layout: means(3) + rotations(4) + log_scales(3) = stride 10
             let t = i * 10;
             // Normalize the quaternion before export.
-            let (r0, r1, r2, r3): (f32, f32, f32, f32) = (transforms[t + 3], transforms[t + 4], transforms[t + 5], transforms[t + 6]);
+            let (r0, r1, r2, r3): (f32, f32, f32, f32) = (
+                transforms[t + 3],
+                transforms[t + 4],
+                transforms[t + 5],
+                transforms[t + 6],
+            );
             let rn = (r0 * r0 + r1 * r1 + r2 * r2 + r3 * r3).sqrt().max(1e-12);
             DynamicPlyGaussian {
                 x: transforms[t],
