@@ -12,6 +12,8 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
@@ -19,6 +21,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
+import android.util.TypedValue;
 import android.provider.OpenableColumns;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -58,7 +61,6 @@ public class MainActivity extends GameActivity {
     private static final int REQUEST_CODE_EXTRACT_FRAMES = 1001;
     private static final int REQUEST_CODE_PICK_CSV = 1002;
     private static final int FRAME_COUNT = 100;
-    // Maximum width/height to avoid OOM. Adjust if you want larger. Set high to preserve quality on modern devices.
     private static final int MAX_DIMENSION = 4096;
     private static final String TAG = "MainActivity";
 
@@ -83,6 +85,7 @@ public class MainActivity extends GameActivity {
         );
     }
 
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -102,23 +105,45 @@ public class MainActivity extends GameActivity {
                 LayoutParams.WRAP_CONTENT
         );
 
-        lp.gravity = Gravity.BOTTOM | Gravity.END;
-        lp.setMargins(0, 0, 48, 48);
+        // ✅ FIXED POSITION (centered, slightly below .ply panel)
+        lp.gravity = Gravity.CENTER_HORIZONTAL | Gravity.CENTER_VERTICAL;
+        lp.setMargins(0, dp(200), 0, 0);
 
         LinearLayout buttonColumn = new LinearLayout(this);
         buttonColumn.setOrientation(LinearLayout.VERTICAL);
+        buttonColumn.setGravity(Gravity.CENTER_HORIZONTAL);
 
-        Button extractButton = new Button(this);
-        extractButton.setText("Extract frames");
+        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
+                LayoutParams.WRAP_CONTENT,
+                LayoutParams.WRAP_CONTENT
+        );
+        btnParams.bottomMargin = dp(6);
+
+        // ===== Extract Frames =====
+        Button extractButton = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        extractButton.setText("Extract Frames");
+        extractButton.setAllCaps(false);
+        extractButton.setTextSize(13);
+        extractButton.setPadding(dp(12), dp(6), dp(12), dp(6));
+        extractButton.setBackgroundColor(Color.parseColor("#4A7BA7"));
+        extractButton.setTextColor(Color.WHITE);
+        extractButton.setLayoutParams(btnParams);
 
         extractButton.setOnClickListener(v -> {
             Log.i(TAG, "Extract frames button clicked");
-            // Use the dedicated request code so onActivityResult can differentiate this use-case
             FilePicker.startFilePicker(REQUEST_CODE_EXTRACT_FRAMES);
         });
 
-        Button csvButton = new Button(this);
+        // ===== CSV Button =====
+        Button csvButton = new Button(this, null, android.R.attr.borderlessButtonStyle);
         csvButton.setText("Select telemetry CSV");
+        csvButton.setAllCaps(false);
+        csvButton.setTextSize(13);
+        csvButton.setPadding(dp(12), dp(6), dp(12), dp(6));
+        csvButton.setBackgroundColor(Color.parseColor("#4A7BA7"));
+        csvButton.setTextColor(Color.WHITE);
+        csvButton.setLayoutParams(btnParams);
+
         csvButton.setOnClickListener(v -> {
             Log.i(TAG, "Select telemetry CSV clicked");
             FilePicker.startCsvPicker(REQUEST_CODE_PICK_CSV);
@@ -128,6 +153,14 @@ public class MainActivity extends GameActivity {
         buttonColumn.addView(csvButton);
 
         addContentView(buttonColumn, lp);
+    }
+
+    private int dp(int v) {
+        return Math.round(TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                v,
+                getResources().getDisplayMetrics()
+        ));
     }
 
     @Override
