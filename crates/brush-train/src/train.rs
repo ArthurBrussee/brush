@@ -532,10 +532,8 @@ impl SplatTrainer {
 
         // Decay log_scales (cols 7..10) within transforms
         splats.transforms = splats.transforms.map(|t| {
-            let means_rots = t.clone().slice(s![.., 0..7]);
-            let log_scales = t.slice(s![.., 7..10]);
-            let new_log_scales = (log_scales.exp() * scale_scaling).log();
-            Tensor::cat(vec![means_rots, new_log_scales], 1)
+            let new_log_scales = (t.clone().slice(s![.., 7..10]).exp() * scale_scaling).log();
+            t.slice_assign(s![.., 7..10], new_log_scales)
         });
 
         self.optim = Some(create_default_optimizer().load_record(record));

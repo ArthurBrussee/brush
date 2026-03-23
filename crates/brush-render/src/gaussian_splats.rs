@@ -237,9 +237,9 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
 
     let transforms = if let Some(scale) = splat_scale {
         // Apply splat_scale offset to the log_scales portion (columns 7..10)
-        let means_rots = splats.transforms.val().slice(s![.., 0..7]);
-        let log_scales = splats.transforms.val().slice(s![.., 7..10]) + scale.ln();
-        Tensor::cat(vec![means_rots, log_scales], 1)
+        let t = splats.transforms.into_value();
+        let adjusted = t.clone().slice(s![.., 7..10]) + scale.ln();
+        t.slice_assign(s![.., 7..10], adjusted)
     } else {
         splats.transforms.into_value()
     };
