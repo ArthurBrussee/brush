@@ -1,13 +1,11 @@
 #import helpers;
 
-@group(0) @binding(0) var<storage, read> means: array<helpers::PackedVec3>;
-@group(0) @binding(1) var<storage, read> quats: array<vec4f>;
-@group(0) @binding(2) var<storage, read> log_scales: array<helpers::PackedVec3>;
-@group(0) @binding(3) var<storage, read> raw_opacities: array<f32>;
-@group(0) @binding(4) var<storage, read_write> global_from_compact_gid: array<u32>;
-@group(0) @binding(5) var<storage, read_write> depths: array<f32>;
-@group(0) @binding(6) var<storage, read_write> num_visible: atomic<u32>;
-@group(0) @binding(7) var<storage, read> uniforms: helpers::ProjectUniforms;
+@group(0) @binding(0) var<storage, read> transforms: array<f32>;
+@group(0) @binding(1) var<storage, read> raw_opacities: array<f32>;
+@group(0) @binding(2) var<storage, read_write> global_from_compact_gid: array<u32>;
+@group(0) @binding(3) var<storage, read_write> depths: array<f32>;
+@group(0) @binding(4) var<storage, read_write> num_visible: atomic<u32>;
+@group(0) @binding(5) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 const WG_SIZE: u32 = 256u;
 
@@ -24,8 +22,9 @@ fn main(
         return;
     }
 
-    // Project world space to camera space.
-    let mean = helpers::as_vec(means[global_gid]);
+    // Read transform data: means(3) + quats(4) + log_scales(3)
+    let base = global_gid * 10u;
+    let mean = vec3f(transforms[base], transforms[base + 1u], transforms[base + 2u]);
 
     let img_size = uniforms.img_size;
     let viewmat = uniforms.viewmat;
@@ -37,8 +36,8 @@ fn main(
         return;
     }
 
-    let scale = exp(helpers::as_vec(log_scales[global_gid]));
-    var quat = quats[global_gid];
+    let scale = exp(vec3f(transforms[base + 7u], transforms[base + 8u], transforms[base + 9u]));
+    var quat = vec4f(transforms[base + 3u], transforms[base + 4u], transforms[base + 5u], transforms[base + 6u]);
 
     // Skip any invalid rotations. This will mean overtime
     // these gaussians just die off while optimizing. For the viewer, the importer

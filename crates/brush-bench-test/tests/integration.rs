@@ -138,7 +138,7 @@ fn test_splat_generation() {
     assert_eq!(splats.num_splats(), 1000);
 
     // Check that means are reasonable
-    let means_data = splats.means.val().into_data().into_vec::<f32>().unwrap();
+    let means_data = splats.means().into_data().into_vec::<f32>().unwrap();
     assert_eq!(means_data.len(), 3000);
 
     for chunk in means_data.chunks(3) {
@@ -156,7 +156,7 @@ fn test_forward_rendering() {
     assert_eq!(splats.num_splats(), 1000);
 
     // Check that the tensor data is accessible
-    let means_data = splats.means.val().into_data().into_vec::<f32>().unwrap();
+    let means_data = splats.means().into_data().into_vec::<f32>().unwrap();
     assert_eq!(means_data.len(), 3000);
     assert!(means_data.iter().all(|&x| x.is_finite()));
 }

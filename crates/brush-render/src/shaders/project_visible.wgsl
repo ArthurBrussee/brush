@@ -6,15 +6,13 @@ struct IsectInfo {
 }
 
 @group(0) @binding(0) var<storage, read> num_visible: u32;
-@group(0) @binding(1) var<storage, read> means: array<helpers::PackedVec3>;
-@group(0) @binding(2) var<storage, read> log_scales: array<helpers::PackedVec3>;
-@group(0) @binding(3) var<storage, read> quats: array<vec4f>;
-@group(0) @binding(4) var<storage, read> coeffs: array<helpers::PackedVec3>;
-@group(0) @binding(5) var<storage, read> raw_opacities: array<f32>;
-@group(0) @binding(6) var<storage, read> global_from_compact_gid: array<u32>;
-@group(0) @binding(7) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
-@group(0) @binding(8) var<storage, read_write> splat_intersect_counts: array<u32>;
-@group(0) @binding(9) var<storage, read> uniforms: helpers::ProjectUniforms;
+@group(0) @binding(1) var<storage, read> transforms: array<f32>;
+@group(0) @binding(2) var<storage, read> coeffs: array<helpers::PackedVec3>;
+@group(0) @binding(3) var<storage, read> raw_opacities: array<f32>;
+@group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(5) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(6) var<storage, read_write> splat_intersect_counts: array<u32>;
+@group(0) @binding(7) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 struct ShCoeffs {
     b0_c0: vec3f,
@@ -178,12 +176,13 @@ fn main(
 
     let global_gid = global_from_compact_gid[compact_gid];
 
-    // Project world space to camera space.
-    let mean = helpers::as_vec(means[global_gid]);
-    let scale = exp(helpers::as_vec(log_scales[global_gid]));
+    // Read transform data: means(3) + quats(4) + log_scales(3)
+    let base = global_gid * 10u;
+    let mean = vec3f(transforms[base], transforms[base + 1u], transforms[base + 2u]);
+    let scale = exp(vec3f(transforms[base + 7u], transforms[base + 8u], transforms[base + 9u]));
 
     // Safe to normalize, splats with length(quat) == 0 are invisible.
-    let quat = normalize(quats[global_gid]);
+    let quat = normalize(vec4f(transforms[base + 3u], transforms[base + 4u], transforms[base + 5u], transforms[base + 6u]));
     var opac = helpers::sigmoid(raw_opacities[global_gid]);
 
     let viewmat = uniforms.viewmat;

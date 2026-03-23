@@ -63,9 +63,7 @@ impl SceneLoader {
         let parallelism = if cfg!(target_family = "wasm") {
             1
         } else {
-            std::thread::available_parallelism()
-                .map(|x| x.get())
-                .unwrap_or(8)
+            std::thread::available_parallelism().map_or(8, |x| x.get())
         };
         let num_views = scene.views.len();
 

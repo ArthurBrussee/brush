@@ -36,9 +36,7 @@ impl SplatOps<Self> for MainBackendBase {
     fn project(
         camera: &Camera,
         img_size: glam::UVec2,
-        means: FloatTensor<Self>,
-        log_scales: FloatTensor<Self>,
-        quats: FloatTensor<Self>,
+        transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
@@ -49,21 +47,17 @@ impl SplatOps<Self> for MainBackendBase {
         );
 
         // Tensor params might not be contiguous, convert them to contiguous tensors.
-        let means = into_contiguous(means);
-        let log_scales = into_contiguous(log_scales);
-        let quats = into_contiguous(quats);
+        let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
         let raw_opacities = into_contiguous(raw_opacities);
 
-        let device = &means.device.clone();
+        let device = &transforms.device.clone();
 
         let _span = tracing::trace_span!("project_prepare").entered();
 
         // Check whether input dimensions are valid.
         DimCheck::new()
-            .check_dims("means", &means, &["D".into(), 3.into()])
-            .check_dims("log_scales", &log_scales, &["D".into(), 3.into()])
-            .check_dims("quats", &quats, &["D".into(), 4.into()])
+            .check_dims("transforms", &transforms, &["D".into(), 10.into()])
             .check_dims("sh_coeffs", &sh_coeffs, &["D".into(), "C".into(), 3.into()])
             .check_dims("raw_opacities", &raw_opacities, &["D".into()]);
 
@@ -72,7 +66,7 @@ impl SplatOps<Self> for MainBackendBase {
 
         // Tile rendering setup.
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
-        let total_splats = means.shape()[0];
+        let total_splats = transforms.shape()[0];
 
         let project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
@@ -90,7 +84,7 @@ impl SplatOps<Self> for MainBackendBase {
         // Separate buffer for num_visible (written atomically by ProjectSplats)
         let num_visible_buffer = Self::int_zeros([1].into(), device, IntDType::U32);
 
-        let client = &means.client.clone();
+        let client = &transforms.client.clone();
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
         // Step 1: ProjectSplats - culling pass
@@ -107,9 +101,7 @@ impl SplatOps<Self> for MainBackendBase {
                 calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
                 Bindings::new()
                     .with_buffers(vec![
-                        means.handle.clone().binding(),
-                        quats.handle.clone().binding(),
-                        log_scales.handle.clone().binding(),
+                        transforms.handle.clone().binding(),
                         raw_opacities.handle.clone().binding(),
                         global_from_presort_gid.handle.clone().binding(),
                         depths.handle.clone().binding(),
@@ -149,9 +141,7 @@ impl SplatOps<Self> for MainBackendBase {
                         Bindings::new()
                             .with_buffers(vec![
                                 num_visible_buffer.handle.clone().binding(),
-                                means.handle.binding(),
-                                log_scales.handle.binding(),
-                                quats.handle.binding(),
+                                transforms.handle.binding(),
                                 sh_coeffs.handle.binding(),
                                 raw_opacities.handle.binding(),
                                 global_from_compact_gid.handle.clone().binding(),

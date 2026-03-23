@@ -49,12 +49,7 @@ mod visualize_tools_impl {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
 
-                let means = splats
-                    .means
-                    .val()
-                    .into_data_async()
-                    .await?
-                    .into_vec::<f32>()?;
+                let means = splats.means().into_data_async().await?.into_vec::<f32>()?;
                 let means = means.chunks(3).map(|c| glam::vec3(c[0], c[1], c[2]));
 
                 let base_rgb = splats
@@ -76,15 +71,14 @@ mod visualize_tools_impl {
                 });
 
                 // Visualize 2 sigma, and simulate some of the small covariance blurring.
-                let radii = (splats.log_scales.val().exp() * transparency.unsqueeze_dim(1) * 2.0
+                let radii = (splats.log_scales().exp() * transparency.unsqueeze_dim(1) * 2.0
                     + 0.004)
                     .into_data_async()
                     .await?
                     .into_vec()?;
 
                 let rotations = splats
-                    .rotations
-                    .val()
+                    .rotations()
                     .into_data_async()
                     .await?
                     .into_vec::<f32>()?;

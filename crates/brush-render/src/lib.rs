@@ -47,9 +47,7 @@ pub trait SplatOps<B: Backend> {
     fn project(
         camera: &Camera,
         img_size: glam::UVec2,
-        means: FloatTensor<B>,
-        log_scales: FloatTensor<B>,
-        quats: FloatTensor<B>,
+        transforms: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
         render_mode: SplatRenderMode,

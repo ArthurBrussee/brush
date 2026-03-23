@@ -10,7 +10,7 @@ use burn::{
     Tensor,
     backend::{Autodiff, wgpu::WgpuDevice},
     prelude::Backend,
-    tensor::TensorPrimitive,
+    tensor::{TensorPrimitive, s},
 };
 
 use anyhow::{Context, Result};
@@ -164,17 +164,19 @@ fn test_reference() -> Result<()> {
         let v_coeffs = splats.sh_coeffs.grad(&grads).context("coeffs grad")?;
         compare("v_coeffs", v_coeffs, v_coeffs_ref, 1e-5, 1e-7);
 
+        let v_transforms = splats.transforms.grad(&grads).context("transforms grad")?;
+        // Slice transforms gradient: means(0..3), quats(3..7), log_scales(7..10)
+        let v_means = v_transforms.clone().slice(s![.., 0..3]);
         let v_means_ref =
             safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_means")?, &device).inner();
-        let v_means = splats.means.grad(&grads).context("means grad")?;
         compare("v_means", v_means, v_means_ref, 1e-5, 1e-7);
 
-        let v_quats = splats.rotations.grad(&grads).context("quats grad")?;
+        let v_quats = v_transforms.clone().slice(s![.., 3..7]);
         let v_quats_ref =
             safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_quats")?, &device).inner();
         compare("v_quats", v_quats, v_quats_ref, 1e-5, 1e-7);
 
-        let v_scales = splats.log_scales.grad(&grads).context("scales grad")?;
+        let v_scales = v_transforms.slice(s![.., 7..10]);
         let v_scales_ref =
             safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_scales")?, &device).inner();
         compare("v_scales", v_scales, v_scales_ref, 1e-5, 1e-7);

@@ -57,10 +57,8 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let client = &projected_splats.client;
 
-        // Setup output tensors.
-        let v_projected_splats = Self::float_zeros([num_points, 8].into(), device, FloatDType::F32);
-        let v_raw_opac = Self::float_zeros([num_points].into(), device, FloatDType::F32);
-        let v_refine_weight = Self::float_zeros([num_points].into(), device, FloatDType::F32);
+        // Setup combined output tensor: [projected_splat_grads(8) + opac(1) + refine(1)] per splat
+        let v_combined = Self::float_zeros([num_points, 10].into(), device, FloatDType::F32);
 
         let tile_bounds = uvec2(
             img_size
@@ -103,9 +101,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                                 projected_splats.handle.binding(),
                                 out_img.handle.binding(),
                                 v_output.handle.binding(),
-                                v_projected_splats.handle.clone().binding(),
-                                v_raw_opac.handle.clone().binding(),
-                                v_refine_weight.handle.clone().binding(),
+                                v_combined.handle.clone().binding(),
                             ])
                             .with_metadata(create_meta_binding(rasterize_uniforms)),
                     )
@@ -113,18 +109,12 @@ impl SplatBwdOps<Self> for MainBackendBase {
             }
         });
 
-        RasterizeGrads {
-            v_projected_splats,
-            v_raw_opac,
-            v_refine_weight,
-        }
+        RasterizeGrads { v_combined }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn project_bwd(
-        means: FloatTensor<Self>,
-        log_scales: FloatTensor<Self>,
-        quats: FloatTensor<Self>,
+        transforms: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
         num_visible: IntTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
@@ -136,19 +126,15 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let _span = tracing::trace_span!("project_bwd").entered();
 
         // Comes from params, might not be contiguous.
-        let means = into_contiguous(means);
-        let log_scales = into_contiguous(log_scales);
-        let quats = into_contiguous(quats);
+        let transforms = into_contiguous(transforms);
         let raw_opac = into_contiguous(raw_opac);
 
-        let device = &means.device;
-        let num_points = means.shape()[0];
-        let client = &means.client;
+        let device = &transforms.device;
+        let num_points = transforms.shape()[0];
+        let client = &transforms.client;
 
         // Setup output tensors.
-        let v_means = Self::float_zeros([num_points, 3].into(), device, FloatDType::F32);
-        let v_scales = Self::float_zeros([num_points, 3].into(), device, FloatDType::F32);
-        let v_quats = Self::float_zeros([num_points, 4].into(), device, FloatDType::F32);
+        let v_transforms = Self::float_zeros([num_points, 10].into(), device, FloatDType::F32);
         let v_coeffs = Self::float_zeros(
             [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
             device,
@@ -167,17 +153,12 @@ impl SplatBwdOps<Self> for MainBackendBase {
                         Bindings::new()
                             .with_buffers(vec![
                                 num_visible.handle.binding(),
-                                means.handle.binding(),
-                                log_scales.handle.binding(),
-                                quats.handle.binding(),
+                                transforms.handle.binding(),
                                 raw_opac.handle.binding(),
                                 global_from_compact_gid.handle.binding(),
-                                rasterize_grads.v_projected_splats.handle.binding(),
-                                v_means.handle.clone().binding(),
-                                v_scales.handle.clone().binding(),
-                                v_quats.handle.clone().binding(),
+                                rasterize_grads.v_combined.handle.clone().binding(),
+                                v_transforms.handle.clone().binding(),
                                 v_coeffs.handle.clone().binding(),
-                                rasterize_grads.v_raw_opac.handle.clone().binding(),
                             ])
                             .with_metadata(create_meta_binding(project_uniforms)),
                     )
@@ -185,13 +166,28 @@ impl SplatBwdOps<Self> for MainBackendBase {
             }
         });
 
+        // Extract v_raw_opac and v_refine_weight from the combined rasterize grads buffer.
+        // These are zero-copy view operations.
+        let v_raw_opac = Self::float_reshape(
+            Self::float_slice(
+                rasterize_grads.v_combined.clone(),
+                &[(0..num_points).into(), (8..9).into()],
+            ),
+            [num_points].into(),
+        );
+        let v_refine_weight = Self::float_reshape(
+            Self::float_slice(
+                rasterize_grads.v_combined,
+                &[(0..num_points).into(), (9..10).into()],
+            ),
+            [num_points].into(),
+        );
+
         SplatGrads {
-            v_means,
-            v_quats,
-            v_scales,
+            v_transforms,
             v_coeffs,
-            v_raw_opac: rasterize_grads.v_raw_opac,
-            v_refine_weight: rasterize_grads.v_refine_weight,
+            v_raw_opac,
+            v_refine_weight,
         }
     }
 }

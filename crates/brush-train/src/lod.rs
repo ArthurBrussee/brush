@@ -37,9 +37,7 @@ pub async fn decimate_to_count(
         &device,
     );
 
-    splats.means = splats.means.map(|m| m.select(0, keep_tensor.clone()));
-    splats.rotations = splats.rotations.map(|r| r.select(0, keep_tensor.clone()));
-    splats.log_scales = splats.log_scales.map(|s| s.select(0, keep_tensor.clone()));
+    splats.transforms = splats.transforms.map(|t| t.select(0, keep_tensor.clone()));
     splats.sh_coeffs = splats.sh_coeffs.map(|c| c.select(0, keep_tensor.clone()));
     splats.raw_opacities = splats
         .raw_opacities
@@ -105,12 +103,9 @@ pub async fn compute_pup_scores(
         let gt_data = sample_to_tensor_data(sample);
 
         let mut splats: Splats<DiffBackend> = splats.clone().train();
-        splats.means = splats
-            .means
-            .map(|m: Tensor<DiffBackend, 2>| m.require_grad());
-        splats.log_scales = splats
-            .log_scales
-            .map(|m: Tensor<DiffBackend, 2>| m.require_grad());
+        splats.transforms = splats
+            .transforms
+            .map(|t: Tensor<DiffBackend, 2>| t.require_grad());
 
         let diff_out = render_splats(splats.clone(), &view.camera, img_size, Vec3::ZERO).await;
         let pred_image = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
@@ -123,16 +118,14 @@ pub async fn compute_pup_scores(
         let loss = (pred_rgb - gt_rgb).abs().mean();
         let mut grads = loss.backward();
 
-        let mean_grad = splats
-            .means
+        let transforms_grad = splats
+            .transforms
             .val()
             .grad_remove(&mut grads)
-            .expect("Mean gradients required for PUP scoring");
-        let scale_grad = splats
-            .log_scales
-            .val()
-            .grad_remove(&mut grads)
-            .expect("Scale gradients required for PUP scoring");
+            .expect("Transform gradients required for PUP scoring");
+        // Extract means (cols 0..3) and log_scales (cols 7..10) gradients for 6D Hessian
+        let mean_grad = transforms_grad.clone().slice(s![.., 0..3]);
+        let scale_grad = transforms_grad.slice(s![.., 7..10]);
 
         let j = Tensor::cat(vec![mean_grad, scale_grad], 1);
         let j_col = j.clone().unsqueeze_dim(2);

@@ -77,14 +77,8 @@ pub fn validate_splat_gradients<B>(
 ) where
     B: burn::tensor::backend::AutodiffBackend,
 {
-    if let Some(mean_grad) = splats.means.grad(gradients) {
-        validate_gradient_finite(&mean_grad, "means");
-    }
-    if let Some(rotation_grad) = splats.rotations.grad(gradients) {
-        validate_gradient_finite(&rotation_grad, "rotation");
-    }
-    if let Some(scales_grad) = splats.log_scales.grad(gradients) {
-        validate_gradient_finite(&scales_grad, "log_scales");
+    if let Some(transforms_grad) = splats.transforms.grad(gradients) {
+        validate_gradient_finite(&transforms_grad, "transforms");
     }
     if let Some(sh_grad) = splats.sh_coeffs.grad(gradients) {
         validate_gradient_finite(&sh_grad, "sh_coeffs");

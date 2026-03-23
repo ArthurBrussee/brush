@@ -25,9 +25,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
     fn project(
         cam: &Camera,
         img_size: glam::UVec2,
-        means: FloatTensor<Self>,
-        log_scales: FloatTensor<Self>,
-        quats: FloatTensor<Self>,
+        transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         opacity: FloatTensor<Self>,
         render_mode: SplatRenderMode,
@@ -47,7 +45,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             ) {
                 let (inputs, outputs) = self.desc.as_fixed();
 
-                let [means, log_scales, quats, sh_coeffs, opacity] = inputs;
+                let [transforms, sh_coeffs, opacity] = inputs;
                 let [
                     projected_splats,
                     num_visible,
@@ -58,9 +56,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 let aux = MainBackendBase::project(
                     &self.cam,
                     self.img_size,
-                    h.get_float_tensor::<MainBackendBase>(means),
-                    h.get_float_tensor::<MainBackendBase>(log_scales),
-                    h.get_float_tensor::<MainBackendBase>(quats),
+                    h.get_float_tensor::<MainBackendBase>(transforms),
                     h.get_float_tensor::<MainBackendBase>(sh_coeffs),
                     h.get_float_tensor::<MainBackendBase>(opacity),
                     self.render_mode,
@@ -80,8 +76,8 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             }
         }
 
-        let client = means.client.clone();
-        let num_points = means.shape[0];
+        let client = transforms.client.clone();
+        let num_points = transforms.shape[0];
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape[1] as u32);
         let tile_bounds = calc_tile_bounds(img_size);
 
@@ -119,7 +115,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             pad_b: 0,
         };
 
-        let input_tensors = [means, log_scales, quats, sh_coeffs, opacity];
+        let input_tensors = [transforms, sh_coeffs, opacity];
         let stream = OperationStreams::with_inputs(&input_tensors);
         let desc = CustomOpIr::new(
             "project_prepare",

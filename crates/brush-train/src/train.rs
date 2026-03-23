@@ -65,8 +65,7 @@ fn create_default_optimizer() -> OptimizerType {
 
 pub async fn get_splat_bounds<B: Backend>(splats: Splats<B>, percentile: f32) -> BoundingBox {
     let means: Vec<f32> = splats
-        .means
-        .val()
+        .means()
         .into_data_async()
         .await
         .expect("Failed to fetch splat data")
@@ -212,26 +211,49 @@ impl SplatTrainer {
             )]))
         });
 
+        // Update per-component LR scaling for the transforms param.
+        // transforms layout: means(3) + rotations(4) + log_scales(3)
+        // We use base_lr=1.0 and encode actual LRs in the scaling tensor.
+        {
+            let lr_values: [f32; 10] = [
+                lr_mean as f32,
+                lr_mean as f32,
+                lr_mean as f32,
+                lr_rotation as f32,
+                lr_rotation as f32,
+                lr_rotation as f32,
+                lr_rotation as f32,
+                lr_scale as f32,
+                lr_scale as f32,
+                lr_scale as f32,
+            ];
+            let transform_scaling =
+                Tensor::<MainBackend, 1>::from_floats(lr_values.as_slice(), &device)
+                    .reshape([1, 10]);
+
+            let mut record = optimizer.to_record();
+            let existing = record.remove(&splats.transforms.id);
+            let momentum = existing.and_then(|r| r.into_state::<2>().momentum);
+            record.insert(
+                splats.transforms.id,
+                AdaptorRecord::from_state(AdamState {
+                    momentum,
+                    scaling: Some(transform_scaling),
+                }),
+            );
+            *optimizer = create_default_optimizer().load_record(record);
+        }
+
         splats = trace_span!("Optimizer step").in_scope(|| {
+            splats = trace_span!("Transforms step").in_scope(|| {
+                let grad_transforms =
+                    GradientsParams::from_params(&mut grads, &splats, &[splats.transforms.id]);
+                optimizer.step(1.0, splats, grad_transforms)
+            });
             splats = trace_span!("SH Coeffs step").in_scope(|| {
                 let grad_coeff =
                     GradientsParams::from_params(&mut grads, &splats, &[splats.sh_coeffs.id]);
                 optimizer.step(lr_coeffs, splats, grad_coeff)
-            });
-            splats = trace_span!("Rotation step").in_scope(|| {
-                let grad_rot =
-                    GradientsParams::from_params(&mut grads, &splats, &[splats.rotations.id]);
-                optimizer.step(lr_rotation, splats, grad_rot)
-            });
-            splats = trace_span!("Scale step").in_scope(|| {
-                let grad_scale =
-                    GradientsParams::from_params(&mut grads, &splats, &[splats.log_scales.id]);
-                optimizer.step(lr_scale, splats, grad_scale)
-            });
-            splats = trace_span!("Mean step").in_scope(|| {
-                let grad_means =
-                    GradientsParams::from_params(&mut grads, &splats, &[splats.means.id]);
-                optimizer.step(lr_mean, splats, grad_means)
             });
             splats = trace_span!("Opacity step").in_scope(|| {
                 let grad_opac =
@@ -271,9 +293,12 @@ impl SplatTrainer {
         let max_noise = median_scale;
         // Could scale by train time, but, the mean_lr already heavily decays.
         let noise_weight = noise_weight * (lr_mean as f32 * self.config.mean_noise_weight);
-        splats.means = splats.means.map(|m| {
-            Tensor::from_inner(m.inner() + (samples * noise_weight).clamp(-max_noise, max_noise))
-                .require_grad()
+        // Add noise to the means portion (cols 0..3) of transforms.
+        splats.transforms = splats.transforms.map(|t| {
+            let noise = (samples * noise_weight).clamp(-max_noise, max_noise);
+            let inner = t.inner();
+            let noised_means = inner.clone().slice(s![.., 0..3]) + noise;
+            Tensor::from_inner(inner.slice_assign(s![.., 0..3], noised_means)).require_grad()
         });
 
         let stats = TrainStepStats {
@@ -295,7 +320,7 @@ impl SplatTrainer {
         iter: u32,
         splats: Splats<MainBackend>,
     ) -> (Splats<MainBackend>, RefineStats) {
-        let device = splats.means.device();
+        let device = splats.device();
         let client = WgpuRuntime::client(&device);
 
         let refiner = self
@@ -325,7 +350,7 @@ impl SplatTrainer {
         let center = self.bounds.center;
         let bound_center =
             Tensor::<_, 1>::from_floats([center.x, center.y, center.z], &device).reshape([1, 3]);
-        let splat_dists = (splats.means.val() - bound_center).abs();
+        let splat_dists = (splats.means() - bound_center).abs();
         let bound_mask = splat_dists
             .greater_elem(max_allowed_bounds)
             .any_dim(1)
@@ -423,9 +448,15 @@ impl SplatTrainer {
                 device,
             );
 
-            let cur_means = splats.means.val().select(0, refine_inds.clone());
-            let cur_rots = splats.rotations_normed().select(0, refine_inds.clone());
-            let cur_log_scale = splats.log_scales.val().select(0, refine_inds.clone());
+            let cur_transforms = splats.transforms.val().select(0, refine_inds.clone());
+            let cur_means = cur_transforms.clone().slice(s![.., 0..3]);
+            let cur_rots_raw = cur_transforms.clone().slice(s![.., 3..7]);
+            let magnitudes = Tensor::clamp_min(
+                Tensor::sum_dim(cur_rots_raw.clone().powi_scalar(2), 1).sqrt(),
+                1e-32,
+            );
+            let cur_rots = cur_rots_raw / magnitudes;
+            let cur_log_scale = cur_transforms.slice(s![.., 7..10]);
             let cur_coeff = splats.sh_coeffs.val().select(0, refine_inds.clone());
             let cur_raw_opac = splats.raw_opacities.val().select(0, refine_inds.clone());
 
@@ -452,21 +483,19 @@ impl SplatTrainer {
 
             // Shrink & offset existing splats.
 
-            // Scatter needs [N, 3] indices for means and scales.
-            let refine_inds_3 = refine_inds.clone().unsqueeze_dim(1).repeat_dim(1, 3);
+            // Scatter into transforms: build a [refine_count, 10] update tensor
+            // with means offset in cols 0..3 and log_scales difference in cols 7..10
+            let refine_inds_10 = refine_inds.clone().unsqueeze_dim(1).repeat_dim(1, 10);
+            let scale_difference = new_log_scales.clone() - cur_log_scale;
 
-            splats.means = splats.means.map(|m| {
-                m.scatter(
-                    0,
-                    refine_inds_3.clone(),
-                    -samples.clone(),
-                    IndexingUpdateOp::Add,
-                )
-            });
-
-            splats.log_scales = splats.log_scales.map(|s| {
-                let difference = new_log_scales.clone() - cur_log_scale.clone();
-                s.scatter(0, refine_inds_3.clone(), difference, IndexingUpdateOp::Add)
+            splats.transforms = splats.transforms.map(|t| {
+                let dev = t.device();
+                let mut update = Tensor::zeros([refine_count, 10], &dev);
+                // Place -samples in means columns (0..3)
+                update = update.slice_assign(s![.., 0..3], -samples.clone());
+                // Place scale difference in log_scales columns (7..10)
+                update = update.slice_assign(s![.., 7..10], scale_difference.clone());
+                t.scatter(0, refine_inds_10.clone(), update, IndexingUpdateOp::Add)
             });
             splats.raw_opacities = splats.raw_opacities.map(|m| {
                 let difference = new_raw_opac.clone() - cur_raw_opac.clone();
@@ -475,17 +504,16 @@ impl SplatTrainer {
 
             // Concatenate new splats.
             let sh_dim = splats.sh_coeffs.dims()[1];
+            // Build new transforms row: means(3) + rotations(4) + log_scales(3)
+            let new_transforms =
+                Tensor::cat(vec![cur_means + samples, cur_rots, new_log_scales], 1);
             splats = map_splats_and_opt(
                 splats,
                 &mut record,
-                |x| Tensor::cat(vec![x, cur_means + samples], 0),
-                |x| Tensor::cat(vec![x, cur_rots], 0),
-                |x| Tensor::cat(vec![x, new_log_scales], 0),
+                |x| Tensor::cat(vec![x, new_transforms], 0),
                 |x| Tensor::cat(vec![x, cur_coeff], 0),
                 |x| Tensor::cat(vec![x, new_raw_opac], 0),
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 3], device)], 0),
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 4], device)], 0),
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 3], device)], 0),
+                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 10], device)], 0),
                 |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, sh_dim, 3], device)], 0),
                 |x| Tensor::cat(vec![x, Tensor::zeros([refine_count], device)], 0),
             );
@@ -502,9 +530,10 @@ impl SplatTrainer {
             inv_sigmoid(new_opac.clamp(1e-12, 1.0 - 1e-12))
         });
 
-        splats.log_scales = splats.log_scales.map(|f| {
-            let new_scale = f.exp() * scale_scaling;
-            new_scale.log()
+        // Decay log_scales (cols 7..10) within transforms
+        splats.transforms = splats.transforms.map(|t| {
+            let new_log_scales = (t.clone().slice(s![.., 7..10]).exp() * scale_scaling).log();
+            t.slice_assign(s![.., 7..10], new_log_scales)
         });
 
         self.optim = Some(create_default_optimizer().load_record(record));
@@ -516,24 +545,16 @@ impl SplatTrainer {
 fn map_splats_and_opt(
     mut splats: Splats<MainBackend>,
     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, DiffBackend>>,
-    map_mean: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
-    map_rotation: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
-    map_scale: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
+    map_transforms: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
     map_coeffs: impl FnOnce(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
     map_opac: impl FnOnce(Tensor<MainBackend, 1>) -> Tensor<MainBackend, 1>,
 
-    map_opt_mean: impl Fn(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
-    map_opt_rotation: impl Fn(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
-    map_opt_scale: impl Fn(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
+    map_opt_transforms: impl Fn(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
     map_opt_coeffs: impl Fn(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
     map_opt_opac: impl Fn(Tensor<MainBackend, 1>) -> Tensor<MainBackend, 1>,
 ) -> Splats<MainBackend> {
-    splats.means = splats.means.map(map_mean);
-    map_opt(splats.means.id, record, &map_opt_mean);
-    splats.rotations = splats.rotations.map(map_rotation);
-    map_opt(splats.rotations.id, record, &map_opt_rotation);
-    splats.log_scales = splats.log_scales.map(map_scale);
-    map_opt(splats.log_scales.id, record, &map_opt_scale);
+    splats.transforms = splats.transforms.map(map_transforms);
+    map_opt(splats.transforms.id, record, &map_opt_transforms);
     splats.sh_coeffs = splats.sh_coeffs.map(map_coeffs);
     map_opt(splats.sh_coeffs.id, record, &map_opt_coeffs);
     splats.raw_opacities = splats.raw_opacities.map(map_opac);
@@ -595,10 +616,6 @@ async fn prune_points(
         splats = map_splats_and_opt(
             splats,
             record,
-            |x| x.select(0, valid_inds.clone()),
-            |x| x.select(0, valid_inds.clone()),
-            |x| x.select(0, valid_inds.clone()),
-            |x| x.select(0, valid_inds.clone()),
             |x| x.select(0, valid_inds.clone()),
             |x| x.select(0, valid_inds.clone()),
             |x| x.select(0, valid_inds.clone()),
