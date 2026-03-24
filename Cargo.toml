@@ -126,24 +126,22 @@ async_zip = { version = "0.0.18", default-features = false, features = ["tokio",
 hashbrown = "0.16"
 alphanumeric-sort = "1.5.3"
 
-# Uncomment this to use local burn/cubecl.
+# Use fork branches for cubecl fix-ub compatibility.
 [patch."https://github.com/tracel-ai/burn"]
-burn = { path = "../burn/crates/burn" }
-burn-cubecl = { path = "../burn/crates/burn-cubecl" }
-burn-ir = { path = "../burn/crates/burn-ir" }
-burn-wgpu = { path = "../burn/crates/burn-wgpu" }
-burn-fusion = { path = "../burn/crates/burn-fusion" }
-burn-store = { path = "../burn/crates/burn-store" }
-# burn-fusion = { path = "../burn/crates/burn-fusion" }
-# burn-ir = { path = "../burn/crates/burn-ir" }
+burn = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
+burn-cubecl = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
+burn-ir = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
+burn-wgpu = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
+burn-fusion = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
+burn-store = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
 
 [patch."https://github.com/tracel-ai/cubecl"]
-cubecl = { path = "../cubecl/crates/cubecl" }
-cubecl-common = { path = "../cubecl/crates/cubecl-common" }
-cubecl-std = { path = "../cubecl/crates/cubecl-std" }
-cubecl-core = { path = "../cubecl/crates/cubecl-core" }
-cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
-cubecl-zspace = { path = "../cubecl/crates/cubecl-zspace" }
+cubecl = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
+cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
+cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
+cubecl-core = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
+cubecl-runtime = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
+cubecl-zspace = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
 
 [patch.crates-io]
 egui = { git = "https://github.com/emilk/egui" }
