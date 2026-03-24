@@ -778,7 +778,7 @@ dependencies = [
  "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2653,7 +2653,7 @@ dependencies = [
 [[package]]
 name = "cubecl"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "cubecl-core",
  "cubecl-cpu",
@@ -2669,7 +2669,7 @@ dependencies = [
 [[package]]
 name = "cubecl-common"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "backtrace",
  "bincode",
@@ -2709,7 +2709,7 @@ dependencies = [
 [[package]]
 name = "cubecl-core"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "bitflags 2.11.0",
  "bytemuck",
@@ -2736,7 +2736,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cpp"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2752,7 +2752,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cpu"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2773,7 +2773,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cuda"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2791,7 +2791,7 @@ dependencies = [
 [[package]]
 name = "cubecl-hip"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2820,7 +2820,7 @@ dependencies = [
 [[package]]
 name = "cubecl-ir"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "cubecl-common",
  "cubecl-macros-internal",
@@ -2841,7 +2841,7 @@ dependencies = [
 [[package]]
 name = "cubecl-macros"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "cubecl-common",
  "darling 0.23.0",
@@ -2857,7 +2857,7 @@ dependencies = [
 [[package]]
 name = "cubecl-macros-internal"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -2868,7 +2868,7 @@ dependencies = [
 [[package]]
 name = "cubecl-opt"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "cubecl-common",
  "cubecl-core",
@@ -2885,7 +2885,7 @@ dependencies = [
 [[package]]
 name = "cubecl-runtime"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "async-channel",
  "bytemuck",
@@ -2915,7 +2915,7 @@ dependencies = [
 [[package]]
 name = "cubecl-std"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "cubecl-common",
  "cubecl-core",
@@ -2931,7 +2931,7 @@ dependencies = [
 [[package]]
 name = "cubecl-wgpu"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "async-channel",
  "bytemuck",
@@ -2954,7 +2954,7 @@ dependencies = [
 [[package]]
 name = "cubecl-zspace"
 version = "0.10.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#9068f64618efe6f2e55718b8c272e6fc38a5aeda"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix-ub#e82f619c44c6ff78c79379ec9d3cc133481fa92f"
 dependencies = [
  "derive-new",
  "serde",
@@ -5208,15 +5208,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -6653,15 +6644,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ordered-float"
-version = "5.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f4779c6901a562440c3786d08192c6fbda7c1c2060edd10006b05ee35d10f2d"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "owned_ttf_parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7121,7 +7103,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -9764,7 +9746,7 @@ dependencies = [
  "nix",
  "num-derive",
  "num-traits",
- "ordered-float 4.6.0",
+ "ordered-float",
  "pest",
  "pest_derive",
  "phf",
@@ -11232,7 +11214,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f2ab60e120fd6eaa68d9567f3226e876684639d22a4219b313ff69ec0ccd5ac"
 dependencies = [
  "log",
- "ordered-float 4.6.0",
+ "ordered-float",
  "strsim",
  "thiserror 1.0.69",
  "wezterm-dynamic-derive",
@@ -11385,7 +11367,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
  "once_cell",
- "ordered-float 5.1.0",
+ "ordered-float",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
