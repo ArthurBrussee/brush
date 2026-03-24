@@ -83,10 +83,10 @@ wasm-streams = "0.5"
 
 rayon = "1.11"
 
-naga_oil = { version = "0.21", default-features = false }
+naga_oil = { version = "0.22", default-features = false }
 
 # Backends are chosen per platform.
-wgpu = { version = "28", default-features = false, features = ["naga-ir"] }
+wgpu = { version = "29", default-features = false, features = ["naga-ir"] }
 
 serde-ply = "0.2.1"
 
@@ -143,12 +143,11 @@ cubecl-runtime = { path = "../cubecl/crates/cubecl-runtime" }
 cubecl-zspace = { path = "../cubecl/crates/cubecl-zspace" }
 
 [patch.crates-io]
-egui = { git = "https://github.com/emilk/egui", rev = "refs/pull/7853/head" }
-eframe = { git = "https://github.com/emilk/egui", rev = "refs/pull/7853/head" }
-
+egui = { git = "https://github.com/emilk/egui" }
+eframe = { git = "https://github.com/emilk/egui"}
 # Use 28.0.1, should be on crates.io any day now.
-wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "a6d9d3254e8d5ed7de08634cd9ddd7b63956f7f3" }
-naga = { git = "https://github.com/gfx-rs/wgpu", rev = "a6d9d3254e8d5ed7de08634cd9ddd7b63956f7f3" }
+# wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "a6d9d3254e8d5ed7de08634cd9ddd7b63956f7f3" }
+# naga = { git = "https://github.com/gfx-rs/wgpu", rev = "a6d9d3254e8d5ed7de08634cd9ddd7b63956f7f3" }
 # Uncomment this to use local wgpu and naga.
 # wgpu.path = "../wgpu/wgpu"
 # naga.path = "../wgpu/naga"
