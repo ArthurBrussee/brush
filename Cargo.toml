@@ -120,7 +120,6 @@ rerun = { version = "0.30", default-features = false, features = [
 ] }
 
 ball-tree = "0.5.1"
-
 web-sys = { version = "0.3.74" }
 async_zip = { version = "0.0.18", default-features = false, features = ["tokio", "deflate"] }
 hashbrown = "0.16"
@@ -146,9 +145,7 @@ cubecl-zspace = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix
 [patch.crates-io]
 egui = { git = "https://github.com/emilk/egui" }
 eframe = { git = "https://github.com/emilk/egui"}
-# Use 28.0.1, should be on crates.io any day now.
-# wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "a6d9d3254e8d5ed7de08634cd9ddd7b63956f7f3" }
-# naga = { git = "https://github.com/gfx-rs/wgpu", rev = "a6d9d3254e8d5ed7de08634cd9ddd7b63956f7f3" }
+
 # Uncomment this to use local wgpu and naga.
 # wgpu.path = "../wgpu/wgpu"
 # naga.path = "../wgpu/naga"
