@@ -100,9 +100,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                             projected_splats.handle.binding(),
                             out_img.handle.binding(),
                             v_output.handle.binding(),
-                            v_projected_splats.handle.clone().binding(),
-                            v_raw_opac.handle.clone().binding(),
-                            v_refine_weight.handle.clone().binding(),
+                            v_combined.handle.clone().binding(),
                         ])
                         .with_metadata(create_meta_binding(rasterize_uniforms)),
                 );
@@ -146,23 +144,21 @@ impl SplatBwdOps<Self> for MainBackendBase {
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
             unsafe {
-                client
-                    .launch_unchecked(
-                        ProjectBackwards::task(mip_splat),
-                        calc_cube_count_1d(num_points as u32, ProjectBackwards::WORKGROUP_SIZE[0]),
-                        Bindings::new()
-                            .with_buffers(vec![
-                                num_visible.handle.binding(),
-                                transforms.handle.binding(),
-                                raw_opac.handle.binding(),
-                                global_from_compact_gid.handle.binding(),
-                                rasterize_grads.v_combined.handle.clone().binding(),
-                                v_transforms.handle.clone().binding(),
-                                v_coeffs.handle.clone().binding(),
-                            ])
-                            .with_metadata(create_meta_binding(project_uniforms)),
-                    )
-                    .expect("Failed to bwd-diff splats");
+                client.launch_unchecked(
+                    ProjectBackwards::task(mip_splat),
+                    calc_cube_count_1d(num_points as u32, ProjectBackwards::WORKGROUP_SIZE[0]),
+                    KernelArguments::new()
+                        .with_buffers(vec![
+                            num_visible.handle.binding(),
+                            transforms.handle.binding(),
+                            raw_opac.handle.binding(),
+                            global_from_compact_gid.handle.binding(),
+                            rasterize_grads.v_combined.handle.clone().binding(),
+                            v_transforms.handle.clone().binding(),
+                            v_coeffs.handle.clone().binding(),
+                        ])
+                        .with_metadata(create_meta_binding(project_uniforms)),
+                );
             }
         });
 

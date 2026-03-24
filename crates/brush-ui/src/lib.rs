@@ -44,6 +44,9 @@ pub fn create_egui_options() -> WgpuConfiguration {
     WgpuConfiguration {
         wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
             eframe::egui_wgpu::WgpuSetupCreateNew {
+                instance_descriptor: wgpu::InstanceDescriptor::new_without_display_handle(),
+                display_handle: None,
+                native_adapter_selector: None,
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 device_descriptor: Arc::new(|adapter: &Adapter| wgpu::DeviceDescriptor {
                     label: Some("egui+burn"),
@@ -56,7 +59,6 @@ pub fn create_egui_options() -> WgpuConfiguration {
                     // SAFETY: Passthrough shaders are allowed.
                     experimental_features: unsafe { ExperimentalFeatures::enabled() },
                 }),
-                ..Default::default()
             },
         ),
         ..Default::default()

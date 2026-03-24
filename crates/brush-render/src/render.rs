@@ -140,9 +140,7 @@ impl SplatOps<Self> for MainBackendBase {
                     KernelArguments::new()
                         .with_buffers(vec![
                             num_visible_buffer.handle.clone().binding(),
-                            means.handle.binding(),
-                            log_scales.handle.binding(),
-                            quats.handle.binding(),
+                            transforms.handle.clone().binding(),
                             sh_coeffs.handle.binding(),
                             raw_opacities.handle.binding(),
                             global_from_compact_gid.handle.clone().binding(),

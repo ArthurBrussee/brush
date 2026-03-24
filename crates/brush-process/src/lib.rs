@@ -44,7 +44,7 @@ pub async fn burn_init_setup() -> WgpuDevice {
 
 pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuDevice {
     let setup = burn_wgpu::WgpuSetup {
-        instance: wgpu::Instance::new(&wgpu::InstanceDescriptor::default()), // unused... need to fix this in Burn.
+        instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()), // unused... need to fix this in Burn.
         adapter,
         device,
         queue,
