@@ -8,7 +8,7 @@ use brush_render::{
     bounding_box::BoundingBox,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
-    validation::validate_splat_gradients,
+    validation::validate_gradient,
 };
 use brush_render_bwd::render_splats;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
@@ -268,5 +268,13 @@ async fn test_gradient_validation() {
 
     // Compute gradients
     let grads = loss.backward();
-    validate_splat_gradients(splats.clone(), &grads).await;
+    if let Some(g) = splats.transforms.grad(&grads) {
+        validate_gradient(g, "transforms").await;
+    }
+    if let Some(g) = splats.sh_coeffs.grad(&grads) {
+        validate_gradient(g, "sh_coeffs").await;
+    }
+    if let Some(g) = splats.raw_opacities.grad(&grads) {
+        validate_gradient(g, "raw_opacity").await;
+    }
 }

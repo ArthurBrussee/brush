@@ -73,24 +73,3 @@ pub async fn validate_tensor_val<B: Backend, const D: usize>(
 pub async fn validate_gradient<B: Backend, const D: usize>(gradient: Tensor<B, D>, name: &str) {
     validate_tensor_val(gradient, &format!("gradient_{name}"), None, None).await;
 }
-
-pub async fn validate_splat_gradients<B>(
-    splats: crate::gaussian_splats::Splats<B>,
-    gradients: &B::Gradients,
-) where
-    B: burn::tensor::backend::AutodiffBackend,
-{
-    let transforms_grad = splats.transforms.grad(gradients);
-    let sh_grad = splats.sh_coeffs.grad(gradients);
-    let opacity_grad = splats.raw_opacities.grad(gradients);
-
-    if let Some(g) = transforms_grad {
-        validate_gradient(g, "transforms").await;
-    }
-    if let Some(g) = sh_grad {
-        validate_gradient(g, "sh_coeffs").await;
-    }
-    if let Some(g) = opacity_grad {
-        validate_gradient(g, "raw_opacity").await;
-    }
-}

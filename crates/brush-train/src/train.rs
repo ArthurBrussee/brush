@@ -177,7 +177,16 @@ impl SplatTrainer {
 
         #[cfg(any(feature = "debug-validation", test))]
         {
-            brush_render::validation::validate_splat_gradients(splats.clone(), &grads).await;
+            use brush_render::validation::validate_gradient;
+            if let Some(g) = splats.transforms.grad(&grads) {
+                validate_gradient(g, "transforms").await;
+            }
+            if let Some(g) = splats.sh_coeffs.grad(&grads) {
+                validate_gradient(g, "sh_coeffs").await;
+            }
+            if let Some(g) = splats.raw_opacities.grad(&grads) {
+                validate_gradient(g, "raw_opacity").await;
+            }
         }
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
