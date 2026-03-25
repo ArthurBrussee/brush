@@ -49,10 +49,7 @@ pub(crate) fn quaternion_vec_multiply<B: Backend>(
 
 #[cfg(test)]
 mod tests {
-    use burn::{
-        backend::Wgpu,
-        tensor::Tensor,
-    };
+    use burn::{backend::Wgpu, tensor::Tensor};
     use glam::Quat;
     use wasm_bindgen_test::wasm_bindgen_test;
 

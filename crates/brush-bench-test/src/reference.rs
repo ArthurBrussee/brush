@@ -100,9 +100,13 @@ async fn test_reference() -> Result<()> {
     );
 
     #[cfg(not(target_family = "wasm"))]
-    let rec = rerun::RecordingStreamBuilder::new("render test")
-        .connect_grpc()
-        .ok();
+    let rec = tokio::task::spawn_blocking(|| {
+        rerun::RecordingStreamBuilder::new("render test")
+            .connect_grpc()
+            .ok()
+    })
+    .await
+    .unwrap();
 
     let test_cases: &[(&str, &[u8])] = &[
         ("tiny_case", TINY_CASE),

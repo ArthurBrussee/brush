@@ -50,8 +50,7 @@ impl<B: Backend> ProjectOutput<B> {
             use crate::validation::validate_tensor_val;
             use burn::tensor::{TensorPrimitive, s};
 
-            let num_visible_tensor: Tensor<B, 1, Int> =
-                Tensor::from_primitive(self.num_visible);
+            let num_visible_tensor: Tensor<B, 1, Int> = Tensor::from_primitive(self.num_visible);
             let total_splats = self.project_uniforms.total_splats;
             let num_visible = num_visible_tensor
                 .into_scalar_async()

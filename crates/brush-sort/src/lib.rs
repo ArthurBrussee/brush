@@ -230,11 +230,9 @@ mod tests {
 
             let values_inp: Vec<_> = keys_inp.iter().copied().map(|x| x * 2 + 5).collect();
 
-            let keys =
-                Tensor::<Backend, 1, Int>::from_ints(keys_inp, &device).into_primitive();
-            let values =
-                Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device)
-                    .into_primitive();
+            let keys = Tensor::<Backend, 1, Int>::from_ints(keys_inp, &device).into_primitive();
+            let values = Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device)
+                .into_primitive();
             let (ret_keys, ret_values) = radix_argsort(keys, values, 32, None);
 
             let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
@@ -250,8 +248,7 @@ mod tests {
             let inds = argsort(&keys_inp);
 
             let ref_keys: Vec<u32> = inds.iter().map(|&i| keys_inp[i] as u32).collect();
-            let ref_values: Vec<u32> =
-                inds.iter().map(|&i| values_inp[i] as u32).collect();
+            let ref_values: Vec<u32> = inds.iter().map(|&i| values_inp[i] as u32).collect();
 
             for (((key, val), ref_key), ref_val) in ret_keys
                 .as_slice::<i32>()
@@ -286,10 +283,10 @@ mod tests {
         let values_inp: Vec<_> = keys_inp.iter().map(|&x| x * 2 + 5).collect();
 
         let device = brush_kernel::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device)
-            .into_primitive();
-        let values = Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device)
-            .into_primitive();
+        let keys =
+            Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
+        let values =
+            Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
         let (ret_keys, ret_values) = radix_argsort(keys, values, 32, None);
 
         let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
@@ -332,10 +329,10 @@ mod tests {
         let values_inp: Vec<u32> = (0..NUM_ELEMENTS).map(|i| i as u32).collect();
 
         let device = brush_kernel::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device)
-            .into_primitive();
-        let values = Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device)
-            .into_primitive();
+        let keys =
+            Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
+        let values =
+            Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
         let (ret_keys, ret_values) = radix_argsort(keys, values, 32, None);
 
         let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)

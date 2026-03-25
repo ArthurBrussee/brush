@@ -138,8 +138,7 @@ mod tests {
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_sum_tiny() {
         let device = brush_kernel::test_helpers::test_device().await;
-        let keys =
-            Tensor::<Backend, 1, Int>::from_data([1, 1, 1, 1], &device).into_primitive();
+        let keys = Tensor::<Backend, 1, Int>::from_data([1, 1, 1, 1], &device).into_primitive();
         let summed = prefix_sum(keys);
         let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
             .to_data_async()
@@ -158,8 +157,7 @@ mod tests {
             data.push(90 + i as i32);
         }
         let device = brush_kernel::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device)
-            .into_primitive();
+        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
         let summed = prefix_sum(keys);
         let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
             .to_data_async()
@@ -195,8 +193,7 @@ mod tests {
         }
 
         let device = brush_kernel::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device)
-            .into_primitive();
+        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
         let summed = prefix_sum(keys);
         let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
             .to_data_async()
@@ -230,8 +227,7 @@ mod tests {
         let data: Vec<i32> = (0..NUM_ELEMENTS).map(|i| (i % 100) as i32).collect();
 
         let device = brush_kernel::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device)
-            .into_primitive();
+        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
         let summed = prefix_sum(keys);
         let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
             .to_data_async()
@@ -246,8 +242,7 @@ mod tests {
         assert_eq!(summed_slice[0], data[0]);
 
         // Check some specific indices
-        let check_indices =
-            [0, 1000, 10_000, 100_000, 1_000_000, 10_000_000, 19_999_999];
+        let check_indices = [0, 1000, 10_000, 100_000, 1_000_000, 10_000_000, 19_999_999];
         for &idx in &check_indices {
             let expected: i32 = data[..=idx].iter().sum();
             assert_eq!(
