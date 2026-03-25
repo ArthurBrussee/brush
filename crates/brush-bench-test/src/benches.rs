@@ -19,8 +19,6 @@ use rand::{RngExt, SeedableRng};
 type DiffBackend = Autodiff<MainBackend>;
 
 const SEED: u64 = 42;
-const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
-const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
 const ITERS_PER_SYNC: u32 = 4;
 
 fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
@@ -223,11 +221,14 @@ pub async fn run_training_steps(
 #[cfg(not(target_family = "wasm"))]
 #[divan::bench_group(max_time = 1)]
 mod forward_rendering {
+    const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
+    const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
+
     use brush_render::MainBackend;
     use burn::{backend::wgpu::WgpuDevice, prelude::*};
     use burn_cubecl::cubecl::future::block_on;
 
-    use crate::benches::{ITERS_PER_SYNC, RESOLUTIONS, SPLAT_COUNTS, run_forward_render};
+    use crate::benches::{ITERS_PER_SYNC, run_forward_render};
 
     #[divan::bench(args = SPLAT_COUNTS)]
     fn render_1080p(bencher: divan::Bencher, splat_count: usize) {
@@ -255,11 +256,13 @@ mod forward_rendering {
 #[cfg(not(target_family = "wasm"))]
 #[divan::bench_group(max_time = 2)]
 mod backward_rendering {
+    const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
+
     use brush_render::MainBackend;
     use burn::{backend::wgpu::WgpuDevice, prelude::*};
     use burn_cubecl::cubecl::future::block_on;
 
-    use crate::benches::{ITERS_PER_SYNC, RESOLUTIONS, run_backward_render};
+    use crate::benches::{ITERS_PER_SYNC, run_backward_render};
 
     #[divan::bench(args = [1_000_000, 2_000_000, 5_000_000])]
     fn render_grad_1080p(bencher: divan::Bencher, splat_count: usize) {
@@ -287,11 +290,13 @@ mod backward_rendering {
 #[cfg(not(target_family = "wasm"))]
 #[divan::bench_group(max_time = 4)]
 mod training {
+    const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
+
     use brush_render::MainBackend;
     use burn::{backend::wgpu::WgpuDevice, prelude::*};
     use burn_cubecl::cubecl::future::block_on;
 
-    use crate::benches::{ITERS_PER_SYNC, SPLAT_COUNTS, run_training_steps};
+    use crate::benches::{ITERS_PER_SYNC, run_training_steps};
 
     #[divan::bench(args = SPLAT_COUNTS)]
     fn train_steps(splat_count: usize) {
