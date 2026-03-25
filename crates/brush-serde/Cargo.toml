@@ -31,5 +31,12 @@ tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["io-util", "fs", "macros"] }
 
+[dev-dependencies]
+brush-kernel = { path = "../brush-kernel" }
+wasm-bindgen-test = "0.3"
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
 [lints]
 workspace = true

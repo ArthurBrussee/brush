@@ -123,36 +123,48 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     outputs
 }
 
-#[cfg(all(test, not(target_family = "wasm")))]
+#[cfg(test)]
 mod tests {
     use crate::prefix_sum;
     use burn::tensor::{Int, Tensor};
     use burn_wgpu::{CubeBackend, WgpuRuntime};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[cfg(target_family = "wasm")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
 
-    #[test]
-    fn test_sum_tiny() {
-        let device = Default::default();
-        let keys = Tensor::<Backend, 1, Int>::from_data([1, 1, 1, 1], &device).into_primitive();
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_sum_tiny() {
+        let device = brush_kernel::test_helpers::test_device().await;
+        let keys =
+            Tensor::<Backend, 1, Int>::from_data([1, 1, 1, 1], &device).into_primitive();
         let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed).to_data();
+        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
+            .to_data_async()
+            .await
+            .expect("readback");
         let summed = summed.as_slice::<i32>().expect("Wrong type");
         assert_eq!(summed.len(), 4);
         assert_eq!(summed, [1, 2, 3, 4]);
     }
 
-    #[test]
-    fn test_512_multiple() {
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_512_multiple() {
         const ITERS: usize = 1024;
         let mut data = vec![];
         for i in 0..ITERS {
             data.push(90 + i as i32);
         }
-        let device = Default::default();
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
+        let device = brush_kernel::test_helpers::test_device().await;
+        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device)
+            .into_primitive();
         let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed).to_data();
+        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
+            .to_data_async()
+            .await
+            .expect("readback");
         let prefix_sum_ref: Vec<_> = data
             .into_iter()
             .scan(0, |x, y| {
@@ -170,8 +182,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_sum() {
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_sum() {
         const ITERS: usize = 512 * 16 + 123;
         let mut data = vec![];
         for i in 0..ITERS {
@@ -182,10 +194,14 @@ mod tests {
             data.push(30965);
         }
 
-        let device = Default::default();
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
+        let device = brush_kernel::test_helpers::test_device().await;
+        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device)
+            .into_primitive();
         let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed).to_data();
+        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
+            .to_data_async()
+            .await
+            .expect("readback");
 
         let prefix_sum_ref: Vec<_> = data
             .into_iter()
@@ -205,18 +221,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_sum_large() {
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_sum_large() {
         // Test with 20M elements to verify 2D dispatch works correctly.
         const NUM_ELEMENTS: usize = 30_000_000;
 
         // Use small values to avoid overflow in prefix sum
         let data: Vec<i32> = (0..NUM_ELEMENTS).map(|i| (i % 100) as i32).collect();
 
-        let device = Default::default();
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
+        let device = brush_kernel::test_helpers::test_device().await;
+        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device)
+            .into_primitive();
         let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed).to_data();
+        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
+            .to_data_async()
+            .await
+            .expect("readback");
 
         // Verify a few samples rather than all 20M elements
         let summed_slice = summed.as_slice::<i32>().expect("Wrong type");
@@ -226,7 +246,8 @@ mod tests {
         assert_eq!(summed_slice[0], data[0]);
 
         // Check some specific indices
-        let check_indices = [0, 1000, 10_000, 100_000, 1_000_000, 10_000_000, 19_999_999];
+        let check_indices =
+            [0, 1000, 10_000, 100_000, 1_000_000, 10_000_000, 19_999_999];
         for &idx in &check_indices {
             let expected: i32 = data[..=idx].iter().sum();
             assert_eq!(

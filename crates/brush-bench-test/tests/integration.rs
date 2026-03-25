@@ -18,6 +18,10 @@ use burn::{
 };
 use glam::{Quat, Vec3};
 use rand::{RngExt, SeedableRng};
+use wasm_bindgen_test::wasm_bindgen_test;
+
+#[cfg(target_family = "wasm")]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 type DiffBackend = Autodiff<MainBackend>;
 
@@ -130,15 +134,21 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
     }
 }
 
-#[test]
-fn test_splat_generation() {
-    let device = WgpuDevice::default();
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn test_splat_generation() {
+    let device = brush_kernel::test_helpers::test_device().await;
     let splats = generate_test_splats(&device, 1000);
 
     assert_eq!(splats.num_splats(), 1000);
 
     // Check that means are reasonable
-    let means_data = splats.means().into_data().into_vec::<f32>().unwrap();
+    let means_data = splats
+        .means()
+        .into_data_async()
+        .await
+        .expect("readback")
+        .into_vec::<f32>()
+        .unwrap();
     assert_eq!(means_data.len(), 3000);
 
     for chunk in means_data.chunks(3) {
@@ -147,23 +157,29 @@ fn test_splat_generation() {
     }
 }
 
-#[test]
-fn test_forward_rendering() {
-    let device = WgpuDevice::default();
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn test_forward_rendering() {
+    let device = brush_kernel::test_helpers::test_device().await;
     let splats = generate_test_splats(&device, 1000);
 
     // Just verify we can create the splats successfully
     assert_eq!(splats.num_splats(), 1000);
 
     // Check that the tensor data is accessible
-    let means_data = splats.means().into_data().into_vec::<f32>().unwrap();
+    let means_data = splats
+        .means()
+        .into_data_async()
+        .await
+        .expect("readback")
+        .into_vec::<f32>()
+        .unwrap();
     assert_eq!(means_data.len(), 3000);
     assert!(means_data.iter().all(|&x| x.is_finite()));
 }
 
-#[tokio::test]
+#[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_training_step() {
-    let device = WgpuDevice::default();
+    let device = brush_kernel::test_helpers::test_device().await;
     let batch = generate_test_batch((64, 64));
     let splats = generate_test_splats(&device, 500);
     let config = TrainConfig::default();
@@ -175,24 +191,30 @@ async fn test_training_step() {
     let (final_splats, stats) = trainer.step(batch, splats).await;
 
     assert!(final_splats.num_splats() > 0);
-    let loss = stats.loss.into_scalar();
+    let loss = stats
+        .loss
+        .into_data_async()
+        .await
+        .expect("readback")
+        .as_slice::<f32>()
+        .expect("Wrong type")[0];
     assert!(loss.is_finite());
     assert!(loss >= 0.0);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn test_batch_generation() {
     let batch = generate_test_batch((256, 128));
     let img_dims = batch.img_tensor.shape.clone();
-    assert_eq!(img_dims, [128, 256, 3]);
+    assert_eq!(img_dims, vec![128, 256, 3]);
     let img_data = batch.img_tensor.into_vec::<f32>().unwrap();
     assert!(img_data.iter().all(|&x| x.is_finite()));
     assert!(img_data.iter().all(|&x| (0.0..=1.1).contains(&x)));
 }
 
-#[tokio::test]
+#[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_multi_step_training() {
-    let device = WgpuDevice::default();
+    let device = brush_kernel::test_helpers::test_device().await;
     let batch = generate_test_batch((64, 64));
     let config = TrainConfig::default();
     let mut splats = generate_test_splats(&device, 100);
@@ -208,7 +230,13 @@ async fn test_multi_step_training() {
         let (new_splats, stats) = trainer.step(batch.clone(), splats).await;
         splats = new_splats;
 
-        let loss = stats.loss.into_scalar();
+        let loss = stats
+            .loss
+            .into_data_async()
+            .await
+            .expect("readback")
+            .as_slice::<f32>()
+            .expect("Wrong type")[0];
         assert!(loss.is_finite());
         assert!(loss >= 0.0);
     }
@@ -216,9 +244,9 @@ async fn test_multi_step_training() {
     assert!(splats.num_splats() > 0);
 }
 
-#[tokio::test]
+#[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_gradient_validation() {
-    let device = WgpuDevice::default();
+    let device = brush_kernel::test_helpers::test_device().await;
     let splats = generate_test_splats(&device, 100);
 
     // Create a simple loss by rendering and taking the mean
@@ -240,5 +268,5 @@ async fn test_gradient_validation() {
 
     // Compute gradients
     let grads = loss.backward();
-    validate_splat_gradients(&splats, &grads);
+    validate_splat_gradients(splats.clone(), &grads).await;
 }

@@ -195,7 +195,7 @@ where
     B: Backend + SplatBwdOps<B>,
     C: CheckpointStrategy,
 {
-    splats.validate_values();
+    splats.clone().validate_values().await;
 
     let device = Tensor::<Autodiff<B, C>, 2>::from_primitive(TensorPrimitive::Float(
         splats.transforms.val().into_primitive().tensor(),
@@ -289,7 +289,7 @@ where
                 render_aux: wrapped_render_aux,
                 refine_weight_holder,
             };
-            result.render_aux.validate();
+            result.render_aux.clone().validate().await;
             result
         }
         OpsKind::UnTracked(prep) => {
@@ -298,7 +298,7 @@ where
                 render_aux: wrapped_render_aux,
                 refine_weight_holder,
             };
-            result.render_aux.validate();
+            result.render_aux.clone().validate().await;
             result
         }
     }

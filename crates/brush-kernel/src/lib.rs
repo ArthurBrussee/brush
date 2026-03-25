@@ -1,3 +1,5 @@
+pub mod test_helpers;
+
 use brush_wgsl::wgsl_kernel;
 
 use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};

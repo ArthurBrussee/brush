@@ -177,7 +177,7 @@ impl SplatTrainer {
 
         #[cfg(any(feature = "debug-validation", test))]
         {
-            brush_render::validation::validate_splat_gradients(&splats, &grads);
+            brush_render::validation::validate_splat_gradients(splats.clone(), &grads).await;
         }
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (

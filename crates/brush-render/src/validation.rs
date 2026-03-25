@@ -1,12 +1,15 @@
 use burn::{prelude::Backend, tensor::Tensor};
 
-pub fn validate_tensor_val<B: Backend, const D: usize>(
-    tensor: &Tensor<B, D>,
+pub async fn validate_tensor_val<B: Backend, const D: usize>(
+    tensor: Tensor<B, D>,
     name: &str,
     min_val: Option<f32>,
     max_val: Option<f32>,
 ) {
-    let data = tensor.clone().into_data();
+    let data = tensor
+        .into_data_async()
+        .await
+        .expect("Failed to read tensor data");
     let values = data
         .into_vec::<f32>()
         .expect("Failed to convert tensor to f32 vec");
@@ -67,23 +70,27 @@ pub fn validate_tensor_val<B: Backend, const D: usize>(
     }
 }
 
-pub fn validate_gradient_finite<B: Backend, const D: usize>(gradient: &Tensor<B, D>, name: &str) {
-    validate_tensor_val(gradient, &format!("gradient_{name}"), None, None);
+pub async fn validate_gradient<B: Backend, const D: usize>(gradient: Tensor<B, D>, name: &str) {
+    validate_tensor_val(gradient, &format!("gradient_{name}"), None, None).await;
 }
 
-pub fn validate_splat_gradients<B>(
-    splats: &crate::gaussian_splats::Splats<B>,
+pub async fn validate_splat_gradients<B>(
+    splats: crate::gaussian_splats::Splats<B>,
     gradients: &B::Gradients,
 ) where
     B: burn::tensor::backend::AutodiffBackend,
 {
-    if let Some(transforms_grad) = splats.transforms.grad(gradients) {
-        validate_gradient_finite(&transforms_grad, "transforms");
+    let transforms_grad = splats.transforms.grad(gradients);
+    let sh_grad = splats.sh_coeffs.grad(gradients);
+    let opacity_grad = splats.raw_opacities.grad(gradients);
+
+    if let Some(g) = transforms_grad {
+        validate_gradient(g, "transforms").await;
     }
-    if let Some(sh_grad) = splats.sh_coeffs.grad(gradients) {
-        validate_gradient_finite(&sh_grad, "sh_coeffs");
+    if let Some(g) = sh_grad {
+        validate_gradient(g, "sh_coeffs").await;
     }
-    if let Some(opacity_grad) = splats.raw_opacities.grad(gradients) {
-        validate_gradient_finite(&opacity_grad, "raw_opacity");
+    if let Some(g) = opacity_grad {
+        validate_gradient(g, "raw_opacity").await;
     }
 }

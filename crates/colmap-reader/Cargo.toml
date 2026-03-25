@@ -8,8 +8,11 @@ license.workspace = true
 [dependencies]
 glam.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "io-util"] }
-tokio_with_wasm.workspace = true
+tokio_with_wasm = { workspace = true, features = ["rt"] }
 log.workspace = true
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
 
 [lints]
 workspace = true

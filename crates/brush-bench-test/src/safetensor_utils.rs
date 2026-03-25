@@ -6,7 +6,9 @@ use burn::{
 use safetensors::{SafeTensors, tensor::TensorView};
 
 fn float_from_u8(data: &[u8]) -> Vec<f32> {
-    bytemuck::cast_slice(data).to_vec()
+    data.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
 }
 
 pub(crate) fn safetensor_to_burn<B: Backend, const D: usize>(

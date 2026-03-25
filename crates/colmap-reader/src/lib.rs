@@ -578,8 +578,9 @@ mod tests {
     use super::*;
     use std::io::Cursor;
     use tokio::io::BufReader;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_camera_model_workflow() {
         // Test camera model parsing and parameter extraction
         let models = [
@@ -601,7 +602,7 @@ mod tests {
         assert!(CameraModel::from_name("INVALID").is_none());
     }
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_camera_intrinsics() {
         let pinhole_camera = Camera {
             id: 1,
@@ -626,7 +627,7 @@ mod tests {
         assert_eq!(simple_camera.focal(), (500.0, 500.0));
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_camera_parsing_workflow() {
         let camera_data = "# Camera list with one line of data per camera:\n\
                           # CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n\
@@ -658,7 +659,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_images_parsing_workflow() {
         let image_data = "# Image list with two lines of data per image:\n\
                          1 0.7071 0.0 0.0 0.7071 1.0 2.0 3.0 1 image1.jpg\n\
@@ -679,7 +680,7 @@ mod tests {
         assert_eq!(img2.points.as_ref().unwrap().xys.len(), 0); // No 2D points
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_images_missing_points_line() {
         // Some apps incorrectly skip the points line when there are 0 points.
         // This test verifies we handle that case correctly by detecting image
@@ -702,7 +703,7 @@ mod tests {
         assert_eq!(images[2].camera_id, 2);
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_points3d_parsing_workflow() {
         let points_data = "# 3D point list\n\
                           1 1.5 2.5 3.5 255 128 64 0.1 1 100 2 200\n\
@@ -724,7 +725,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_error_handling_workflow() {
         // Test various malformed inputs - these should all fail
         let malformed_cases = [
@@ -749,7 +750,7 @@ mod tests {
         assert_eq!(cameras.len(), 0);
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_public_api_integration() {
         let camera_data = "1 PINHOLE 800 600 500.0 500.0 400.0 300.0\n";
         let reader = Cursor::new(camera_data.as_bytes());

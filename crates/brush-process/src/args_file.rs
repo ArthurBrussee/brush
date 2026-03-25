@@ -127,8 +127,9 @@ pub fn merge_configs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_config_to_args_only_includes_changes() {
         let mut config = TrainStreamConfig::default();
         config.train_config.total_train_iters = 5000;
@@ -148,7 +149,7 @@ mod tests {
         assert!(args_str.contains("--max-frames 10"), "Missing max-frames");
     }
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_config_round_trip() {
         let mut original = TrainStreamConfig::default();
         original.train_config.total_train_iters = 5000;

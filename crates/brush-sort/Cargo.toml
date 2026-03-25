@@ -16,6 +16,11 @@ tracing.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+wasm-bindgen-test = "0.3"
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [package.metadata.cargo-shear]
 ignored = ["bytemuck"]

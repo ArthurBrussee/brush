@@ -562,9 +562,14 @@ mod tests {
     use crate::test_utils::{create_test_splats, create_test_splats_with_count};
     use brush_render::sh::sh_coeffs_for_degree;
     use std::io::Cursor;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[tokio::test]
+    #[cfg(target_family = "wasm")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_import_basic_functionality() {
+        let _device = brush_kernel::test_helpers::test_device().await;
         let original_splats = create_test_splats(1);
         let ply_bytes = splat_to_ply(original_splats.clone()).await.unwrap();
 
@@ -580,8 +585,9 @@ mod tests {
         assert!(imported_message.data.raw_opacities.is_some());
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_import_different_sh_degrees() {
+        let _device = brush_kernel::test_helpers::test_device().await;
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);
             let ply_bytes = splat_to_ply(original_splats).await.unwrap();
@@ -596,8 +602,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_import_with_subsample() {
+        let _device = brush_kernel::test_helpers::test_device().await;
         // Create 4 test splats
         let original_splats = create_test_splats_with_count(0, 4);
         assert_eq!(original_splats.num_splats(), 4);

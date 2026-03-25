@@ -21,7 +21,7 @@ pub mod shaders;
 
 pub mod sh;
 
-#[cfg(all(test, not(target_family = "wasm")))]
+#[cfg(test)]
 mod tests;
 
 pub mod bounding_box;

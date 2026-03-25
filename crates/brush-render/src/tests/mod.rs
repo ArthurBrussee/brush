@@ -5,10 +5,13 @@ use crate::{
 };
 use assert_approx_eq::assert_approx_eq;
 use burn::tensor::{Distribution, Tensor};
-use burn_wgpu::WgpuDevice;
 use glam::Vec3;
+use wasm_bindgen_test::wasm_bindgen_test;
 
-#[tokio::test]
+#[cfg(target_family = "wasm")]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+#[wasm_bindgen_test(unsupported = tokio::test)]
 async fn renders_at_all() {
     // Check if rendering doesn't hard crash or anything.
     // These are some zero-sized gaussians, so we know
@@ -21,7 +24,7 @@ async fn renders_at_all() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(32, 32);
-    let device = WgpuDevice::DefaultDevice;
+    let device = brush_kernel::test_helpers::test_device().await;
     let num_points = 8;
     let means = Tensor::<MainBackend, 2>::zeros([num_points, 3], &device);
     let log_scales = Tensor::<MainBackend, 2>::ones([num_points, 3], &device) * 2.0;
@@ -45,17 +48,25 @@ async fn renders_at_all() {
 
     let rgb = output.clone().slice([0..32, 0..32, 0..3]);
     let alpha = output.slice([0..32, 0..32, 3..4]);
-    let rgb_mean = rgb.mean().to_data().as_slice::<f32>().expect("Wrong type")[0];
+    let rgb_mean = rgb
+        .mean()
+        .to_data_async()
+        .await
+        .expect("readback")
+        .as_slice::<f32>()
+        .expect("Wrong type")[0];
     let alpha_mean = alpha
         .mean()
-        .to_data()
+        .to_data_async()
+        .await
+        .expect("readback")
         .as_slice::<f32>()
         .expect("Wrong type")[0];
     assert_approx_eq!(rgb_mean, 0.0, 1e-5);
     assert_approx_eq!(alpha_mean, 0.0);
 }
 
-#[tokio::test]
+#[wasm_bindgen_test(unsupported = tokio::test)]
 async fn renders_many_splats() {
     // Test rendering with a ton of gaussians to verify 2D dispatch works correctly.
     // This exceeds the 1D 65535 * 256 = 16.7M limit.
@@ -68,7 +79,7 @@ async fn renders_many_splats() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(64, 64);
-    let device = WgpuDevice::DefaultDevice;
+    let device = brush_kernel::test_helpers::test_device().await;
 
     // Create random gaussians spread in front of the camera
     let means = Tensor::<MainBackend, 2>::random(

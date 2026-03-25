@@ -11,6 +11,9 @@ name = "lpips-convert"
 path = "src/main.rs"
 
 [dependencies]
+lpips = { path = "../lpips" }
+
+# burn-store depends on zstd (C code) which can't compile for WASM.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 burn.workspace = true
 burn-store.workspace = true
-lpips = { path = "../lpips" }

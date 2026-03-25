@@ -70,7 +70,9 @@ pub(crate) fn decode_quat(value: u32) -> glam::Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_vector_decode() {
         let result = decode_vec_11_10_11(0);
         assert_eq!(result, glam::Vec3::ZERO);
@@ -94,7 +96,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_decode_quat() {
         let test_val = (512 << 20) | (512 << 10) | 512;
         let result = decode_quat(test_val);

@@ -197,7 +197,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -208,7 +208,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -929,6 +929,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "brush-dataset",
+ "brush-kernel",
  "brush-render",
  "brush-render-bwd",
  "brush-rerun",
@@ -937,6 +938,7 @@ dependencies = [
  "burn-cubecl",
  "bytemuck",
  "divan",
+ "getrandom 0.4.2",
  "glam",
  "image",
  "log",
@@ -944,6 +946,7 @@ dependencies = [
  "rerun",
  "safetensors 0.7.0",
  "tokio",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -955,6 +958,7 @@ dependencies = [
  "brush-vfs",
  "clap",
  "env_logger",
+ "getrandom 0.4.2",
  "humantime",
  "indicatif",
  "indicatif-log-bridge",
@@ -973,6 +977,7 @@ dependencies = [
  "burn",
  "clap",
  "colmap-reader",
+ "getrandom 0.4.2",
  "glam",
  "image",
  "itertools 0.14.0",
@@ -984,6 +989,7 @@ dependencies = [
  "tokio",
  "tokio_with_wasm",
  "tracing",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -993,6 +999,7 @@ dependencies = [
  "brush-wgsl",
  "burn",
  "burn-cubecl",
+ "burn-wgpu",
  "bytemuck",
 ]
 
@@ -1006,6 +1013,9 @@ dependencies = [
  "burn-cubecl",
  "burn-wgpu",
  "bytemuck",
+ "getrandom 0.4.2",
+ "tokio",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -1025,6 +1035,7 @@ dependencies = [
  "burn-cubecl",
  "burn-wgpu",
  "clap",
+ "getrandom 0.4.2",
  "glam",
  "log",
  "rand 0.10.0",
@@ -1034,6 +1045,7 @@ dependencies = [
  "tokio-stream",
  "tokio_with_wasm",
  "tracing",
+ "wasm-bindgen-test",
  "web-time",
  "wgpu",
 ]
@@ -1054,11 +1066,13 @@ dependencies = [
  "burn-wgpu",
  "bytemuck",
  "clap",
+ "getrandom 0.4.2",
  "glam",
  "log",
  "serde",
  "tokio",
  "tracing",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -1101,17 +1115,20 @@ name = "brush-serde"
 version = "0.3.0"
 dependencies = [
  "async-fn-stream",
+ "brush-kernel",
  "brush-render",
  "brush-serde-macros",
  "brush-vfs",
  "burn",
  "burn-cubecl",
+ "getrandom 0.4.2",
  "glam",
  "serde",
  "serde-ply",
  "tokio",
  "tokio-stream",
  "tokio_with_wasm",
+ "wasm-bindgen-test",
  "web-time",
 ]
 
@@ -1134,8 +1151,11 @@ dependencies = [
  "burn-cubecl",
  "burn-wgpu",
  "bytemuck",
+ "getrandom 0.4.2",
  "rand 0.10.0",
+ "tokio",
  "tracing",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -1145,12 +1165,14 @@ dependencies = [
  "anyhow",
  "ball-tree",
  "brush-dataset",
+ "brush-kernel",
  "brush-render",
  "brush-render-bwd",
  "brush-serde",
  "burn",
  "burn-cubecl",
  "clap",
+ "getrandom 0.4.2",
  "glam",
  "hashbrown 0.16.1",
  "image",
@@ -1161,6 +1183,7 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -1215,6 +1238,7 @@ dependencies = [
  "tokio_with_wasm",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-bindgen-test",
  "wasm-streams 0.5.0",
  "web-sys",
 ]
@@ -1945,6 +1969,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cast"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
+
+[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2163,6 +2193,7 @@ dependencies = [
  "log",
  "tokio",
  "tokio_with_wasm",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -2192,7 +2223,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3270,7 +3301,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3757,7 +3788,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5202,7 +5233,7 @@ dependencies = [
  "portable-atomic-util",
  "serde_core",
  "wasm-bindgen",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5588,8 +5619,12 @@ dependencies = [
 name = "lpips"
 version = "0.3.0"
 dependencies = [
+ "brush-kernel",
  "burn",
+ "getrandom 0.4.2",
  "image",
+ "tokio",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -5807,6 +5842,16 @@ dependencies = [
  "phf",
  "phf_shared",
  "unicase",
+]
+
+[[package]]
+name = "minicov"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4869b6a491569605d66d3952bcdf03df789e5b536e5f0cf7758a7f08a55ae24d"
+dependencies = [
+ "cc",
+ "walkdir",
 ]
 
 [[package]]
@@ -6063,7 +6108,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6534,6 +6579,12 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "oorandom"
+version = "11.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "openssl-probe"
@@ -8735,7 +8786,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9582,7 +9633,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10729,6 +10780,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-bindgen-test"
+version = "0.3.64"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6311c867385cc7d5602463b31825d454d0837a3aba7cdb5e56d5201792a3f7fe"
+dependencies = [
+ "async-trait",
+ "cast",
+ "js-sys",
+ "libm",
+ "minicov",
+ "nu-ansi-term",
+ "num-traits",
+ "oorandom",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-test-macro",
+ "wasm-bindgen-test-shared",
+]
+
+[[package]]
+name = "wasm-bindgen-test-macro"
+version = "0.3.64"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67008cdde4769831958536b0f11b3bdd0380bde882be17fff9c2f34bb4549abd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "wasm-bindgen-test-shared"
+version = "0.2.114"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe29135b180b72b04c74aa97b2b4a2ef275161eff9a6c7955ea9eaedc7e1d4e"
+
+[[package]]
 name = "wasm-encoder"
 version = "0.244.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11231,7 +11321,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -23,5 +23,8 @@ log.workspace = true
 env_logger.workspace = true
 anyhow.workspace = true
 
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
 [lints]
 workspace = true

@@ -147,7 +147,6 @@ impl<B: Backend> LpipsModel<B> {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
 pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
     use burn::record::{BinBytesRecorder, HalfPrecisionSettings, Recorder};
 
@@ -167,10 +166,15 @@ pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
 mod tests {
     use super::load_vgg_lpips;
     use burn::backend::Wgpu;
-    use burn::backend::wgpu::WgpuDevice;
     use burn::tensor::TensorData;
     use burn::tensor::{Tensor, backend::Backend};
-    use image::ImageReader;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[cfg(target_family = "wasm")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    static APPLE_PNG: &[u8] = include_bytes!("../apple.png");
+    static PEAR_PNG: &[u8] = include_bytes!("../pear.png");
 
     fn image_to_tensor<B: Backend>(device: &B::Device, img: &image::DynamicImage) -> Tensor<B, 4> {
         let rgb_img = img.to_rgb32f();
@@ -179,22 +183,25 @@ mod tests {
         Tensor::from_data(data, device)
     }
 
-    #[test]
-    fn test_result() -> Result<(), Box<dyn std::error::Error>> {
-        let device = WgpuDevice::default();
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_result() {
+        let device = brush_kernel::test_helpers::test_device().await;
 
-        // Load and preprocess the images
-        let image1 = ImageReader::open("./apple.png")?.decode()?;
-        let image2 = ImageReader::open("./pear.png")?.decode()?;
+        let image1 = image::load_from_memory(APPLE_PNG).expect("Failed to load apple.png");
+        let image2 = image::load_from_memory(PEAR_PNG).expect("Failed to load pear.png");
 
         let apple = image_to_tensor::<Wgpu>(&device, &image1);
         let pear = image_to_tensor::<Wgpu>(&device, &image2);
 
         let model = load_vgg_lpips(&device);
 
-        // Calculate LPIPS similarity score between the two images
-        let similarity_score = model.lpips(apple, pear).into_scalar();
+        let similarity_score = model
+            .lpips(apple, pear)
+            .into_data_async()
+            .await
+            .expect("readback")
+            .as_slice::<f32>()
+            .expect("Wrong type")[0];
         assert!((similarity_score - 0.65710217).abs() < 1e-4);
-        Ok(())
     }
 }

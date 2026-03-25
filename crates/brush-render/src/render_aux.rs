@@ -38,21 +38,26 @@ impl<B: Backend> ProjectOutput<B> {
         }
     }
 
-    /// Validate project outputs. Call before consuming.
-    pub fn validate(&self) {
+    /// Validate project outputs. Takes self by value to avoid Send issues with async.
+    pub async fn validate(self) {
         #[cfg(any(test, feature = "debug-validation"))]
         {
+            #[cfg(not(target_family = "wasm"))]
             if std::env::args().any(|a| a == "--bench") {
                 return;
             }
 
             use crate::validation::validate_tensor_val;
-            use burn::tensor::{ElementConversion, TensorPrimitive, s};
+            use burn::tensor::{TensorPrimitive, s};
 
             let num_visible_tensor: Tensor<B, 1, Int> =
-                Tensor::from_primitive(self.num_visible.clone());
+                Tensor::from_primitive(self.num_visible);
             let total_splats = self.project_uniforms.total_splats;
-            let num_visible = num_visible_tensor.into_scalar().elem::<i32>() as u32;
+            let num_visible = num_visible_tensor
+                .into_scalar_async()
+                .await
+                .expect("readback")
+                .elem::<u32>();
 
             assert!(
                 num_visible <= total_splats,
@@ -61,17 +66,19 @@ impl<B: Backend> ProjectOutput<B> {
 
             if total_splats > 0 && num_visible > 0 {
                 let projected_splats: Tensor<B, 2> =
-                    Tensor::from_primitive(TensorPrimitive::Float(self.projected_splats.clone()));
+                    Tensor::from_primitive(TensorPrimitive::Float(self.projected_splats));
                 let projected_splats = projected_splats.slice(s![0..num_visible, ..]);
-                validate_tensor_val(&projected_splats, "projected_splats", None, None);
+                validate_tensor_val(projected_splats, "projected_splats", None, None).await;
 
                 let global_from_compact_gid: Tensor<B, 1, Int> =
-                    Tensor::from_primitive(self.global_from_compact_gid.clone());
-                let global_from_compact_gid = &global_from_compact_gid
-                    .into_data()
+                    Tensor::from_primitive(self.global_from_compact_gid);
+                let global_from_compact_gid = global_from_compact_gid
+                    .into_data_async()
+                    .await
+                    .expect("readback")
                     .into_vec::<u32>()
-                    .expect("Failed to fetch global_from_compact_gid")
-                    [0..num_visible as usize];
+                    .expect("Failed to fetch global_from_compact_gid");
+                let global_from_compact_gid = &global_from_compact_gid[0..num_visible as usize];
 
                 for &global_gid in global_from_compact_gid {
                     assert!(
@@ -113,30 +120,34 @@ impl<B: Backend> RenderAux<B> {
         (max - min).reshape([ty as usize, tx as usize])
     }
 
-    /// Validate rasterize outputs.
-    pub fn validate(&self) {
+    /// Validate rasterize outputs. Takes self by value to avoid Send issues with async.
+    pub async fn validate(self) {
         #[cfg(any(test, feature = "debug-validation"))]
         {
+            #[cfg(not(target_family = "wasm"))]
             if std::env::args().any(|a| a == "--bench") {
                 return;
             }
 
             use crate::validation::validate_tensor_val;
-            use burn::tensor::{ElementConversion, TensorPrimitive};
+            use burn::tensor::TensorPrimitive;
 
-            let num_visible = Tensor::<B, 1, Int>::from_primitive(self.num_visible.clone())
-                .into_scalar()
+            let num_visible = Tensor::<B, 1, Int>::from_primitive(self.num_visible)
+                .into_scalar_async()
+                .await
+                .expect("readback")
                 .elem::<u32>();
 
             let visible: Tensor<B, 1> =
-                Tensor::from_primitive(TensorPrimitive::Float(self.visible.clone()));
+                Tensor::from_primitive(TensorPrimitive::Float(self.visible));
             let visible_2d: Tensor<B, 2> = visible.unsqueeze_dim(1);
-            validate_tensor_val(&visible_2d, "visible", None, None);
+            validate_tensor_val(visible_2d, "visible", None, None).await;
 
-            // Validate tile_offsets
-            let tile_offsets: Tensor<B, 3, Int> = Tensor::from_primitive(self.tile_offsets.clone());
+            let tile_offsets: Tensor<B, 3, Int> = Tensor::from_primitive(self.tile_offsets);
             let tile_offsets_data = tile_offsets
-                .into_data()
+                .into_data_async()
+                .await
+                .expect("readback")
                 .into_vec::<u32>()
                 .expect("Failed to fetch tile offsets");
 

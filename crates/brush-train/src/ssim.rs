@@ -65,19 +65,24 @@ impl<B: Backend> Ssim<B> {
     }
 }
 
-#[cfg(all(test, not(target_family = "wasm")))]
+#[cfg(test)]
 mod tests {
     use burn::{
-        backend::{Wgpu, wgpu::WgpuDevice},
+        backend::Wgpu,
         tensor::{Float, Tensor},
     };
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[cfg(target_family = "wasm")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
     type Backend = Wgpu;
 
-    #[test]
-    fn test_ssim() {
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_ssim() {
         use super::Ssim;
 
-        let device = WgpuDevice::DefaultDevice;
+        let device = brush_kernel::test_helpers::test_device().await;
         let img_shape = [30, 50, 3];
         let pixels = img_shape.iter().product::<usize>();
 
@@ -99,6 +104,12 @@ mod tests {
 
         // You get 0.078679755 when using  a naive 2d conv.
         // The separable approach results in 0.078679785
-        assert!((ssim_val.into_scalar() - 0.078679755).abs() < 1e-7);
+        let val = ssim_val
+            .into_data_async()
+            .await
+            .expect("readback")
+            .as_slice::<f32>()
+            .expect("Wrong type")[0];
+        assert!((val - 0.078679755).abs() < 1e-7);
     }
 }

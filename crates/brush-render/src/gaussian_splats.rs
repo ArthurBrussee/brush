@@ -159,9 +159,10 @@ impl<B: Backend> Splats<B> {
         self.transforms.device()
     }
 
-    pub fn validate_values(&self) {
+    pub async fn validate_values(self) {
         #[cfg(any(test, feature = "debug-validation"))]
         {
+            #[cfg(not(target_family = "wasm"))]
             if std::env::args().any(|a| a == "--bench") {
                 return;
             }
@@ -171,27 +172,28 @@ impl<B: Backend> Splats<B> {
             let num_splats = self.num_splats();
 
             // Validate means (positions)
-            validate_tensor_val(&self.means(), "means", None, None);
+            validate_tensor_val(self.means(), "means", None, None).await;
             // Validate rotations
-            validate_tensor_val(&self.rotations(), "rotations", None, None);
+            validate_tensor_val(self.rotations(), "rotations", None, None).await;
             // Validate pre-activation scales (log_scales) and post-activation scales
-            validate_tensor_val(&self.log_scales(), "log_scales", Some(-10.0), Some(10.0));
+            validate_tensor_val(self.log_scales(), "log_scales", Some(-10.0), Some(10.0)).await;
             let scales = self.scales();
-            validate_tensor_val(&scales, "scales", Some(1e-20), Some(10000.0));
+            validate_tensor_val(scales.clone(), "scales", Some(1e-20), Some(10000.0)).await;
             // Validate SH coefficients
-            validate_tensor_val(&self.sh_coeffs.val(), "sh_coeffs", Some(-5.0), Some(5.0));
+            validate_tensor_val(self.sh_coeffs.val(), "sh_coeffs", Some(-5.0), Some(5.0)).await;
             // Validate pre-activation opacity (raw_opacity) and post-activation opacity
             validate_tensor_val(
-                &self.raw_opacities.val(),
+                self.raw_opacities.val(),
                 "raw_opacity",
                 Some(-20.0),
                 Some(20.0),
-            );
+            )
+            .await;
             let opacities = self.opacities();
-            validate_tensor_val(&opacities, "opacities", Some(0.0), Some(1.0));
+            validate_tensor_val(opacities, "opacities", Some(0.0), Some(1.0)).await;
             // Range validation if requested
             // Scales should be positive and reasonable
-            validate_tensor_val(&scales, "scales", Some(1e-6), Some(100.0));
+            validate_tensor_val(scales, "scales", Some(1e-6), Some(100.0)).await;
 
             assert!(num_splats > 0, "Splats must contain at least one splat");
 
@@ -233,7 +235,7 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
     splat_scale: Option<f32>,
     texture_mode: TextureMode,
 ) -> (Tensor<B, 3>, RenderAux<B>) {
-    splats.validate_values();
+    splats.clone().validate_values().await;
 
     let transforms = if let Some(scale) = splat_scale {
         // Apply splat_scale offset to the log_scales portion (columns 7..10)
@@ -257,7 +259,7 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
         },
     );
 
-    project_output.validate();
+    project_output.clone().validate().await;
 
     // Async readback
     let num_intersections = project_output.read_num_intersections().await;
@@ -266,7 +268,7 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
     let (out_img, render_aux, _) =
         B::rasterize(&project_output, num_intersections, background, use_float);
 
-    render_aux.validate();
+    render_aux.clone().validate().await;
 
     (
         Tensor::from_primitive(TensorPrimitive::Float(out_img)),

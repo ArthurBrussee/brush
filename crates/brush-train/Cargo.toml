@@ -31,5 +31,13 @@ tokio = { workspace = true, features = ["io-util", "rt"] }
 burn = { workspace = true, features = ["autodiff"] }
 burn-cubecl.workspace = true
 
+[dev-dependencies]
+brush-kernel = { path = "../brush-kernel" }
+tokio = { workspace = true, features = ["macros", "rt"] }
+wasm-bindgen-test = "0.3"
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
 [lints]
 workspace = true

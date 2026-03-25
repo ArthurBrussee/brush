@@ -50,25 +50,34 @@ pub(crate) fn quaternion_vec_multiply<B: Backend>(
 #[cfg(test)]
 mod tests {
     use burn::{
-        backend::{Wgpu, wgpu::WgpuDevice},
+        backend::Wgpu,
         tensor::Tensor,
     };
     use glam::Quat;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[cfg(target_family = "wasm")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     use super::quaternion_vec_multiply;
 
-    #[test]
-    fn test_quat_multiply() {
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_quat_multiply() {
         let quat = Quat::from_euler(glam::EulerRot::XYZ, 0.2, 0.2, 0.3);
         let vec = glam::vec3(0.5, 0.7, 0.1);
         let result_ref = quat * vec;
 
-        let device = WgpuDevice::DefaultDevice;
+        let device = brush_kernel::test_helpers::test_device().await;
         let quaternions = Tensor::<Wgpu, 1>::from_floats([quat.w, quat.x, quat.y, quat.z], &device)
             .reshape([1, 4]);
         let vecs = Tensor::<Wgpu, 1>::from_floats([vec.x, vec.y, vec.z], &device).reshape([1, 3]);
         let result = quaternion_vec_multiply(quaternions, vecs);
-        let result: Vec<f32> = result.into_data().into_vec().expect("Wrong type");
+        let result: Vec<f32> = result
+            .into_data_async()
+            .await
+            .expect("readback")
+            .into_vec()
+            .expect("Wrong type");
         let result = glam::vec3(result[0], result[1], result[2]);
         assert!((result_ref - result).length() < 1e-7);
     }
