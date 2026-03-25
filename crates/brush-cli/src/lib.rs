@@ -237,6 +237,8 @@ pub async fn run_cli_ui(
                 log::warn!("{error}");
                 sp.println(format!("⚠️: {error}"))?;
             }
+            #[allow(unreachable_patterns)]
+            _ => {}
         }
     }
 

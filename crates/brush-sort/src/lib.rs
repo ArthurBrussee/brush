@@ -186,12 +186,16 @@ pub fn radix_argsort(
     (cur_keys, cur_vals)
 }
 
-#[cfg(all(test, not(target_family = "wasm")))]
+#[cfg(test)]
 mod tests {
     use crate::radix_argsort;
     use burn::tensor::{Int, Tensor};
     use burn_wgpu::{CubeBackend, WgpuRuntime};
     use rand::RngExt;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[cfg(target_family = "wasm")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
 
@@ -201,8 +205,10 @@ mod tests {
         indices
     }
 
-    #[test]
-    fn test_sorting() {
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_sorting() {
+        let device = brush_kernel::test_helpers::test_device().await;
+
         for i in 0..128 {
             let keys_inp = [
                 5 + i * 4,
@@ -224,15 +230,20 @@ mod tests {
 
             let values_inp: Vec<_> = keys_inp.iter().copied().map(|x| x * 2 + 5).collect();
 
-            let device = Default::default();
             let keys = Tensor::<Backend, 1, Int>::from_ints(keys_inp, &device).into_primitive();
             let values = Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device)
                 .into_primitive();
             let (ret_keys, ret_values) = radix_argsort(keys, values, 32, None);
 
-            let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys).into_data();
+            let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
+                .into_data_async()
+                .await
+                .expect("readback");
 
-            let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values).into_data();
+            let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values)
+                .into_data_async()
+                .await
+                .expect("readback");
 
             let inds = argsort(&keys_inp);
 
@@ -253,8 +264,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_sorting_big() {
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_sorting_big() {
         // Simulate some data as one might find for a bunch of gaussians.
         let mut rng = rand::rng();
         let mut keys_inp = Vec::new();
@@ -271,15 +282,21 @@ mod tests {
 
         let values_inp: Vec<_> = keys_inp.iter().map(|&x| x * 2 + 5).collect();
 
-        let device = Default::default();
+        let device = brush_kernel::test_helpers::test_device().await;
         let keys =
             Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
         let values =
             Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
         let (ret_keys, ret_values) = radix_argsort(keys, values, 32, None);
 
-        let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys).to_data();
-        let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values).to_data();
+        let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
+            .to_data_async()
+            .await
+            .expect("readback");
+        let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values)
+            .to_data_async()
+            .await
+            .expect("readback");
 
         let inds = argsort(&keys_inp);
         let ref_keys: Vec<u32> = inds.iter().map(|&i| keys_inp[i]).collect();
@@ -298,8 +315,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_sorting_large() {
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_sorting_large() {
         // Test with a ton of elements to verify 2D dispatch works correctly.
         const NUM_ELEMENTS: usize = 30_000_000;
 
@@ -311,15 +328,21 @@ mod tests {
             .collect();
         let values_inp: Vec<u32> = (0..NUM_ELEMENTS).map(|i| i as u32).collect();
 
-        let device = Default::default();
+        let device = brush_kernel::test_helpers::test_device().await;
         let keys =
             Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
         let values =
             Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
         let (ret_keys, ret_values) = radix_argsort(keys, values, 32, None);
 
-        let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys).to_data();
-        let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values).to_data();
+        let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
+            .to_data_async()
+            .await
+            .expect("readback");
+        let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values)
+            .to_data_async()
+            .await
+            .expect("readback");
 
         let ret_keys_slice = ret_keys.as_slice::<i32>().expect("Wrong type");
         let ret_values_slice = ret_values.as_slice::<i32>().expect("Wrong type");

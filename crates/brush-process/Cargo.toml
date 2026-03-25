@@ -43,5 +43,11 @@ brush-train = { path = "../brush-train", optional = true }
 brush-dataset = { path = "../brush-dataset", optional = true }
 brush-rerun = { path = "../brush-rerun", optional = true }
 
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
 [lints]
 workspace = true

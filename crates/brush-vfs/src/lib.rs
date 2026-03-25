@@ -295,11 +295,12 @@ impl BrushVfs {
         match &self.container {
             VfsContainer::InMemory { entries } => {
                 let data = entries.get(path).expect("Unreachable").clone();
-                Ok(Box::new(Cursor::new(ArcVec(data))))
+                let reader: Box<dyn DynRead> = Box::new(Cursor::new(ArcVec(data)));
+                Ok(reader)
             }
             VfsContainer::Streaming { reader } => {
                 // Streaming reader can only be consumed once
-                let reader = reader
+                let reader: Box<dyn DynRead> = reader
                     .lock()
                     .await
                     .take()
@@ -314,7 +315,8 @@ impl BrushVfs {
                     5 * 1024 * 1024,
                     tokio::fs::File::open(total_path).await?,
                 );
-                Ok(Box::new(file))
+                let reader: Box<dyn DynRead> = Box::new(file);
+                Ok(reader)
             }
             #[cfg(target_family = "wasm")]
             VfsContainer::Directory { dir_handle } => {
@@ -345,7 +347,8 @@ impl BrushVfs {
                             })
                     });
 
-                Ok(Box::new(BufReader::new(StreamReader::new(stream))))
+                let reader: Box<dyn DynRead> = Box::new(BufReader::new(StreamReader::new(stream)));
+                Ok(reader)
             }
         }
     }
@@ -393,6 +396,10 @@ mod tests {
     use super::*;
     use std::io::Cursor;
     use tokio::io::AsyncReadExt;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[cfg(target_family = "wasm")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     async fn create_test_zip() -> Vec<u8> {
         use async_zip::base::write::ZipFileWriter;
@@ -419,7 +426,7 @@ mod tests {
         buffer
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_zip_vfs_workflow() {
         let zip_data = create_test_zip().await;
         let vfs = BrushVfs::from_reader(Cursor::new(zip_data), None)
@@ -469,7 +476,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_format_detection_and_errors() {
         // Test PLY format
         let vfs = BrushVfs::from_reader(

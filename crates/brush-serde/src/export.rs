@@ -185,8 +185,11 @@ mod tests {
     use crate::test_utils::create_test_splats;
     use brush_render::MainBackend;
     use brush_render::gaussian_splats::SplatRenderMode;
-    use burn::backend::wgpu::WgpuDevice;
     use std::io::Cursor;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[cfg(target_family = "wasm")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     async fn assert_coeffs_match(orig: &Splats<MainBackend>, imported: &Splats<MainBackend>) {
         let orig_sh: Vec<f32> = orig
@@ -215,8 +218,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_sh_degree_exports() {
+        let _device = brush_kernel::test_helpers::test_device().await;
         for degree in 0..=2 {
             let splats = create_test_splats(degree);
             assert_eq!(splats.sh_degree(), degree);
@@ -236,8 +240,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_ply_field_count_matches_sh_degree() {
+        let _device = brush_kernel::test_helpers::test_device().await;
         let test_cases = [(0, 0), (1, 9), (2, 24)];
 
         for (degree, expected_rest_fields) in test_cases {
@@ -261,9 +266,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_roundtrip_sh_coefficient_ordering() {
-        let device = WgpuDevice::default();
+        let device = brush_kernel::test_helpers::test_device().await;
 
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);

@@ -22,9 +22,18 @@ rand.workspace = true
 
 divan = "0.1.17"
 safetensors.workspace = true
-brush-rerun.path = "../brush-rerun"
-rerun.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+brush-rerun = { path = "../brush-rerun" }
+rerun = { workspace = true }
+
+[dev-dependencies]
+brush-kernel = { path = "../brush-kernel" }
+wasm-bindgen-test = "0.3"
+
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [[bench]]
 name = "training_bench"

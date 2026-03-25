@@ -1,4 +1,4 @@
-#![cfg(feature = "training")]
+#![cfg(all(feature = "training", not(target_family = "wasm")))]
 
 use std::ffi::{CString, c_void};
 use std::fs;

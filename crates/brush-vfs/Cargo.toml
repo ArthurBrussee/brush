@@ -44,5 +44,8 @@ futures-util = "0.3"
 tokio = { workspace = true, features = ["io-util", "fs", "macros", "rt"] }
 reqwest.workspace = true
 
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
 [lints]
 workspace = true

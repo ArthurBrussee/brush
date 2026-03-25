@@ -1,30 +1,34 @@
-use std::{fs::File, io::Read};
-
 use brush_render::{
     MainBackend,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
 };
-use brush_rerun::burn_to_rerun::{BurnToImage, BurnToRerun};
 use burn::{
     Tensor,
-    backend::{Autodiff, wgpu::WgpuDevice},
+    backend::Autodiff,
     prelude::Backend,
     tensor::{TensorPrimitive, s},
 };
 
 use anyhow::{Context, Result};
-use burn_cubecl::cubecl::future::block_on;
 use glam::Vec3;
 use safetensors::SafeTensors;
+use wasm_bindgen_test::wasm_bindgen_test;
+
+#[cfg(target_family = "wasm")]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 use crate::safetensor_utils::{safetensor_to_burn, splats_from_safetensors};
 
 type DiffBack = Autodiff<MainBackend>;
 
-const USE_RERUN: bool = true;
+static CRAB_PNG: &[u8] = include_bytes!("../test_cases/crab.png");
+static TINY_CASE: &[u8] = include_bytes!("../test_cases/tiny_case.safetensors");
+static BASIC_CASE: &[u8] = include_bytes!("../test_cases/basic_case.safetensors");
+#[allow(clippy::large_include_file)] // It's fine, just for a test, not the final binary.
+static MIX_CASE: &[u8] = include_bytes!("../test_cases/mix_case.safetensors");
 
-fn compare<B: Backend, const D1: usize>(
+async fn compare<B: Backend, const D1: usize>(
     name: &str,
     tensor_a: Tensor<B, D1>,
     tensor_b: Tensor<B, D1>,
@@ -37,11 +41,15 @@ fn compare<B: Backend, const D1: usize>(
     );
 
     let data_a = tensor_a
-        .into_data()
+        .into_data_async()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:a"))
         .into_vec::<f32>()
         .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:a"));
     let data_b = tensor_b
-        .into_data()
+        .into_data_async()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:b"))
         .into_vec::<f32>()
         .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:b"));
 
@@ -62,14 +70,12 @@ fn compare<B: Backend, const D1: usize>(
     }
 }
 
-#[test]
-fn test_reference() -> Result<()> {
-    let device = WgpuDevice::DefaultDevice;
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn test_reference() -> Result<()> {
+    let device = brush_kernel::test_helpers::test_device().await;
 
-    let crab_img = image::open("./test_cases/crab.png")?;
+    let crab_img = image::load_from_memory(CRAB_PNG)?;
 
-    // Convert the image to RGB format
-    // Get the raw buffer
     let raw_buffer = crab_img.to_rgb8().into_raw();
     let crab_tens: Tensor<DiffBack, 3> = Tensor::<_, 1>::from_floats(
         raw_buffer
@@ -93,21 +99,25 @@ fn test_reference() -> Result<()> {
         2,
     );
 
-    let rec = if USE_RERUN {
+    #[cfg(not(target_family = "wasm"))]
+    let rec = tokio::task::spawn_blocking(|| {
         rerun::RecordingStreamBuilder::new("render test")
             .connect_grpc()
             .ok()
-    } else {
-        None
-    };
+    })
+    .await
+    .unwrap();
 
-    for (i, path) in ["tiny_case", "basic_case", "mix_case"].iter().enumerate() {
+    let test_cases: &[(&str, &[u8])] = &[
+        ("tiny_case", TINY_CASE),
+        ("basic_case", BASIC_CASE),
+        ("mix_case", MIX_CASE),
+    ];
+
+    for (i, &(path, data)) in test_cases.iter().enumerate() {
         log::info!("Checking path {path}");
 
-        let mut buffer = Vec::new();
-        let _ = File::open(format!("./test_cases/{path}.safetensors"))?.read_to_end(&mut buffer)?;
-
-        let tensors = SafeTensors::deserialize(&buffer)?;
+        let tensors = SafeTensors::deserialize(data)?;
         let splats: Splats<DiffBack> = splats_from_safetensors(&tensors, &device)?;
 
         let img_ref = safetensor_to_burn::<DiffBack, 3>(&tensors.tensor("out_img")?, &device);
@@ -127,17 +137,20 @@ fn test_reference() -> Result<()> {
             glam::vec2(0.5, 0.5),
         );
 
-        let diff_out = block_on(brush_render_bwd::render_splats(
+        let diff_out = brush_render_bwd::render_splats(
             splats.clone(),
             &cam,
             glam::uvec2(w as u32, h as u32),
             Vec3::ZERO,
-        ));
+        )
+        .await;
 
         let out: Tensor<DiffBack, 3> = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-        let render_aux = diff_out.render_aux;
 
+        #[cfg(not(target_family = "wasm"))]
         if let Some(rec) = rec.as_ref() {
+            use brush_rerun::burn_to_rerun::{BurnToImage, BurnToRerun};
+            let render_aux = &diff_out.render_aux;
             rec.set_time_sequence("test case", i as i64);
             rec.log("img/render", &out.clone().into_rerun_image_blocking())?;
             rec.log("img/ref", &img_ref.clone().into_rerun_image_blocking())?;
@@ -150,9 +163,10 @@ fn test_reference() -> Result<()> {
                 &render_aux.calc_tile_depth().into_rerun_blocking(),
             )?;
         }
+        let _ = (i, &diff_out.render_aux); // suppress unused warnings when rerun is off
 
         // Check if images match.
-        compare("img", out.clone(), img_ref, 1e-5, 1e-5);
+        compare("img", out.clone(), img_ref, 1e-5, 1e-5).await;
 
         let grads = (out.clone() - crab_tens.clone())
             .powi_scalar(2.0)
@@ -162,24 +176,24 @@ fn test_reference() -> Result<()> {
         let v_coeffs_ref =
             safetensor_to_burn::<DiffBack, 3>(&tensors.tensor("v_coeffs")?, &device).inner();
         let v_coeffs = splats.sh_coeffs.grad(&grads).context("coeffs grad")?;
-        compare("v_coeffs", v_coeffs, v_coeffs_ref, 1e-5, 1e-7);
+        compare("v_coeffs", v_coeffs, v_coeffs_ref, 1e-5, 1e-7).await;
 
         let v_transforms = splats.transforms.grad(&grads).context("transforms grad")?;
         // Slice transforms gradient: means(0..3), quats(3..7), log_scales(7..10)
         let v_means = v_transforms.clone().slice(s![.., 0..3]);
         let v_means_ref =
             safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_means")?, &device).inner();
-        compare("v_means", v_means, v_means_ref, 1e-5, 1e-7);
+        compare("v_means", v_means, v_means_ref, 1e-5, 1e-7).await;
 
         let v_quats = v_transforms.clone().slice(s![.., 3..7]);
         let v_quats_ref =
             safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_quats")?, &device).inner();
-        compare("v_quats", v_quats, v_quats_ref, 1e-5, 1e-7);
+        compare("v_quats", v_quats, v_quats_ref, 1e-5, 1e-7).await;
 
         let v_scales = v_transforms.slice(s![.., 7..10]);
         let v_scales_ref =
             safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_scales")?, &device).inner();
-        compare("v_scales", v_scales, v_scales_ref, 1e-5, 1e-7);
+        compare("v_scales", v_scales, v_scales_ref, 1e-5, 1e-7).await;
 
         let v_opacities_ref =
             safetensor_to_burn::<DiffBack, 1>(&tensors.tensor("v_opacities")?, &device).inner();
@@ -187,7 +201,7 @@ fn test_reference() -> Result<()> {
             .raw_opacities
             .grad(&grads)
             .context("opacities grad")?;
-        compare("v_opacities", v_opacities, v_opacities_ref, 1e-5, 1e-7);
+        compare("v_opacities", v_opacities, v_opacities_ref, 1e-5, 1e-7).await;
     }
     Ok(())
 }

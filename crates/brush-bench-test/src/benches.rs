@@ -1,6 +1,7 @@
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
     AlphaMode, MainBackend, TextureMode,
+    bounding_box::BoundingBox,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
     render_splats,
@@ -10,7 +11,6 @@ use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
     backend::{Autodiff, wgpu::WgpuDevice},
     module::AutodiffModule,
-    prelude::Backend,
     tensor::{Tensor, TensorData, TensorPrimitive},
 };
 use glam::{Quat, Vec3};
@@ -19,14 +19,11 @@ use rand::{RngExt, SeedableRng};
 type DiffBackend = Autodiff<MainBackend>;
 
 const SEED: u64 = 42;
-const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
-const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
 const ITERS_PER_SYNC: u32 = 4;
 
 fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(SEED);
 
-    // Generate positions in a realistic scene distribution (roughly spherical with some structure)
     let means: Vec<f32> = (0..count)
         .flat_map(|_| {
             // Create clusters with some randomness
@@ -81,10 +78,11 @@ fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
     // Realistic color distribution
     let sh_coeffs: Vec<f32> = (0..count)
         .flat_map(|_| {
-            let r = rng.random_range(0.1..0.9);
-            let g = rng.random_range(0.1..0.9);
-            let b = rng.random_range(0.1..0.9);
-            [r, g, b]
+            [
+                rng.random_range(0.1..0.9),
+                rng.random_range(0.1..0.9),
+                rng.random_range(0.1..0.9),
+            ]
         })
         .collect();
 
@@ -140,39 +138,104 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
     }
 }
 
+fn bench_camera() -> Camera {
+    Camera::new(
+        Vec3::new(0.0, 0.0, 5.0),
+        Quat::IDENTITY,
+        50.0,
+        50.0,
+        glam::vec2(0.5, 0.5),
+    )
+}
+
+/// Run forward rendering loop. Generates splats once, then renders `iters` times.
+pub async fn run_forward_render(
+    device: &WgpuDevice,
+    splat_count: usize,
+    resolution: (u32, u32),
+    iters: u32,
+) {
+    let splats = gen_splats(device, splat_count).valid();
+    let camera = bench_camera();
+    for _ in 0..iters {
+        let _ = render_splats(
+            splats.clone(),
+            &camera,
+            glam::uvec2(resolution.0, resolution.1),
+            Vec3::ZERO,
+            None,
+            TextureMode::Float,
+        )
+        .await;
+    }
+}
+
+/// Run backward rendering loop. Generates splats once, then renders+backward `iters` times.
+pub async fn run_backward_render(
+    device: &WgpuDevice,
+    splat_count: usize,
+    resolution: (u32, u32),
+    iters: u32,
+) {
+    let splats = gen_splats(device, splat_count);
+    let camera = bench_camera();
+    for _ in 0..iters {
+        let diff_out = render_splats_diff(
+            splats.clone(),
+            &camera,
+            glam::uvec2(resolution.0, resolution.1),
+            Vec3::ZERO,
+        )
+        .await;
+        let img: Tensor<DiffBackend, 3> =
+            Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+        let _ = img.mean().backward();
+    }
+}
+
+/// Run training loop. Generates splats once, then trains `iters` steps.
+pub async fn run_training_steps(
+    device: &WgpuDevice,
+    splat_count: usize,
+    resolution: (u32, u32),
+    iters: u32,
+) {
+    let batch1 = generate_training_batch(resolution, Vec3::new(0.0, 0.0, 5.0));
+    let batch2 = generate_training_batch(resolution, Vec3::new(2.0, 0.0, 5.0));
+    let batches = [batch1, batch2];
+    let config = TrainConfig::default();
+    let mut splats = gen_splats(device, splat_count);
+    let mut trainer = SplatTrainer::new(
+        &config,
+        device,
+        BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+    );
+    for step in 0..iters {
+        let batch = batches[step as usize % batches.len()].clone();
+        let (new_splats, _) = trainer.step(batch, splats).await;
+        splats = new_splats;
+    }
+    assert!(splats.num_splats() > 0, "Failed smoke test");
+}
+
+#[cfg(not(target_family = "wasm"))]
 #[divan::bench_group(max_time = 1)]
 mod forward_rendering {
-    use super::{
-        AutodiffModule, Backend, Camera, ITERS_PER_SYNC, MainBackend, Quat, RESOLUTIONS,
-        SPLAT_COUNTS, TextureMode, Vec3, WgpuDevice, gen_splats, render_splats,
-    };
+    const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
+    const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
+
+    use brush_render::MainBackend;
+    use burn::{backend::wgpu::WgpuDevice, prelude::*};
     use burn_cubecl::cubecl::future::block_on;
+
+    use crate::benches::{ITERS_PER_SYNC, run_forward_render};
 
     #[divan::bench(args = SPLAT_COUNTS)]
     fn render_1080p(bencher: divan::Bencher, splat_count: usize) {
         let device = WgpuDevice::default();
-        let splats = gen_splats(&device, splat_count).valid();
-        let camera = Camera::new(
-            Vec3::new(0.0, 0.0, 5.0),
-            Quat::IDENTITY,
-            50.0,
-            50.0,
-            glam::vec2(0.5, 0.5),
-        );
-
         bencher.bench_local(move || {
             block_on(async {
-                for _ in 0..ITERS_PER_SYNC {
-                    let _ = render_splats(
-                        splats.clone(),
-                        &camera,
-                        glam::uvec2(1920, 1080),
-                        Vec3::ZERO,
-                        None,
-                        TextureMode::Float,
-                    )
-                    .await;
-                }
+                run_forward_render(&device, splat_count, (1920, 1080), ITERS_PER_SYNC).await;
                 MainBackend::sync(&device).expect("Failed to sync");
             });
         });
@@ -181,68 +244,32 @@ mod forward_rendering {
     #[divan::bench(args = RESOLUTIONS)]
     fn render_2m_splats(bencher: divan::Bencher, (width, height): (u32, u32)) {
         let device = WgpuDevice::default();
-        let splats = gen_splats(&device, 2_000_000).valid();
-        let camera = Camera::new(
-            Vec3::new(0.0, 0.0, 5.0),
-            Quat::IDENTITY,
-            50.0,
-            50.0,
-            glam::vec2(0.5, 0.5),
-        );
-
         bencher.bench_local(move || {
             block_on(async {
-                for _ in 0..ITERS_PER_SYNC {
-                    let _ = render_splats(
-                        splats.clone(),
-                        &camera,
-                        glam::uvec2(width, height),
-                        Vec3::ZERO,
-                        None,
-                        TextureMode::Float,
-                    )
-                    .await;
-                }
+                run_forward_render(&device, 2_000_000, (width, height), ITERS_PER_SYNC).await;
                 MainBackend::sync(&device).expect("Failed to sync");
             });
         });
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[divan::bench_group(max_time = 2)]
 mod backward_rendering {
-    use super::{
-        Backend, Camera, DiffBackend, ITERS_PER_SYNC, MainBackend, Quat, RESOLUTIONS, Tensor,
-        TensorPrimitive, Vec3, WgpuDevice, gen_splats, render_splats_diff,
-    };
+    const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
+
+    use brush_render::MainBackend;
+    use burn::{backend::wgpu::WgpuDevice, prelude::*};
     use burn_cubecl::cubecl::future::block_on;
+
+    use crate::benches::{ITERS_PER_SYNC, run_backward_render};
 
     #[divan::bench(args = [1_000_000, 2_000_000, 5_000_000])]
     fn render_grad_1080p(bencher: divan::Bencher, splat_count: usize) {
         let device = WgpuDevice::default();
-        let splats = gen_splats(&device, splat_count);
-        let camera = Camera::new(
-            Vec3::new(0.0, 0.0, 5.0),
-            Quat::IDENTITY,
-            50.0,
-            50.0,
-            glam::vec2(0.5, 0.5),
-        );
-
         bencher.bench_local(move || {
             block_on(async {
-                for _ in 0..ITERS_PER_SYNC {
-                    let diff_out = render_splats_diff(
-                        splats.clone(),
-                        &camera,
-                        glam::uvec2(1920, 1080),
-                        Vec3::ZERO,
-                    )
-                    .await;
-                    let img: Tensor<DiffBackend, 3> =
-                        Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-                    let _ = img.mean().backward();
-                }
+                run_backward_render(&device, splat_count, (1920, 1080), ITERS_PER_SYNC).await;
                 MainBackend::sync(&device).expect("Failed to sync");
             });
         });
@@ -251,102 +278,62 @@ mod backward_rendering {
     #[divan::bench(args = RESOLUTIONS)]
     fn render_grad_2m_splats(bencher: divan::Bencher, (width, height): (u32, u32)) {
         let device = WgpuDevice::default();
-        let splats = gen_splats(&device, 2_000_000);
-        let camera = Camera::new(
-            Vec3::new(0.0, 0.0, 5.0),
-            Quat::IDENTITY,
-            50.0,
-            50.0,
-            glam::vec2(0.5, 0.5),
-        );
         bencher.bench_local(move || {
             block_on(async {
-                for _ in 0..ITERS_PER_SYNC {
-                    let diff_out = render_splats_diff(
-                        splats.clone(),
-                        &camera,
-                        glam::uvec2(width, height),
-                        Vec3::ZERO,
-                    )
-                    .await;
-                    let img: Tensor<DiffBackend, 3> =
-                        Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-                    let _ = img.mean().backward();
-                }
+                run_backward_render(&device, 2_000_000, (width, height), ITERS_PER_SYNC).await;
                 MainBackend::sync(&device).expect("Failed to sync");
             });
         });
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[divan::bench_group(max_time = 4)]
 mod training {
-    use brush_render::bounding_box::BoundingBox;
+    const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
+
+    use brush_render::MainBackend;
+    use burn::{backend::wgpu::WgpuDevice, prelude::*};
     use burn_cubecl::cubecl::future::block_on;
 
-    use crate::benches::ITERS_PER_SYNC;
-
-    use super::{
-        Backend, MainBackend, SPLAT_COUNTS, SplatTrainer, TrainConfig, Vec3, WgpuDevice,
-        gen_splats, generate_training_batch,
-    };
+    use crate::benches::{ITERS_PER_SYNC, run_training_steps};
 
     #[divan::bench(args = SPLAT_COUNTS)]
     fn train_steps(splat_count: usize) {
         let device = WgpuDevice::default();
-        let batch1 = generate_training_batch((1920, 1080), Vec3::new(0.0, 0.0, 5.0));
-        let batch2 = generate_training_batch((1920, 1080), Vec3::new(2.0, 0.0, 5.0));
-        let batches = [batch1, batch2];
-        let config = TrainConfig::default();
-        let mut splats = gen_splats(&device, splat_count);
-        let mut trainer = SplatTrainer::new(
-            &config,
-            &device,
-            BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
-        );
-        for step in 0..ITERS_PER_SYNC {
-            let batch = batches[step as usize % batches.len()].clone();
-            let (new_splats, _) = block_on(trainer.step(batch, splats));
-            splats = new_splats;
-        }
-        MainBackend::sync(&device).expect("Failed to sync");
+        block_on(async {
+            run_training_steps(&device, splat_count, (1920, 1080), ITERS_PER_SYNC).await;
+            MainBackend::sync(&device).expect("Failed to sync");
+        });
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #[allow(unused)]
-    use divan::Divan;
+    #[allow(unused_imports)]
+    use crate::benches::{
+        ITERS_PER_SYNC, run_backward_render, run_forward_render, run_training_steps,
+    };
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[allow(unused)]
-    fn regex_except(arg: &str) -> String {
-        let all = ["forward_rendering", "backward_rendering", "training"];
-        let to_skip: Vec<_> = all
-            .iter()
-            .filter(|&&s| s != arg)
-            .map(|s| s.to_string())
-            .collect();
-        to_skip.join("|")
+    #[cfg(target_family = "wasm")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_fwd_render() {
+        let device = brush_kernel::test_helpers::test_device().await;
+        run_forward_render(&device, 500_000, (1920, 1080), ITERS_PER_SYNC).await;
     }
 
-    #[test]
-    fn test_fwd_render_bench() {
-        Divan::default()
-            .skip_regex(regex_except("forward_rendering"))
-            .test_benches();
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_bwd_render() {
+        let device = brush_kernel::test_helpers::test_device().await;
+        run_backward_render(&device, 500_000, (1920, 1080), ITERS_PER_SYNC).await;
     }
 
-    #[test]
-    fn test_bwd_bench() {
-        Divan::default()
-            .skip_regex(regex_except("backward_rendering"))
-            .test_benches();
-    }
-
-    #[test]
-    fn test_training_bench() {
-        Divan::default()
-            .skip_regex(regex_except("training"))
-            .test_benches();
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_training() {
+        let device = brush_kernel::test_helpers::test_device().await;
+        run_training_steps(&device, 500_000, (1920, 1080), ITERS_PER_SYNC).await;
     }
 }

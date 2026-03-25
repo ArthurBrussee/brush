@@ -1,39 +1,37 @@
 #![recursion_limit = "256"]
 
+// The desktop binary only compiles on native platforms.
+// On WASM, brush-app is used as a library (cdylib) via wasm.rs instead.
+#[cfg(not(target_family = "wasm"))]
 mod shared;
 
-use brush_cli::Cli;
-use brush_process::create_process;
-use brush_ui::app::App;
-use clap::Parser;
-
-use crate::shared::startup;
-
-#[cfg(target_family = "windows")]
-fn is_console() -> bool {
-    let mut buffer = [0u32; 1];
-
-    // SAFETY: FFI, buffer is large enough.
-    unsafe {
-        use winapi::um::wincon::GetConsoleProcessList;
-        let count = GetConsoleProcessList(buffer.as_mut_ptr(), 1);
-        count != 1
-    }
-}
-
-#[allow(clippy::unnecessary_wraps)] // Error isn't need on wasm but that's ok.
+#[cfg(not(target_family = "wasm"))]
+#[allow(clippy::unnecessary_wraps)]
 fn main() -> Result<(), anyhow::Error> {
+    use brush_cli::Cli;
+    use brush_process::create_process;
+    use brush_ui::app::App;
+    use clap::Parser;
+
     let args = Cli::parse().validate()?;
 
-    startup();
+    shared::startup();
 
     #[cfg(target_family = "windows")]
-    if args.with_viewer && !is_console() {
-        // Hide the console window on windows when running as a GUI.
-        // SAFETY: FFI.
-        unsafe {
-            winapi::um::wincon::FreeConsole();
-        };
+    {
+        use winapi::um::wincon::GetConsoleProcessList;
+
+        let mut buffer = [0u32; 1];
+
+        // Safety: FFI. Buffer is valid for duration of call
+        let is_console = unsafe { GetConsoleProcessList(buffer.as_mut_ptr(), 1) != 1 };
+
+        if args.with_viewer && !is_console {
+            // Safety: FFI
+            unsafe {
+                winapi::um::wincon::FreeConsole();
+            };
+        }
     }
 
     #[cfg(feature = "tracy")]
@@ -51,7 +49,6 @@ fn main() -> Result<(), anyhow::Error> {
         .build()
         .expect("Failed to initialize tokio runtime")
         .block_on(async move {
-            // Create initial process if source is provided
             let init_process = args.source.map(|source| {
                 create_process(
                     source,
@@ -76,7 +73,6 @@ fn main() -> Result<(), anyhow::Error> {
                 .expect("Failed to load icon");
 
                 let native_options = eframe::NativeOptions {
-                    // Build app display.
                     viewport: egui::ViewportBuilder::default()
                         .with_inner_size(egui::Vec2::new(1450.0, 1200.0))
                         .with_active(true)
@@ -92,14 +88,12 @@ fn main() -> Result<(), anyhow::Error> {
                     "Brush"
                 };
 
-                // UI will init the burn device.
                 eframe::run_native(
                     title,
                     native_options,
                     Box::new(move |cc| Ok(Box::new(App::new(cc, init_process)))),
                 )?;
             } else {
-                // Manually init the device.
                 brush_process::burn_init_setup().await;
                 brush_cli::run_cli_ui(
                     init_process.expect("Must provide a source"),
@@ -113,3 +107,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     Ok(())
 }
+
+// On WASM, just stub a dummy main.
+#[cfg(target_family = "wasm")]
+fn main() {}

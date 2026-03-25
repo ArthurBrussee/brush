@@ -22,8 +22,9 @@ pub(crate) fn multinomial_sample(weights: &[f32], n: u32) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_multinomial_sampling() {
         // Test the complete multinomial sampling workflow (samples indices without replacement)
         let weights = vec![0.1, 0.3, 0.4, 0.2];
@@ -46,7 +47,7 @@ mod tests {
         assert_eq!(single_samples[0], 0);
     }
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_nan_weight_handling() {
         // Test that NaN weights are handled (converted to 0.0)
         let weights_with_nan = vec![0.5, f32::NAN, 0.3, 0.2];
@@ -61,7 +62,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_all_zero_weights() {
         // Discovered behavior: returns empty vec when all weights are zero
         let zero_weights = vec![0.0, 0.0, 0.0];

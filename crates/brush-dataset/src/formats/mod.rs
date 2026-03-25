@@ -137,8 +137,9 @@ fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+    use wasm_bindgen_test::wasm_bindgen_test;
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_find_mask() {
         // Basic matching with same extension
         let vfs = BrushVfs::create_test_vfs(vec![
@@ -160,7 +161,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_find_mask_formats() {
         // Test img.png.mask format
         let vfs = BrushVfs::create_test_vfs(vec![
@@ -183,7 +184,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_find_nested_dirs() {
         // Nested directories must match
         let vfs = BrushVfs::create_test_vfs(vec![
@@ -202,7 +203,7 @@ mod tests {
         assert_eq!(find_mask_path(&vfs, Path::new("images/baz/img.png")), None);
     }
 
-    #[test]
+    #[wasm_bindgen_test(unsupported = test)]
     fn test_find_case_insensitive() {
         let vfs = BrushVfs::create_test_vfs(vec![
             PathBuf::from("images/IMG.PNG"),
