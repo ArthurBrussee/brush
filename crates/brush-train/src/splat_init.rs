@@ -1,6 +1,7 @@
 use ball_tree::BallTree;
 use brush_render::{
     bounding_box::BoundingBox,
+    camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats, inverse_sigmoid},
 };
 use brush_serde::SplatData;
@@ -16,27 +17,76 @@ pub struct RandomSplatsConfig {
     pub init_count: usize,
 }
 
-/// Create initial splats from a random configuration within the given bounds.
+/// Estimate scene scale from camera positions.
+///
+/// Uses the average nearest-neighbor distance between cameras,
+/// with a minimum of 1.0 (1 meter baseline).
+fn estimate_scene_scale(cameras: &[Camera]) -> f32 {
+    if cameras.len() < 2 {
+        return 1.0;
+    }
+
+    let mut total_nn_dist = 0.0f32;
+    for (i, cam) in cameras.iter().enumerate() {
+        let mut min_dist = f32::INFINITY;
+        for (j, other) in cameras.iter().enumerate() {
+            if i != j {
+                let d = cam.position.distance(other.position);
+                if d < min_dist {
+                    min_dist = d;
+                }
+            }
+        }
+        total_nn_dist += min_dist;
+    }
+
+    let avg_nn = total_nn_dist / cameras.len() as f32;
+    // Scene depth is roughly a few multiples of the camera spacing.
+    // Use 3x the average spacing, with 1m floor.
+    (avg_nn * 3.0).max(1.0)
+}
+
+/// Create initial splats by sampling random points inside camera frustums.
+///
+/// For each splat, a random camera is chosen, then a random ray direction
+/// within its field of view is sampled, and a random depth along that ray
+/// is picked.
 pub fn create_random_splats<B: Backend>(
     config: &RandomSplatsConfig,
-    bounds: BoundingBox,
+    cameras: &[Camera],
+    scene_scale_override: Option<f32>,
     rng: &mut impl Rng,
     mode: SplatRenderMode,
     device: &B::Device,
 ) -> Splats<B> {
     let num_points = config.init_count;
+    let scene_scale = scene_scale_override.unwrap_or_else(|| estimate_scene_scale(cameras));
 
-    let min = bounds.min();
-    let max = bounds.max();
+    let near = scene_scale * 0.05;
+    let far = scene_scale;
+    let ln_near = near.ln();
+    let ln_far = far.ln();
 
-    // Random positions within bounds
+    // Sample points in camera frustums
     let positions: Vec<f32> = (0..num_points)
         .flat_map(|_| {
-            [
-                rng.random_range(min.x..max.x),
-                rng.random_range(min.y..max.y),
-                rng.random_range(min.z..max.z),
-            ]
+            let cam = &cameras[rng.random_range(0..cameras.len())];
+            let local_to_world = cam.local_to_world();
+
+            // Random direction within the camera's FOV
+            let half_fov_x = (cam.fov_x * 0.5) as f32;
+            let half_fov_y = (cam.fov_y * 0.5) as f32;
+            let dx = rng.random_range(-half_fov_x..half_fov_x).tan();
+            let dy = rng.random_range(-half_fov_y..half_fov_y).tan();
+
+            // Log-uniform depth so we don't over-pack near the camera
+            let depth = (rng.random_range(ln_near..ln_far)).exp();
+
+            // Camera looks along -Z in local space
+            let local_point = Vec3::new(dx * depth, dy * depth, -depth);
+            let world_point = local_to_world.transform_point3(local_point);
+
+            [world_point.x, world_point.y, world_point.z]
         })
         .collect();
 
@@ -68,9 +118,8 @@ pub fn create_random_splats<B: Backend>(
         .map(|_| rng.random_range(inverse_sigmoid(0.1)..inverse_sigmoid(0.25)))
         .collect();
 
-    // Use a reasonable default scale based on bounds
-    let avg_extent = (bounds.extent.x + bounds.extent.y + bounds.extent.z) / 3.0;
-    let default_scale = (avg_extent / (num_points as f32).cbrt()).ln();
+    // Scale based on scene scale and point density
+    let default_scale = (scene_scale / (num_points as f32).cbrt()).ln();
     let log_scales: Vec<f32> = vec![default_scale; num_points * 3];
 
     Splats::from_raw(

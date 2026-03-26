@@ -108,6 +108,13 @@ pub struct TrainConfig {
     /// Percentage to scale source images at each LOD level (1-100).
     #[arg(long, help_heading = "LOD options", default_value = "50")]
     pub lod_image_scale: u32,
+
+    /// Scene scale used for random splat initialization.
+    /// When no init is provided, splats are randomly placed
+    /// inside camera frustums up to this depth. By default this is
+    /// estimated from the camera spacing (with a 1m minimum).
+    #[arg(long, help_heading = "Training options")]
+    pub random_init_scene_scale: Option<f32>,
 }
 
 impl Default for TrainConfig {
