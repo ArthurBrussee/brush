@@ -4,7 +4,7 @@
 # This image is for easier server deployments. Nb: This dockerfile explicitly installs nvidia drivers,
 # I haven't tested this on non nvidia GPUs. Alternatively, you should be able
 # to run with host drivers.
-FROM rust:1.86 AS builder
+FROM rust:1.88 AS builder
 RUN git clone https://github.com/ArthurBrussee/brush
 RUN cargo build --release --manifest-path ./brush/Cargo.toml
 
