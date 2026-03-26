@@ -125,23 +125,6 @@ async_zip = { version = "0.0.18", default-features = false, features = ["tokio",
 hashbrown = "0.16"
 alphanumeric-sort = "1.5.3"
 
-# Use fork branches for cubecl fix-ub compatibility.
-[patch."https://github.com/tracel-ai/burn"]
-burn = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
-burn-cubecl = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
-burn-ir = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
-burn-wgpu = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
-burn-fusion = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
-burn-store = { git = "https://github.com/ArthurBrussee/burn", branch = "fix-ub-compat" }
-
-[patch."https://github.com/tracel-ai/cubecl"]
-cubecl = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
-cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
-cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
-cubecl-core = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
-cubecl-runtime = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
-cubecl-zspace = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix-ub" }
-
 [patch.crates-io]
 egui = { git = "https://github.com/emilk/egui" }
 eframe = { git = "https://github.com/emilk/egui"}
@@ -332,14 +315,3 @@ needless_range_loop = "allow"
 
 # This doesn't quite work with Burn:
 single_range_in_vec_init = "allow"
-
-# NOTE: This is a temporary workaround for macOS tahoe, and xcode 16.4+.
-# Some requirement for FFI has changed, and macOS crashes because of a
-# sign mismatch ("expected return to have type code 'q', but found 'Q'")
-# This workaround disables the problematic check entirely.
-# objc2 0.6+ has a better workaround that only disables sign conversion
-# checks, see https://github.com/madsmtm/objc2/issues/765#issuecomment-2996136843,
-# and new winit versions are enabling this by default: https://github.com/madsmtm/objc2/issues/765.
-# When that has landed and Bevy has updated to a new winit version this workaround should be removed.
-[profile.dev.package.objc2]
-debug-assertions = false
