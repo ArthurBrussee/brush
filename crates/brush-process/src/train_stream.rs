@@ -119,11 +119,22 @@ pub(crate) async fn train_stream(
             .render_mode
             .unwrap_or(SplatRenderMode::Default);
         log::info!("Starting with random splat config.");
-        let cameras: Vec<_> = dataset.train.views.iter().map(|v| v.camera.clone()).collect();
+        let cameras: Vec<_> = dataset
+            .train
+            .views
+            .iter()
+            .map(|v| v.camera.clone())
+            .collect();
         let config = RandomSplatsConfig::new();
         let scene_scale = train_stream_config.train_config.random_init_scene_scale;
-        let splats =
-            create_random_splats(&config, &cameras, scene_scale, &mut rng, render_mode, &device);
+        let splats = create_random_splats(
+            &config,
+            &cameras,
+            scene_scale,
+            &mut rng,
+            render_mode,
+            &device,
+        );
         (None, splats)
     };
 

@@ -1,34 +1,27 @@
-# Simple docker file to run Brush. Note that as Brush has very few dependencies, you should be able to run
-# it on any system already.
+# Headless Brush training. GPU drivers come from the host via
+# nvidia-container-toolkit or by mounting /usr/share/vulkan/icd.d.
+# Falls back to mesa software rendering if neither is available.
 #
-# This image is for easier server deployments. Nb: This dockerfile explicitly installs nvidia drivers,
-# I haven't tested this on non nvidia GPUs. Alternatively, you should be able
-# to run with host drivers.
-FROM rust:1.86 AS builder
-RUN git clone https://github.com/ArthurBrussee/brush
-RUN cargo build --release --manifest-path ./brush/Cargo.toml
+#   docker build -t brush -f extras/Dockerfile .
+#   docker run --gpus all -v ./data:/data brush /data/my_scene
 
-FROM ubuntu:22.04
+FROM rust:1.93 AS builder
+WORKDIR /build
+COPY . .
+RUN cargo build --release -p brush-app
 
-# Install dependencies.
-RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y \
-    build-essential \
-    cmake \
-    libvulkan1 \
-    vulkan-tools \
-    mesa-vulkan-drivers \
-    nvidia-driver-570 \
-    && apt-get clean \
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=all
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libvulkan1 mesa-vulkan-drivers \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir /workdir
-COPY --from=builder ./brush/target/release/brush /workdir
-WORKDIR /workdir
+COPY --from=builder /build/target/release/brush /usr/local/bin/brush
 
-# Below command creates home dir for 1000 UID user
-RUN useradd -m -u 1000 clouduser
-RUN chown -R 1000:root /workdir && chmod -R 775 /workdir
-
-# Launch training.
-USER clouduser
-ENTRYPOINT ["./brush"]
+RUN useradd -m brush && mkdir /data && chown brush:brush /data
+USER brush
+WORKDIR /data
+ENTRYPOINT ["brush"]
