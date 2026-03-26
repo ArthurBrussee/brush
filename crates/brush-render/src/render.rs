@@ -20,7 +20,7 @@ use burn::tensor::{
     FloatDType,
     ops::{FloatTensorOps, IntTensor, IntTensorOps},
 };
-use burn_cubecl::cubecl::server::Bindings;
+use burn_cubecl::cubecl::server::KernelArguments;
 use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::{CubeDim, CubeTensor, WgpuRuntime};
 use glam::{Vec3, uvec2};
@@ -99,7 +99,7 @@ impl SplatOps<Self> for MainBackendBase {
             client.launch_unchecked(
                 ProjectSplats::task(mip_splat),
                 calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
-                Bindings::new()
+                KernelArguments::new()
                     .with_buffers(vec![
                         transforms.handle.clone().binding(),
                         raw_opacities.handle.clone().binding(),
@@ -108,7 +108,7 @@ impl SplatOps<Self> for MainBackendBase {
                         num_visible_buffer.handle.clone().binding(),
                     ])
                     .with_metadata(create_meta_binding(project_uniforms)),
-            ).expect("Failed to render splats");
+            );
         });
 
             let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort").in_scope(|| {
@@ -134,23 +134,21 @@ impl SplatOps<Self> for MainBackendBase {
             );
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
-                client
-                    .launch_unchecked(
-                        ProjectVisible::task(mip_splat),
-                        CubeCount::Dynamic(num_vis_wg.handle.binding()),
-                        Bindings::new()
-                            .with_buffers(vec![
-                                num_visible_buffer.handle.clone().binding(),
-                                transforms.handle.binding(),
-                                sh_coeffs.handle.binding(),
-                                raw_opacities.handle.binding(),
-                                global_from_compact_gid.handle.clone().binding(),
-                                projected_splats.handle.clone().binding(),
-                                splat_intersect_counts.handle.clone().binding(),
-                            ])
-                            .with_metadata(create_meta_binding(project_uniforms)),
-                    )
-                    .expect("Failed to render splats");
+                client.launch_unchecked(
+                    ProjectVisible::task(mip_splat),
+                    CubeCount::Dynamic(num_vis_wg.handle.binding()),
+                    KernelArguments::new()
+                        .with_buffers(vec![
+                            num_visible_buffer.handle.clone().binding(),
+                            transforms.handle.clone().binding(),
+                            sh_coeffs.handle.binding(),
+                            raw_opacities.handle.binding(),
+                            global_from_compact_gid.handle.clone().binding(),
+                            projected_splats.handle.clone().binding(),
+                            splat_intersect_counts.handle.clone().binding(),
+                        ])
+                        .with_metadata(create_meta_binding(project_uniforms)),
+                );
             }
         });
 
@@ -207,21 +205,19 @@ impl SplatOps<Self> for MainBackendBase {
         tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
-                client
-                    .launch_unchecked(
-                        MapGaussiansToIntersect::task(),
-                        CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
-                        Bindings::new()
-                            .with_buffers(vec![
-                                project_output.num_visible.handle.clone().binding(),
-                                project_output.projected_splats.handle.clone().binding(),
-                                project_output.cum_tiles_hit.handle.clone().binding(),
-                                tile_id_from_isect.handle.clone().binding(),
-                                compact_gid_from_isect.handle.clone().binding(),
-                            ])
-                            .with_metadata(create_meta_binding(map_uniforms)),
-                    )
-                    .expect("Failed to render splats");
+                client.launch_unchecked(
+                    MapGaussiansToIntersect::task(),
+                    CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
+                    KernelArguments::new()
+                        .with_buffers(vec![
+                            project_output.num_visible.handle.clone().binding(),
+                            project_output.projected_splats.handle.clone().binding(),
+                            project_output.cum_tiles_hit.handle.clone().binding(),
+                            tile_id_from_isect.handle.clone().binding(),
+                            compact_gid_from_isect.handle.clone().binding(),
+                        ])
+                        .with_metadata(create_meta_binding(map_uniforms)),
+                );
             }
         });
 
@@ -254,11 +250,10 @@ impl SplatOps<Self> for MainBackendBase {
                 &client,
                 calc_cube_count_1d(num_intersections, cube_dim.x * CHECKS_PER_ITER),
                 cube_dim,
-                tile_id_from_isect.as_tensor_arg(1),
-                tile_offsets.as_tensor_arg(1),
-                num_inter_tensor.as_tensor_arg(1),
-            )
-            .expect("Failed to render splats");
+                tile_id_from_isect.into_tensor_arg(),
+                tile_offsets.clone().into_tensor_arg(),
+                num_inter_tensor.into_tensor_arg(),
+            );
         }
 
         let out_dim = if bwd_info { 4 } else { 1 };
@@ -273,7 +268,7 @@ impl SplatOps<Self> for MainBackendBase {
 
         let (bindings, visible) = if bwd_info {
             let visible = Self::float_zeros([total_splats].into(), device, FloatDType::F32);
-            let bindings = Bindings::new()
+            let bindings = KernelArguments::new()
                 .with_buffers(vec![
                     compact_gid_from_isect.handle.clone().binding(),
                     tile_offsets.handle.clone().binding(),
@@ -289,7 +284,7 @@ impl SplatOps<Self> for MainBackendBase {
                 .with_metadata(create_meta_binding(rasterize_uniforms));
             (bindings, visible)
         } else {
-            let bindings = Bindings::new()
+            let bindings = KernelArguments::new()
                 .with_buffers(vec![
                     compact_gid_from_isect.handle.clone().binding(),
                     tile_offsets.handle.clone().binding(),
@@ -304,16 +299,14 @@ impl SplatOps<Self> for MainBackendBase {
 
         // SAFETY: Kernel checked to have no OOB, bounded loops.
         unsafe {
-            client
-                .launch_unchecked(
-                    raster_task,
-                    calc_cube_count_1d(
-                        num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
-                        shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
-                    ),
-                    bindings,
-                )
-                .expect("Failed to render splats");
+            client.launch_unchecked(
+                raster_task,
+                calc_cube_count_1d(
+                    num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
+                    shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
+                ),
+                bindings,
+            );
         }
 
         (

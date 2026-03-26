@@ -54,6 +54,8 @@ skip = [
     { name = 'thiserror' },
     { name = 'thiserror-impl' },
 
+    { name = "bit-vec" },
+
     # Other
     { name = "core-foundation" },     # Egui has two?
     { name = 'windows_x86_64_msvc' }, # Old version from winit.
@@ -74,7 +76,6 @@ skip = [
 
     { name = 'hashbrown' },
     { name = "rustc-hash" },
-    { name = "core-graphics-types" },
 
     { name = "smithay-client-toolkit" },
     { name = "foldhash" },
@@ -83,12 +84,11 @@ skip = [
     { name = "calloop-wayland-source" },
     { name = "calloop" },
 
-    { name = "zune-jpeg" },
-    { name = "zune-core" },
-
     { name = "convert_case" },
 
     { name = "console" },
+    { name = "jni-sys" },
+    { name = "codespan-reporting" },
 
     { name = "wasm-streams" },
 ]

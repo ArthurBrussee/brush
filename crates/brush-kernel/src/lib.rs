@@ -5,12 +5,10 @@ use brush_wgsl::wgsl_kernel;
 use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::tensor::{DType, Scalar, Shape};
 
+pub use burn_cubecl::cubecl::prelude::KernelId;
+use burn_cubecl::cubecl::server::{KernelArguments, MetadataBindingInfo};
 pub use burn_cubecl::cubecl::{CubeCount, CubeDim, client::ComputeClient, server::ComputeServer};
 pub use burn_cubecl::cubecl::{CubeTask, Runtime};
-pub use burn_cubecl::cubecl::{
-    prelude::KernelId,
-    server::{Bindings, MetadataBinding},
-};
 pub use burn_cubecl::{CubeRuntime, tensor::CubeTensor};
 
 use bytemuck::NoUninit;
@@ -75,11 +73,11 @@ pub fn create_tensor<const D: usize>(
     CubeTensor::new_contiguous(client, device.clone(), shape, buffer, dtype)
 }
 
-pub fn create_meta_binding<T: NoUninit>(val: T) -> MetadataBinding {
+pub fn create_meta_binding<T: NoUninit>(val: T) -> MetadataBindingInfo {
     // Copy data to u32. If length of T is not % 4, this will correctly
     // pad with zeros.
     let data = bytemuck::pod_collect_to_vec(&[val]);
-    MetadataBinding {
+    MetadataBindingInfo {
         static_len: data.len(),
         data,
     }
@@ -118,18 +116,16 @@ pub fn create_dispatch_buffer_1d(
 
     // SAFETY: wgsl FFI, kernel checked to have no OOB, bounded loops.
     unsafe {
-        client
-            .launch_unchecked(
-                Wg::task(),
-                CubeCount::Static(1, 1, 1),
-                Bindings::new()
-                    .with_buffers(vec![
-                        thread_count.handle.binding(),
-                        ret.handle.clone().binding(),
-                    ])
-                    .with_metadata(data),
-            )
-            .expect("Failed to execute");
+        client.launch_unchecked(
+            Wg::task(),
+            CubeCount::Static(1, 1, 1),
+            KernelArguments::new()
+                .with_buffers(vec![
+                    thread_count.handle.binding(),
+                    ret.handle.clone().binding(),
+                ])
+                .with_metadata(data),
+        );
     }
 
     ret

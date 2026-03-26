@@ -2,7 +2,7 @@ use burn::tensor::{
     DType, Shape,
     ops::{FloatTensor, IntTensor},
 };
-use burn_cubecl::{BoolElement, fusion::FusionCubeRuntime};
+use burn_cubecl::fusion::FusionCubeRuntime;
 use burn_fusion::{
     Fusion, FusionHandle,
     stream::{Operation, OperationStreams},
@@ -38,10 +38,10 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             desc: CustomOpIr,
         }
 
-        impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp {
+        impl Operation<FusionCubeRuntime<WgpuRuntime>> for CustomOp {
             fn execute(
                 &self,
-                h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
+                h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime>>>,
             ) {
                 let (inputs, outputs) = self.desc.as_fixed();
 
@@ -171,10 +171,10 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             desc: CustomOpIr,
         }
 
-        impl<BT: BoolElement> Operation<FusionCubeRuntime<WgpuRuntime, BT>> for CustomOp {
+        impl Operation<FusionCubeRuntime<WgpuRuntime>> for CustomOp {
             fn execute(
                 &self,
-                h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime, BT>>>,
+                h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime>>>,
             ) {
                 let (inputs, outputs) = self.desc.as_fixed();
 
