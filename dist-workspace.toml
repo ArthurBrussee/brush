@@ -12,8 +12,8 @@ installers = []
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 
-# Pin GitHub Actions to specific versions (v6 for checkout/upload, v7 for download)
+# Pin GitHub Actions to specific versions
 [dist.github-action-commits]
 "actions/checkout" = "v6"
-"actions/upload-artifact" = "v6"
-"actions/download-artifact" = "v7"
+"actions/upload-artifact" = "v7"
+"actions/download-artifact" = "v8"
