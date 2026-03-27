@@ -9,7 +9,7 @@ pub mod quant;
 
 // Re-export main functionality
 #[cfg(feature = "export")]
-pub use export::splat_to_ply;
+pub use export::{ExportError, splat_to_ply};
 #[cfg(feature = "import")]
 pub use import::{
     ParseMetadata, SplatData, SplatMessage, load_splat_from_ply, stream_splat_from_ply,
@@ -19,8 +19,6 @@ pub use ply_gaussian::PlyGaussian;
 // Re-export serde-ply types for compatibility
 #[cfg(feature = "import")]
 pub use serde_ply::DeserializeError;
-#[cfg(feature = "export")]
-pub use serde_ply::SerializeError;
 
 #[cfg(test)]
 #[allow(unused)]

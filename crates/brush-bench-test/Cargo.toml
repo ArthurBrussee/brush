@@ -10,6 +10,7 @@ brush-render = { path = "../brush-render", features = ["debug-validation"] }
 brush-render-bwd.path = "../brush-render-bwd"
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
+brush-serde = { path = "../brush-serde", features = ["export", "import"] }
 
 anyhow.workspace = true
 image.workspace = true
