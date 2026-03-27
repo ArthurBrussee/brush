@@ -193,7 +193,13 @@ pub async fn save_file(default_name: &str, data: &[u8]) -> Result<(), PickFileEr
 
     anchor.set_href(&url);
     anchor.set_download(default_name);
+
+    // Append to body, click, then remove - some browsers ignore clicks on detached elements.
+    let body = document.body().ok_or(PickFileError::NoFileSelected)?;
+    body.append_child(&anchor)
+        .map_err(|_| PickFileError::NoFileSelected)?;
     anchor.click();
+    let _ = body.remove_child(&anchor);
 
     let _ = web_sys::Url::revoke_object_url(&url);
     Ok(())

@@ -7,6 +7,17 @@ use burn::tensor::Transaction;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use serde_ply::{SerializeError, SerializeOptions};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ExportError {
+    #[error("Failed to fetch splat data from GPU")]
+    FetchFailed,
+    #[error("Failed to convert tensor data to f32 - data may be corrupted")]
+    DataConversion,
+    #[error("PLY serialization failed: {0}")]
+    Serialize(#[from] SerializeError),
+}
 
 // Dynamic PLY structure that only includes needed SH coefficients
 #[derive(Debug)]
@@ -68,21 +79,24 @@ impl Serialize for DynamicPlyGaussian {
 struct DynamicPly {
     vertex: Vec<DynamicPlyGaussian>,
 }
-pub use burn_cubecl::{CubeRuntime, cubecl::Compiler, tensor::CubeTensor};
 
-async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
-    let [transforms, raw_opacities, sh_coeffs] = Transaction::default()
+async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<DynamicPly, ExportError> {
+    let data = Transaction::default()
         .register(splats.transforms.val())
         .register(splats.raw_opacities.val())
         .register(splats.sh_coeffs.val().permute([0, 2, 1])) // Permute to inria format ([n, channel, coeffs]).)
         .execute_async()
         .await
-        .expect("Failed to fetch splat data")
+        .map_err(|_fetch| ExportError::FetchFailed)?;
+
+    let vecs: Vec<Vec<f32>> = data
         .into_iter()
-        .map(|x| x.into_vec().unwrap())
-        .collect::<Vec<_>>()
+        .map(|x| x.into_vec().map_err(|_convert| ExportError::DataConversion))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let [transforms, raw_opacities, sh_coeffs]: [Vec<f32>; 3] = vecs
         .try_into()
-        .unwrap();
+        .map_err(|_convert| ExportError::DataConversion)?;
 
     let sh_coeffs_num = splats.sh_coeffs.dims()[1];
     let sh_degree = splats.sh_degree();
@@ -160,12 +174,12 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
             }
         })
         .collect();
-    DynamicPly { vertex: vertices }
+    Ok(DynamicPly { vertex: vertices })
 }
 
-pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, SerializeError> {
+pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, ExportError> {
     let sh_degree = splats.sh_degree();
-    let ply = read_splat_data(splats.clone()).await;
+    let ply = read_splat_data(splats.clone()).await?;
 
     let render_mode_str = if splats.render_mip { "mip" } else { "default" };
 
@@ -175,7 +189,10 @@ pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, Seri
         format!("SH degree: {}", sh_degree),
         format!("SplatRenderMode: {}", render_mode_str),
     ];
-    serde_ply::to_bytes(&ply, SerializeOptions::binary_le().with_comments(comments))
+    Ok(serde_ply::to_bytes(
+        &ply,
+        SerializeOptions::binary_le().with_comments(comments),
+    )?)
 }
 
 #[cfg(test)]
@@ -225,7 +242,7 @@ mod tests {
             let splats = create_test_splats(degree);
             assert_eq!(splats.sh_degree(), degree);
 
-            let ply_data = read_splat_data(splats.clone()).await;
+            let ply_data = read_splat_data(splats.clone()).await.unwrap();
             let expected_rest_coeffs = if degree == 0 {
                 0
             } else {
@@ -286,6 +303,41 @@ mod tests {
 
             assert_eq!(imported_splats.sh_degree(), degree);
             assert_coeffs_match(&original_splats, &imported_splats).await;
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_export_roundtrip_multiple_splats() {
+        use crate::test_utils::create_test_splats_with_count;
+
+        let device = brush_kernel::test_helpers::test_device().await;
+        let num_splats = 100;
+
+        for degree in [0, 1, 2, 3] {
+            let original = create_test_splats_with_count(degree, num_splats);
+            assert_eq!(original.num_splats(), num_splats as u32);
+
+            let ply_bytes = splat_to_ply(original.clone())
+                .await
+                .expect("Failed to export splats");
+
+            assert!(!ply_bytes.is_empty(), "Exported PLY should not be empty");
+
+            let cursor = Cursor::new(ply_bytes);
+            let imported_message = load_splat_from_ply(cursor, None)
+                .await
+                .expect("Failed to reimport exported splats");
+            let imported = imported_message
+                .data
+                .into_splats(&device, SplatRenderMode::Default);
+
+            assert_eq!(
+                imported.num_splats(),
+                num_splats as u32,
+                "Splat count mismatch after roundtrip"
+            );
+            assert_eq!(imported.sh_degree(), degree);
+            assert_coeffs_match(&original, &imported).await;
         }
     }
 }
