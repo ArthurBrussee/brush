@@ -107,7 +107,7 @@ impl SplatOps<Self> for MainBackendBase {
                         depths.handle.clone().binding(),
                         num_visible_buffer.handle.clone().binding(),
                     ])
-                    .with_metadata(create_meta_binding(project_uniforms)),
+                    .with_info(create_meta_binding(project_uniforms)),
             );
         });
 
@@ -147,7 +147,7 @@ impl SplatOps<Self> for MainBackendBase {
                             projected_splats.handle.clone().binding(),
                             splat_intersect_counts.handle.clone().binding(),
                         ])
-                        .with_metadata(create_meta_binding(project_uniforms)),
+                        .with_info(create_meta_binding(project_uniforms)),
                 );
             }
         });
@@ -216,7 +216,7 @@ impl SplatOps<Self> for MainBackendBase {
                             tile_id_from_isect.handle.clone().binding(),
                             compact_gid_from_isect.handle.clone().binding(),
                         ])
-                        .with_metadata(create_meta_binding(map_uniforms)),
+                        .with_info(create_meta_binding(map_uniforms)),
                 );
             }
         });
@@ -281,7 +281,7 @@ impl SplatOps<Self> for MainBackendBase {
                         .binding(),
                     visible.handle.clone().binding(),
                 ])
-                .with_metadata(create_meta_binding(rasterize_uniforms));
+                .with_info(create_meta_binding(rasterize_uniforms));
             (bindings, visible)
         } else {
             let bindings = KernelArguments::new()
@@ -291,7 +291,7 @@ impl SplatOps<Self> for MainBackendBase {
                     project_output.projected_splats.handle.clone().binding(),
                     out_img.handle.clone().binding(),
                 ])
-                .with_metadata(create_meta_binding(rasterize_uniforms));
+                .with_info(create_meta_binding(rasterize_uniforms));
             (bindings, create_tensor([1], device, DType::F32))
         };
 

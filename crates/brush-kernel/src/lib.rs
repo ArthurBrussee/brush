@@ -74,13 +74,10 @@ pub fn create_tensor<const D: usize>(
 }
 
 pub fn create_meta_binding<T: NoUninit>(val: T) -> MetadataBindingInfo {
-    // Copy data to u32. If length of T is not % 4, this will correctly
+    // Copy data to u64. If length of T is not % 8, this will correctly
     // pad with zeros.
-    let data = bytemuck::pod_collect_to_vec(&[val]);
-    MetadataBindingInfo {
-        static_len: data.len(),
-        data,
-    }
+    let data: Vec<u64> = bytemuck::pod_collect_to_vec(&[val]);
+    MetadataBindingInfo::new(data, 0, 0)
 }
 
 /// Create a buffer to use as a shader uniform, from a structure.
@@ -124,7 +121,7 @@ pub fn create_dispatch_buffer_1d(
                     thread_count.handle.binding(),
                     ret.handle.clone().binding(),
                 ])
-                .with_metadata(data),
+                .with_info(data),
         );
     }
 

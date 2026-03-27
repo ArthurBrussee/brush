@@ -23,7 +23,6 @@ pub fn get_tile_offsets(
         let isect_id = (base_id + i) as usize;
 
         if isect_id < inter {
-            let prev_tid = tile_id_from_isect[isect_id - 1] as usize;
             let tid = tile_id_from_isect[isect_id] as usize;
 
             if isect_id == inter - 1 {
@@ -31,11 +30,17 @@ pub fn get_tile_offsets(
                 tile_offsets[tid * 2 + 1] = isect_id as u32 + 1;
             }
 
-            if tid != prev_tid {
-                // Write the end of the previous tile.
-                tile_offsets[prev_tid * 2 + 1] = isect_id as u32;
-                // Write start of this tile.
-                tile_offsets[tid * 2] = isect_id as u32;
+            if isect_id == 0 {
+                // First intersection: always write the start of its tile.
+                tile_offsets[tid * 2] = 0;
+            } else {
+                let prev_tid = tile_id_from_isect[isect_id - 1] as usize;
+                if tid != prev_tid {
+                    // Write the end of the previous tile.
+                    tile_offsets[prev_tid * 2 + 1] = isect_id as u32;
+                    // Write start of this tile.
+                    tile_offsets[tid * 2] = isect_id as u32;
+                }
             }
         }
     }
