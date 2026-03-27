@@ -103,8 +103,8 @@ burn-store = { git = "https://github.com/tracel-ai/burn", features = [
     "pytorch",
 ] }
 
-egui = { version = "0.33"  }
-eframe = { version = "0.33", default-features = false, features = [
+egui = { version = "0.34"  }
+eframe = { version = "0.34", default-features = false, features = [
     "wgpu",
     "android-game-activity",
     "wayland",
@@ -112,7 +112,7 @@ eframe = { version = "0.33", default-features = false, features = [
     "persistence",
 ] }
 
-egui_tiles = { version = "0.14", features = ["serde"] }
+egui_tiles = { version = "0.15", features = ["serde"] }
 
 rerun = { version = "0.30", default-features = false, features = [
     'sdk',
@@ -125,9 +125,6 @@ async_zip = { version = "0.0.18", default-features = false, features = ["tokio",
 hashbrown = "0.16"
 alphanumeric-sort = "1.5.3"
 
-[patch.crates-io]
-egui = { git = "https://github.com/emilk/egui" }
-eframe = { git = "https://github.com/emilk/egui"}
 
 # Uncomment this to use local wgpu and naga.
 # wgpu.path = "../wgpu/wgpu"

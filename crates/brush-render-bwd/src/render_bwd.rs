@@ -102,7 +102,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                             v_output.handle.binding(),
                             v_combined.handle.clone().binding(),
                         ])
-                        .with_metadata(create_meta_binding(rasterize_uniforms)),
+                        .with_info(create_meta_binding(rasterize_uniforms)),
                 );
             }
         });
@@ -157,7 +157,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                             v_transforms.handle.clone().binding(),
                             v_coeffs.handle.clone().binding(),
                         ])
-                        .with_metadata(create_meta_binding(project_uniforms)),
+                        .with_info(create_meta_binding(project_uniforms)),
                 );
             }
         });
