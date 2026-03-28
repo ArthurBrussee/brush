@@ -792,6 +792,15 @@ impl AppPane for ScenePanel {
             ProcessMessage::Warning { error } => {
                 self.warnings.push(ErrorDisplay::new(error));
             }
+            #[cfg(feature = "training")]
+            ProcessMessage::TrainMessage(brush_process::message::TrainMessage::TrainConfig {
+                config,
+            }) => {
+                let bg = &config.train_config.background_color;
+                let mut settings = process.get_cam_settings();
+                settings.background = Some(glam::vec3(bg[0], bg[1], bg[2]));
+                process.set_cam_settings(&settings);
+            }
             _ => {}
         }
     }
@@ -943,7 +952,13 @@ impl AppPane for ScenePanel {
                         draw_checkerboard(ui, rect, Color32::WHITE);
                     }
                     BackgroundStyle::Black => {
-                        ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+                        let bg = settings.background.unwrap_or(Vec3::ZERO);
+                        let bg_color = Color32::from_rgb(
+                            (bg.x * 255.0) as u8,
+                            (bg.y * 255.0) as u8,
+                            (bg.z * 255.0) as u8,
+                        );
+                        ui.painter().rect_filled(rect, 0.0, bg_color);
                     }
                 }
 

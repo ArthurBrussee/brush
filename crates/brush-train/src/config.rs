@@ -93,6 +93,21 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "0.0")]
     pub lpips_loss_weight: f32,
 
+    /// Base background color (R,G,B) used during training.
+    #[arg(
+        long,
+        help_heading = "Training options",
+        default_value = "0,0,0",
+        value_delimiter = ',',
+        num_args = 3
+    )]
+    pub background_color: Vec<f32>,
+
+    /// Strength of random noise added to the background color each step.
+    /// Noise is uniform in [-strength, +strength], clamped to [0, 1].
+    #[arg(long, help_heading = "Training options", default_value = "0.1")]
+    pub background_noise_strength: f32,
+
     /// Number of LOD levels to generate after initial training (0 = disabled).
     #[arg(long, help_heading = "LOD options", default_value = "0")]
     pub lod_levels: u32,

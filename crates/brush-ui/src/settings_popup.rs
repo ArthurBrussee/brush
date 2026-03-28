@@ -200,6 +200,35 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
         );
     });
 
+    ui.collapsing("Background", |ui| {
+        let tc = &mut args.train_config;
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                let mut color = egui::Color32::from_rgb(
+                    (tc.background_color[0] * 255.0) as u8,
+                    (tc.background_color[1] * 255.0) as u8,
+                    (tc.background_color[2] * 255.0) as u8,
+                );
+                ui.label("Color");
+                if ui.color_edit_button_srgba(&mut color).changed() {
+                    tc.background_color = vec![
+                        color.r() as f32 / 255.0,
+                        color.g() as f32 / 255.0,
+                        color.b() as f32 / 255.0,
+                    ];
+                }
+            });
+        });
+        slider(
+            ui,
+            &mut tc.background_noise_strength,
+            0.0..=1.0,
+            "Noise strength",
+            false,
+            enabled,
+        );
+    });
+
     {
         let tc = &mut args.train_config;
         let lod_label = if tc.lod_levels == 1 {
