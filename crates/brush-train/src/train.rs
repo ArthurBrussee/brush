@@ -32,7 +32,6 @@ use burn::{
 };
 
 use burn_cubecl::cubecl::Runtime;
-use glam::Vec3;
 use hashbrown::{HashMap, HashSet};
 use tracing::{Instrument, trace_span};
 
@@ -117,8 +116,13 @@ impl SplatTrainer {
 
         // Forward pass - render splats asynchronously.
         // Clone splats to avoid holding references across the await.
-        let background = Vec3::ZERO;
+        let noise_strength = self.config.background_noise_strength;
         let img_size = glam::uvec2(img_w as u32, img_h as u32);
+
+        // Use a random background color each step to prevent splats from
+        // exploiting a fixed black background with semi-transparency.
+        let [r, g, b] = sample_background_color(noise_strength);
+        let background = glam::Vec3::new(r, g, b);
 
         let diff_out = render_splats(splats.clone(), &camera, img_size, background)
             .instrument(trace_span!("Forward"))
@@ -130,8 +134,22 @@ impl SplatTrainer {
 
         let median_scale = self.bounds.median_size();
         let num_visible = render_aux.get_num_visible().inner();
+
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
-        let gt_rgb = gt_tensor.clone().slice(s![.., .., 0..3]);
+
+        // For images with alpha, composite GT on the same background.
+        let gt_rgb = if has_alpha && noise_strength > 0.0 {
+            let gt_rgb = gt_tensor.clone().slice(s![.., .., 0..3]);
+            let gt_alpha = gt_tensor.clone().slice(s![.., .., 3..4]);
+            let bg_3d: Tensor<DiffBackend, 3> = Tensor::<DiffBackend, 1>::from_floats(
+                [background.x, background.y, background.z].as_slice(),
+                &device,
+            )
+            .reshape([1, 1, 3]);
+            gt_rgb + (1.0 - gt_alpha) * bg_3d
+        } else {
+            gt_tensor.clone().slice(s![.., .., 0..3])
+        };
 
         let visible: Tensor<Autodiff<MainBackend>, 1> =
             Tensor::from_primitive(TensorPrimitive::Float(render_aux.visible));
@@ -642,4 +660,15 @@ fn scale_down_largest_dim<B: Backend>(scales: Tensor<B, 2>, factor: f32) -> Tens
     let max_mask = scales.clone().equal(scales.clone().max_dim(1));
     let scale = Tensor::ones_like(&scales).mask_fill(max_mask, factor);
     scales.mul(scale)
+}
+
+/// Sample a single uniform random RGB background color in [0, strength].
+fn sample_background_color(strength: f32) -> [f32; 3] {
+    use rand::RngExt as _;
+    let mut rng = rand::rng();
+    [
+        rng.random_range(0.0..strength),
+        rng.random_range(0.0..strength),
+        rng.random_range(0.0..strength),
+    ]
 }
