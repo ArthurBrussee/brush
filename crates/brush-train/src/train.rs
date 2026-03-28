@@ -116,13 +116,11 @@ impl SplatTrainer {
 
         // Forward pass - render splats asynchronously.
         // Clone splats to avoid holding references across the await.
-        let noise_strength = self.config.background_noise_strength;
         let img_size = glam::uvec2(img_w as u32, img_h as u32);
 
-        // Use a random background color each step to prevent splats from
-        // exploiting a fixed black background with semi-transparency.
-        let [r, g, b] = sample_background_color(noise_strength);
-        let background = glam::Vec3::new(r, g, b);
+        let base = &self.config.background_color;
+        let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
+        let background = sample_background_color(base_bg, self.config.background_noise_strength);
 
         let diff_out = render_splats(splats.clone(), &camera, img_size, background)
             .instrument(trace_span!("Forward"))
@@ -138,7 +136,7 @@ impl SplatTrainer {
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
 
         // For images with alpha, composite GT on the same background.
-        let gt_rgb = if has_alpha && noise_strength > 0.0 {
+        let gt_rgb = if has_alpha && background != glam::Vec3::ZERO {
             let gt_rgb = gt_tensor.clone().slice(s![.., .., 0..3]);
             let gt_alpha = gt_tensor.clone().slice(s![.., .., 3..4]);
             let bg_3d: Tensor<DiffBackend, 3> = Tensor::<DiffBackend, 1>::from_floats(
@@ -662,13 +660,14 @@ fn scale_down_largest_dim<B: Backend>(scales: Tensor<B, 2>, factor: f32) -> Tens
     scales.mul(scale)
 }
 
-/// Sample a single uniform random RGB background color in [0, strength].
-fn sample_background_color(strength: f32) -> [f32; 3] {
+/// Sample a background color: base + uniform noise in [-strength, +strength], clamped to [0, 1].
+fn sample_background_color(base: glam::Vec3, strength: f32) -> glam::Vec3 {
     use rand::RngExt as _;
     let mut rng = rand::rng();
-    [
-        rng.random_range(0.0..strength),
-        rng.random_range(0.0..strength),
-        rng.random_range(0.0..strength),
-    ]
+    let noise = glam::Vec3::new(
+        rng.random_range(-strength..strength),
+        rng.random_range(-strength..strength),
+        rng.random_range(-strength..strength),
+    );
+    (base + noise).clamp(glam::Vec3::ZERO, glam::Vec3::ONE)
 }

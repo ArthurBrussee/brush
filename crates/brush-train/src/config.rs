@@ -93,10 +93,18 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "0.0")]
     pub lpips_loss_weight: f32,
 
-    /// Strength of random background noise during training.
-    /// Prevents semi-transparent splats from exploiting a fixed background.
-    /// A single random color is sampled per training step and used for all pixels.
-    /// 0.0 = black background, 1.0 = fully random background.
+    /// Base background color (R,G,B) used during training.
+    #[arg(
+        long,
+        help_heading = "Training options",
+        default_value = "0,0,0",
+        value_delimiter = ',',
+        num_args = 3
+    )]
+    pub background_color: Vec<f32>,
+
+    /// Strength of random noise added to the background color each step.
+    /// Noise is uniform in [-strength, +strength], clamped to [0, 1].
     #[arg(long, help_heading = "Training options", default_value = "0.1")]
     pub background_noise_strength: f32,
 
