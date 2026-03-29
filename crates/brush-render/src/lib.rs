@@ -8,7 +8,7 @@ use burn_wgpu::WgpuRuntime;
 use camera::Camera;
 use clap::ValueEnum;
 use glam::Vec3;
-use render_aux::ProjectOutput;
+use render_aux::CullOutput;
 
 use crate::gaussian_splats::SplatRenderMode;
 pub use crate::gaussian_splats::{TextureMode, render_splats};
@@ -34,32 +34,39 @@ pub mod validation;
 pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u32>;
 pub type MainBackend = Fusion<MainBackendBase>;
 
-/// Trait for the the gaussian splatting rendering pipeline.
+/// Trait for the gaussian splatting rendering pipeline.
 ///
-/// This trait provides two passes:
-/// 1. `project`: Culling, depth sort, projection, intersection counting, prefix sum.
-/// 2. `rasterize`: Intersection filling, tile sort, tile offsets, rasterization.
-///
-/// The split allows for an explicit GPU sync point between passes to read back
-/// the exact number of intersections needed for buffer allocation.
+/// The pipeline has two phases with a single async readback point:
+/// 1. `project_cull`: Culling, depth sort, tile intersection counting, prefix sum.
+/// 2. Readback `num_visible` + `num_intersections` from [`CullOutput::read_counts`].
+/// 3. `rasterize`: Projection, intersection filling, tile sort, rasterization.
 pub trait SplatOps<B: Backend> {
-    /// First pass: project gaussians and count intersections.
-    fn project(
+    /// Phase 1: Cull invisible splats, depth sort, count tile intersections, prefix sum.
+    fn project_cull(
         camera: &Camera,
         img_size: glam::UVec2,
+        transforms: FloatTensor<B>,
+        raw_opacities: FloatTensor<B>,
+        render_mode: SplatRenderMode,
+    ) -> CullOutput<B>;
+
+    /// Phase 2: Project visible splats, fill intersections, tile sort, rasterize.
+    ///
+    /// `num_visible` and `num_intersections` are the CPU-side readbacks from
+    /// [`CullOutput::read_counts`].
+    #[allow(clippy::too_many_arguments)]
+    fn rasterize(
+        cull_output: &CullOutput<B>,
+        num_visible: u32,
+        num_intersections: u32,
         transforms: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
         render_mode: SplatRenderMode,
-    ) -> ProjectOutput<B>;
-
-    /// Second pass: rasterize using projection data.
-    fn rasterize(
-        project_output: &ProjectOutput<B>,
-        num_intersections: u32,
         background: Vec3,
         bwd_info: bool,
-    ) -> (FloatTensor<B>, RenderAux<B>, IntTensor<B>);
+    ) -> (FloatTensor<B>, RenderAux<B>, FloatTensor<B>, IntTensor<B>);
+    //    out_img,       render_aux,     projected_splats, compact_gid_from_isect
 }
 
 #[derive(

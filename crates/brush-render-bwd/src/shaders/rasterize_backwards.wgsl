@@ -1,26 +1,25 @@
 #import helpers;
 
 @group(0) @binding(0) var<storage, read> compact_gid_from_isect: array<u32>;
-@group(0) @binding(1) var<storage, read> global_from_compact_gid: array<u32>;
-@group(0) @binding(2) var<storage, read> tile_offsets: array<u32>;
-@group(0) @binding(3) var<storage, read> projected: array<helpers::ProjectedSplat>;
-@group(0) @binding(4) var<storage, read> output: array<vec4f>;
-@group(0) @binding(5) var<storage, read> v_output: array<vec4f>;
+@group(0) @binding(1) var<storage, read> tile_offsets: array<u32>;
+@group(0) @binding(2) var<storage, read> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(3) var<storage, read> output: array<vec4f>;
+@group(0) @binding(4) var<storage, read> v_output: array<vec4f>;
 
-// v_splats layout per splat (stride 10):
+// v_splats layout per splat (stride 10, indexed by compact_gid):
 // [0..7]: projected splat grads (xy, conic, rgb)
 // [8]: opacity grad
 // [9]: refine weight
 #ifdef HARD_FLOAT
-    @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<f32>>;
-    @group(0) @binding(7) var<storage, read> uniforms: helpers::RasterizeUniforms;
+    @group(0) @binding(5) var<storage, read_write> v_splats: array<atomic<f32>>;
+    @group(0) @binding(6) var<storage, read> uniforms: helpers::RasterizeUniforms;
 
     fn write_grads_atomic(id: u32, grads: f32) {
         atomicAdd(&v_splats[id], grads);
     }
 #else
-    @group(0) @binding(6) var<storage, read_write> v_splats: array<atomic<u32>>;
-    @group(0) @binding(7) var<storage, read> uniforms: helpers::RasterizeUniforms;
+    @group(0) @binding(5) var<storage, read_write> v_splats: array<atomic<u32>>;
+    @group(0) @binding(6) var<storage, read> uniforms: helpers::RasterizeUniforms;
 
     fn add_bitcast(cur: u32, add: f32) -> u32 {
         return bitcast<u32>(bitcast<f32>(cur) + add);
@@ -37,7 +36,6 @@
 const THREAD_COUNT: u32 = 64u;
 const PIXELS_PER_THREAD: u32 = 4u;
 var<workgroup> local_batch: array<helpers::ProjectedSplat, THREAD_COUNT>;
-var<workgroup> load_gid: array<u32, THREAD_COUNT>;
 
 var<workgroup> range_uniform: vec2u;
 
@@ -104,7 +102,6 @@ fn main(
 
         workgroupBarrier();
         if local_idx < remaining {
-            load_gid[local_idx] = global_from_compact_gid[compact_gid];
             local_batch[local_idx] = projected[compact_gid];
         }
         workgroupBarrier();
@@ -197,8 +194,7 @@ fn main(
                 let sum_refine = subgroupAdd(v_refine_thread);
 
                 if doAdd {
-                    let global_gid = load_gid[t];
-                    let base = global_gid * 10u;
+                    let base = compact_gid_from_isect[batch_start + t] * 10u;
 
                     write_grads_atomic(base + 0u, sum_xy.x);
                     write_grads_atomic(base + 1u, sum_xy.y);

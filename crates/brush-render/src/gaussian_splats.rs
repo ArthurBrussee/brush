@@ -246,27 +246,40 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
         splats.transforms.into_value()
     };
 
-    let project_output = B::project(
+    let render_mode = if splats.render_mip {
+        SplatRenderMode::Mip
+    } else {
+        SplatRenderMode::Default
+    };
+
+    let transforms_prim = transforms.into_primitive().tensor();
+    let sh_coeffs_prim = splats.sh_coeffs.into_value().into_primitive().tensor();
+    let raw_opac_prim = splats.raw_opacities.into_value().into_primitive().tensor();
+
+    let cull_output = B::project_cull(
         camera,
         img_size,
-        transforms.into_primitive().tensor(),
-        splats.sh_coeffs.into_value().into_primitive().tensor(),
-        splats.raw_opacities.into_value().into_primitive().tensor(),
-        if splats.render_mip {
-            SplatRenderMode::Mip
-        } else {
-            SplatRenderMode::Default
-        },
+        transforms_prim.clone(),
+        raw_opac_prim.clone(),
+        render_mode,
     );
 
-    project_output.clone().validate().await;
+    cull_output.clone().validate().await;
 
-    // Async readback
-    let num_intersections = project_output.read_num_intersections().await;
+    let (num_visible, num_intersections) = cull_output.read_counts().await;
 
     let use_float = matches!(texture_mode, TextureMode::Float);
-    let (out_img, render_aux, _) =
-        B::rasterize(&project_output, num_intersections, background, use_float);
+    let (out_img, render_aux, _, _) = B::rasterize(
+        &cull_output,
+        num_visible,
+        num_intersections,
+        transforms_prim,
+        sh_coeffs_prim,
+        raw_opac_prim,
+        render_mode,
+        background,
+        use_float,
+    );
 
     render_aux.clone().validate().await;
 

@@ -1,44 +1,65 @@
-use burn::tensor::ElementConversion;
 use burn::{
     Tensor,
     prelude::Backend,
     tensor::{
-        Int,
+        Int, Transaction,
         ops::{FloatTensor, IntTensor},
     },
 };
 
 use crate::shaders::helpers::ProjectUniforms;
 
-/// Output from the project pass. Consumed by rasterize.
+/// Output from the culling + depth sort pass.
+///
+/// Contains `num_visible` and `num_intersections` on the GPU (both atomics).
+/// Read back both counts with [`read_counts`] before calling `rasterize`.
 #[derive(Debug, Clone)]
-pub struct ProjectOutput<B: Backend> {
+pub struct CullOutput<B: Backend> {
+    /// Uniforms shared across all GPU passes. `sh_degree` is set to 0 here
+    /// because ProjectSplats doesn't use it; it's filled in by `rasterize`.
     pub project_uniforms: ProjectUniforms,
-    pub projected_splats: FloatTensor<B>,
     pub num_visible: IntTensor<B>,
     pub global_from_compact_gid: IntTensor<B>,
+    /// Total number of tile-splat intersections (atomic counter from ProjectSplats).
+    pub num_intersections: IntTensor<B>,
+    /// Inclusive prefix sum of per-splat tile intersection counts in compact (depth) order.
     pub cum_tiles_hit: IntTensor<B>,
     pub img_size: glam::UVec2,
 }
 
-impl<B: Backend> ProjectOutput<B> {
-    /// Get the total number of intersections.
-    pub async fn read_num_intersections(&self) -> u32 {
-        let cum_tiles_hit: Tensor<B, 1, Int> = Tensor::from_primitive(self.cum_tiles_hit.clone());
+impl<B: Backend> CullOutput<B> {
+    /// Read `num_visible` and `num_intersections` in a single batched GPU readback.
+    pub async fn read_counts(&self) -> (u32, u32) {
         let total = self.project_uniforms.total_splats as usize;
-        if total > 0 {
-            cum_tiles_hit
-                .slice([total - 1..total])
-                .into_scalar_async()
-                .await
-                .expect("Failed to read num_intersections")
-                .elem::<u32>()
-        } else {
-            0
+        if total == 0 {
+            return (0, 0);
         }
+
+        let num_visible_tensor: Tensor<B, 1, Int> =
+            Tensor::from_primitive(self.num_visible.clone());
+        let num_intersections_tensor: Tensor<B, 1, Int> =
+            Tensor::from_primitive(self.num_intersections.clone());
+
+        let data = Transaction::default()
+            .register(num_visible_tensor)
+            .register(num_intersections_tensor)
+            .execute_async()
+            .await
+            .expect("Failed to read counts");
+
+        let num_visible = data[0]
+            .clone()
+            .into_vec::<u32>()
+            .expect("Failed to read num_visible")[0];
+        let num_intersections = data[1]
+            .clone()
+            .into_vec::<u32>()
+            .expect("Failed to read num_intersections")[0];
+
+        (num_visible, num_intersections)
     }
 
-    /// Validate project outputs. Takes self by value to avoid Send issues with async.
+    /// Validate cull outputs. Takes self by value to avoid Send issues with async.
     pub async fn validate(self) {
         #[cfg(any(test, feature = "debug-validation"))]
         {
@@ -47,12 +68,12 @@ impl<B: Backend> ProjectOutput<B> {
                 return;
             }
 
-            use crate::validation::validate_tensor_val;
-            use burn::tensor::{TensorPrimitive, s};
+            use burn::tensor::ElementConversion;
 
-            let num_visible_tensor: Tensor<B, 1, Int> = Tensor::from_primitive(self.num_visible);
             let total_splats = self.project_uniforms.total_splats;
-            let num_visible = num_visible_tensor
+
+            let num_visible: Tensor<B, 1, Int> = Tensor::from_primitive(self.num_visible);
+            let num_visible = num_visible
                 .into_scalar_async()
                 .await
                 .expect("readback")
@@ -64,11 +85,6 @@ impl<B: Backend> ProjectOutput<B> {
             );
 
             if total_splats > 0 && num_visible > 0 {
-                let projected_splats: Tensor<B, 2> =
-                    Tensor::from_primitive(TensorPrimitive::Float(self.projected_splats));
-                let projected_splats = projected_splats.slice(s![0..num_visible, ..]);
-                validate_tensor_val(projected_splats, "projected_splats", None, None).await;
-
                 let global_from_compact_gid: Tensor<B, 1, Int> =
                     Tensor::from_primitive(self.global_from_compact_gid);
                 let global_from_compact_gid = global_from_compact_gid
@@ -129,7 +145,7 @@ impl<B: Backend> RenderAux<B> {
             }
 
             use crate::validation::validate_tensor_val;
-            use burn::tensor::TensorPrimitive;
+            use burn::tensor::{ElementConversion, TensorPrimitive};
 
             let num_visible = Tensor::<B, 1, Int>::from_primitive(self.num_visible)
                 .into_scalar_async()

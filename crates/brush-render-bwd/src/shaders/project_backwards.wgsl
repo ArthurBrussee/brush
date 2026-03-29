@@ -4,11 +4,13 @@
 @group(0) @binding(1) var<storage, read> transforms: array<f32>;
 @group(0) @binding(2) var<storage, read> raw_opac: array<f32>;
 @group(0) @binding(3) var<storage, read> global_from_compact_gid: array<u32>;
-// Combined rasterize grads: projected_splat_grads(8) + opac_grad(1) + refine_weight(1) per splat, stride 10
+// Sparse rasterize grads (indexed by compact_gid, stride 10): projected_splat_grads(8) + opac_grad(1) + refine_weight(1)
 @group(0) @binding(4) var<storage, read_write> v_rasterize_grads: array<f32>;
 @group(0) @binding(5) var<storage, read_write> v_transforms: array<f32>;
 @group(0) @binding(6) var<storage, read_write> v_coeffs: array<f32>;
-@group(0) @binding(7) var<storage, read> uniforms: helpers::ProjectUniforms;
+@group(0) @binding(7) var<storage, read_write> v_raw_opac: array<f32>;
+@group(0) @binding(8) var<storage, read_write> v_refine_weight: array<f32>;
+@group(0) @binding(9) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 const SH_C0: f32 = 0.2820947917738781f;
 
@@ -311,8 +313,8 @@ fn main(
     // Safe to normalize, quats with norm 0 are invisible.
     let quat = normalize(quat_unorm);
 
-    // Read from combined rasterize grads buffer (stride 10 per splat).
-    let rg_base = global_gid * 10u;
+    // Read from sparse rasterize grads buffer (indexed by compact_gid, stride 10).
+    let rg_base = compact_gid * 10u;
     let v_mean2d = vec2f(v_rasterize_grads[rg_base], v_rasterize_grads[rg_base + 1u]);
     let v_conics = vec3f(v_rasterize_grads[rg_base + 2u], v_rasterize_grads[rg_base + 3u], v_rasterize_grads[rg_base + 4u]);
     let v_color = vec3f(v_rasterize_grads[rg_base + 5u], v_rasterize_grads[rg_base + 6u], v_rasterize_grads[rg_base + 7u]);
@@ -373,8 +375,10 @@ fn main(
 
     let filter_comp = helpers::compensate_cov2d(&cov2d);
     let opac = helpers::sigmoid(raw_opac[global_gid]);
-    // Modify opacity gradient in-place within the combined rasterize grads buffer (index 8).
-    v_rasterize_grads[rg_base + 8u] = filter_comp * v_rasterize_grads[rg_base + 8u] * opac * (1.0f - opac);
+    // Write opacity gradient to dense output buffer (scatter compact→global happens here).
+    v_raw_opac[global_gid] = filter_comp * v_rasterize_grads[rg_base + 8u] * opac * (1.0 - opac);
+    // Write refine weight to dense output buffer (scatter compact→global).
+    v_refine_weight[global_gid] = v_rasterize_grads[rg_base + 9u];
 
     let covar2d_inv = helpers::inverse(cov2d);
     let v_covar2d_inv = mat2x2f(vec2f(v_conics.x, v_conics.y * 0.5f), vec2f(v_conics.y * 0.5f, v_conics.z));
@@ -430,7 +434,7 @@ fn main(
     // grad for (quat, scale) from covar
     let v_quat = normalize_vjp(quat_unorm) * quat_to_mat_vjp(quat, v_M * S);
 
-    // Write gradients to v_transforms: means(3) + quats(4) + log_scales(3)
+    // Write gradients to dense v_transforms: means(3) + quats(4) + log_scales(3)
     let vbase = global_gid * 10u;
     v_transforms[vbase]      = v_mean.x;
     v_transforms[vbase + 1u] = v_mean.y;

@@ -16,20 +16,19 @@ use crate::{
     camera::Camera,
     gaussian_splats::SplatRenderMode,
     render::calc_tile_bounds,
-    render_aux::ProjectOutput,
+    render_aux::CullOutput,
     sh::sh_degree_from_coeffs,
     shaders::{self, helpers::ProjectUniforms},
 };
 
 impl SplatOps<Self> for Fusion<MainBackendBase> {
-    fn project(
+    fn project_cull(
         cam: &Camera,
         img_size: glam::UVec2,
         transforms: FloatTensor<Self>,
-        sh_coeffs: FloatTensor<Self>,
         opacity: FloatTensor<Self>,
         render_mode: SplatRenderMode,
-    ) -> ProjectOutput<Self> {
+    ) -> CullOutput<Self> {
         #[derive(Debug)]
         struct CustomOp {
             cam: Camera,
@@ -44,55 +43,41 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime>>>,
             ) {
                 let (inputs, outputs) = self.desc.as_fixed();
+                let [transforms, opacity] = inputs;
+                let [num_visible, global_from_compact_gid, num_intersections, cum_tiles_hit] = outputs;
 
-                let [transforms, sh_coeffs, opacity] = inputs;
-                let [
-                    projected_splats,
-                    num_visible,
-                    global_from_compact_gid,
-                    cum_tiles_hit,
-                ] = outputs;
-
-                let aux = MainBackendBase::project(
+                let result = MainBackendBase::project_cull(
                     &self.cam,
                     self.img_size,
                     h.get_float_tensor::<MainBackendBase>(transforms),
-                    h.get_float_tensor::<MainBackendBase>(sh_coeffs),
                     h.get_float_tensor::<MainBackendBase>(opacity),
                     self.render_mode,
                 );
 
-                // Register outputs (project_uniforms is stored on ProjectAux directly)
-                h.register_float_tensor::<MainBackendBase>(
-                    &projected_splats.id,
-                    aux.projected_splats,
-                );
-                h.register_int_tensor::<MainBackendBase>(&num_visible.id, aux.num_visible);
+                h.register_int_tensor::<MainBackendBase>(&num_visible.id, result.num_visible);
                 h.register_int_tensor::<MainBackendBase>(
                     &global_from_compact_gid.id,
-                    aux.global_from_compact_gid,
+                    result.global_from_compact_gid,
                 );
-                h.register_int_tensor::<MainBackendBase>(&cum_tiles_hit.id, aux.cum_tiles_hit);
+                h.register_int_tensor::<MainBackendBase>(&num_intersections.id, result.num_intersections);
+                h.register_int_tensor::<MainBackendBase>(&cum_tiles_hit.id, result.cum_tiles_hit);
             }
         }
 
         let client = transforms.client.clone();
         let num_points = transforms.shape[0];
-        let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape[1] as u32);
         let tile_bounds = calc_tile_bounds(img_size);
 
-        let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / 4;
-
-        let projected_splats = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_points, proj_size]),
-            DType::F32,
-        );
         let num_visible =
             TensorIr::uninit(client.create_empty_handle(), Shape::new([1]), DType::U32);
         let global_from_compact_gid = TensorIr::uninit(
             client.create_empty_handle(),
             Shape::new([num_points]),
+            DType::U32,
+        );
+        let num_intersections_ir = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([1]),
             DType::U32,
         );
         let cum_tiles_hit = TensorIr::uninit(
@@ -101,7 +86,6 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             DType::U32,
         );
 
-        // Create project_uniforms from camera and img_size (stored on ProjectAux directly)
         let project_uniforms = ProjectUniforms {
             viewmat: glam::Mat4::from(cam.world_to_local()).to_cols_array_2d(),
             camera_position: [cam.position.x, cam.position.y, cam.position.z, 0.0],
@@ -109,23 +93,18 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             pixel_center: cam.center(img_size).into(),
             img_size: img_size.into(),
             tile_bounds: tile_bounds.into(),
-            sh_degree,
+            sh_degree: 0,
             total_splats: num_points as u32,
             pad_a: 0,
             pad_b: 0,
         };
 
-        let input_tensors = [transforms, sh_coeffs, opacity];
+        let input_tensors = [transforms, opacity];
         let stream = OperationStreams::with_inputs(&input_tensors);
         let desc = CustomOpIr::new(
-            "project_prepare",
+            "project_cull",
             &input_tensors.map(|t| t.into_ir()),
-            &[
-                projected_splats,
-                num_visible,
-                global_from_compact_gid,
-                cum_tiles_hit,
-            ],
+            &[num_visible, global_from_compact_gid, num_intersections_ir, cum_tiles_hit],
         );
         let op = CustomOp {
             cam: cam.clone(),
@@ -138,33 +117,36 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             .register(stream, OperationIr::Custom(desc), op)
             .outputs();
 
-        let [
-            projected_splats,
-            num_visible,
-            global_from_compact_gid,
-            cum_tiles_hit,
-        ] = outputs;
+        let [num_visible, global_from_compact_gid, num_intersections, cum_tiles_hit] = outputs;
 
-        ProjectOutput::<Self> {
-            projected_splats,
+        CullOutput::<Self> {
             project_uniforms,
             num_visible,
             global_from_compact_gid,
+            num_intersections,
             cum_tiles_hit,
             img_size,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rasterize(
-        project_output: &ProjectOutput<Self>,
+        cull_output: &CullOutput<Self>,
+        num_visible: u32,
         num_intersections: u32,
+        transforms: FloatTensor<Self>,
+        sh_coeffs: FloatTensor<Self>,
+        opacity: FloatTensor<Self>,
+        render_mode: SplatRenderMode,
         background: Vec3,
         bwd_info: bool,
-    ) -> (FloatTensor<Self>, RenderAux<Self>, IntTensor<Self>) {
+    ) -> (FloatTensor<Self>, RenderAux<Self>, FloatTensor<Self>, IntTensor<Self>) {
         #[derive(Debug)]
         struct CustomOp {
             img_size: glam::UVec2,
+            num_visible: u32,
             num_intersections: u32,
+            render_mode: SplatRenderMode,
             background: Vec3,
             bwd_info: bool,
             project_uniforms: ProjectUniforms,
@@ -179,43 +161,59 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 let (inputs, outputs) = self.desc.as_fixed();
 
                 let [
-                    projected_splats,
-                    num_visible,
+                    transforms,
+                    sh_coeffs,
+                    opacity,
+                    num_visible_buf,
                     global_from_compact_gid,
+                    num_intersections_buf,
                     cum_tiles_hit,
                 ] = inputs;
-                let [out_img, tile_offsets, compact_gid_from_isect, visible] = outputs;
+                let [out_img, tile_offsets, compact_gid_from_isect, visible, projected_splats] =
+                    outputs;
 
-                let inner_output = ProjectOutput::<MainBackendBase> {
-                    projected_splats: h.get_float_tensor::<MainBackendBase>(projected_splats),
+                let cull = CullOutput::<MainBackendBase> {
                     project_uniforms: self.project_uniforms,
-                    num_visible: h.get_int_tensor::<MainBackendBase>(num_visible),
+                    num_visible: h.get_int_tensor::<MainBackendBase>(num_visible_buf),
                     global_from_compact_gid: h
                         .get_int_tensor::<MainBackendBase>(global_from_compact_gid),
-                    cum_tiles_hit: h.get_int_tensor::<MainBackendBase>(cum_tiles_hit),
+                    num_intersections: h.get_int_tensor::<MainBackendBase>(num_intersections_buf),
+                    cum_tiles_hit: h
+                        .get_int_tensor::<MainBackendBase>(cum_tiles_hit),
                     img_size: self.img_size,
                 };
 
-                let (img, aux, compact_gid) = MainBackendBase::rasterize(
-                    &inner_output,
+                let (img, aux, proj, compact_gid) = MainBackendBase::rasterize(
+                    &cull,
+                    self.num_visible,
                     self.num_intersections,
+                    h.get_float_tensor::<MainBackendBase>(transforms),
+                    h.get_float_tensor::<MainBackendBase>(sh_coeffs),
+                    h.get_float_tensor::<MainBackendBase>(opacity),
+                    self.render_mode,
                     self.background,
                     self.bwd_info,
                 );
 
-                // Register outputs
                 h.register_float_tensor::<MainBackendBase>(&out_img.id, img);
                 h.register_int_tensor::<MainBackendBase>(&tile_offsets.id, aux.tile_offsets);
                 h.register_int_tensor::<MainBackendBase>(&compact_gid_from_isect.id, compact_gid);
                 h.register_float_tensor::<MainBackendBase>(&visible.id, aux.visible);
+                h.register_float_tensor::<MainBackendBase>(&projected_splats.id, proj);
             }
         }
 
-        let client = project_output.projected_splats.client.clone();
-        let img_size = project_output.img_size;
+        let client = transforms.client.clone();
+        let img_size = cull_output.img_size;
         let tile_bounds = calc_tile_bounds(img_size);
+        let total_splats = cull_output.project_uniforms.total_splats as usize;
 
-        let num_points = project_output.projected_splats.shape[0];
+        let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape[1] as u32);
+        let mut project_uniforms = cull_output.project_uniforms;
+        project_uniforms.sh_degree = sh_degree;
+
+        let num_visible_sz = (num_visible as usize).max(1);
+        let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / 4;
 
         let channels = if bwd_info { 4 } else { 1 };
         let out_img = TensorIr::uninit(
@@ -223,45 +221,57 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             Shape::new([img_size.y as usize, img_size.x as usize, channels]),
             if bwd_info { DType::F32 } else { DType::U32 },
         );
-
         let tile_offsets = TensorIr::uninit(
             client.create_empty_handle(),
             Shape::new([tile_bounds.y as usize, tile_bounds.x as usize, 2]),
             DType::U32,
         );
-
-        // Use actual num_intersections for buffer size
         let compact_gid_from_isect = TensorIr::uninit(
             client.create_empty_handle(),
             Shape::new([num_intersections.max(1) as usize]),
             DType::U32,
         );
-
         let visible_shape = if bwd_info {
-            Shape::new([num_points])
+            Shape::new([total_splats])
         } else {
             Shape::new([1])
         };
         let visible = TensorIr::uninit(client.create_empty_handle(), visible_shape, DType::F32);
+        let projected_splats = TensorIr::uninit(
+            client.create_empty_handle(),
+            Shape::new([num_visible_sz, proj_size]),
+            DType::F32,
+        );
 
         let input_tensors = [
-            project_output.projected_splats.clone(),
-            project_output.num_visible.clone(),
-            project_output.global_from_compact_gid.clone(),
-            project_output.cum_tiles_hit.clone(),
+            transforms,
+            sh_coeffs,
+            opacity,
+            cull_output.num_visible.clone(),
+            cull_output.global_from_compact_gid.clone(),
+            cull_output.num_intersections.clone(),
+            cull_output.cum_tiles_hit.clone(),
         ];
         let stream = OperationStreams::with_inputs(&input_tensors);
         let desc = CustomOpIr::new(
             "rasterize",
             &input_tensors.map(|t| t.into_ir()),
-            &[out_img, tile_offsets, compact_gid_from_isect, visible],
+            &[
+                out_img,
+                tile_offsets,
+                compact_gid_from_isect,
+                visible,
+                projected_splats,
+            ],
         );
         let op = CustomOp {
             img_size,
+            num_visible,
             num_intersections,
+            render_mode,
             background,
             bwd_info,
-            project_uniforms: project_output.project_uniforms,
+            project_uniforms,
             desc: desc.clone(),
         };
 
@@ -269,17 +279,18 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             .register(stream, OperationIr::Custom(desc), op)
             .outputs();
 
-        let [out_img, tile_offsets, compact_gid_from_isect, visible] = outputs;
+        let [out_img, tile_offsets, compact_gid_from_isect, visible, projected_splats] = outputs;
 
         (
             out_img,
             RenderAux::<Self> {
-                num_visible: project_output.num_visible.clone(),
+                num_visible: cull_output.num_visible.clone(),
                 num_intersections,
                 visible,
                 tile_offsets,
                 img_size,
             },
+            projected_splats,
             compact_gid_from_isect,
         )
     }
