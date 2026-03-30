@@ -126,14 +126,17 @@ impl SplatOps<Self> for MainBackendBase {
         project_uniforms.num_visible = num_visible;
         let num_visible_sz = (num_visible as usize).max(1);
 
-        // Depth sort only the valid [0..num_visible] entries.
-        // Slice to exactly num_visible before sorting — no dynamic dispatch needed.
-        let depths = Self::float_slice(depths, &[(0..num_visible_sz).into()]);
-        let global_from_presort_gid =
-            Self::int_slice(global_from_presort_gid, &[(0..num_visible_sz).into()]);
+        let global_from_compact_gid = {
+            // Depth sort only the valid [0..num_visible] entries.
+            // Slice to exactly num_visible before sorting — no dynamic dispatch needed.
+            let depths = Self::float_slice(depths, &[(0..num_visible_sz).into()]);
+            let global_from_presort_gid =
+                Self::int_slice(global_from_presort_gid, &[(0..num_visible_sz).into()]);
 
-        let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort")
-            .in_scope(|| radix_argsort(depths, global_from_presort_gid, 32));
+            let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort")
+                .in_scope(|| radix_argsort(depths, global_from_presort_gid, 32));
+            global_from_compact_gid
+        };
 
         // Reorder intersection counts from global_gid to compact (depth-sorted) order.
         let compact_counts = Self::int_gather(0, intersect_counts, global_from_compact_gid.clone());
