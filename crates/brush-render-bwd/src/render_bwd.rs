@@ -38,7 +38,6 @@ pub struct RasterizeBackwards {
 impl SplatBwdOps<Self> for MainBackendBase {
     #[allow(clippy::too_many_arguments)]
     fn rasterize_bwd(
-        num_visible_val: u32,
         out_img: FloatTensor<Self>,
         projected_splats: FloatTensor<Self>,
         compact_gid_from_isect: IntTensor<Self>,
@@ -52,7 +51,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let v_output = into_contiguous(v_output);
 
         let device = &out_img.device;
-        let num_visible = (num_visible_val as usize).max(1);
+        let num_visible = projected_splats.shape()[0].max(1);
 
         let client = &projected_splats.client;
 
@@ -112,7 +111,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
     fn project_bwd(
         transforms: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
-        num_visible: u32,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         sh_degree: u32,
@@ -140,6 +138,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
+        let num_visible = project_uniforms.num_visible;
         // Create GPU buffer from CPU num_visible for the kernel binding.
         let num_visible_buf = CubeTensor::new_contiguous(
             client.clone(),

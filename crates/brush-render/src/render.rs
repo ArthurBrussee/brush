@@ -9,13 +9,16 @@ use crate::{
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
 use brush_kernel::bytemuck;
+use brush_kernel::calc_cube_count_1d;
 use brush_kernel::create_meta_binding;
 use brush_kernel::create_tensor;
-use brush_kernel::calc_cube_count_1d;
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::tensor::{DType, FloatDType, Int, IntDType, Shape, Tensor, TensorMetadata, Transaction};
-use burn::tensor::ops::{FloatTensor, FloatTensorOps, IntTensorOps};
+use burn::tensor::{
+    ops::{FloatTensor, FloatTensorOps, IntTensorOps},
+    s,
+};
 use burn_cubecl::cubecl::server::KernelArguments;
 use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::{CubeDim, CubeTensor, WgpuRuntime};
@@ -62,7 +65,7 @@ impl SplatOps<Self> for MainBackendBase {
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
-        let project_uniforms = shaders::helpers::ProjectUniforms {
+        let mut project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
             camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
             focal: camera.focal(img_size).into(),
@@ -71,14 +74,11 @@ impl SplatOps<Self> for MainBackendBase {
             tile_bounds: tile_bounds.into(),
             sh_degree,
             total_splats: total_splats as u32,
+            num_visible: 0,
             pad_a: 0,
-            pad_b: 0,
         };
 
-        // ===== Phase 1: Cull + depth sort + prefix sum =====
-
         let num_visible_buffer = Self::int_zeros([1].into(), device, IntDType::U32);
-        let num_intersections_buffer = Self::int_zeros([1].into(), device, IntDType::U32);
         let intersect_counts = Self::int_zeros([total_splats].into(), device, IntDType::U32);
 
         let global_from_compact_gid = {
@@ -102,7 +102,6 @@ impl SplatOps<Self> for MainBackendBase {
                             depths.handle.clone().binding(),
                             num_visible_buffer.handle.clone().binding(),
                             intersect_counts.handle.clone().binding(),
-                            num_intersections_buffer.handle.clone().binding(),
                         ])
                         .with_info(create_meta_binding(project_uniforms)),
                 );
@@ -123,23 +122,19 @@ impl SplatOps<Self> for MainBackendBase {
         // Gather intersection counts from global_gid order to compact (depth-sorted) order.
         let compact_counts = {
             let counts = Tensor::<Self, 1, Int>::from_primitive(intersect_counts);
-            let indices =
-                Tensor::<Self, 1, Int>::from_primitive(global_from_compact_gid.clone());
+            let indices = Tensor::<Self, 1, Int>::from_primitive(global_from_compact_gid.clone());
             counts.gather(0, indices).into_primitive()
         };
 
-        let cum_tiles_hit = tracing::trace_span!("PrefixSumGaussHits")
-            .in_scope(|| prefix_sum(compact_counts));
-
-        // ===== Phase 2: Async readback of num_visible + num_intersections =====
+        let cum_tiles_hit =
+            tracing::trace_span!("PrefixSumGaussHits").in_scope(|| prefix_sum(compact_counts));
 
         let (num_visible, num_intersections) = if total_splats == 0 {
             (0, 0)
         } else {
-            let nv_tensor: Tensor<Self, 1, Int> =
-                Tensor::from_primitive(num_visible_buffer);
+            let nv_tensor: Tensor<Self, 1, Int> = Tensor::from_primitive(num_visible_buffer);
             let ni_tensor: Tensor<Self, 1, Int> =
-                Tensor::from_primitive(num_intersections_buffer);
+                Tensor::from_primitive(cum_tiles_hit.clone()).slice(s![-1]);
 
             let data = Transaction::default()
                 .register(nv_tensor)
@@ -149,25 +144,19 @@ impl SplatOps<Self> for MainBackendBase {
                 .expect("Failed to read counts");
 
             let nv = data[0].clone().into_vec::<u32>().expect("read num_visible")[0];
-            let ni = data[1].clone().into_vec::<u32>().expect("read num_intersections")[0];
+            let ni = data[1]
+                .clone()
+                .into_vec::<u32>()
+                .expect("read num_intersections")[0];
             (nv, ni)
         };
 
-        // ===== Phase 3: Rasterize =====
+        project_uniforms.num_visible = num_visible;
 
         let num_visible_sz = (num_visible as usize).max(1);
         let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / size_of::<f32>();
         let projected_splats = create_tensor([num_visible_sz, proj_size], device, DType::F32);
 
-        let num_visible_buf = CubeTensor::new_contiguous(
-            client.clone(),
-            device.clone(),
-            Shape::new([1]),
-            client.create_from_slice(bytemuck::cast_slice(&[num_visible])),
-            DType::U32,
-        );
-
-        // ---- ProjectVisible ----
         tracing::trace_span!("ProjectVisible").in_scope(|| {
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
@@ -176,7 +165,6 @@ impl SplatOps<Self> for MainBackendBase {
                     calc_cube_count_1d(num_visible, ProjectVisible::WORKGROUP_SIZE[0]),
                     KernelArguments::new()
                         .with_buffers(vec![
-                            num_visible_buf.handle.clone().binding(),
                             transforms.handle.clone().binding(),
                             sh_coeffs.handle.binding(),
                             raw_opacities.handle.binding(),
@@ -188,7 +176,6 @@ impl SplatOps<Self> for MainBackendBase {
             }
         });
 
-        // ---- MapGaussiansToIntersect ----
         let num_tiles = tile_bounds.x * tile_bounds.y;
         let buffer_size = (num_intersections as usize).max(1);
         let tile_id_from_isect = create_tensor([buffer_size], device, DType::U32);
@@ -196,25 +183,23 @@ impl SplatOps<Self> for MainBackendBase {
 
         let map_uniforms = shaders::map_gaussians_to_intersect::Uniforms {
             tile_bounds: tile_bounds.into(),
+            num_visible,
+            pad_a: 0,
         };
 
         tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
-            // SAFETY: Kernel checked to have no OOB, bounded loops.
-            unsafe {
-                client.launch_unchecked(
-                    MapGaussiansToIntersect::task(),
-                    calc_cube_count_1d(num_visible, MapGaussiansToIntersect::WORKGROUP_SIZE[0]),
-                    KernelArguments::new()
-                        .with_buffers(vec![
-                            num_visible_buf.handle.clone().binding(),
-                            projected_splats.handle.clone().binding(),
-                            cum_tiles_hit.handle.clone().binding(),
-                            tile_id_from_isect.handle.clone().binding(),
-                            compact_gid_from_isect.handle.clone().binding(),
-                        ])
-                        .with_info(create_meta_binding(map_uniforms)),
-                );
-            }
+            client.launch(
+                MapGaussiansToIntersect::task(),
+                calc_cube_count_1d(num_visible, MapGaussiansToIntersect::WORKGROUP_SIZE[0]),
+                KernelArguments::new()
+                    .with_buffers(vec![
+                        projected_splats.handle.clone().binding(),
+                        cum_tiles_hit.handle.clone().binding(),
+                        tile_id_from_isect.handle.clone().binding(),
+                        compact_gid_from_isect.handle.clone().binding(),
+                    ])
+                    .with_info(create_meta_binding(map_uniforms)),
+            );
         });
 
         // ---- Tile sort ----

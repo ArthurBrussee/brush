@@ -59,9 +59,9 @@ struct ProjectUniforms {
     sh_degree: u32,
 
     total_splats: u32,
+    num_visible: u32,
 
     pad_a: u32,
-    pad_b: u32,
 }
 
 // Uniforms for rasterize pass.

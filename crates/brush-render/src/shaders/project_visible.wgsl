@@ -1,17 +1,11 @@
 #import helpers;
 
-struct IsectInfo {
-    compact_gid: u32,
-    tile_id: u32,
-}
-
-@group(0) @binding(0) var<storage, read> num_visible: u32;
-@group(0) @binding(1) var<storage, read> transforms: array<f32>;
-@group(0) @binding(2) var<storage, read> coeffs: array<helpers::PackedVec3>;
-@group(0) @binding(3) var<storage, read> raw_opacities: array<f32>;
-@group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
-@group(0) @binding(5) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
-@group(0) @binding(6) var<storage, read> uniforms: helpers::ProjectUniforms;
+@group(0) @binding(0) var<storage, read> transforms: array<f32>;
+@group(0) @binding(1) var<storage, read> coeffs: array<helpers::PackedVec3>;
+@group(0) @binding(2) var<storage, read> raw_opacities: array<f32>;
+@group(0) @binding(3) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(4) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(5) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 struct ShCoeffs {
     b0_c0: vec3f,
@@ -169,7 +163,7 @@ fn main(
 ) {
     let compact_gid = helpers::get_global_id(wid, num_wgs, lid, WG_SIZE);
 
-    if compact_gid >= num_visible {
+    if compact_gid >= uniforms.num_visible {
         return;
     }
 

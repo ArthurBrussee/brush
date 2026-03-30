@@ -57,7 +57,6 @@ pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
     /// Returns sparse `v_combined` [`num_visible`, 10] indexed by `compact_gid`.
     #[allow(clippy::too_many_arguments)]
     fn rasterize_bwd(
-        num_visible_val: u32,
         out_img: FloatTensor<B>,
         projected_splats: FloatTensor<B>,
         compact_gid_from_isect: IntTensor<B>,
@@ -73,7 +72,6 @@ pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
     fn project_bwd(
         transforms: FloatTensor<B>,
         raw_opac: FloatTensor<B>,
-        num_visible: u32,
         global_from_compact_gid: IntTensor<B>,
         project_uniforms: ProjectUniforms,
         sh_degree: u32,
@@ -131,11 +129,7 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
             raw_opacity_parent,
         ] = ops.parents;
 
-        // projected_splats is [num_visible, proj_size], so shape[0] gives num_visible.
-        let num_visible_val = state.projected_splats.shape()[0] as u32;
-
         let rasterize_grads = B::rasterize_bwd(
-            num_visible_val,
             state.out_img,
             state.projected_splats,
             state.compact_gid_from_isect,
@@ -148,7 +142,6 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
         let splat_grads = B::project_bwd(
             state.transforms,
             state.raw_opac,
-            num_visible_val,
             state.global_from_compact_gid,
             state.project_uniforms,
             state.sh_degree,
@@ -285,28 +278,23 @@ where
 
             let out_img = prep.finish(state, output.out_img);
 
-            let result = SplatOutputDiff {
+            SplatOutputDiff {
                 img: out_img,
                 render_aux: wrapped_render_aux,
                 refine_weight_holder,
-            };
-            result
+            }
         }
-        OpsKind::UnTracked(prep) => {
-            let result = SplatOutputDiff {
-                img: prep.finish(output.out_img),
-                render_aux: wrapped_render_aux,
-                refine_weight_holder,
-            };
-            result
-        }
+        OpsKind::UnTracked(prep) => SplatOutputDiff {
+            img: prep.finish(output.out_img),
+            render_aux: wrapped_render_aux,
+            refine_weight_holder,
+        },
     }
 }
 
 impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
     #[allow(clippy::too_many_arguments)]
     fn rasterize_bwd(
-        num_visible_val: u32,
         out_img: FloatTensor<Self>,
         projected_splats: FloatTensor<Self>,
         compact_gid_from_isect: IntTensor<Self>,
@@ -318,7 +306,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         #[derive(Debug)]
         struct CustomOp {
             desc: CustomOpIr,
-            num_visible_val: u32,
             background: Vec3,
             img_size: glam::UVec2,
         }
@@ -341,7 +328,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 let [v_combined] = outputs;
 
                 let grads = <MainBackendBase as SplatBwdOps<MainBackendBase>>::rasterize_bwd(
-                    self.num_visible_val,
                     h.get_float_tensor::<MainBackendBase>(out_img),
                     h.get_float_tensor::<MainBackendBase>(projected_splats),
                     h.get_int_tensor::<MainBackendBase>(compact_gid_from_isect),
@@ -354,6 +340,9 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 h.register_float_tensor::<MainBackendBase>(&v_combined.id, grads.v_combined);
             }
         }
+
+        // projected_splats is [num_visible, proj_size], so shape[0] gives num_visible.
+        let num_visible_val = projected_splats.shape()[0] as u32;
 
         let client = v_output.client.clone();
         let num_visible = (num_visible_val as usize).max(1);
@@ -380,7 +369,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         );
         let op = CustomOp {
             desc: desc.clone(),
-            num_visible_val,
             background,
             img_size,
         };
@@ -398,7 +386,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
     fn project_bwd(
         transforms: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
-        num_visible: u32,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         sh_degree: u32,
@@ -408,7 +395,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         #[derive(Debug)]
         struct CustomOp {
             desc: CustomOpIr,
-            num_visible: u32,
             render_mode: SplatRenderMode,
             sh_degree: u32,
             project_uniforms: ProjectUniforms,
@@ -421,19 +407,13 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             ) {
                 let (inputs, outputs) = self.desc.as_fixed();
 
-                let [
-                    transforms,
-                    raw_opac,
-                    global_from_compact_gid,
-                    v_combined_in,
-                ] = inputs;
+                let [transforms, raw_opac, global_from_compact_gid, v_combined_in] = inputs;
 
                 let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
 
                 let grads = <MainBackendBase as SplatBwdOps<MainBackendBase>>::project_bwd(
                     h.get_float_tensor::<MainBackendBase>(transforms),
                     h.get_float_tensor::<MainBackendBase>(raw_opac),
-                    self.num_visible,
                     h.get_int_tensor::<MainBackendBase>(global_from_compact_gid),
                     self.project_uniforms,
                     self.sh_degree,
@@ -476,18 +456,18 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             DType::F32,
         );
 
-        let input_tensors = [
-            transforms,
-            raw_opac,
-            global_from_compact_gid,
-            v_combined,
-        ];
+        let input_tensors = [transforms, raw_opac, global_from_compact_gid, v_combined];
 
         let stream = OperationStreams::with_inputs(&input_tensors);
         let desc = CustomOpIr::new(
             "project_bwd",
             &input_tensors.map(|t| t.into_ir()),
-            &[v_transforms_out, v_coeffs_out, v_raw_opac_out, v_refine_weight_out],
+            &[
+                v_transforms_out,
+                v_coeffs_out,
+                v_raw_opac_out,
+                v_refine_weight_out,
+            ],
         );
 
         let outputs = client
@@ -496,7 +476,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 OperationIr::Custom(desc.clone()),
                 CustomOp {
                     desc,
-                    num_visible,
                     sh_degree,
                     render_mode,
                     project_uniforms,
