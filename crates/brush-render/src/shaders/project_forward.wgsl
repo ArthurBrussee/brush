@@ -6,7 +6,8 @@
 @group(0) @binding(3) var<storage, read_write> depths: array<f32>;
 @group(0) @binding(4) var<storage, read_write> num_visible: atomic<u32>;
 @group(0) @binding(5) var<storage, read_write> intersect_counts: array<u32>;
-@group(0) @binding(6) var<storage, read> uniforms: helpers::ProjectUniforms;
+@group(0) @binding(6) var<storage, read_write> num_intersections: atomic<u32>;
+@group(0) @binding(7) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 const WG_SIZE: u32 = 256u;
 
@@ -94,6 +95,7 @@ fn main(
     }
 
     intersect_counts[global_gid] = num_tiles_hit;
+    atomicAdd(&num_intersections, num_tiles_hit);
 
     let write_id = atomicAdd(&num_visible, 1u);
     global_from_compact_gid[write_id] = global_gid;

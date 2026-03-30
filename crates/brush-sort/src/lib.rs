@@ -1,6 +1,5 @@
 use brush_kernel::CubeCount;
 use brush_kernel::calc_cube_count_1d;
-use brush_kernel::create_dispatch_buffer_1d;
 use brush_kernel::create_tensor;
 use brush_kernel::create_uniform_buffer;
 use brush_wgsl::wgsl_kernel;
@@ -43,7 +42,6 @@ pub fn radix_argsort(
     input_keys: CubeTensor<WgpuRuntime>,
     input_values: CubeTensor<WgpuRuntime>,
     sorting_bits: u32,
-    dynamic_count: Option<CubeTensor<WgpuRuntime>>,
 ) -> (CubeTensor<WgpuRuntime>, CubeTensor<WgpuRuntime>) {
     assert_eq!(
         input_keys.shape()[0],
@@ -71,18 +69,7 @@ pub fn radix_argsort(
     let max_needed_wgs = max_n.div_ceil(BLOCK_SIZE);
 
     // Handle dynamic vs static dispatch
-    let (num_keys_buf, num_wgs, num_reduce_wgs) = if let Some(count_buf) = dynamic_count {
-        let num_wgs = create_dispatch_buffer_1d(count_buf.clone(), BLOCK_SIZE);
-        let num_reduce_wgs: Tensor<CubeBackend<WgpuRuntime, f32, i32, u32>, 1, Int> =
-            Tensor::from_primitive(create_dispatch_buffer_1d(num_wgs.clone(), BLOCK_SIZE))
-                * Tensor::from_ints([SortCount::BIN_COUNT, 1, 1], device);
-        let num_reduce_wgs: CubeTensor<WgpuRuntime> = num_reduce_wgs.into_primitive();
-        (
-            count_buf,
-            CubeCount::Dynamic(num_wgs.handle.binding()),
-            CubeCount::Dynamic(num_reduce_wgs.handle.binding()),
-        )
-    } else {
+    let (num_keys_buf, num_wgs, num_reduce_wgs) = {
         // Static dispatch: use full buffer size
         let num_keys_buf = {
             type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
@@ -222,7 +209,7 @@ mod tests {
             let keys = Tensor::<Backend, 1, Int>::from_ints(keys_inp, &device).into_primitive();
             let values = Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device)
                 .into_primitive();
-            let (ret_keys, ret_values) = radix_argsort(keys, values, 32, None);
+            let (ret_keys, ret_values) = radix_argsort(keys, values, 32);
 
             let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
                 .into_data_async()
@@ -276,7 +263,7 @@ mod tests {
             Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
         let values =
             Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
-        let (ret_keys, ret_values) = radix_argsort(keys, values, 32, None);
+        let (ret_keys, ret_values) = radix_argsort(keys, values, 32);
 
         let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
             .to_data_async()
@@ -322,7 +309,7 @@ mod tests {
             Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
         let values =
             Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
-        let (ret_keys, ret_values) = radix_argsort(keys, values, 32, None);
+        let (ret_keys, ret_values) = radix_argsort(keys, values, 32);
 
         let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
             .to_data_async()

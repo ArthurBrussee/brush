@@ -14,11 +14,8 @@ use brush_kernel::create_meta_binding;
 use brush_kernel::create_tensor;
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
+use burn::tensor::ops::{FloatTensor, FloatTensorOps, IntTensorOps};
 use burn::tensor::{DType, FloatDType, Int, IntDType, Shape, Tensor, TensorMetadata, Transaction};
-use burn::tensor::{
-    ops::{FloatTensor, FloatTensorOps, IntTensorOps},
-    s,
-};
 use burn_cubecl::cubecl::server::KernelArguments;
 use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::{CubeDim, CubeTensor, WgpuRuntime};
@@ -79,81 +76,70 @@ impl SplatOps<Self> for MainBackendBase {
         };
 
         let num_visible_buffer = Self::int_zeros([1].into(), device, IntDType::U32);
+        let num_intersections_buffer = Self::int_zeros([1].into(), device, IntDType::U32);
         let intersect_counts = Self::int_zeros([total_splats].into(), device, IntDType::U32);
 
-        let global_from_compact_gid = {
-            let _span = tracing::trace_span!("project_cull").entered();
+        // Phase 1: Project & cull. Writes num_visible, num_intersections atomically.
+        let global_from_presort_gid = create_tensor([total_splats], device, DType::U32);
+        let depths = create_tensor([total_splats], device, DType::F32);
 
-            let global_from_presort_gid =
-                Self::int_zeros([total_splats].into(), device, IntDType::U32);
-            let depths = create_tensor([total_splats], device, DType::F32);
+        tracing::trace_span!("ProjectSplats").in_scope(||
+        // SAFETY: Kernel checked to have no OOB, bounded loops.
+        unsafe {
+            client.launch_unchecked(
+                ProjectSplats::task(mip_splat),
+                calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
+                KernelArguments::new()
+                    .with_buffers(vec![
+                        transforms.handle.clone().binding(),
+                        raw_opacities.handle.clone().binding(),
+                        global_from_presort_gid.handle.clone().binding(),
+                        depths.handle.clone().binding(),
+                        num_visible_buffer.handle.clone().binding(),
+                        intersect_counts.handle.clone().binding(),
+                        num_intersections_buffer.handle.clone().binding(),
+                    ])
+                    .with_info(create_meta_binding(project_uniforms)),
+            );
+        });
 
-            tracing::trace_span!("ProjectSplats").in_scope(||
-            // SAFETY: Kernel checked to have no OOB, bounded loops.
-            unsafe {
-                client.launch_unchecked(
-                    ProjectSplats::task(mip_splat),
-                    calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
-                    KernelArguments::new()
-                        .with_buffers(vec![
-                            transforms.handle.clone().binding(),
-                            raw_opacities.handle.clone().binding(),
-                            global_from_presort_gid.handle.clone().binding(),
-                            depths.handle.clone().binding(),
-                            num_visible_buffer.handle.clone().binding(),
-                            intersect_counts.handle.clone().binding(),
-                        ])
-                        .with_info(create_meta_binding(project_uniforms)),
-                );
-            });
-
-            let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort").in_scope(|| {
-                radix_argsort(
-                    depths,
-                    global_from_presort_gid,
-                    32,
-                    Some(num_visible_buffer.clone()),
-                )
-            });
-
-            global_from_compact_gid
-        };
-
-        // Gather intersection counts from global_gid order to compact (depth-sorted) order.
-        let compact_counts = {
-            let counts = Tensor::<Self, 1, Int>::from_primitive(intersect_counts);
-            let indices = Tensor::<Self, 1, Int>::from_primitive(global_from_compact_gid.clone());
-            counts.gather(0, indices).into_primitive()
-        };
-
-        let cum_tiles_hit =
-            tracing::trace_span!("PrefixSumGaussHits").in_scope(|| prefix_sum(compact_counts));
-
+        // Read both atomic counts in one transaction BEFORE the sort.
         let (num_visible, num_intersections) = if total_splats == 0 {
             (0, 0)
         } else {
-            let nv_tensor: Tensor<Self, 1, Int> = Tensor::from_primitive(num_visible_buffer);
-            let ni_tensor: Tensor<Self, 1, Int> =
-                Tensor::from_primitive(cum_tiles_hit.clone()).slice(s![-1]);
-
             let data = Transaction::default()
-                .register(nv_tensor)
-                .register(ni_tensor)
+                .register(Tensor::<Self, 1, Int>::from_primitive(num_visible_buffer))
+                .register(Tensor::<Self, 1, Int>::from_primitive(
+                    num_intersections_buffer,
+                ))
                 .execute_async()
                 .await
                 .expect("Failed to read counts");
-
-            let nv = data[0].clone().into_vec::<u32>().expect("read num_visible")[0];
-            let ni = data[1]
+            let num_visible = data[0].clone().into_vec::<u32>().expect("num_visible")[0];
+            let num_intersections = data[1]
                 .clone()
                 .into_vec::<u32>()
-                .expect("read num_intersections")[0];
-            (nv, ni)
+                .expect("num_intersections")[0];
+            (num_visible, num_intersections)
         };
 
         project_uniforms.num_visible = num_visible;
-
         let num_visible_sz = (num_visible as usize).max(1);
+
+        // Depth sort only the valid [0..num_visible] entries.
+        // Slice to exactly num_visible before sorting — no dynamic dispatch needed.
+        let depths = Self::float_slice(depths, &[(0..num_visible_sz).into()]);
+        let global_from_presort_gid =
+            Self::int_slice(global_from_presort_gid, &[(0..num_visible_sz).into()]);
+
+        let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort")
+            .in_scope(|| radix_argsort(depths, global_from_presort_gid, 32));
+
+        // Reorder intersection counts from global_gid to compact (depth-sorted) order.
+        let compact_counts = Self::int_gather(0, intersect_counts, global_from_compact_gid.clone());
+
+        let cum_tiles_hit =
+            tracing::trace_span!("PrefixSumGaussHits").in_scope(|| prefix_sum(compact_counts));
         let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / size_of::<f32>();
         let projected_splats = create_tensor([num_visible_sz, proj_size], device, DType::F32);
 
@@ -205,7 +191,7 @@ impl SplatOps<Self> for MainBackendBase {
         // ---- Tile sort ----
         let bits = u32::BITS - num_tiles.leading_zeros();
         let (tile_id_from_isect, compact_gid_from_isect) = tracing::trace_span!("Tile sort")
-            .in_scope(|| radix_argsort(tile_id_from_isect, compact_gid_from_isect, bits, None));
+            .in_scope(|| radix_argsort(tile_id_from_isect, compact_gid_from_isect, bits));
 
         // ---- GetTileOffsets ----
         let cube_dim = CubeDim::new_1d(256);
