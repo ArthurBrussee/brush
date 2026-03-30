@@ -161,11 +161,6 @@ fn scale_to_mat(scale: vec3f) -> mat3x3f {
     );
 }
 
-fn calc_cov3d(scale: vec3f, quat: vec4f) -> mat3x3f {
-    let M = quat_to_mat(quat) * scale_to_mat(scale);
-    return M * transpose(M);
-}
-
 fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f) -> mat3x2f {
     let lims_pos = (1.15f * vec2f(img_size.xy) - pixel_center) / focal;
     let lims_neg = (-0.15f * vec2f(img_size.xy) - pixel_center) / focal;
@@ -184,11 +179,17 @@ fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f)
     return J;
 }
 
-fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f, viewmat: mat4x4f) -> mat2x2f {
-    let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
-    let covar_cam = R * cov3d * transpose(R);
+// Compute 2D covariance directly from scale, quat, and view params.
+fn calc_cov2d(scale: vec3f, quat: vec4f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f, viewmat: mat4x4f) -> mat2x2f {
+    let R_obj = quat_to_mat(quat);
+    let R_cam = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let J = calc_cam_J(mean_c, focal, img_size, pixel_center);
-    return J * covar_cam * transpose(J);
+
+    // V = J * R_cam * R_obj * diag(scale)
+    let N = R_cam * R_obj;
+    let N_s = mat3x3f(N[0] * scale.x, N[1] * scale.y, N[2] * scale.z);
+    let V = J * N_s;
+    return V * transpose(V);
 }
 
 #ifdef MIP_SPLATTING
@@ -240,10 +241,18 @@ fn calc_vis(pixel_coord: vec2f, conic: vec3f, xy: vec2f) -> f32 {
     return exp(-calc_sigma(pixel_coord, conic, xy));
 }
 
-fn compute_bbox_extent(cov2d: mat2x2f, power_threshold: f32) -> vec2f {
+// Compute bbox extent from conic (inverse of cov2d).
+// Since cov2d = inv(conic), cov2d[0][0] = conic.z/det, cov2d[1][1] = conic.x/det
+// where conic = (a, b, c) represents [[a,b],[b,c]] and det = a*c - b*b.
+fn compute_bbox_extent(conic: vec3f, power_threshold: f32) -> vec2f {
+    let det = conic.x * conic.z - conic.y * conic.y;
+    if det <= 0.0 {
+        return vec2f(-1.0);
+    }
+    let inv_det = 1.0 / det;
     return vec2f(
-        sqrt(2.0f * power_threshold * cov2d[0][0]),
-        sqrt(2.0f * power_threshold * cov2d[1][1]),
+        sqrt(2.0f * power_threshold * conic.z * inv_det),
+        sqrt(2.0f * power_threshold * conic.x * inv_det),
     );
 }
 

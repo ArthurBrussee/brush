@@ -370,8 +370,7 @@ fn main(
     let S = helpers::scale_to_mat(scale);
     let M = rotmat * S;
 
-    let covar = M * transpose(M);
-    var cov2d = helpers::calc_cov2d(covar, mean_c, focal, img_size, pixel_center, viewmat);
+    var cov2d = helpers::calc_cov2d(scale, quat, mean_c, focal, img_size, pixel_center, viewmat);
 
     let filter_comp = helpers::compensate_cov2d(&cov2d);
     let opac = helpers::sigmoid(raw_opac[global_gid]);
@@ -385,6 +384,7 @@ fn main(
     let v_covar2d = inverse_vjp(covar2d_inv, v_covar2d_inv);
 
     // covar_world_to_cam
+    let covar = M * transpose(M);
     let covar_c = R * covar * transpose(R);
 
     // persp_proj_vjp

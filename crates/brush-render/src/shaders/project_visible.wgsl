@@ -182,8 +182,7 @@ fn main(
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let mean_c = R * mean + viewmat[3].xyz;
 
-    let covar = helpers::calc_cov3d(scale, quat);
-    var cov2d = helpers::calc_cov2d(covar, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
+    var cov2d = helpers::calc_cov2d(scale, quat, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
     opac *= helpers::compensate_cov2d(&cov2d);
 
     let conic = helpers::inverse(cov2d);
@@ -246,4 +245,27 @@ fn main(
         conic_packed,
         vec4f(color, opac)
     );
+
+    // Count intersections for this splat (merged from map_gaussian_to_intersects prepass)
+    let power_threshold = log(opac * 255.0);
+    let extent = helpers::compute_bbox_extent(conic_packed, power_threshold);
+    let tile_bbox = helpers::get_tile_bbox(mean2d, extent, uniforms.tile_bounds);
+    let tile_bbox_min = tile_bbox.xy;
+    let tile_bbox_max = tile_bbox.zw;
+
+    var num_tiles_hit = 0u;
+    let tile_bbox_width = tile_bbox_max.x - tile_bbox_min.x;
+    let num_tiles_bbox = (tile_bbox_max.y - tile_bbox_min.y) * tile_bbox_width;
+
+    for (var tile_idx = 0u; tile_idx < num_tiles_bbox; tile_idx++) {
+        let tx = (tile_idx % tile_bbox_width) + tile_bbox_min.x;
+        let ty = (tile_idx / tile_bbox_width) + tile_bbox_min.y;
+
+        let rect = helpers::tile_rect(vec2u(tx, ty));
+        if helpers::will_primitive_contribute(rect, mean2d, conic_packed, power_threshold) {
+            num_tiles_hit += 1u;
+        }
+    }
+
+    splat_intersect_counts[compact_gid] = num_tiles_hit;
 }
