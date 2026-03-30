@@ -256,7 +256,7 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
     let sh_coeffs_prim = splats.sh_coeffs.into_value().into_primitive().tensor();
     let raw_opac_prim = splats.raw_opacities.into_value().into_primitive().tensor();
 
-    let cull_output = B::project_cull(
+    let (cull_output, cull_readback) = B::project_cull(
         camera,
         img_size,
         transforms_prim.clone(),
@@ -264,9 +264,9 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
         render_mode,
     );
 
-    cull_output.clone().validate().await;
+    let (num_visible, num_intersections) = cull_readback.read_counts().await;
 
-    let (num_visible, num_intersections) = cull_output.read_counts().await;
+    cull_output.clone().validate(num_visible).await;
 
     let use_float = matches!(texture_mode, TextureMode::Float);
     let (out_img, render_aux, _, _) = B::rasterize(

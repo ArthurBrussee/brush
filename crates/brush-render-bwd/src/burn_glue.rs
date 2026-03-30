@@ -73,7 +73,7 @@ pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
     fn project_bwd(
         transforms: FloatTensor<B>,
         raw_opac: FloatTensor<B>,
-        num_visible: IntTensor<B>,
+        num_visible: u32,
         global_from_compact_gid: IntTensor<B>,
         project_uniforms: ProjectUniforms,
         sh_degree: u32,
@@ -90,7 +90,6 @@ struct GaussianBackwardState<B: Backend> {
 
     projected_splats: FloatTensor<B>,
     project_uniforms: ProjectUniforms,
-    num_visible: IntTensor<B>,
     global_from_compact_gid: IntTensor<B>,
 
     out_img: FloatTensor<B>,
@@ -149,7 +148,7 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
         let splat_grads = B::project_bwd(
             state.transforms,
             state.raw_opac,
-            state.num_visible,
+            num_visible_val,
             state.global_from_compact_gid,
             state.project_uniforms,
             state.sh_degree,
@@ -243,7 +242,7 @@ where
         SplatRenderMode::Default
     };
 
-    let cull_output = <B as SplatOps<B>>::project_cull(
+    let (cull_output, cull_readback) = <B as SplatOps<B>>::project_cull(
         camera,
         img_size,
         transforms.clone(),
@@ -251,7 +250,7 @@ where
         render_mode,
     );
 
-    let (num_visible_val, num_intersections) = cull_output.read_counts().await;
+    let (num_visible_val, num_intersections) = cull_readback.read_counts().await;
 
     let (out_img, render_aux, projected_splats, compact_gid_from_isect) =
         <B as SplatOps<B>>::rasterize(
@@ -289,7 +288,6 @@ where
                 out_img: out_img.clone(),
                 projected_splats,
                 project_uniforms,
-                num_visible: cull_output.num_visible,
                 tile_offsets: render_aux.tile_offsets,
                 compact_gid_from_isect,
                 render_mode,
@@ -415,7 +413,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
     fn project_bwd(
         transforms: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
-        num_visible: IntTensor<Self>,
+        num_visible: u32,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         sh_degree: u32,
@@ -425,6 +423,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         #[derive(Debug)]
         struct CustomOp {
             desc: CustomOpIr,
+            num_visible: u32,
             render_mode: SplatRenderMode,
             sh_degree: u32,
             project_uniforms: ProjectUniforms,
@@ -440,7 +439,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 let [
                     transforms,
                     raw_opac,
-                    num_visible,
                     global_from_compact_gid,
                     v_combined_in,
                 ] = inputs;
@@ -450,7 +448,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 let grads = <MainBackendBase as SplatBwdOps<MainBackendBase>>::project_bwd(
                     h.get_float_tensor::<MainBackendBase>(transforms),
                     h.get_float_tensor::<MainBackendBase>(raw_opac),
-                    h.get_int_tensor::<MainBackendBase>(num_visible),
+                    self.num_visible,
                     h.get_int_tensor::<MainBackendBase>(global_from_compact_gid),
                     self.project_uniforms,
                     self.sh_degree,
@@ -496,7 +494,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         let input_tensors = [
             transforms,
             raw_opac,
-            num_visible,
             global_from_compact_gid,
             v_combined,
         ];
@@ -514,6 +511,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 OperationIr::Custom(desc.clone()),
                 CustomOp {
                     desc,
+                    num_visible,
                     sh_degree,
                     render_mode,
                     project_uniforms,

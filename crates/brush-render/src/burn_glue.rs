@@ -16,7 +16,7 @@ use crate::{
     camera::Camera,
     gaussian_splats::SplatRenderMode,
     render::calc_tile_bounds,
-    render_aux::CullOutput,
+    render_aux::{CullOutput, CullReadback},
     sh::sh_degree_from_coeffs,
     shaders::{self, helpers::ProjectUniforms},
 };
@@ -28,7 +28,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         transforms: FloatTensor<Self>,
         opacity: FloatTensor<Self>,
         render_mode: SplatRenderMode,
-    ) -> CullOutput<Self> {
+    ) -> (CullOutput<Self>, CullReadback<Self>) {
         #[derive(Debug)]
         struct CustomOp {
             cam: Camera,
@@ -46,7 +46,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 let [transforms, opacity] = inputs;
                 let [num_visible, global_from_compact_gid, num_intersections, cum_tiles_hit] = outputs;
 
-                let result = MainBackendBase::project_cull(
+                let (cull, readback) = MainBackendBase::project_cull(
                     &self.cam,
                     self.img_size,
                     h.get_float_tensor::<MainBackendBase>(transforms),
@@ -54,13 +54,13 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                     self.render_mode,
                 );
 
-                h.register_int_tensor::<MainBackendBase>(&num_visible.id, result.num_visible);
+                h.register_int_tensor::<MainBackendBase>(&num_visible.id, readback.num_visible);
                 h.register_int_tensor::<MainBackendBase>(
                     &global_from_compact_gid.id,
-                    result.global_from_compact_gid,
+                    cull.global_from_compact_gid,
                 );
-                h.register_int_tensor::<MainBackendBase>(&num_intersections.id, result.num_intersections);
-                h.register_int_tensor::<MainBackendBase>(&cum_tiles_hit.id, result.cum_tiles_hit);
+                h.register_int_tensor::<MainBackendBase>(&num_intersections.id, readback.num_intersections);
+                h.register_int_tensor::<MainBackendBase>(&cum_tiles_hit.id, cull.cum_tiles_hit);
             }
         }
 
@@ -119,14 +119,15 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
 
         let [num_visible, global_from_compact_gid, num_intersections, cum_tiles_hit] = outputs;
 
-        CullOutput::<Self> {
-            project_uniforms,
-            num_visible,
-            global_from_compact_gid,
-            num_intersections,
-            cum_tiles_hit,
-            img_size,
-        }
+        (
+            CullOutput::<Self> {
+                project_uniforms,
+                global_from_compact_gid,
+                cum_tiles_hit,
+                img_size,
+            },
+            CullReadback::new(num_visible, num_intersections, num_points as u32),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -164,9 +165,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                     transforms,
                     sh_coeffs,
                     opacity,
-                    num_visible_buf,
                     global_from_compact_gid,
-                    num_intersections_buf,
                     cum_tiles_hit,
                 ] = inputs;
                 let [out_img, tile_offsets, compact_gid_from_isect, visible, projected_splats] =
@@ -174,10 +173,8 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
 
                 let cull = CullOutput::<MainBackendBase> {
                     project_uniforms: self.project_uniforms,
-                    num_visible: h.get_int_tensor::<MainBackendBase>(num_visible_buf),
                     global_from_compact_gid: h
                         .get_int_tensor::<MainBackendBase>(global_from_compact_gid),
-                    num_intersections: h.get_int_tensor::<MainBackendBase>(num_intersections_buf),
                     cum_tiles_hit: h
                         .get_int_tensor::<MainBackendBase>(cum_tiles_hit),
                     img_size: self.img_size,
@@ -247,9 +244,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             transforms,
             sh_coeffs,
             opacity,
-            cull_output.num_visible.clone(),
             cull_output.global_from_compact_gid.clone(),
-            cull_output.num_intersections.clone(),
             cull_output.cum_tiles_hit.clone(),
         ];
         let stream = OperationStreams::with_inputs(&input_tensors);
@@ -284,7 +279,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         (
             out_img,
             RenderAux::<Self> {
-                num_visible: cull_output.num_visible.clone(),
+                num_visible,
                 num_intersections,
                 visible,
                 tile_offsets,

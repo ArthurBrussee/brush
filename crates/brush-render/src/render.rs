@@ -4,15 +4,14 @@ use crate::{
     dim_check::DimCheck,
     gaussian_splats::SplatRenderMode,
     get_tile_offset::{CHECKS_PER_ITER, get_tile_offsets},
-    render_aux::CullOutput,
+    render_aux::{CullOutput, CullReadback},
     sh::sh_degree_from_coeffs,
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
 use brush_kernel::bytemuck;
-use brush_kernel::create_dispatch_buffer_1d;
 use brush_kernel::create_meta_binding;
 use brush_kernel::create_tensor;
-use brush_kernel::{CubeCount, calc_cube_count_1d};
+use brush_kernel::calc_cube_count_1d;
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::tensor::{DType, IntDType, Shape, TensorMetadata, ops::FloatTensor};
@@ -39,7 +38,7 @@ impl SplatOps<Self> for MainBackendBase {
         transforms: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
-    ) -> CullOutput<Self> {
+    ) -> (CullOutput<Self>, CullReadback<Self>) {
         assert!(
             img_size[0] > 0 && img_size[1] > 0,
             "Can't render images with 0 size."
@@ -127,14 +126,19 @@ impl SplatOps<Self> for MainBackendBase {
         let cum_tiles_hit = tracing::trace_span!("PrefixSumGaussHits")
             .in_scope(|| prefix_sum(compact_counts));
 
-        CullOutput {
-            project_uniforms,
-            num_visible: num_visible_buffer,
-            global_from_compact_gid,
-            num_intersections: num_intersections_buffer,
-            cum_tiles_hit,
-            img_size,
-        }
+        (
+            CullOutput {
+                project_uniforms,
+                global_from_compact_gid,
+                cum_tiles_hit,
+                img_size,
+            },
+            CullReadback::new(
+                num_visible_buffer,
+                num_intersections_buffer,
+                total_splats as u32,
+            ),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -170,19 +174,24 @@ impl SplatOps<Self> for MainBackendBase {
         let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / size_of::<f32>();
         let projected_splats = create_tensor([num_visible_sz, proj_size], device, DType::F32);
 
+        // Create a small GPU buffer from the CPU num_visible value for kernel bindings.
+        let num_visible_buf = CubeTensor::new_contiguous(
+            client.clone(),
+            device.clone(),
+            Shape::new([1]),
+            client.create_from_slice(bytemuck::cast_slice(&[num_visible])),
+            DType::U32,
+        );
+
         tracing::trace_span!("ProjectVisible").in_scope(|| {
-            let num_vis_wg = create_dispatch_buffer_1d(
-                cull_output.num_visible.clone(),
-                ProjectVisible::WORKGROUP_SIZE[0],
-            );
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
                 client.launch_unchecked(
                     ProjectVisible::task(mip_splat),
-                    CubeCount::Dynamic(num_vis_wg.handle.binding()),
+                    calc_cube_count_1d(num_visible, ProjectVisible::WORKGROUP_SIZE[0]),
                     KernelArguments::new()
                         .with_buffers(vec![
-                            cull_output.num_visible.handle.clone().binding(),
+                            num_visible_buf.handle.clone().binding(),
                             transforms.handle.clone().binding(),
                             sh_coeffs.handle.binding(),
                             raw_opacities.handle.binding(),
@@ -206,11 +215,6 @@ impl SplatOps<Self> for MainBackendBase {
         let tile_id_from_isect = create_tensor([buffer_size], device, DType::U32);
         let compact_gid_from_isect = create_tensor([buffer_size], device, DType::U32);
 
-        let num_vis_map_wg = create_dispatch_buffer_1d(
-            cull_output.num_visible.clone(),
-            MapGaussiansToIntersect::WORKGROUP_SIZE[0],
-        );
-
         let map_uniforms = shaders::map_gaussians_to_intersect::Uniforms {
             tile_bounds: tile_bounds.into(),
         };
@@ -220,10 +224,10 @@ impl SplatOps<Self> for MainBackendBase {
             unsafe {
                 client.launch_unchecked(
                     MapGaussiansToIntersect::task(),
-                    CubeCount::Dynamic(num_vis_map_wg.handle.clone().binding()),
+                    calc_cube_count_1d(num_visible, MapGaussiansToIntersect::WORKGROUP_SIZE[0]),
                     KernelArguments::new()
                         .with_buffers(vec![
-                            cull_output.num_visible.handle.clone().binding(),
+                            num_visible_buf.handle.clone().binding(),
                             projected_splats.handle.clone().binding(),
                             cull_output.cum_tiles_hit.handle.clone().binding(),
                             tile_id_from_isect.handle.clone().binding(),
@@ -330,7 +334,7 @@ impl SplatOps<Self> for MainBackendBase {
         (
             out_img,
             RenderAux {
-                num_visible: cull_output.num_visible.clone(),
+                num_visible,
                 num_intersections,
                 visible,
                 tile_offsets,

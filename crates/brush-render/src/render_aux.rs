@@ -9,29 +9,37 @@ use burn::{
 
 use crate::shaders::helpers::ProjectUniforms;
 
-/// Output from the culling + depth sort pass.
-///
-/// Contains `num_visible` and `num_intersections` on the GPU (both atomics).
-/// Read back both counts with [`read_counts`] before calling `rasterize`.
+/// Output from the culling + depth sort pass, consumed by `rasterize`.
 #[derive(Debug, Clone)]
 pub struct CullOutput<B: Backend> {
     /// Uniforms shared across all GPU passes. `sh_degree` is set to 0 here
     /// because ProjectSplats doesn't use it; it's filled in by `rasterize`.
     pub project_uniforms: ProjectUniforms,
-    pub num_visible: IntTensor<B>,
     pub global_from_compact_gid: IntTensor<B>,
-    /// Total number of tile-splat intersections (atomic counter from ProjectSplats).
-    pub num_intersections: IntTensor<B>,
     /// Inclusive prefix sum of per-splat tile intersection counts in compact (depth) order.
     pub cum_tiles_hit: IntTensor<B>,
     pub img_size: glam::UVec2,
 }
 
-impl<B: Backend> CullOutput<B> {
+/// GPU tensors for async readback of `num_visible` and `num_intersections`.
+///
+/// These are separate from [`CullOutput`] because after readback they become
+/// plain `u32` values and are not needed for rasterization.
+#[derive(Debug, Clone)]
+pub struct CullReadback<B: Backend> {
+    pub num_visible: IntTensor<B>,
+    pub num_intersections: IntTensor<B>,
+    total_splats: u32,
+}
+
+impl<B: Backend> CullReadback<B> {
+    pub fn new(num_visible: IntTensor<B>, num_intersections: IntTensor<B>, total_splats: u32) -> Self {
+        Self { num_visible, num_intersections, total_splats }
+    }
+
     /// Read `num_visible` and `num_intersections` in a single batched GPU readback.
     pub async fn read_counts(&self) -> (u32, u32) {
-        let total = self.project_uniforms.total_splats as usize;
-        if total == 0 {
+        if self.total_splats == 0 {
             return (0, 0);
         }
 
@@ -58,9 +66,12 @@ impl<B: Backend> CullOutput<B> {
 
         (num_visible, num_intersections)
     }
+}
 
+impl<B: Backend> CullOutput<B> {
     /// Validate cull outputs. Takes self by value to avoid Send issues with async.
-    pub async fn validate(self) {
+    #[allow(unused_variables)]
+    pub async fn validate(self, num_visible: u32) {
         #[cfg(any(test, feature = "debug-validation"))]
         {
             #[cfg(not(target_family = "wasm"))]
@@ -68,16 +79,7 @@ impl<B: Backend> CullOutput<B> {
                 return;
             }
 
-            use burn::tensor::ElementConversion;
-
             let total_splats = self.project_uniforms.total_splats;
-
-            let num_visible: Tensor<B, 1, Int> = Tensor::from_primitive(self.num_visible);
-            let num_visible = num_visible
-                .into_scalar_async()
-                .await
-                .expect("readback")
-                .elem::<u32>();
 
             assert!(
                 num_visible <= total_splats,
@@ -109,7 +111,7 @@ impl<B: Backend> CullOutput<B> {
 /// Minimal output from rendering. Contains only what callers typically need.
 #[derive(Debug, Clone)]
 pub struct RenderAux<B: Backend> {
-    pub num_visible: IntTensor<B>,
+    pub num_visible: u32,
     pub num_intersections: u32,
     pub visible: FloatTensor<B>,
     pub tile_offsets: IntTensor<B>,
@@ -117,9 +119,9 @@ pub struct RenderAux<B: Backend> {
 }
 
 impl<B: Backend> RenderAux<B> {
-    /// Get `num_visible` as a tensor.
-    pub fn get_num_visible(&self) -> Tensor<B, 1, Int> {
-        Tensor::from_primitive(self.num_visible.clone())
+    /// Get `num_visible` count.
+    pub fn get_num_visible(&self) -> u32 {
+        self.num_visible
     }
 
     /// Calculate tile depth map for visualization.
@@ -145,13 +147,9 @@ impl<B: Backend> RenderAux<B> {
             }
 
             use crate::validation::validate_tensor_val;
-            use burn::tensor::{ElementConversion, TensorPrimitive};
+            use burn::tensor::TensorPrimitive;
 
-            let num_visible = Tensor::<B, 1, Int>::from_primitive(self.num_visible)
-                .into_scalar_async()
-                .await
-                .expect("readback")
-                .elem::<u32>();
+            let num_visible = self.num_visible;
 
             let visible: Tensor<B, 1> =
                 Tensor::from_primitive(TensorPrimitive::Float(self.visible));

@@ -243,7 +243,7 @@ mod visualize_tools_impl {
                 self.rec.log(
                     "splats/splats_visible",
                     &rerun::Scalars::new(vec![
-                        stats.num_visible.into_scalar_async().await?.elem::<f64>(),
+                        stats.num_visible as f64,
                     ]),
                 )?;
 

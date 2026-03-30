@@ -1,4 +1,4 @@
-use brush_kernel::{calc_cube_count_1d, create_meta_binding};
+use brush_kernel::{CubeTensor, bytemuck, calc_cube_count_1d, create_meta_binding};
 use brush_render::MainBackendBase;
 use brush_render::gaussian_splats::SplatRenderMode;
 use brush_render::shaders::helpers::RasterizeUniforms;
@@ -7,7 +7,7 @@ use brush_wgsl::wgsl_kernel;
 use brush_render::sh::sh_coeffs_for_degree;
 use burn::tensor::ops::IntTensor;
 use burn::tensor::ops::{FloatTensor, FloatTensorOps};
-use burn::tensor::{FloatDType, TensorMetadata};
+use burn::tensor::{DType, FloatDType, Shape, TensorMetadata};
 use burn_cubecl::cubecl::features::TypeUsage;
 use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType};
 use burn_cubecl::cubecl::server::KernelArguments;
@@ -112,7 +112,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
     fn project_bwd(
         transforms: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
-        num_visible_tensor: IntTensor<Self>,
+        num_visible: u32,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         sh_degree: u32,
@@ -126,7 +126,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let device = &transforms.device;
         let num_points = transforms.shape()[0];
-        let num_visible = v_combined.shape()[0] as u32;
         let client = &transforms.client;
 
         // Dense outputs, the kernel scatters compact→global internally.
@@ -141,6 +140,15 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
+        // Create GPU buffer from CPU num_visible for the kernel binding.
+        let num_visible_buf = CubeTensor::new_contiguous(
+            client.clone(),
+            device.clone(),
+            Shape::new([1]),
+            client.create_from_slice(bytemuck::cast_slice(&[num_visible])),
+            DType::U32,
+        );
+
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
             unsafe {
@@ -149,7 +157,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     calc_cube_count_1d(num_visible, ProjectBackwards::WORKGROUP_SIZE[0]),
                     KernelArguments::new()
                         .with_buffers(vec![
-                            num_visible_tensor.handle.binding(),
+                            num_visible_buf.handle.binding(),
                             transforms.handle.binding(),
                             raw_opac.handle.binding(),
                             global_from_compact_gid.handle.binding(),

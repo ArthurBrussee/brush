@@ -8,7 +8,7 @@ use burn_wgpu::WgpuRuntime;
 use camera::Camera;
 use clap::ValueEnum;
 use glam::Vec3;
-use render_aux::CullOutput;
+use render_aux::{CullOutput, CullReadback};
 
 use crate::gaussian_splats::SplatRenderMode;
 pub use crate::gaussian_splats::{TextureMode, render_splats};
@@ -38,17 +38,19 @@ pub type MainBackend = Fusion<MainBackendBase>;
 ///
 /// The pipeline has two phases with a single async readback point:
 /// 1. `project_cull`: Culling, depth sort, tile intersection counting, prefix sum.
-/// 2. Readback `num_visible` + `num_intersections` from [`CullOutput::read_counts`].
+/// 2. Readback `num_visible` + `num_intersections` from [`CullReadback::read_counts`].
 /// 3. `rasterize`: Projection, intersection filling, tile sort, rasterization.
 pub trait SplatOps<B: Backend> {
     /// Phase 1: Cull invisible splats, depth sort, count tile intersections, prefix sum.
+    ///
+    /// Returns the cull output (for rasterize) and readback tensors (for async count readback).
     fn project_cull(
         camera: &Camera,
         img_size: glam::UVec2,
         transforms: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
         render_mode: SplatRenderMode,
-    ) -> CullOutput<B>;
+    ) -> (CullOutput<B>, CullReadback<B>);
 
     /// Phase 2: Project visible splats, fill intersections, tile sort, rasterize.
     ///
