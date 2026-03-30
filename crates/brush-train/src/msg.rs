@@ -1,7 +1,4 @@
-use burn::{
-    prelude::Backend,
-    tensor::Tensor,
-};
+use burn::{prelude::Backend, tensor::Tensor};
 
 #[derive(Clone)]
 pub struct RefineStats {
