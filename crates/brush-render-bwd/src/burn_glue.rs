@@ -242,77 +242,62 @@ where
         SplatRenderMode::Default
     };
 
-    let (cull_output, cull_readback) = <B as SplatOps<B>>::project_cull(
+    let output = <B as SplatOps<B>>::render(
         camera,
         img_size,
         transforms.clone(),
+        sh_coeffs,
         raw_opacity.clone(),
         render_mode,
-    );
+        background,
+        true,
+    )
+    .await;
 
-    let (num_visible_val, num_intersections) = cull_readback.read_counts().await;
-
-    let (out_img, render_aux, projected_splats, compact_gid_from_isect) =
-        <B as SplatOps<B>>::rasterize(
-            &cull_output,
-            num_visible_val,
-            num_intersections,
-            transforms.clone(),
-            sh_coeffs,
-            raw_opacity.clone(),
-            render_mode,
-            background,
-            true,
-        );
+    output.clone().validate().await;
 
     let wrapped_render_aux = RenderAux::<Autodiff<B, C>> {
-        num_visible: render_aux.num_visible.clone(),
-        num_intersections: render_aux.num_intersections,
-        visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(render_aux.visible.clone()),
-        tile_offsets: render_aux.tile_offsets.clone(),
-        img_size: render_aux.img_size,
+        num_visible: output.aux.num_visible,
+        num_intersections: output.aux.num_intersections,
+        visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(output.aux.visible.clone()),
+        tile_offsets: output.aux.tile_offsets.clone(),
+        img_size: output.aux.img_size,
     };
 
     let sh_degree = sh_degree_from_coeffs(sh_coeffs_dims[1] as u32);
 
     match prep_nodes {
         OpsKind::Tracked(prep) => {
-            // project_uniforms needs sh_degree set for the backward pass.
-            let mut project_uniforms = cull_output.project_uniforms;
-            project_uniforms.sh_degree = sh_degree;
-
             let state = GaussianBackwardState {
                 transforms,
                 raw_opac: raw_opacity,
                 sh_degree,
-                out_img: out_img.clone(),
-                projected_splats,
-                project_uniforms,
-                tile_offsets: render_aux.tile_offsets,
-                compact_gid_from_isect,
+                out_img: output.out_img.clone(),
+                projected_splats: output.projected_splats,
+                project_uniforms: output.project_uniforms,
+                tile_offsets: output.aux.tile_offsets,
+                compact_gid_from_isect: output.compact_gid_from_isect,
                 render_mode,
-                global_from_compact_gid: cull_output.global_from_compact_gid,
+                global_from_compact_gid: output.global_from_compact_gid,
                 background,
                 img_size,
             };
 
-            let out_img = prep.finish(state, out_img);
+            let out_img = prep.finish(state, output.out_img);
 
             let result = SplatOutputDiff {
                 img: out_img,
                 render_aux: wrapped_render_aux,
                 refine_weight_holder,
             };
-            result.render_aux.clone().validate().await;
             result
         }
         OpsKind::UnTracked(prep) => {
             let result = SplatOutputDiff {
-                img: prep.finish(out_img),
+                img: prep.finish(output.out_img),
                 render_aux: wrapped_render_aux,
                 refine_weight_holder,
             };
-            result.render_aux.clone().validate().await;
             result
         }
     }

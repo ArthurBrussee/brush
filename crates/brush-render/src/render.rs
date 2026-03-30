@@ -4,7 +4,7 @@ use crate::{
     dim_check::DimCheck,
     gaussian_splats::SplatRenderMode,
     get_tile_offset::{CHECKS_PER_ITER, get_tile_offsets},
-    render_aux::{CullOutput, CullReadback},
+    render_aux::RenderOutput,
     sh::sh_degree_from_coeffs,
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
@@ -14,11 +14,8 @@ use brush_kernel::create_tensor;
 use brush_kernel::calc_cube_count_1d;
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
-use burn::tensor::{DType, IntDType, Shape, TensorMetadata, ops::FloatTensor};
-use burn::tensor::{
-    FloatDType,
-    ops::{FloatTensorOps, IntTensor, IntTensorOps},
-};
+use burn::tensor::{DType, FloatDType, Int, IntDType, Shape, Tensor, TensorMetadata, Transaction};
+use burn::tensor::ops::{FloatTensor, FloatTensorOps, IntTensorOps};
 use burn_cubecl::cubecl::server::KernelArguments;
 use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::{CubeDim, CubeTensor, WgpuRuntime};
@@ -32,23 +29,28 @@ pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
 }
 
 impl SplatOps<Self> for MainBackendBase {
-    fn project_cull(
+    #[allow(clippy::too_many_arguments)]
+    async fn render(
         camera: &Camera,
         img_size: glam::UVec2,
         transforms: FloatTensor<Self>,
+        sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
-    ) -> (CullOutput<Self>, CullReadback<Self>) {
+        background: Vec3,
+        bwd_info: bool,
+    ) -> RenderOutput<Self> {
         assert!(
             img_size[0] > 0 && img_size[1] > 0,
             "Can't render images with 0 size."
         );
 
         let transforms = into_contiguous(transforms);
+        let sh_coeffs = into_contiguous(sh_coeffs);
         let raw_opacities = into_contiguous(raw_opacities);
 
         let device = &transforms.device.clone();
-        let _span = tracing::trace_span!("project_cull").entered();
+        let client = transforms.client.clone();
 
         DimCheck::new()
             .check_dims("transforms", &transforms, &["D".into(), 10.into()])
@@ -57,6 +59,9 @@ impl SplatOps<Self> for MainBackendBase {
         let tile_bounds = calc_tile_bounds(img_size);
         let total_splats = transforms.shape()[0];
 
+        let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
+        let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
+
         let project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
             camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
@@ -64,21 +69,21 @@ impl SplatOps<Self> for MainBackendBase {
             pixel_center: camera.center(img_size).into(),
             img_size: img_size.into(),
             tile_bounds: tile_bounds.into(),
-            // sh_degree is unused by ProjectSplats; set by rasterize for ProjectVisible.
-            sh_degree: 0,
+            sh_degree,
             total_splats: total_splats as u32,
             pad_a: 0,
             pad_b: 0,
         };
 
+        // ===== Phase 1: Cull + depth sort + prefix sum =====
+
         let num_visible_buffer = Self::int_zeros([1].into(), device, IntDType::U32);
         let num_intersections_buffer = Self::int_zeros([1].into(), device, IntDType::U32);
         let intersect_counts = Self::int_zeros([total_splats].into(), device, IntDType::U32);
 
-        let client = &transforms.client.clone();
-        let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
-
         let global_from_compact_gid = {
+            let _span = tracing::trace_span!("project_cull").entered();
+
             let global_from_presort_gid =
                 Self::int_zeros([total_splats].into(), device, IntDType::U32);
             let depths = create_tensor([total_splats], device, DType::F32);
@@ -86,22 +91,22 @@ impl SplatOps<Self> for MainBackendBase {
             tracing::trace_span!("ProjectSplats").in_scope(||
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
-            client.launch_unchecked(
-                ProjectSplats::task(mip_splat),
-                calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
-                KernelArguments::new()
-                    .with_buffers(vec![
-                        transforms.handle.clone().binding(),
-                        raw_opacities.handle.clone().binding(),
-                        global_from_presort_gid.handle.clone().binding(),
-                        depths.handle.clone().binding(),
-                        num_visible_buffer.handle.clone().binding(),
-                        intersect_counts.handle.clone().binding(),
-                        num_intersections_buffer.handle.clone().binding(),
-                    ])
-                    .with_info(create_meta_binding(project_uniforms)),
-            );
-        });
+                client.launch_unchecked(
+                    ProjectSplats::task(mip_splat),
+                    calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
+                    KernelArguments::new()
+                        .with_buffers(vec![
+                            transforms.handle.clone().binding(),
+                            raw_opacities.handle.clone().binding(),
+                            global_from_presort_gid.handle.clone().binding(),
+                            depths.handle.clone().binding(),
+                            num_visible_buffer.handle.clone().binding(),
+                            intersect_counts.handle.clone().binding(),
+                            num_intersections_buffer.handle.clone().binding(),
+                        ])
+                        .with_info(create_meta_binding(project_uniforms)),
+                );
+            });
 
             let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort").in_scope(|| {
                 radix_argsort(
@@ -117,64 +122,43 @@ impl SplatOps<Self> for MainBackendBase {
 
         // Gather intersection counts from global_gid order to compact (depth-sorted) order.
         let compact_counts = {
-            use burn::tensor::{Int, Tensor};
             let counts = Tensor::<Self, 1, Int>::from_primitive(intersect_counts);
-            let indices = Tensor::<Self, 1, Int>::from_primitive(global_from_compact_gid.clone());
+            let indices =
+                Tensor::<Self, 1, Int>::from_primitive(global_from_compact_gid.clone());
             counts.gather(0, indices).into_primitive()
         };
 
         let cum_tiles_hit = tracing::trace_span!("PrefixSumGaussHits")
             .in_scope(|| prefix_sum(compact_counts));
 
-        (
-            CullOutput {
-                project_uniforms,
-                global_from_compact_gid,
-                cum_tiles_hit,
-                img_size,
-            },
-            CullReadback::new(
-                num_visible_buffer,
-                num_intersections_buffer,
-                total_splats as u32,
-            ),
-        )
-    }
+        // ===== Phase 2: Async readback of num_visible + num_intersections =====
 
-    #[allow(clippy::too_many_arguments)]
-    fn rasterize(
-        cull_output: &CullOutput<Self>,
-        num_visible: u32,
-        num_intersections: u32,
-        transforms: FloatTensor<Self>,
-        sh_coeffs: FloatTensor<Self>,
-        raw_opacities: FloatTensor<Self>,
-        render_mode: SplatRenderMode,
-        background: Vec3,
-        bwd_info: bool,
-    ) -> (FloatTensor<Self>, RenderAux<Self>, FloatTensor<Self>, IntTensor<Self>) {
-        let transforms = into_contiguous(transforms);
-        let sh_coeffs = into_contiguous(sh_coeffs);
-        let raw_opacities = into_contiguous(raw_opacities);
+        let (num_visible, num_intersections) = if total_splats == 0 {
+            (0, 0)
+        } else {
+            let nv_tensor: Tensor<Self, 1, Int> =
+                Tensor::from_primitive(num_visible_buffer);
+            let ni_tensor: Tensor<Self, 1, Int> =
+                Tensor::from_primitive(num_intersections_buffer);
 
-        let device = &transforms.device.clone();
-        let client = transforms.client.clone();
-        let img_size = cull_output.img_size;
+            let data = Transaction::default()
+                .register(nv_tensor)
+                .register(ni_tensor)
+                .execute_async()
+                .await
+                .expect("Failed to read counts");
 
-        // Set sh_degree on the uniforms for ProjectVisible.
-        let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
-        let mut project_uniforms = cull_output.project_uniforms;
-        project_uniforms.sh_degree = sh_degree;
+            let nv = data[0].clone().into_vec::<u32>().expect("read num_visible")[0];
+            let ni = data[1].clone().into_vec::<u32>().expect("read num_intersections")[0];
+            (nv, ni)
+        };
 
-        let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
-        let total_splats = project_uniforms.total_splats as usize;
+        // ===== Phase 3: Rasterize =====
 
-        // ---- ProjectVisible (compact-sized buffers) ----
         let num_visible_sz = (num_visible as usize).max(1);
         let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / size_of::<f32>();
         let projected_splats = create_tensor([num_visible_sz, proj_size], device, DType::F32);
 
-        // Create a small GPU buffer from the CPU num_visible value for kernel bindings.
         let num_visible_buf = CubeTensor::new_contiguous(
             client.clone(),
             device.clone(),
@@ -183,6 +167,7 @@ impl SplatOps<Self> for MainBackendBase {
             DType::U32,
         );
 
+        // ---- ProjectVisible ----
         tracing::trace_span!("ProjectVisible").in_scope(|| {
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
@@ -195,11 +180,7 @@ impl SplatOps<Self> for MainBackendBase {
                             transforms.handle.clone().binding(),
                             sh_coeffs.handle.binding(),
                             raw_opacities.handle.binding(),
-                            cull_output
-                                .global_from_compact_gid
-                                .handle
-                                .clone()
-                                .binding(),
+                            global_from_compact_gid.handle.clone().binding(),
                             projected_splats.handle.clone().binding(),
                         ])
                         .with_info(create_meta_binding(project_uniforms)),
@@ -208,9 +189,7 @@ impl SplatOps<Self> for MainBackendBase {
         });
 
         // ---- MapGaussiansToIntersect ----
-        let tile_bounds = calc_tile_bounds(img_size);
         let num_tiles = tile_bounds.x * tile_bounds.y;
-
         let buffer_size = (num_intersections as usize).max(1);
         let tile_id_from_isect = create_tensor([buffer_size], device, DType::U32);
         let compact_gid_from_isect = create_tensor([buffer_size], device, DType::U32);
@@ -229,7 +208,7 @@ impl SplatOps<Self> for MainBackendBase {
                         .with_buffers(vec![
                             num_visible_buf.handle.clone().binding(),
                             projected_splats.handle.clone().binding(),
-                            cull_output.cum_tiles_hit.handle.clone().binding(),
+                            cum_tiles_hit.handle.clone().binding(),
                             tile_id_from_isect.handle.clone().binding(),
                             compact_gid_from_isect.handle.clone().binding(),
                         ])
@@ -288,6 +267,7 @@ impl SplatOps<Self> for MainBackendBase {
             DType::F32,
         );
 
+        let total_splats = project_uniforms.total_splats as usize;
         let (bindings, visible) = if bwd_info {
             let visible = Self::float_zeros([total_splats].into(), device, FloatDType::F32);
             let bindings = KernelArguments::new()
@@ -296,11 +276,7 @@ impl SplatOps<Self> for MainBackendBase {
                     tile_offsets.handle.clone().binding(),
                     projected_splats.handle.clone().binding(),
                     out_img.handle.clone().binding(),
-                    cull_output
-                        .global_from_compact_gid
-                        .handle
-                        .clone()
-                        .binding(),
+                    global_from_compact_gid.handle.clone().binding(),
                     visible.handle.clone().binding(),
                 ])
                 .with_info(create_meta_binding(rasterize_uniforms));
@@ -317,12 +293,10 @@ impl SplatOps<Self> for MainBackendBase {
             (bindings, create_tensor([1], device, DType::F32))
         };
 
-        let raster_task = Rasterize::task(bwd_info);
-
         // SAFETY: Kernel checked to have no OOB, bounded loops.
         unsafe {
             client.launch_unchecked(
-                raster_task,
+                Rasterize::task(bwd_info),
                 calc_cube_count_1d(
                     num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
                     shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
@@ -331,9 +305,9 @@ impl SplatOps<Self> for MainBackendBase {
             );
         }
 
-        (
+        RenderOutput {
             out_img,
-            RenderAux {
+            aux: RenderAux {
                 num_visible,
                 num_intersections,
                 visible,
@@ -342,6 +316,8 @@ impl SplatOps<Self> for MainBackendBase {
             },
             projected_splats,
             compact_gid_from_isect,
-        )
+            project_uniforms,
+            global_from_compact_gid,
+        }
     }
 }

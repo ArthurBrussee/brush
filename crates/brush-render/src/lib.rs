@@ -1,18 +1,17 @@
 #![recursion_limit = "256"]
 
 use burn::prelude::Backend;
-use burn::tensor::ops::{FloatTensor, IntTensor};
+use burn::tensor::ops::FloatTensor;
 use burn_cubecl::CubeBackend;
 use burn_fusion::Fusion;
 use burn_wgpu::WgpuRuntime;
 use camera::Camera;
 use clap::ValueEnum;
 use glam::Vec3;
-use render_aux::{CullOutput, CullReadback};
 
 use crate::gaussian_splats::SplatRenderMode;
 pub use crate::gaussian_splats::{TextureMode, render_splats};
-pub use crate::render_aux::RenderAux;
+pub use crate::render_aux::{RenderAux, RenderOutput};
 
 mod burn_glue;
 mod dim_check;
@@ -36,39 +35,24 @@ pub type MainBackend = Fusion<MainBackendBase>;
 
 /// Trait for the gaussian splatting rendering pipeline.
 ///
-/// The pipeline has two phases with a single async readback point:
-/// 1. `project_cull`: Culling, depth sort, tile intersection counting, prefix sum.
-/// 2. Readback `num_visible` + `num_intersections` from [`CullReadback::read_counts`].
-/// 3. `rasterize`: Projection, intersection filling, tile sort, rasterization.
+/// A single call performs: cull → readback → rasterize.
 pub trait SplatOps<B: Backend> {
-    /// Phase 1: Cull invisible splats, depth sort, count tile intersections, prefix sum.
+    /// Render gaussian splats to an image.
     ///
-    /// Returns the cull output (for rasterize) and readback tensors (for async count readback).
-    fn project_cull(
+    /// This is the full forward pipeline: cull, depth sort, readback, project,
+    /// rasterize. When `bwd_info` is true, extra per-splat data is computed
+    /// for the backward pass.
+    #[allow(clippy::too_many_arguments)]
+    fn render(
         camera: &Camera,
         img_size: glam::UVec2,
-        transforms: FloatTensor<B>,
-        raw_opacities: FloatTensor<B>,
-        render_mode: SplatRenderMode,
-    ) -> (CullOutput<B>, CullReadback<B>);
-
-    /// Phase 2: Project visible splats, fill intersections, tile sort, rasterize.
-    ///
-    /// `num_visible` and `num_intersections` are the CPU-side readbacks from
-    /// [`CullOutput::read_counts`].
-    #[allow(clippy::too_many_arguments)]
-    fn rasterize(
-        cull_output: &CullOutput<B>,
-        num_visible: u32,
-        num_intersections: u32,
         transforms: FloatTensor<B>,
         sh_coeffs: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
         render_mode: SplatRenderMode,
         background: Vec3,
         bwd_info: bool,
-    ) -> (FloatTensor<B>, RenderAux<B>, FloatTensor<B>, IntTensor<B>);
-    //    out_img,       render_aux,     projected_splats, compact_gid_from_isect
+    ) -> impl Future<Output = RenderOutput<B>>;
 }
 
 #[derive(
