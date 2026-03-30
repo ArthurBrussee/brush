@@ -6,7 +6,7 @@ use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::tensor::{DType, Scalar, Shape};
 
 pub use burn_cubecl::cubecl::prelude::KernelId;
-use burn_cubecl::cubecl::server::{KernelArguments, MetadataBindingInfo};
+use burn_cubecl::cubecl::server::MetadataBindingInfo;
 pub use burn_cubecl::cubecl::{CubeCount, CubeDim, client::ComputeClient, server::ComputeServer};
 pub use burn_cubecl::cubecl::{CubeTask, Runtime};
 pub use burn_cubecl::{CubeRuntime, tensor::CubeTensor};
@@ -94,36 +94,4 @@ pub fn create_uniform_buffer<R: CubeRuntime, T: NoUninit>(
         client.create_from_slice(bytemuck::cast_slice(&binding.data)),
         DType::I32,
     )
-}
-
-/// Create a dynamic dispatch buffer for 1D dispatches.
-/// Returns a buffer with (`wg_x`, `wg_y`, 1) that tiles into 2D if needed.
-pub fn create_dispatch_buffer_1d(
-    thread_count: CubeTensor<WgpuRuntime>,
-    wg_size: u32,
-) -> CubeTensor<WgpuRuntime> {
-    assert!(
-        thread_count.is_contiguous(),
-        "Thread count should be contiguous"
-    );
-    let client = thread_count.client;
-    let ret = create_tensor([3], &thread_count.device, DType::I32);
-
-    let data = create_meta_binding(wg::Uniforms { wg_size });
-
-    // SAFETY: wgsl FFI, kernel checked to have no OOB, bounded loops.
-    unsafe {
-        client.launch_unchecked(
-            Wg::task(),
-            CubeCount::Static(1, 1, 1),
-            KernelArguments::new()
-                .with_buffers(vec![
-                    thread_count.handle.binding(),
-                    ret.handle.clone().binding(),
-                ])
-                .with_info(data),
-        );
-    }
-
-    ret
 }

@@ -1,4 +1,4 @@
-use brush_kernel::{calc_cube_count_1d, create_meta_binding};
+use brush_kernel::{CubeTensor, bytemuck, calc_cube_count_1d, create_meta_binding};
 use brush_render::MainBackendBase;
 use brush_render::gaussian_splats::SplatRenderMode;
 use brush_render::shaders::helpers::RasterizeUniforms;
@@ -7,7 +7,7 @@ use brush_wgsl::wgsl_kernel;
 use brush_render::sh::sh_coeffs_for_degree;
 use burn::tensor::ops::IntTensor;
 use burn::tensor::ops::{FloatTensor, FloatTensorOps};
-use burn::tensor::{FloatDType, TensorMetadata};
+use burn::tensor::{DType, FloatDType, Shape, TensorMetadata};
 use burn_cubecl::cubecl::features::TypeUsage;
 use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType};
 use burn_cubecl::cubecl::server::KernelArguments;
@@ -40,7 +40,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
         projected_splats: FloatTensor<Self>,
-        global_from_compact_gid: IntTensor<Self>,
         compact_gid_from_isect: IntTensor<Self>,
         tile_offsets: IntTensor<Self>,
         background: Vec3,
@@ -49,16 +48,15 @@ impl SplatBwdOps<Self> for MainBackendBase {
     ) -> RasterizeGrads<Self> {
         let _span = tracing::trace_span!("rasterize_bwd").entered();
 
-        // Comes from loss, might not be contiguous.
         let v_output = into_contiguous(v_output);
 
         let device = &out_img.device;
-        let num_points = projected_splats.shape()[0];
+        let num_visible = projected_splats.shape()[0].max(1);
 
         let client = &projected_splats.client;
 
-        // Setup combined output tensor: [projected_splat_grads(8) + opac(1) + refine(1)] per splat
-        let v_combined = Self::float_zeros([num_points, 10].into(), device, FloatDType::F32);
+        // Sparse [num_visible, 10] indexed by compact_gid.
+        let v_combined = Self::float_zeros([num_visible, 10].into(), device, FloatDType::F32);
 
         let tile_bounds = uvec2(
             img_size
@@ -95,7 +93,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     KernelArguments::new()
                         .with_buffers(vec![
                             compact_gid_from_isect.handle.binding(),
-                            global_from_compact_gid.handle.binding(),
                             tile_offsets.handle.binding(),
                             projected_splats.handle.binding(),
                             out_img.handle.binding(),
@@ -114,16 +111,14 @@ impl SplatBwdOps<Self> for MainBackendBase {
     fn project_bwd(
         transforms: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
-        num_visible: IntTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         sh_degree: u32,
         render_mode: SplatRenderMode,
-        rasterize_grads: RasterizeGrads<Self>,
+        v_combined: FloatTensor<Self>,
     ) -> SplatGrads<Self> {
         let _span = tracing::trace_span!("project_bwd").entered();
 
-        // Comes from params, might not be contiguous.
         let transforms = into_contiguous(transforms);
         let raw_opac = into_contiguous(raw_opac);
 
@@ -131,53 +126,50 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let num_points = transforms.shape()[0];
         let client = &transforms.client;
 
-        // Setup output tensors.
+        // Dense outputs, the kernel scatters compact→global internally.
         let v_transforms = Self::float_zeros([num_points, 10].into(), device, FloatDType::F32);
         let v_coeffs = Self::float_zeros(
             [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
             device,
             FloatDType::F32,
         );
+        let v_raw_opac = Self::float_zeros([num_points].into(), device, FloatDType::F32);
+        let v_refine_weight = Self::float_zeros([num_points].into(), device, FloatDType::F32);
 
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
+
+        let num_visible = project_uniforms.num_visible;
+        // Create GPU buffer from CPU num_visible for the kernel binding.
+        let num_visible_buf = CubeTensor::new_contiguous(
+            client.clone(),
+            device.clone(),
+            Shape::new([1]),
+            client.create_from_slice(bytemuck::cast_slice(&[num_visible])),
+            DType::U32,
+        );
 
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
             unsafe {
                 client.launch_unchecked(
                     ProjectBackwards::task(mip_splat),
-                    calc_cube_count_1d(num_points as u32, ProjectBackwards::WORKGROUP_SIZE[0]),
+                    calc_cube_count_1d(num_visible, ProjectBackwards::WORKGROUP_SIZE[0]),
                     KernelArguments::new()
                         .with_buffers(vec![
-                            num_visible.handle.binding(),
+                            num_visible_buf.handle.binding(),
                             transforms.handle.binding(),
                             raw_opac.handle.binding(),
                             global_from_compact_gid.handle.binding(),
-                            rasterize_grads.v_combined.handle.clone().binding(),
+                            v_combined.handle.binding(),
                             v_transforms.handle.clone().binding(),
                             v_coeffs.handle.clone().binding(),
+                            v_raw_opac.handle.clone().binding(),
+                            v_refine_weight.handle.clone().binding(),
                         ])
                         .with_info(create_meta_binding(project_uniforms)),
                 );
             }
         });
-
-        // Extract v_raw_opac and v_refine_weight from the combined rasterize grads buffer.
-        // These are zero-copy view operations.
-        let v_raw_opac = Self::float_reshape(
-            Self::float_slice(
-                rasterize_grads.v_combined.clone(),
-                &[(0..num_points).into(), (8..9).into()],
-            ),
-            [num_points].into(),
-        );
-        let v_refine_weight = Self::float_reshape(
-            Self::float_slice(
-                rasterize_grads.v_combined,
-                &[(0..num_points).into(), (9..10).into()],
-            ),
-            [num_points].into(),
-        );
 
         SplatGrads {
             v_transforms,

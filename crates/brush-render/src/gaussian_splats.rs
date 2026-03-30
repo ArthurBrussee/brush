@@ -226,7 +226,7 @@ impl<B: Backend> Splats<B> {
 /// NB: This doesn't work on a differentiable backend. Use
 /// [`brush_render_bwd::render_splats`] for that.
 ///
-/// Takes ownership of the splats to avoid cloning internally.
+/// Takes ownership of the splats. Clone before calling if you need to reuse them.
 pub async fn render_splats<B: Backend + SplatOps<B>>(
     splats: Splats<B>,
     camera: &Camera,
@@ -238,7 +238,6 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
     splats.clone().validate_values().await;
 
     let transforms = if let Some(scale) = splat_scale {
-        // Apply splat_scale offset to the log_scales portion (columns 7..10)
         let t = splats.transforms.into_value();
         let adjusted = t.clone().slice(s![.., 7..10]) + scale.ln();
         t.slice_assign(s![.., 7..10], adjusted)
@@ -246,32 +245,30 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
         splats.transforms.into_value()
     };
 
-    let project_output = B::project(
+    let render_mode = if splats.render_mip {
+        SplatRenderMode::Mip
+    } else {
+        SplatRenderMode::Default
+    };
+
+    let use_float = matches!(texture_mode, TextureMode::Float);
+
+    let output = B::render(
         camera,
         img_size,
         transforms.into_primitive().tensor(),
         splats.sh_coeffs.into_value().into_primitive().tensor(),
         splats.raw_opacities.into_value().into_primitive().tensor(),
-        if splats.render_mip {
-            SplatRenderMode::Mip
-        } else {
-            SplatRenderMode::Default
-        },
-    );
+        render_mode,
+        background,
+        use_float,
+    )
+    .await;
 
-    project_output.clone().validate().await;
-
-    // Async readback
-    let num_intersections = project_output.read_num_intersections().await;
-
-    let use_float = matches!(texture_mode, TextureMode::Float);
-    let (out_img, render_aux, _) =
-        B::rasterize(&project_output, num_intersections, background, use_float);
-
-    render_aux.clone().validate().await;
+    output.clone().validate().await;
 
     (
-        Tensor::from_primitive(TensorPrimitive::Float(out_img)),
-        render_aux,
+        Tensor::from_primitive(TensorPrimitive::Float(output.out_img)),
+        output.aux,
     )
 }

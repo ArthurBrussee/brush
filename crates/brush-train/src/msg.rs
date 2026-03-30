@@ -1,7 +1,4 @@
-use burn::{
-    prelude::Backend,
-    tensor::{Int, Tensor},
-};
+use burn::{prelude::Backend, tensor::Tensor};
 
 #[derive(Clone)]
 pub struct RefineStats {
@@ -14,7 +11,7 @@ pub struct RefineStats {
 pub struct TrainStepStats<B: Backend> {
     pub pred_image: Tensor<B, 3>,
 
-    pub num_visible: Tensor<B, 1, Int>,
+    pub num_visible: u32,
     pub loss: Tensor<B, 1>,
 
     pub lr_mean: f64,

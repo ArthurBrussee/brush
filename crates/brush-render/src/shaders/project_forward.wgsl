@@ -5,7 +5,9 @@
 @group(0) @binding(2) var<storage, read_write> global_from_compact_gid: array<u32>;
 @group(0) @binding(3) var<storage, read_write> depths: array<f32>;
 @group(0) @binding(4) var<storage, read_write> num_visible: atomic<u32>;
-@group(0) @binding(5) var<storage, read> uniforms: helpers::ProjectUniforms;
+@group(0) @binding(5) var<storage, read_write> intersect_counts: array<u32>;
+@group(0) @binding(6) var<storage, read_write> num_intersections: atomic<u32>;
+@group(0) @binding(7) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 const WG_SIZE: u32 = 256u;
 
@@ -62,7 +64,8 @@ fn main(
         return;
     }
 
-    let extent = helpers::compute_bbox_extent(cov2d, log(255.0f * opac));
+    let power_threshold = log(255.0f * opac);
+    let extent = helpers::compute_bbox_extent(cov2d, power_threshold);
     if extent.x < 0.0 || extent.y < 0.0 {
         return;
     }
@@ -71,7 +74,29 @@ fn main(
        mean2d.y + extent.y <= 0 || mean2d.y - extent.y >= f32(uniforms.img_size.y) {
         return;
     }
-    // Now write all the data to the buffers.
+
+    // Count tile intersections for this splat.
+    let conic = helpers::inverse(cov2d);
+    let conic_packed = vec3f(conic[0][0], conic[0][1], conic[1][1]);
+    let tile_bbox = helpers::get_tile_bbox(mean2d, extent, uniforms.tile_bounds);
+    let tile_bbox_min = tile_bbox.xy;
+    let tile_bbox_max = tile_bbox.zw;
+    let tile_bbox_width = tile_bbox_max.x - tile_bbox_min.x;
+    let num_tiles_bbox = (tile_bbox_max.y - tile_bbox_min.y) * tile_bbox_width;
+
+    var num_tiles_hit = 0u;
+    for (var tile_idx = 0u; tile_idx < num_tiles_bbox; tile_idx++) {
+        let tx = (tile_idx % tile_bbox_width) + tile_bbox_min.x;
+        let ty = (tile_idx / tile_bbox_width) + tile_bbox_min.y;
+        let rect = helpers::tile_rect(vec2u(tx, ty));
+        if helpers::will_primitive_contribute(rect, mean2d, conic_packed, power_threshold) {
+            num_tiles_hit += 1u;
+        }
+    }
+
+    intersect_counts[global_gid] = num_tiles_hit;
+    atomicAdd(&num_intersections, num_tiles_hit);
+
     let write_id = atomicAdd(&num_visible, 1u);
     global_from_compact_gid[write_id] = global_gid;
     depths[write_id] = mean_c.z;

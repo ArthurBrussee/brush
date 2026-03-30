@@ -242,9 +242,7 @@ mod visualize_tools_impl {
                     .log("lr/opac", &rerun::Scalars::new(vec![stats.lr_opac]))?;
                 self.rec.log(
                     "splats/splats_visible",
-                    &rerun::Scalars::new(vec![
-                        stats.num_visible.into_scalar_async().await?.elem::<f64>(),
-                    ]),
+                    &rerun::Scalars::new(vec![stats.num_visible as f64]),
                 )?;
 
                 let [img_h, img_w, _] = stats.pred_image.dims();

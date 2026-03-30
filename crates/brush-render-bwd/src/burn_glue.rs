@@ -17,7 +17,7 @@ use burn::{
     },
     prelude::Backend,
     tensor::{
-        DType, Shape, Tensor, TensorPrimitive,
+        DType, Shape, Tensor, TensorMetadata, TensorPrimitive,
         backend::AutodiffBackend,
         ops::{FloatTensor, IntTensor},
     },
@@ -32,7 +32,7 @@ use glam::Vec3;
 
 /// Intermediate gradients from the rasterize backward pass.
 ///
-/// Combined buffer of shape [`num_points`, 10]:
+/// Sparse buffer of shape [`num_visible`, 10], indexed by `compact_gid`:
 ///   [0..8]: projected splat gradients
 ///   [8]:    raw opacity gradient
 ///   [9]:    refinement weight
@@ -54,11 +54,11 @@ pub struct SplatGrads<B: Backend> {
 /// Backward pass trait mirroring [`SplatOps`].
 pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
     /// Backward pass for rasterization.
+    /// Returns sparse `v_combined` [`num_visible`, 10] indexed by `compact_gid`.
     #[allow(clippy::too_many_arguments)]
     fn rasterize_bwd(
         out_img: FloatTensor<B>,
         projected_splats: FloatTensor<B>,
-        global_from_compact_gid: IntTensor<B>,
         compact_gid_from_isect: IntTensor<B>,
         tile_offsets: IntTensor<B>,
         background: Vec3,
@@ -67,16 +67,16 @@ pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
     ) -> RasterizeGrads<B>;
 
     /// Backward pass for projection.
+    /// Reads sparse `v_combined` [`num_visible`, 9], writes dense outputs (scatter in kernel).
     #[allow(clippy::too_many_arguments)]
     fn project_bwd(
         transforms: FloatTensor<B>,
         raw_opac: FloatTensor<B>,
-        num_visible: IntTensor<B>,
         global_from_compact_gid: IntTensor<B>,
         project_uniforms: ProjectUniforms,
         sh_degree: u32,
         render_mode: SplatRenderMode,
-        rasterize_grads: RasterizeGrads<B>,
+        v_combined: FloatTensor<B>,
     ) -> SplatGrads<B>;
 }
 
@@ -88,7 +88,6 @@ struct GaussianBackwardState<B: Backend> {
 
     projected_splats: FloatTensor<B>,
     project_uniforms: ProjectUniforms,
-    num_visible: IntTensor<B>,
     global_from_compact_gid: IntTensor<B>,
 
     out_img: FloatTensor<B>,
@@ -130,11 +129,9 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
             raw_opacity_parent,
         ] = ops.parents;
 
-        // Step 1: Rasterize backward
         let rasterize_grads = B::rasterize_bwd(
             state.out_img,
             state.projected_splats,
-            state.global_from_compact_gid.clone(),
             state.compact_gid_from_isect,
             state.tile_offsets,
             state.background,
@@ -142,23 +139,21 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
             v_output,
         );
 
-        // Step 2: Project backward
         let splat_grads = B::project_bwd(
             state.transforms,
             state.raw_opac,
-            state.num_visible,
             state.global_from_compact_gid,
             state.project_uniforms,
             state.sh_degree,
             state.render_mode,
-            rasterize_grads,
+            rasterize_grads.v_combined,
         );
 
         if let Some(node) = transforms_parent {
             grads.register::<B>(node.id, splat_grads.v_transforms);
         }
 
-        // Register the gradients for the dummy xy input.
+        // v_refine_weight is already dense [num_points], written by the kernel.
         if let Some(node) = refine_weight {
             grads.register::<B>(node.id, splat_grads.v_refine_weight);
         }
@@ -239,27 +234,27 @@ where
     } else {
         SplatRenderMode::Default
     };
-    let project_output = <B as SplatOps<B>>::project(
+
+    let output = <B as SplatOps<B>>::render(
         camera,
         img_size,
         transforms.clone(),
         sh_coeffs,
         raw_opacity.clone(),
         render_mode,
-    );
+        background,
+        true,
+    )
+    .await;
 
-    // Async readback
-    let num_intersections = project_output.read_num_intersections().await;
-
-    let (out_img, render_aux, compact_gid_from_isect) =
-        <B as SplatOps<B>>::rasterize(&project_output, num_intersections, background, true);
+    output.clone().validate().await;
 
     let wrapped_render_aux = RenderAux::<Autodiff<B, C>> {
-        num_visible: render_aux.num_visible.clone(),
-        num_intersections: render_aux.num_intersections,
-        visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(render_aux.visible.clone()),
-        tile_offsets: render_aux.tile_offsets.clone(),
-        img_size: render_aux.img_size,
+        num_visible: output.aux.num_visible,
+        num_intersections: output.aux.num_intersections,
+        visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(output.aux.visible.clone()),
+        tile_offsets: output.aux.tile_offsets.clone(),
+        img_size: output.aux.img_size,
     };
 
     let sh_degree = sh_degree_from_coeffs(sh_coeffs_dims[1] as u32);
@@ -270,37 +265,30 @@ where
                 transforms,
                 raw_opac: raw_opacity,
                 sh_degree,
-                out_img: out_img.clone(),
-                projected_splats: project_output.projected_splats,
-                project_uniforms: project_output.project_uniforms,
-                num_visible: project_output.num_visible,
-                tile_offsets: render_aux.tile_offsets,
-                compact_gid_from_isect,
+                out_img: output.out_img.clone(),
+                projected_splats: output.projected_splats,
+                project_uniforms: output.project_uniforms,
+                tile_offsets: output.aux.tile_offsets,
+                compact_gid_from_isect: output.compact_gid_from_isect,
                 render_mode,
-                global_from_compact_gid: project_output.global_from_compact_gid,
+                global_from_compact_gid: output.global_from_compact_gid,
                 background,
                 img_size,
             };
 
-            let out_img = prep.finish(state, out_img);
+            let out_img = prep.finish(state, output.out_img);
 
-            let result = SplatOutputDiff {
+            SplatOutputDiff {
                 img: out_img,
                 render_aux: wrapped_render_aux,
                 refine_weight_holder,
-            };
-            result.render_aux.clone().validate().await;
-            result
+            }
         }
-        OpsKind::UnTracked(prep) => {
-            let result = SplatOutputDiff {
-                img: prep.finish(out_img),
-                render_aux: wrapped_render_aux,
-                refine_weight_holder,
-            };
-            result.render_aux.clone().validate().await;
-            result
-        }
+        OpsKind::UnTracked(prep) => SplatOutputDiff {
+            img: prep.finish(output.out_img),
+            render_aux: wrapped_render_aux,
+            refine_weight_holder,
+        },
     }
 }
 
@@ -309,7 +297,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
         projected_splats: FloatTensor<Self>,
-        global_from_compact_gid: IntTensor<Self>,
         compact_gid_from_isect: IntTensor<Self>,
         tile_offsets: IntTensor<Self>,
         background: Vec3,
@@ -334,7 +321,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                     v_output,
                     out_img,
                     projected_splats,
-                    global_from_compact_gid,
                     compact_gid_from_isect,
                     tile_offsets,
                 ] = inputs;
@@ -344,7 +330,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 let grads = <MainBackendBase as SplatBwdOps<MainBackendBase>>::rasterize_bwd(
                     h.get_float_tensor::<MainBackendBase>(out_img),
                     h.get_float_tensor::<MainBackendBase>(projected_splats),
-                    h.get_int_tensor::<MainBackendBase>(global_from_compact_gid),
                     h.get_int_tensor::<MainBackendBase>(compact_gid_from_isect),
                     h.get_int_tensor::<MainBackendBase>(tile_offsets),
                     self.background,
@@ -356,12 +341,15 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             }
         }
 
+        // projected_splats is [num_visible, proj_size], so shape[0] gives num_visible.
+        let num_visible_val = projected_splats.shape()[0] as u32;
+
         let client = v_output.client.clone();
-        let num_points = projected_splats.shape[0];
+        let num_visible = (num_visible_val as usize).max(1);
 
         let v_combined_out = TensorIr::uninit(
             client.create_empty_handle(),
-            Shape::new([num_points, 10]),
+            Shape::new([num_visible, 10]),
             DType::F32,
         );
 
@@ -369,7 +357,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             v_output,
             out_img,
             projected_splats,
-            global_from_compact_gid,
             compact_gid_from_isect,
             tile_offsets,
         ];
@@ -399,12 +386,11 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
     fn project_bwd(
         transforms: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
-        num_visible: IntTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         sh_degree: u32,
         render_mode: SplatRenderMode,
-        rasterize_grads: RasterizeGrads<Self>,
+        v_combined: FloatTensor<Self>,
     ) -> SplatGrads<Self> {
         #[derive(Debug)]
         struct CustomOp {
@@ -421,29 +407,18 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             ) {
                 let (inputs, outputs) = self.desc.as_fixed();
 
-                let [
-                    transforms,
-                    raw_opac,
-                    num_visible,
-                    global_from_compact_gid,
-                    v_combined_in,
-                ] = inputs;
+                let [transforms, raw_opac, global_from_compact_gid, v_combined_in] = inputs;
 
                 let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
-
-                let inner_rasterize_grads = RasterizeGrads {
-                    v_combined: h.get_float_tensor::<MainBackendBase>(v_combined_in),
-                };
 
                 let grads = <MainBackendBase as SplatBwdOps<MainBackendBase>>::project_bwd(
                     h.get_float_tensor::<MainBackendBase>(transforms),
                     h.get_float_tensor::<MainBackendBase>(raw_opac),
-                    h.get_int_tensor::<MainBackendBase>(num_visible),
                     h.get_int_tensor::<MainBackendBase>(global_from_compact_gid),
                     self.project_uniforms,
                     self.sh_degree,
                     self.render_mode,
-                    inner_rasterize_grads,
+                    h.get_float_tensor::<MainBackendBase>(v_combined_in),
                 );
 
                 h.register_float_tensor::<MainBackendBase>(&v_transforms.id, grads.v_transforms);
@@ -481,13 +456,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             DType::F32,
         );
 
-        let input_tensors = [
-            transforms,
-            raw_opac,
-            num_visible,
-            global_from_compact_gid,
-            rasterize_grads.v_combined,
-        ];
+        let input_tensors = [transforms, raw_opac, global_from_compact_gid, v_combined];
 
         let stream = OperationStreams::with_inputs(&input_tensors);
         let desc = CustomOpIr::new(

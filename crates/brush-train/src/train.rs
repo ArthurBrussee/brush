@@ -131,7 +131,7 @@ impl SplatTrainer {
         let refine_weight_holder = diff_out.refine_weight_holder;
 
         let median_scale = self.bounds.median_size();
-        let num_visible = render_aux.get_num_visible().inner();
+        let num_visible = render_aux.get_num_visible();
 
         let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
 

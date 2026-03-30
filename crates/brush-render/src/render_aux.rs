@@ -1,4 +1,3 @@
-use burn::tensor::ElementConversion;
 use burn::{
     Tensor,
     prelude::Backend,
@@ -10,35 +9,21 @@ use burn::{
 
 use crate::shaders::helpers::ProjectUniforms;
 
-/// Output from the project pass. Consumed by rasterize.
+/// Full output from the rendering pipeline.
 #[derive(Debug, Clone)]
-pub struct ProjectOutput<B: Backend> {
-    pub project_uniforms: ProjectUniforms,
+pub struct RenderOutput<B: Backend> {
+    pub out_img: FloatTensor<B>,
+    pub aux: RenderAux<B>,
+    // State needed by the backward pass; non-diff callers can ignore these.
     pub projected_splats: FloatTensor<B>,
-    pub num_visible: IntTensor<B>,
+    pub compact_gid_from_isect: IntTensor<B>,
+    pub project_uniforms: ProjectUniforms,
     pub global_from_compact_gid: IntTensor<B>,
-    pub cum_tiles_hit: IntTensor<B>,
-    pub img_size: glam::UVec2,
 }
 
-impl<B: Backend> ProjectOutput<B> {
-    /// Get the total number of intersections.
-    pub async fn read_num_intersections(&self) -> u32 {
-        let cum_tiles_hit: Tensor<B, 1, Int> = Tensor::from_primitive(self.cum_tiles_hit.clone());
-        let total = self.project_uniforms.total_splats as usize;
-        if total > 0 {
-            cum_tiles_hit
-                .slice([total - 1..total])
-                .into_scalar_async()
-                .await
-                .expect("Failed to read num_intersections")
-                .elem::<u32>()
-        } else {
-            0
-        }
-    }
-
-    /// Validate project outputs. Takes self by value to avoid Send issues with async.
+impl<B: Backend> RenderOutput<B> {
+    /// Validate all outputs. Debug-only, takes self by value to avoid Send issues.
+    #[allow(unused_variables)]
     pub async fn validate(self) {
         #[cfg(any(test, feature = "debug-validation"))]
         {
@@ -47,28 +32,16 @@ impl<B: Backend> ProjectOutput<B> {
                 return;
             }
 
-            use crate::validation::validate_tensor_val;
-            use burn::tensor::{TensorPrimitive, s};
-
-            let num_visible_tensor: Tensor<B, 1, Int> = Tensor::from_primitive(self.num_visible);
+            let num_visible = self.aux.num_visible;
             let total_splats = self.project_uniforms.total_splats;
-            let num_visible = num_visible_tensor
-                .into_scalar_async()
-                .await
-                .expect("readback")
-                .elem::<u32>();
 
+            // Validate cull outputs.
             assert!(
                 num_visible <= total_splats,
                 "num_visible ({num_visible}) > total_splats ({total_splats})"
             );
 
             if total_splats > 0 && num_visible > 0 {
-                let projected_splats: Tensor<B, 2> =
-                    Tensor::from_primitive(TensorPrimitive::Float(self.projected_splats));
-                let projected_splats = projected_splats.slice(s![0..num_visible, ..]);
-                validate_tensor_val(projected_splats, "projected_splats", None, None).await;
-
                 let global_from_compact_gid: Tensor<B, 1, Int> =
                     Tensor::from_primitive(self.global_from_compact_gid);
                 let global_from_compact_gid = global_from_compact_gid
@@ -86,63 +59,17 @@ impl<B: Backend> ProjectOutput<B> {
                     );
                 }
             }
-        }
-    }
-}
 
-/// Minimal output from rendering. Contains only what callers typically need.
-#[derive(Debug, Clone)]
-pub struct RenderAux<B: Backend> {
-    pub num_visible: IntTensor<B>,
-    pub num_intersections: u32,
-    pub visible: FloatTensor<B>,
-    pub tile_offsets: IntTensor<B>,
-    pub img_size: glam::UVec2,
-}
-
-impl<B: Backend> RenderAux<B> {
-    /// Get `num_visible` as a tensor.
-    pub fn get_num_visible(&self) -> Tensor<B, 1, Int> {
-        Tensor::from_primitive(self.num_visible.clone())
-    }
-
-    /// Calculate tile depth map for visualization.
-    pub fn calc_tile_depth(&self) -> Tensor<B, 2, Int> {
-        use crate::shaders::helpers::TILE_WIDTH;
-        use burn::tensor::s;
-
-        let tile_offsets: Tensor<B, 3, Int> = Tensor::from_primitive(self.tile_offsets.clone());
-        let max = tile_offsets.clone().slice(s![.., .., 1]);
-        let min = tile_offsets.slice(s![.., .., 0]);
-        let [w, h] = self.img_size.into();
-        let [ty, tx] = [h.div_ceil(TILE_WIDTH), w.div_ceil(TILE_WIDTH)];
-        (max - min).reshape([ty as usize, tx as usize])
-    }
-
-    /// Validate rasterize outputs. Takes self by value to avoid Send issues with async.
-    pub async fn validate(self) {
-        #[cfg(any(test, feature = "debug-validation"))]
-        {
-            #[cfg(not(target_family = "wasm"))]
-            if std::env::args().any(|a| a == "--bench") {
-                return;
-            }
-
+            // Validate rasterize outputs.
             use crate::validation::validate_tensor_val;
             use burn::tensor::TensorPrimitive;
 
-            let num_visible = Tensor::<B, 1, Int>::from_primitive(self.num_visible)
-                .into_scalar_async()
-                .await
-                .expect("readback")
-                .elem::<u32>();
-
             let visible: Tensor<B, 1> =
-                Tensor::from_primitive(TensorPrimitive::Float(self.visible));
+                Tensor::from_primitive(TensorPrimitive::Float(self.aux.visible));
             let visible_2d: Tensor<B, 2> = visible.unsqueeze_dim(1);
             validate_tensor_val(visible_2d, "visible", None, None).await;
 
-            let tile_offsets: Tensor<B, 3, Int> = Tensor::from_primitive(self.tile_offsets);
+            let tile_offsets: Tensor<B, 3, Int> = Tensor::from_primitive(self.aux.tile_offsets);
             let tile_offsets_data = tile_offsets
                 .into_data_async()
                 .await
@@ -164,5 +91,35 @@ impl<B: Backend> RenderAux<B> {
                 );
             }
         }
+    }
+}
+
+/// Minimal output from rendering. Contains only what callers typically need.
+#[derive(Debug, Clone)]
+pub struct RenderAux<B: Backend> {
+    pub num_visible: u32,
+    pub num_intersections: u32,
+    pub visible: FloatTensor<B>,
+    pub tile_offsets: IntTensor<B>,
+    pub img_size: glam::UVec2,
+}
+
+impl<B: Backend> RenderAux<B> {
+    /// Get `num_visible` count.
+    pub fn get_num_visible(&self) -> u32 {
+        self.num_visible
+    }
+
+    /// Calculate tile depth map for visualization.
+    pub fn calc_tile_depth(&self) -> Tensor<B, 2, Int> {
+        use crate::shaders::helpers::TILE_WIDTH;
+        use burn::tensor::s;
+
+        let tile_offsets: Tensor<B, 3, Int> = Tensor::from_primitive(self.tile_offsets.clone());
+        let max = tile_offsets.clone().slice(s![.., .., 1]);
+        let min = tile_offsets.slice(s![.., .., 0]);
+        let [w, h] = self.img_size.into();
+        let [ty, tx] = [h.div_ceil(TILE_WIDTH), w.div_ceil(TILE_WIDTH)];
+        (max - min).reshape([ty as usize, tx as usize])
     }
 }
