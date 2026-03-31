@@ -311,8 +311,6 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
     let sh_coeffs_dc = splats.sh_coeffs_dc.into_value();
     let sh_coeffs_rest = splats.sh_coeffs_rest.into_value();
     let raw_opacities = splats.raw_opacities.into_value();
-    let render_mip = splats.render_mip;
-
     let transforms = if let Some(scale) = splat_scale {
         let t = splats.transforms.into_value();
         let adjusted = t.clone().slice(s![.., 7..10]) + scale.ln();

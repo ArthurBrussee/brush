@@ -541,7 +541,6 @@ impl SplatTrainer {
             });
 
             // Concatenate new splats.
-            let rest_dim = splats.sh_coeffs_rest.dims()[1];
             // Build new transforms row: means(3) + rotations(4) + log_scales(3)
             let new_transforms =
                 Tensor::cat(vec![cur_means + samples, cur_rots, new_log_scales], 1);

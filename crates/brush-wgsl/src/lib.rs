@@ -537,7 +537,7 @@ fn generate_code(
                     {
                         format!("enable subgroups;\n{}", source)
                     } else {
-                        source
+                        source.to_string()
                     };
 
                     Ok(CompiledKernel {
