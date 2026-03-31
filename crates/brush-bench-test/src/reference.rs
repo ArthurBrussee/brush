@@ -40,16 +40,29 @@ async fn compare<B: Backend, const D1: usize>(
         "Tensor shapes for {name} must match"
     );
 
+    // Cast both to the lower precision of the two, so we test correctness
+    // at the actual working precision (e.g. if one is f16, compare in f16).
+    let target_dtype = if tensor_a.dtype().size() < tensor_b.dtype().size() {
+        tensor_a.dtype()
+    } else {
+        tensor_b.dtype()
+    };
     let data_a = tensor_a
+        .cast(target_dtype)
         .into_data_async()
         .await
         .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:a"))
-        .into_vec::<f32>()
-        .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:a"));
+        .convert::<f32>();
     let data_b = tensor_b
+        .cast(target_dtype)
         .into_data_async()
         .await
         .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:b"))
+        .convert::<f32>();
+    let data_a = data_a
+        .into_vec::<f32>()
+        .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:a"));
+    let data_b = data_b
         .into_vec::<f32>()
         .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:b"));
 
@@ -165,8 +178,9 @@ async fn test_reference() -> Result<()> {
         }
         let _ = (i, &diff_out.render_aux); // suppress unused warnings when rerun is off
 
-        // Check if images match.
-        compare("img", out.clone(), img_ref, 1e-5, 1e-5).await;
+        // Tolerance reflects f16 precision in the color pipeline: ProjectedSplat stores
+        // colors as f16, giving ~1e-3 relative precision that accumulates through blending.
+        compare("img", out.clone(), img_ref, 1e-5, 1e-2).await;
 
         let grads = (out.clone() - crab_tens.clone())
             .powi_scalar(2.0)
@@ -175,8 +189,20 @@ async fn test_reference() -> Result<()> {
 
         let v_coeffs_ref =
             safetensor_to_burn::<DiffBack, 3>(&tensors.tensor("v_coeffs")?, &device).inner();
-        let v_coeffs = splats.sh_coeffs.grad(&grads).context("coeffs grad")?;
-        compare("v_coeffs", v_coeffs, v_coeffs_ref, 1e-5, 1e-7).await;
+        // Compare DC gradient (first coeff) against reference slice.
+        let v_dc = splats.sh_coeffs_dc.grad(&grads).context("dc grad")?;
+        let [n, _, _] = v_dc.dims();
+        let v_dc_ref = v_coeffs_ref.clone().slice(s![0..n, 0..1]);
+        compare("v_coeffs_dc", v_dc, v_dc_ref, 2e-3, 2e-3).await;
+        // Compare rest gradient if present.
+        let [_, total_c, _] = v_coeffs_ref.dims();
+        if total_c > 1
+            && let Some(v_rest) = splats.sh_coeffs_rest.grad(&grads)
+        {
+            let v_rest_f32 = v_rest.cast(burn::tensor::FloatDType::F32);
+            let v_rest_ref = v_coeffs_ref.slice(s![0..n, 1..total_c]);
+            compare("v_coeffs_rest", v_rest_f32, v_rest_ref, 2e-3, 2e-3).await;
+        }
 
         let v_transforms = splats.transforms.grad(&grads).context("transforms grad")?;
         // Slice transforms gradient: means(0..3), quats(3..7), log_scales(7..10)

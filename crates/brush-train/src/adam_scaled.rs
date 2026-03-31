@@ -10,7 +10,7 @@ use burn::{
     },
     prelude::Backend,
     record::Record,
-    tensor::{Device, ElementConversion, Tensor, backend::AutodiffBackend},
+    tensor::{Device, ElementConversion, FloatDType, Tensor, backend::AutodiffBackend},
 };
 
 /// Adam optimizer with optional per-parameter second moment reduction.
@@ -113,6 +113,12 @@ impl<B: Backend> SimpleOptimizer<B> for AdamScaled {
         mut grad: Tensor<B, D>,
         state: Option<Self::State<D>>,
     ) -> (Tensor<B, D>, Option<Self::State<D>>) {
+        // Standard mixed-precision: optimizer math in f32 for numerical stability,
+        // then cast back to param dtype (e.g. f16 for SH coefficients).
+        let param_dtype: FloatDType = tensor.dtype().into();
+        let tensor_f32 = tensor.cast(FloatDType::F32);
+        grad = grad.cast(FloatDType::F32);
+
         let mut state_momentum = None;
         let mut scaling = None;
         let reduce = state.as_ref().is_some_and(|s| s.reduce_moment_2);
@@ -123,7 +129,7 @@ impl<B: Backend> SimpleOptimizer<B> for AdamScaled {
         }
 
         if let Some(weight_decay) = &self.weight_decay {
-            grad = weight_decay.transform(grad, tensor.clone());
+            grad = weight_decay.transform(grad, tensor_f32.clone());
         }
 
         let (grad, state_momentum) = self.momentum.transform(&grad, state_momentum, reduce);
@@ -140,7 +146,7 @@ impl<B: Backend> SimpleOptimizer<B> for AdamScaled {
             grad * lr
         };
 
-        (tensor - delta, Some(state))
+        ((tensor_f32 - delta).cast(param_dtype), Some(state))
     }
 
     fn to_device<const D: usize>(mut state: Self::State<D>, device: &Device<B>) -> Self::State<D> {

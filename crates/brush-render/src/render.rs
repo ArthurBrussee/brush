@@ -5,7 +5,6 @@ use crate::{
     gaussian_splats::SplatRenderMode,
     get_tile_offset::{CHECKS_PER_ITER, get_tile_offsets},
     render_aux::RenderOutput,
-    sh::sh_degree_from_coeffs,
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
 use brush_kernel::bytemuck;
@@ -34,8 +33,10 @@ impl SplatOps<Self> for MainBackendBase {
         camera: &Camera,
         img_size: glam::UVec2,
         transforms: FloatTensor<Self>,
-        sh_coeffs: FloatTensor<Self>,
+        sh_coeffs_dc: FloatTensor<Self>,
+        sh_coeffs_rest: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        sh_degree: u32,
         render_mode: SplatRenderMode,
         background: Vec3,
         bwd_info: bool,
@@ -46,7 +47,8 @@ impl SplatOps<Self> for MainBackendBase {
         );
 
         let transforms = into_contiguous(transforms);
-        let sh_coeffs = into_contiguous(sh_coeffs);
+        let sh_coeffs_dc = into_contiguous(sh_coeffs_dc);
+        let sh_coeffs_rest = into_contiguous(sh_coeffs_rest);
         let raw_opacities = into_contiguous(raw_opacities);
 
         let device = &transforms.device.clone();
@@ -54,12 +56,15 @@ impl SplatOps<Self> for MainBackendBase {
 
         DimCheck::new()
             .check_dims("transforms", &transforms, &["D".into(), 10.into()])
+            .check_dims(
+                "sh_coeffs_dc",
+                &sh_coeffs_dc,
+                &["D".into(), 1.into(), 3.into()],
+            )
             .check_dims("raw_opacities", &raw_opacities, &["D".into()]);
 
         let tile_bounds = calc_tile_bounds(img_size);
         let total_splats = transforms.shape()[0];
-
-        let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
         let mut project_uniforms = shaders::helpers::ProjectUniforms {
@@ -155,7 +160,8 @@ impl SplatOps<Self> for MainBackendBase {
                     KernelArguments::new()
                         .with_buffers(vec![
                             transforms.handle.clone().binding(),
-                            sh_coeffs.handle.binding(),
+                            sh_coeffs_dc.handle.binding(),
+                            sh_coeffs_rest.handle.binding(),
                             raw_opacities.handle.binding(),
                             global_from_compact_gid.handle.clone().binding(),
                             projected_splats.handle.clone().binding(),

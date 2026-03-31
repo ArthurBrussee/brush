@@ -1,3 +1,4 @@
+enable f16;
 #import helpers;
 
 @group(0) @binding(0) var<storage, read> transforms: array<f32>;

@@ -1,3 +1,5 @@
+enable f16;
+
 const TILE_WIDTH: u32 = 16u;
 const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 
@@ -78,20 +80,29 @@ struct ProjectedSplat {
     conic_x: f32,
     conic_y: f32,
     conic_z: f32,
-    color_r: f32,
-    color_g: f32,
-    color_b: f32,
+    // Opacity kept as f32 for precision (affects intersection counting and alpha blending).
     color_a: f32,
+    // RGB in f16 for memory savings (visually imperceptible).
+    color_r: f16,
+    color_g: f16,
+    color_b: f16,
+    _pad: f16,
 }
 
 fn create_projected_splat(xy: vec2f, conic: vec3f, color: vec4f) -> ProjectedSplat {
-    return ProjectedSplat(xy.x, xy.y, conic.x, conic.y, conic.z, color.r, color.g, color.b, color.a);
+    return ProjectedSplat(xy.x, xy.y, conic.x, conic.y, conic.z, color.a, f16(color.r), f16(color.g), f16(color.b), f16(0.0));
 }
 
 struct PackedVec3 {
     x: f32,
     y: f32,
     z: f32,
+}
+
+struct PackedVec3H {
+    x: f16,
+    y: f16,
+    z: f16,
 }
 
 fn get_bbox(center: vec2f, dims: vec2f, bounds: vec2u) -> vec4u {

@@ -2,7 +2,10 @@ use burn::{
     Tensor,
     module::{Module, Param, ParamId},
     prelude::Backend,
-    tensor::{TensorData, TensorPrimitive, activation::sigmoid, s},
+    tensor::{
+        DType, FloatDType, TensorCreationOptions, TensorData, TensorPrimitive, activation::sigmoid,
+        s,
+    },
 };
 use clap::ValueEnum;
 use glam::Vec3;
@@ -32,14 +35,22 @@ pub enum TextureMode {
 ///
 /// `transforms` stores means(3) + rotations(4) + log scales(3) = 10 floats per splat
 /// as a single contiguous [N, 10] tensor to minimize GPU shader bindings.
+///
+/// SH coefficients are split into DC (band 0, f32) and rest (bands 1+, f16) for
+/// mixed-precision training: f32 DC, f16 rest.
 #[derive(Module, Debug)]
 pub struct Splats<B: Backend> {
     pub transforms: Param<Tensor<B, 2>>,
-    pub sh_coeffs: Param<Tensor<B, 3>>,
+    /// DC (band 0) SH coefficients, shape [N, 1, 3], stored as f32.
+    pub sh_coeffs_dc: Param<Tensor<B, 3>>,
+    /// Higher-order SH coefficients (bands 1+), shape [N, C-1, 3], stored as f16.
+    pub sh_coeffs_rest: Param<Tensor<B, 3>>,
     pub raw_opacities: Param<Tensor<B, 1>>,
 
-    #[module(skip)] // TODO: Should be SplatRenderMode but not supported atm..
+    #[module(skip)]
     pub render_mip: bool,
+    #[module(skip)]
+    pub sh_degree: u32,
 }
 
 pub fn inverse_sigmoid(x: f32) -> f32 {
@@ -80,23 +91,33 @@ impl<B: Backend> Splats<B> {
 
     /// Set the SH degree of this splat to be equal to `sh_degree`
     pub fn with_sh_degree(mut self, sh_degree: u32) -> Self {
-        let n_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
-        let [n, cur_coeffs, _] = self.sh_coeffs.dims();
+        let n_rest = sh_coeffs_for_degree(sh_degree) as usize - 1;
+        let n = self.num_splats() as usize;
+        let cur_degree = self.sh_degree();
+        self.sh_degree = sh_degree;
 
-        self.sh_coeffs = self.sh_coeffs.map(|coeffs| {
-            let device = coeffs.device();
-            let tens = if cur_coeffs < n_coeffs {
-                Tensor::cat(
-                    vec![
-                        coeffs,
-                        Tensor::zeros([n, n_coeffs - cur_coeffs, 3], &device),
-                    ],
-                    1,
-                )
+        if n_rest == 0 {
+            // Degree 0: keep the dummy rest buffer as-is.
+            return self;
+        }
+
+        self.sh_coeffs_rest = self.sh_coeffs_rest.map(|rest| {
+            let device = rest.device();
+            let f16_opts = TensorCreationOptions::new(device).with_dtype(DType::F16);
+            if cur_degree == 0 {
+                // Was degree 0 (dummy buffer) — create fresh rest from scratch.
+                Tensor::<B, 3>::zeros([n, n_rest, 3], f16_opts)
             } else {
-                coeffs.slice(s![.., 0..n_coeffs])
-            };
-            tens.detach().require_grad()
+                let cur_rest = rest.dims()[1];
+                if cur_rest < n_rest {
+                    let zeros = Tensor::<B, 3>::zeros([n, n_rest - cur_rest, 3], f16_opts);
+                    Tensor::cat(vec![rest, zeros], 1)
+                } else {
+                    rest.slice(s![.., 0..n_rest])
+                }
+            }
+            .detach()
+            .require_grad()
         });
         self
     }
@@ -115,12 +136,40 @@ impl<B: Backend> Splats<B> {
 
         let transforms = Tensor::cat(vec![means, rotation, log_scales], 1);
 
+        // Split SH coefficients: DC (band 0) in f32, rest in f16.
+        let sh_coeffs_dc = sh_coeffs.clone().slice(s![.., 0..1]);
+        let [_, n_coeffs, _] = sh_coeffs.dims();
+        let f16_opts = TensorCreationOptions::new(sh_coeffs.device()).with_dtype(DType::F16);
+        let sh_coeffs_rest = if n_coeffs > 1 {
+            sh_coeffs.slice(s![.., 1..n_coeffs]).cast(FloatDType::F16)
+        } else {
+            // Degree 0: no rest coefficients. Allocate a minimal [1, 1, 3] dummy
+            // (GPU backends don't support zero-size resources). The shader won't
+            // read this because sh_degree == 0 returns before reading rest.
+            Tensor::<B, 3>::zeros([1, 1, 3], f16_opts)
+        };
+
         Self {
             transforms: Param::initialized(ParamId::new(), transforms.detach().require_grad()),
-            sh_coeffs: Param::initialized(ParamId::new(), sh_coeffs.detach().require_grad()),
+            sh_coeffs_dc: Param::initialized(ParamId::new(), sh_coeffs_dc.detach().require_grad()),
+            sh_coeffs_rest: Param::initialized(
+                ParamId::new(),
+                sh_coeffs_rest.detach().require_grad(),
+            ),
             raw_opacities: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
             render_mip: mode == SplatRenderMode::Mip,
+            sh_degree: sh_degree_from_coeffs(n_coeffs as u32),
         }
+    }
+
+    /// Get combined SH coefficients as a single f32 tensor (for serialization/export).
+    pub fn sh_coeffs_combined(&self) -> Tensor<B, 3> {
+        let dc = self.sh_coeffs_dc.val();
+        if self.sh_degree() == 0 {
+            return dc;
+        }
+        let rest = self.sh_coeffs_rest.val().cast(FloatDType::F32);
+        Tensor::cat(vec![dc, rest], 1)
     }
 
     /// Get means (positions) — slice of transforms columns 0..3.
@@ -151,8 +200,7 @@ impl<B: Backend> Splats<B> {
     }
 
     pub fn sh_degree(&self) -> u32 {
-        let [_, coeffs, _] = self.sh_coeffs.dims();
-        sh_degree_from_coeffs(coeffs as u32)
+        self.sh_degree
     }
 
     pub fn device(&self) -> B::Device {
@@ -180,7 +228,20 @@ impl<B: Backend> Splats<B> {
             let scales = self.scales();
             validate_tensor_val(scales.clone(), "scales", Some(1e-20), Some(10000.0)).await;
             // Validate SH coefficients
-            validate_tensor_val(self.sh_coeffs.val(), "sh_coeffs", Some(-5.0), Some(5.0)).await;
+            validate_tensor_val(
+                self.sh_coeffs_dc.val(),
+                "sh_coeffs_dc",
+                Some(-5.0),
+                Some(5.0),
+            )
+            .await;
+            validate_tensor_val(
+                self.sh_coeffs_rest.val().cast(FloatDType::F32),
+                "sh_coeffs_rest",
+                Some(-5.0),
+                Some(5.0),
+            )
+            .await;
             // Validate pre-activation opacity (raw_opacity) and post-activation opacity
             validate_tensor_val(
                 self.raw_opacities.val(),
@@ -211,12 +272,21 @@ impl<B: Backend> Splats<B> {
                 n_opacity, num_splats as usize,
                 "Inconsistent number of splats in opacity"
             );
-            let [n_sh, _coeffs, sh_dims] = self.sh_coeffs.dims();
-            assert_eq!(sh_dims, 3, "SH coefficients must have 3 color channels");
+            let [n_dc, dc_coeffs, dc_dims] = self.sh_coeffs_dc.dims();
+            assert_eq!(dc_dims, 3, "SH DC must have 3 color channels");
+            assert_eq!(dc_coeffs, 1, "SH DC must have exactly 1 coefficient");
             assert_eq!(
-                n_sh, num_splats as usize,
-                "Inconsistent number of splats in SH coeffs"
+                n_dc, num_splats as usize,
+                "Inconsistent number of splats in SH DC"
             );
+            if self.sh_degree() > 0 {
+                let [n_rest, _rest_coeffs, rest_dims] = self.sh_coeffs_rest.dims();
+                assert_eq!(rest_dims, 3, "SH rest must have 3 color channels");
+                assert_eq!(
+                    n_rest, num_splats as usize,
+                    "Inconsistent number of splats in SH rest"
+                );
+            }
         }
     }
 }
@@ -236,6 +306,12 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
     texture_mode: TextureMode,
 ) -> (Tensor<B, 3>, RenderAux<B>) {
     splats.clone().validate_values().await;
+
+    let sh_degree = splats.sh_degree();
+    let sh_coeffs_dc = splats.sh_coeffs_dc.into_value();
+    let sh_coeffs_rest = splats.sh_coeffs_rest.into_value();
+    let raw_opacities = splats.raw_opacities.into_value();
+    let render_mip = splats.render_mip;
 
     let transforms = if let Some(scale) = splat_scale {
         let t = splats.transforms.into_value();
@@ -257,8 +333,10 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
         camera,
         img_size,
         transforms.into_primitive().tensor(),
-        splats.sh_coeffs.into_value().into_primitive().tensor(),
-        splats.raw_opacities.into_value().into_primitive().tensor(),
+        sh_coeffs_dc.into_primitive().tensor(),
+        sh_coeffs_rest.into_primitive().tensor(),
+        raw_opacities.into_primitive().tensor(),
+        sh_degree,
         render_mode,
         background,
         use_float,

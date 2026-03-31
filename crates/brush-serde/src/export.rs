@@ -84,7 +84,7 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<DynamicPly, Ex
     let data = Transaction::default()
         .register(splats.transforms.val())
         .register(splats.raw_opacities.val())
-        .register(splats.sh_coeffs.val().permute([0, 2, 1])) // Permute to inria format ([n, channel, coeffs]).)
+        .register(splats.sh_coeffs_combined().permute([0, 2, 1])) // Permute to inria format ([n, channel, coeffs]).
         .execute_async()
         .await
         .map_err(|_fetch| ExportError::FetchFailed)?;
@@ -98,7 +98,7 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<DynamicPly, Ex
         .try_into()
         .map_err(|_convert| ExportError::DataConversion)?;
 
-    let sh_coeffs_num = splats.sh_coeffs.dims()[1];
+    let sh_coeffs_num = sh_coeffs_for_degree(splats.sh_degree()) as usize;
     let sh_degree = splats.sh_degree();
 
     // Calculate how many rest coefficients we should export based on the actual SH degree
@@ -210,16 +210,14 @@ mod tests {
 
     async fn assert_coeffs_match(orig: &Splats<MainBackend>, imported: &Splats<MainBackend>) {
         let orig_sh: Vec<f32> = orig
-            .sh_coeffs
-            .val()
+            .sh_coeffs_combined()
             .into_data_async()
             .await
             .unwrap()
             .into_vec()
             .expect("Failed to convert SH coefficients to vector");
         let import_sh: Vec<f32> = imported
-            .sh_coeffs
-            .val()
+            .sh_coeffs_combined()
             .into_data_async()
             .await
             .unwrap()
@@ -228,9 +226,12 @@ mod tests {
 
         assert_eq!(orig_sh.len(), import_sh.len());
         for (i, (&orig, &imported)) in orig_sh.iter().zip(import_sh.iter()).enumerate() {
+            // Tolerance accounts for f16 rest coefficients (relative precision ~1e-3).
+            let tol = 1e-3_f32 * orig.abs().max(1e-6);
             assert!(
-                (orig - imported).abs() < 1e-6_f32,
-                "SH coeffs mismatch at index {i}: orig={orig}, imported={imported}",
+                (orig - imported).abs() < tol,
+                "SH coeffs mismatch at index {i}: orig={orig}, imported={imported}, diff={}, tol={tol}",
+                (orig - imported).abs(),
             );
         }
     }

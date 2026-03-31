@@ -171,9 +171,31 @@ impl SplatBwdOps<Self> for MainBackendBase {
             }
         });
 
+        // Split coefficient gradients: DC [N, 1, 3] stays f32, rest [N, C-1, 3] cast to f16.
+        let total_coeffs = v_coeffs.shape()[1];
+        let v_coeffs_dc = Self::float_slice(
+            v_coeffs.clone(),
+            &[(0..num_points).into(), (0..1).into(), (0..3).into()],
+        );
+        let v_coeffs_rest = if total_coeffs > 1 {
+            let rest = Self::float_slice(
+                v_coeffs,
+                &[
+                    (0..num_points).into(),
+                    (1..total_coeffs).into(),
+                    (0..3).into(),
+                ],
+            );
+            Self::float_cast(rest, FloatDType::F16)
+        } else {
+            // Dummy gradient for degree 0 (no rest coefficients).
+            Self::float_zeros([1, 1, 3].into(), &v_transforms.device, FloatDType::F16)
+        };
+
         SplatGrads {
             v_transforms,
-            v_coeffs,
+            v_coeffs_dc,
+            v_coeffs_rest,
             v_raw_opac,
             v_refine_weight,
         }

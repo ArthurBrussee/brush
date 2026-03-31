@@ -38,7 +38,12 @@ pub async fn decimate_to_count(
     );
 
     splats.transforms = splats.transforms.map(|t| t.select(0, keep_tensor.clone()));
-    splats.sh_coeffs = splats.sh_coeffs.map(|c| c.select(0, keep_tensor.clone()));
+    splats.sh_coeffs_dc = splats
+        .sh_coeffs_dc
+        .map(|c| c.select(0, keep_tensor.clone()));
+    splats.sh_coeffs_rest = splats
+        .sh_coeffs_rest
+        .map(|c| c.select(0, keep_tensor.clone()));
     splats.raw_opacities = splats
         .raw_opacities
         .map(|o| o.select(0, keep_tensor.clone()));
