@@ -54,8 +54,6 @@ skip = [
     { name = 'thiserror' },
     { name = 'thiserror-impl' },
 
-    { name = "bit-vec" },
-
     # Other
     { name = "core-foundation" },     # Egui has two?
     { name = 'windows_x86_64_msvc' }, # Old version from winit.
@@ -80,7 +78,6 @@ skip = [
     { name = "smithay-client-toolkit" },
     { name = "foldhash" },
 
-    { name = "emath" },
     { name = "calloop-wayland-source" },
     { name = "calloop" },
 

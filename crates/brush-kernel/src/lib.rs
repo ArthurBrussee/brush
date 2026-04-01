@@ -77,7 +77,7 @@ pub fn create_meta_binding<T: NoUninit>(val: T) -> MetadataBindingInfo {
     // Copy data to u64. If length of T is not % 8, this will correctly
     // pad with zeros.
     let data: Vec<u64> = bytemuck::pod_collect_to_vec(&[val]);
-    MetadataBindingInfo::new(data, 0, 0)
+    MetadataBindingInfo::new(data, 0)
 }
 
 /// Create a buffer to use as a shader uniform, from a structure.

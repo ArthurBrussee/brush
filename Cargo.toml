@@ -114,7 +114,7 @@ eframe = { version = "0.34", default-features = false, features = [
 
 egui_tiles = { version = "0.15", features = ["serde"] }
 
-rerun = { version = "0.30", default-features = false, features = [
+rerun = { version = "0.31", default-features = false, features = [
     'sdk',
     'glam',
 ] }
