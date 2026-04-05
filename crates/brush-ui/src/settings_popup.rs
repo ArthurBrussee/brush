@@ -18,6 +18,16 @@ pub(crate) struct SettingsPopup {
     save_status: Option<(String, web_time::Instant)>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum QualityPreset {
+    Quick,
+    Medium,
+    #[default]
+    High,
+    Best,
+    Custom,
+}
+
 fn slider<T>(
     ui: &mut Ui,
     value: &mut T,
@@ -38,365 +48,530 @@ fn slider<T>(
     ui.add_enabled(enabled, s);
 }
 
+fn approx_eq_f32(a: f32, b: f32) -> bool {
+    (a - b).abs() <= 1e-6 * a.abs().max(b.abs()).max(1.0)
+}
+
+fn apply_quality_preset(args: &mut TrainStreamConfig, preset: QualityPreset) {
+    match preset {
+        QualityPreset::Quick => {
+            args.train_config.total_train_iters = 7_000;
+            args.train_config.max_splats = 2_000_000;
+            args.train_config.refine_every = 200;
+            args.train_config.growth_grad_threshold = 0.005;
+            args.train_config.growth_select_fraction = 0.1;
+            args.train_config.growth_stop_iter = 5_000;
+            args.model_config.sh_degree = 2;
+            args.load_config.max_resolution = 800;
+        }
+        QualityPreset::Medium => {
+            args.train_config.total_train_iters = 15_000;
+            args.train_config.max_splats = 5_000_000;
+            args.train_config.refine_every = 200;
+            args.train_config.growth_grad_threshold = 0.004;
+            args.train_config.growth_select_fraction = 0.15;
+            args.train_config.growth_stop_iter = 10_000;
+            args.model_config.sh_degree = 3;
+            args.load_config.max_resolution = 1_280;
+        }
+        QualityPreset::High => {
+            args.train_config.total_train_iters = 30_000;
+            args.train_config.max_splats = 10_000_000;
+            args.train_config.refine_every = 200;
+            args.train_config.growth_grad_threshold = 0.003;
+            args.train_config.growth_select_fraction = 0.2;
+            args.train_config.growth_stop_iter = 15_000;
+            args.model_config.sh_degree = 3;
+            args.load_config.max_resolution = 1_920;
+        }
+        QualityPreset::Best => {
+            args.train_config.total_train_iters = 50_000;
+            args.train_config.max_splats = 10_000_000;
+            args.train_config.refine_every = 150;
+            args.train_config.growth_grad_threshold = 0.002;
+            args.train_config.growth_select_fraction = 0.2;
+            args.train_config.growth_stop_iter = 20_000;
+            args.model_config.sh_degree = 4;
+            args.load_config.max_resolution = 4_096;
+        }
+        QualityPreset::Custom => {}
+    }
+}
+
+fn current_quality_preset(args: &TrainStreamConfig) -> QualityPreset {
+    let tc = &args.train_config;
+    let model = &args.model_config;
+    let load = &args.load_config;
+
+    if tc.total_train_iters == 7_000
+        && tc.max_splats == 2_000_000
+        && tc.refine_every == 200
+        && approx_eq_f32(tc.growth_grad_threshold, 0.005)
+        && approx_eq_f32(tc.growth_select_fraction, 0.1)
+        && tc.growth_stop_iter == 5_000
+        && model.sh_degree == 2
+        && load.max_resolution == 800
+    {
+        QualityPreset::Quick
+    } else if tc.total_train_iters == 15_000
+        && tc.max_splats == 5_000_000
+        && tc.refine_every == 200
+        && approx_eq_f32(tc.growth_grad_threshold, 0.004)
+        && approx_eq_f32(tc.growth_select_fraction, 0.15)
+        && tc.growth_stop_iter == 10_000
+        && model.sh_degree == 3
+        && load.max_resolution == 1_280
+    {
+        QualityPreset::Medium
+    } else if tc.total_train_iters == 30_000
+        && tc.max_splats == 10_000_000
+        && tc.refine_every == 200
+        && approx_eq_f32(tc.growth_grad_threshold, 0.003)
+        && approx_eq_f32(tc.growth_select_fraction, 0.2)
+        && tc.growth_stop_iter == 15_000
+        && model.sh_degree == 3
+        && load.max_resolution == 1_920
+    {
+        QualityPreset::High
+    } else if tc.total_train_iters == 50_000
+        && tc.max_splats == 10_000_000
+        && tc.refine_every == 150
+        && approx_eq_f32(tc.growth_grad_threshold, 0.002)
+        && approx_eq_f32(tc.growth_select_fraction, 0.2)
+        && tc.growth_stop_iter == 20_000
+        && model.sh_degree == 4
+        && load.max_resolution == 4_096
+    {
+        QualityPreset::Best
+    } else {
+        QualityPreset::Custom
+    }
+}
+
+fn quality_preset_button(
+    ui: &mut Ui,
+    args: &mut TrainStreamConfig,
+    current: QualityPreset,
+    enabled: bool,
+    preset: QualityPreset,
+    label: &str,
+) {
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new(label).selected(current == preset),
+    );
+
+    if response.clicked() {
+        apply_quality_preset(args, preset);
+    }
+}
+
 /// Draw all settings controls for a `TrainStreamConfig`.
 /// When `enabled` is false, individual widgets are greyed out and non-interactive,
 /// but collapsing sections and layout remain fully functional.
 pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: bool) {
-    ui.heading("Training");
-    slider(
-        ui,
-        &mut args.train_config.total_train_iters,
-        1..=50000,
-        " steps",
-        false,
-        enabled,
-    );
+    let current_preset = current_quality_preset(args);
 
-    ui.label("Max Splats Cap");
-    ui.add_enabled(
-        enabled,
-        Slider::new(&mut args.train_config.max_splats, 1000000..=10000000)
-            .custom_formatter(|n, _| format!("{:.0}k", n as f32 / 1000.0))
-            .custom_parser(|str| {
-                str.trim()
-                    .strip_suffix('k')
-                    .and_then(|s| s.parse::<f64>().ok().map(|n| n * 1000.0))
-                    .or_else(|| str.trim().parse::<f64>().ok())
-            })
-            .clamping(egui::SliderClamping::Never),
-    );
+    ui.heading("Quality");
+    ui.label("Choose a preset, or open Advanced to tune the training manually.");
+    ui.horizontal_wrapped(|ui| {
+        quality_preset_button(
+            ui,
+            args,
+            current_preset,
+            enabled,
+            QualityPreset::Quick,
+            "Quick",
+        );
+        quality_preset_button(
+            ui,
+            args,
+            current_preset,
+            enabled,
+            QualityPreset::Medium,
+            "Medium",
+        );
+        quality_preset_button(
+            ui,
+            args,
+            current_preset,
+            enabled,
+            QualityPreset::High,
+            "High",
+        );
+        quality_preset_button(
+            ui,
+            args,
+            current_preset,
+            enabled,
+            QualityPreset::Best,
+            "Best",
+        );
 
-    ui.collapsing("Learning rates", |ui| {
-        let tc = &mut args.train_config;
-        slider(
-            ui,
-            &mut tc.lr_mean,
-            1e-7..=1e-4,
-            "Mean learning rate start",
-            true,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.lr_mean_end,
-            1e-7..=1e-4,
-            "Mean learning rate end",
-            true,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.mean_noise_weight,
-            0.0..=200.0,
-            "Mean noise weight",
-            true,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.lr_coeffs_dc,
-            1e-4..=1e-2,
-            "SH coefficients",
-            true,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.lr_coeffs_sh_scale,
-            1.0..=50.0,
-            "SH division for higher orders",
-            false,
-            enabled,
-        );
-        slider(ui, &mut tc.lr_opac, 1e-3..=1e-1, "opacity", true, enabled);
-        slider(ui, &mut tc.lr_scale, 1e-3..=1e-1, "scale", true, enabled);
-        slider(
-            ui,
-            &mut tc.lr_scale_end,
-            1e-4..=1e-2,
-            "scale (end)",
-            true,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.lr_rotation,
-            1e-4..=1e-2,
-            "rotation",
-            true,
-            enabled,
-        );
+        if current_preset == QualityPreset::Custom {
+            ui.add_enabled(false, egui::Button::new("Custom").selected(true));
+        }
     });
 
-    ui.collapsing("Growth & refinement", |ui| {
-        let tc = &mut args.train_config;
-        slider(
-            ui,
-            &mut tc.refine_every,
-            50..=300,
-            "Refinement frequency",
-            false,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.growth_grad_threshold,
-            0.0001..=0.001,
-            "Growth threshold",
-            true,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.growth_select_fraction,
-            0.01..=0.2,
-            "Growth selection fraction",
-            false,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.growth_stop_iter,
-            5000..=20000,
-            "Growth stop iteration",
-            false,
-            enabled,
-        );
-    });
+    ui.add_space(12.0);
 
-    ui.collapsing("Losses", |ui| {
-        let tc = &mut args.train_config;
+    ui.collapsing("Advanced", |ui| {
+        ui.heading("Training");
         slider(
             ui,
-            &mut tc.ssim_weight,
-            0.0..=1.0,
-            "ssim weight",
+            &mut args.train_config.total_train_iters,
+            1..=50000,
+            " steps",
             false,
             enabled,
         );
-        slider(
-            ui,
-            &mut tc.opac_decay,
-            0.0..=0.01,
-            "Splat opacity decay",
-            true,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.scale_decay,
-            0.0..=0.01,
-            "Splat scale decay",
-            true,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.match_alpha_weight,
-            0.01..=1.0,
-            "Alpha match weight",
-            false,
-            enabled,
-        );
-    });
 
-    ui.collapsing("Background", |ui| {
-        let tc = &mut args.train_config;
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(enabled, |ui| {
-                let mut color = egui::Color32::from_rgb(
-                    (tc.background_color[0] * 255.0) as u8,
-                    (tc.background_color[1] * 255.0) as u8,
-                    (tc.background_color[2] * 255.0) as u8,
-                );
-                ui.label("Color");
-                if ui.color_edit_button_srgba(&mut color).changed() {
-                    tc.background_color = vec![
-                        color.r() as f32 / 255.0,
-                        color.g() as f32 / 255.0,
-                        color.b() as f32 / 255.0,
-                    ];
-                }
-            });
-        });
-        slider(
-            ui,
-            &mut tc.background_noise_strength,
-            0.0..=1.0,
-            "Noise strength",
-            false,
+        ui.label("Max Splats Cap");
+        ui.add_enabled(
             enabled,
+            Slider::new(&mut args.train_config.max_splats, 1000000..=10000000)
+                .custom_formatter(|n, _| format!("{:.0}k", n as f32 / 1000.0))
+                .custom_parser(|str| {
+                    str.trim()
+                        .strip_suffix('k')
+                        .and_then(|s| s.parse::<f64>().ok().map(|n| n * 1000.0))
+                        .or_else(|| str.trim().parse::<f64>().ok())
+                })
+                .clamping(egui::SliderClamping::Never),
         );
-    });
 
-    {
-        let tc = &mut args.train_config;
-        let lod_label = if tc.lod_levels == 1 {
-            "LOD level"
-        } else {
-            "LOD levels"
-        };
-        slider(ui, &mut tc.lod_levels, 0..=8, lod_label, false, enabled);
-        if tc.lod_levels > 0 {
+        ui.collapsing("Learning rates", |ui| {
+            let tc = &mut args.train_config;
             slider(
                 ui,
-                &mut tc.lod_refine_steps,
-                1..=50000,
-                "Refine steps per LOD",
+                &mut tc.lr_mean,
+                1e-7..=1e-4,
+                "Mean learning rate start",
+                true,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.lr_mean_end,
+                1e-7..=1e-4,
+                "Mean learning rate end",
+                true,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.mean_noise_weight,
+                0.0..=200.0,
+                "Mean noise weight",
+                true,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.lr_coeffs_dc,
+                1e-4..=1e-2,
+                "SH coefficients",
+                true,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.lr_coeffs_sh_scale,
+                1.0..=50.0,
+                "SH division for higher orders",
                 false,
                 enabled,
             );
+            slider(ui, &mut tc.lr_opac, 1e-3..=1e-1, "opacity", true, enabled);
+            slider(ui, &mut tc.lr_scale, 1e-3..=1e-1, "scale", true, enabled);
+            slider(
+                ui,
+                &mut tc.lr_scale_end,
+                1e-4..=1e-2,
+                "scale (end)",
+                true,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.lr_rotation,
+                1e-4..=1e-2,
+                "rotation",
+                true,
+                enabled,
+            );
+        });
+
+        ui.collapsing("Growth & refinement", |ui| {
+            let tc = &mut args.train_config;
+            slider(
+                ui,
+                &mut tc.refine_every,
+                50..=300,
+                "Refinement frequency",
+                false,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.growth_grad_threshold,
+                0.0001..=0.001,
+                "Growth threshold",
+                true,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.growth_select_fraction,
+                0.01..=0.2,
+                "Growth selection fraction",
+                false,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.growth_stop_iter,
+                5000..=20000,
+                "Growth stop iteration",
+                false,
+                enabled,
+            );
+        });
+
+        ui.collapsing("Losses", |ui| {
+            let tc = &mut args.train_config;
+            slider(
+                ui,
+                &mut tc.ssim_weight,
+                0.0..=1.0,
+                "ssim weight",
+                false,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.opac_decay,
+                0.0..=0.01,
+                "Splat opacity decay",
+                true,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.scale_decay,
+                0.0..=0.01,
+                "Splat scale decay",
+                true,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.match_alpha_weight,
+                0.01..=1.0,
+                "Alpha match weight",
+                false,
+                enabled,
+            );
+        });
+
+        ui.collapsing("Background", |ui| {
+            let tc = &mut args.train_config;
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(enabled, |ui| {
+                    let mut color = egui::Color32::from_rgb(
+                        (tc.background_color[0] * 255.0) as u8,
+                        (tc.background_color[1] * 255.0) as u8,
+                        (tc.background_color[2] * 255.0) as u8,
+                    );
+                    ui.label("Color");
+                    if ui.color_edit_button_srgba(&mut color).changed() {
+                        tc.background_color = vec![
+                            color.r() as f32 / 255.0,
+                            color.g() as f32 / 255.0,
+                            color.b() as f32 / 255.0,
+                        ];
+                    }
+                });
+            });
+            slider(
+                ui,
+                &mut tc.background_noise_strength,
+                0.0..=1.0,
+                "Noise strength",
+                false,
+                enabled,
+            );
+        });
+
+        {
+            let tc = &mut args.train_config;
+            let lod_label = if tc.lod_levels == 1 {
+                "LOD level"
+            } else {
+                "LOD levels"
+            };
+            slider(ui, &mut tc.lod_levels, 0..=8, lod_label, false, enabled);
+            if tc.lod_levels > 0 {
+                slider(
+                    ui,
+                    &mut tc.lod_refine_steps,
+                    1..=50000,
+                    "Refine steps per LOD",
+                    false,
+                    enabled,
+                );
+                ui.add_enabled(
+                    enabled,
+                    Slider::new(&mut tc.lod_decimation_keep, 1..=100)
+                        .clamping(egui::SliderClamping::Never)
+                        .suffix("% splats / level"),
+                );
+                ui.add_enabled(
+                    enabled,
+                    Slider::new(&mut tc.lod_image_scale, 1..=100)
+                        .clamping(egui::SliderClamping::Never)
+                        .suffix("% image scale / level"),
+                );
+            }
+        }
+
+        ui.add_space(16.0);
+
+        ui.heading("Model");
+        ui.label("Spherical Harmonics Degree:");
+        ui.add_enabled(
+            enabled,
+            Slider::new(&mut args.model_config.sh_degree, 0..=4),
+        );
+
+        let mut render_mode_enabled = args.train_config.render_mode.is_some();
+        ui.add_enabled(
+            enabled,
+            egui::Checkbox::new(&mut render_mode_enabled, "Render mode"),
+        );
+        if enabled && render_mode_enabled != args.train_config.render_mode.is_some() {
+            args.train_config.render_mode = if render_mode_enabled {
+                Some(SplatRenderMode::Mip)
+            } else {
+                None
+            };
+        }
+        if let Some(ref mut render_mode) = args.train_config.render_mode {
+            ui.add_enabled_ui(enabled, |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(render_mode, SplatRenderMode::Default, "Default");
+                    ui.selectable_value(render_mode, SplatRenderMode::Mip, "Mip");
+                });
+            });
+        }
+
+        ui.add_space(16.0);
+
+        ui.heading("Dataset");
+        ui.label("Max image resolution");
+        slider(
+            ui,
+            &mut args.load_config.max_resolution,
+            32..=4096,
+            "",
+            false,
+            enabled,
+        );
+
+        let mut limit_frames = args.load_config.max_frames.is_some();
+        ui.add_enabled(
+            enabled,
+            egui::Checkbox::new(&mut limit_frames, "Limit max frames"),
+        );
+        if enabled && limit_frames != args.load_config.max_frames.is_some() {
+            args.load_config.max_frames = if limit_frames { Some(32) } else { None };
+        }
+        if let Some(max_frames) = args.load_config.max_frames.as_mut() {
+            slider(ui, max_frames, 1..=256, "", false, enabled);
+        }
+
+        let mut use_eval_split = args.load_config.eval_split_every.is_some();
+        ui.add_enabled(
+            enabled,
+            egui::Checkbox::new(&mut use_eval_split, "Split dataset for evaluation"),
+        );
+        if enabled && use_eval_split != args.load_config.eval_split_every.is_some() {
+            args.load_config.eval_split_every = if use_eval_split { Some(8) } else { None };
+        }
+        if let Some(eval_split) = args.load_config.eval_split_every.as_mut() {
             ui.add_enabled(
                 enabled,
-                Slider::new(&mut tc.lod_decimation_keep, 1..=100)
+                Slider::new(eval_split, 2..=32)
                     .clamping(egui::SliderClamping::Never)
-                    .suffix("% splats / level"),
+                    .prefix("1 out of ")
+                    .suffix(" frames"),
             );
+        }
+
+        let mut subsample_frames = args.load_config.subsample_frames.is_some();
+        ui.add_enabled(
+            enabled,
+            egui::Checkbox::new(&mut subsample_frames, "Subsample frames"),
+        );
+        if enabled && subsample_frames != args.load_config.subsample_frames.is_some() {
+            args.load_config.subsample_frames = if subsample_frames { Some(2) } else { None };
+        }
+        if let Some(subsample) = args.load_config.subsample_frames.as_mut() {
             ui.add_enabled(
                 enabled,
-                Slider::new(&mut tc.lod_image_scale, 1..=100)
+                Slider::new(subsample, 2..=20)
                     .clamping(egui::SliderClamping::Never)
-                    .suffix("% image scale / level"),
+                    .prefix("Load every 1/")
+                    .suffix(" frames"),
             );
         }
-    }
 
-    ui.add_space(16.0);
-
-    ui.heading("Model");
-    ui.label("Spherical Harmonics Degree:");
-    ui.add_enabled(
-        enabled,
-        Slider::new(&mut args.model_config.sh_degree, 0..=4),
-    );
-
-    let mut render_mode_enabled = args.train_config.render_mode.is_some();
-    ui.add_enabled(
-        enabled,
-        egui::Checkbox::new(&mut render_mode_enabled, "Render mode"),
-    );
-    if enabled && render_mode_enabled != args.train_config.render_mode.is_some() {
-        args.train_config.render_mode = if render_mode_enabled {
-            Some(SplatRenderMode::Mip)
-        } else {
-            None
-        };
-    }
-    if let Some(ref mut render_mode) = args.train_config.render_mode {
-        ui.add_enabled_ui(enabled, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(render_mode, SplatRenderMode::Default, "Default");
-                ui.selectable_value(render_mode, SplatRenderMode::Mip, "Mip");
-            });
-        });
-    }
-
-    ui.add_space(16.0);
-
-    ui.heading("Dataset");
-    ui.label("Max image resolution");
-    slider(
-        ui,
-        &mut args.load_config.max_resolution,
-        32..=4096,
-        "",
-        false,
-        enabled,
-    );
-
-    let mut limit_frames = args.load_config.max_frames.is_some();
-    ui.add_enabled(
-        enabled,
-        egui::Checkbox::new(&mut limit_frames, "Limit max frames"),
-    );
-    if enabled && limit_frames != args.load_config.max_frames.is_some() {
-        args.load_config.max_frames = if limit_frames { Some(32) } else { None };
-    }
-    if let Some(max_frames) = args.load_config.max_frames.as_mut() {
-        slider(ui, max_frames, 1..=256, "", false, enabled);
-    }
-
-    let mut use_eval_split = args.load_config.eval_split_every.is_some();
-    ui.add_enabled(
-        enabled,
-        egui::Checkbox::new(&mut use_eval_split, "Split dataset for evaluation"),
-    );
-    if enabled && use_eval_split != args.load_config.eval_split_every.is_some() {
-        args.load_config.eval_split_every = if use_eval_split { Some(8) } else { None };
-    }
-    if let Some(eval_split) = args.load_config.eval_split_every.as_mut() {
+        let mut subsample_points = args.load_config.subsample_points.is_some();
         ui.add_enabled(
             enabled,
-            Slider::new(eval_split, 2..=32)
-                .clamping(egui::SliderClamping::Never)
-                .prefix("1 out of ")
-                .suffix(" frames"),
+            egui::Checkbox::new(&mut subsample_points, "Subsample points"),
         );
-    }
-
-    let mut subsample_frames = args.load_config.subsample_frames.is_some();
-    ui.add_enabled(
-        enabled,
-        egui::Checkbox::new(&mut subsample_frames, "Subsample frames"),
-    );
-    if enabled && subsample_frames != args.load_config.subsample_frames.is_some() {
-        args.load_config.subsample_frames = if subsample_frames { Some(2) } else { None };
-    }
-    if let Some(subsample) = args.load_config.subsample_frames.as_mut() {
-        ui.add_enabled(
-            enabled,
-            Slider::new(subsample, 2..=20)
-                .clamping(egui::SliderClamping::Never)
-                .prefix("Load every 1/")
-                .suffix(" frames"),
-        );
-    }
-
-    let mut subsample_points = args.load_config.subsample_points.is_some();
-    ui.add_enabled(
-        enabled,
-        egui::Checkbox::new(&mut subsample_points, "Subsample points"),
-    );
-    if enabled && subsample_points != args.load_config.subsample_points.is_some() {
-        args.load_config.subsample_points = if subsample_points { Some(2) } else { None };
-    }
-    if let Some(subsample) = args.load_config.subsample_points.as_mut() {
-        ui.add_enabled(
-            enabled,
-            Slider::new(subsample, 2..=20)
-                .clamping(egui::SliderClamping::Never)
-                .prefix("Load every 1/")
-                .suffix(" points"),
-        );
-    }
-
-    let mut alpha_mode_enabled = args.load_config.alpha_mode.is_some();
-    ui.add_enabled(
-        enabled,
-        egui::Checkbox::new(&mut alpha_mode_enabled, "Force alpha mode"),
-    );
-    if enabled && alpha_mode_enabled != args.load_config.alpha_mode.is_some() {
-        args.load_config.alpha_mode = if alpha_mode_enabled {
-            Some(AlphaMode::default())
-        } else {
-            None
-        };
-    }
-
-    if alpha_mode_enabled {
-        let mut alpha_mode = args.load_config.alpha_mode.unwrap_or_default();
-        ui.add_enabled_ui(enabled, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut alpha_mode, AlphaMode::Masked, "Masked");
-                ui.selectable_value(&mut alpha_mode, AlphaMode::Transparent, "Transparent");
-            });
-        });
-        if enabled {
-            args.load_config.alpha_mode = Some(alpha_mode);
+        if enabled && subsample_points != args.load_config.subsample_points.is_some() {
+            args.load_config.subsample_points = if subsample_points { Some(2) } else { None };
         }
-    }
+        if let Some(subsample) = args.load_config.subsample_points.as_mut() {
+            ui.add_enabled(
+                enabled,
+                Slider::new(subsample, 2..=20)
+                    .clamping(egui::SliderClamping::Never)
+                    .prefix("Load every 1/")
+                    .suffix(" points"),
+            );
+        }
 
-    ui.add_space(16.0);
+        let mut alpha_mode_enabled = args.load_config.alpha_mode.is_some();
+        ui.add_enabled(
+            enabled,
+            egui::Checkbox::new(&mut alpha_mode_enabled, "Force alpha mode"),
+        );
+        if enabled && alpha_mode_enabled != args.load_config.alpha_mode.is_some() {
+            args.load_config.alpha_mode = if alpha_mode_enabled {
+                Some(AlphaMode::default())
+            } else {
+                None
+            };
+        }
+
+        if alpha_mode_enabled {
+            let mut alpha_mode = args.load_config.alpha_mode.unwrap_or_default();
+            ui.add_enabled_ui(enabled, |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut alpha_mode, AlphaMode::Masked, "Masked");
+                    ui.selectable_value(&mut alpha_mode, AlphaMode::Transparent, "Transparent");
+                });
+            });
+            if enabled {
+                args.load_config.alpha_mode = Some(alpha_mode);
+            }
+        }
+
+        ui.add_space(16.0);
+    });
 
     ui.heading("Process");
     ui.label("Random seed:");
