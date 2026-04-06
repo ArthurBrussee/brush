@@ -58,7 +58,7 @@ fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
     (x.clone() / (1.0f32 - x)).log()
 }
 
-fn create_default_optimizer() -> OptimizerType {
+fn create_optimizer() -> OptimizerType {
     AdamScaledConfig::new().with_epsilon(1e-15).init()
 }
 
@@ -227,11 +227,12 @@ impl SplatTrainer {
             let sh_lr_scales = Tensor::<_, 1>::from_floats(sh_lr_scales.as_slice(), &device)
                 .reshape([1, coeff_count, 1]);
 
-            create_default_optimizer().load_record(HashMap::from([(
+            create_optimizer().load_record(HashMap::from([(
                 splats.sh_coeffs.id,
                 AdaptorRecord::from_state(AdamState {
                     momentum: None,
                     scaling: Some(sh_lr_scales),
+                    reduce_moment_2: self.config.reduce_second_moment,
                 }),
             )]))
         });
@@ -264,9 +265,10 @@ impl SplatTrainer {
                 AdaptorRecord::from_state(AdamState {
                     momentum,
                     scaling: Some(transform_scaling),
+                    reduce_moment_2: false,
                 }),
             );
-            *optimizer = create_default_optimizer().load_record(record);
+            *optimizer = create_optimizer().load_record(record);
         }
 
         splats = trace_span!("Optimizer step").in_scope(|| {
@@ -528,7 +530,6 @@ impl SplatTrainer {
             });
 
             // Concatenate new splats.
-            let sh_dim = splats.sh_coeffs.dims()[1];
             // Build new transforms row: means(3) + rotations(4) + log_scales(3)
             let new_transforms =
                 Tensor::cat(vec![cur_means + samples, cur_rots, new_log_scales], 1);
@@ -538,8 +539,15 @@ impl SplatTrainer {
                 |x| Tensor::cat(vec![x, new_transforms], 0),
                 |x| Tensor::cat(vec![x, cur_coeff], 0),
                 |x| Tensor::cat(vec![x, new_raw_opac], 0),
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, 10], device)], 0),
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, sh_dim, 3], device)], 0),
+                // Read dims from tensor: moment_2 may have reduced trailing dims.
+                |x: Tensor<MainBackend, 2>| {
+                    let d1 = x.dims()[1];
+                    Tensor::cat(vec![x, Tensor::zeros([refine_count, d1], device)], 0)
+                },
+                |x: Tensor<MainBackend, 3>| {
+                    let [_, d1, d2] = x.dims();
+                    Tensor::cat(vec![x, Tensor::zeros([refine_count, d1, d2], device)], 0)
+                },
                 |x| Tensor::cat(vec![x, Tensor::zeros([refine_count], device)], 0),
             );
         }
@@ -561,7 +569,7 @@ impl SplatTrainer {
             t.slice_assign(s![.., 7..10], new_log_scales)
         });
 
-        self.optim = Some(create_default_optimizer().load_record(record));
+        self.optim = Some(create_optimizer().load_record(record));
 
         splats
     }
@@ -587,10 +595,13 @@ fn map_splats_and_opt(
     splats
 }
 
+/// Apply `map_fn` to both `moment_1` and `moment_2` in the optimizer state.
+/// `map_fn` must be shape-agnostic along trailing dims because `moment_2`
+/// may have reduced trailing dims (size 1) when `reduce_moment_2` is set.
 fn map_opt<B: AutodiffBackend, const D: usize>(
     param_id: ParamId,
     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, B>>,
-    map_opt: &impl Fn(Tensor<B::InnerBackend, D>) -> Tensor<B::InnerBackend, D>,
+    map_fn: &impl Fn(Tensor<B::InnerBackend, D>) -> Tensor<B::InnerBackend, D>,
 ) {
     let mut state: AdamState<_, D> = record
         .remove(&param_id)
@@ -598,8 +609,8 @@ fn map_opt<B: AutodiffBackend, const D: usize>(
         .into_state();
 
     state.momentum = state.momentum.map(|mut moment| {
-        moment.moment_1 = map_opt(moment.moment_1);
-        moment.moment_2 = map_opt(moment.moment_2);
+        moment.moment_1 = map_fn(moment.moment_1);
+        moment.moment_2 = map_fn(moment.moment_2);
         moment
     });
 
