@@ -358,7 +358,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         let num_visible_val = projected_splats.shape()[0] as u32;
 
         let client = v_output.client.clone();
-        let num_visible = (num_visible_val as usize).max(1);
+        let num_visible = num_visible_val as usize;
 
         let v_combined_out = TensorIr::uninit(
             client.create_empty_handle(),
@@ -465,11 +465,10 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             Shape::new([num_points, 1, 3]),
             DType::F32,
         );
-        let rest_coeffs = if coeffs > 1 { coeffs - 1 } else { 1 }; // dummy for degree 0
-        let rest_n = if coeffs > 1 { num_points } else { 1 };
+        let rest_coeffs = if coeffs > 1 { coeffs - 1 } else { 0 };
         let v_coeffs_rest_out = TensorIr::uninit(
             client.create_empty_handle(),
-            Shape::new([rest_n, rest_coeffs, 3]),
+            Shape::new([num_points, rest_coeffs, 3]),
             DType::F16,
         );
         let v_raw_opac_out = TensorIr::uninit(

@@ -8,8 +8,8 @@ use brush_render::sh::sh_coeffs_for_degree;
 use burn::tensor::ops::IntTensor;
 use burn::tensor::ops::{FloatTensor, FloatTensorOps};
 use burn::tensor::{DType, FloatDType, Shape, TensorMetadata};
-use burn_cubecl::cubecl::features::TypeUsage;
-use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType};
+use burn_cubecl::cubecl::features::AtomicUsage;
+use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType, Type};
 use burn_cubecl::cubecl::server::KernelArguments;
 use burn_cubecl::kernel::into_contiguous;
 use glam::{Vec3, uvec2};
@@ -51,7 +51,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let v_output = into_contiguous(v_output);
 
         let device = &out_img.device;
-        let num_visible = projected_splats.shape()[0].max(1);
+        let num_visible = projected_splats.shape()[0];
 
         let client = &projected_splats.client;
 
@@ -76,8 +76,8 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let hard_floats = client
             .properties()
-            .type_usage(StorageType::Atomic(ElemType::Float(FloatKind::F32)))
-            .contains(TypeUsage::AtomicAdd);
+            .atomic_type_usage(Type::Scalar(StorageType::Atomic(ElemType::Float(FloatKind::F32))))
+            .contains(AtomicUsage::Add);
 
         let webgpu = cfg!(target_family = "wasm");
 
@@ -188,8 +188,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
             );
             Self::float_cast(rest, FloatDType::F16)
         } else {
-            // Dummy gradient for degree 0 (no rest coefficients).
-            Self::float_zeros([1, 1, 3].into(), &v_transforms.device, FloatDType::F16)
+            Self::float_zeros([num_points, 0, 3].into(), &v_transforms.device, FloatDType::F16)
         };
 
         SplatGrads {

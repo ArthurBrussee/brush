@@ -129,7 +129,7 @@ impl SplatOps<Self> for MainBackendBase {
         };
 
         project_uniforms.num_visible = num_visible;
-        let num_visible_sz = (num_visible as usize).max(1);
+        let num_visible_sz = num_visible as usize;
 
         let global_from_compact_gid = {
             // Depth sort only the valid [0..num_visible] entries.
@@ -172,7 +172,7 @@ impl SplatOps<Self> for MainBackendBase {
         });
 
         let num_tiles = tile_bounds.x * tile_bounds.y;
-        let buffer_size = (num_intersections as usize).max(1);
+        let buffer_size = num_intersections as usize;
         let tile_id_from_isect = create_tensor([buffer_size], device, DType::U32);
         let compact_gid_from_isect = create_tensor([buffer_size], device, DType::U32);
 

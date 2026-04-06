@@ -49,8 +49,6 @@ pub struct Splats<B: Backend> {
 
     #[module(skip)]
     pub render_mip: bool,
-    #[module(skip)]
-    pub sh_degree: u32,
 }
 
 pub fn inverse_sigmoid(x: f32) -> f32 {
@@ -94,18 +92,13 @@ impl<B: Backend> Splats<B> {
         let n_rest = sh_coeffs_for_degree(sh_degree) as usize - 1;
         let n = self.num_splats() as usize;
         let cur_degree = self.sh_degree();
-        self.sh_degree = sh_degree;
-
-        if n_rest == 0 {
-            // Degree 0: keep the dummy rest buffer as-is.
-            return self;
-        }
 
         self.sh_coeffs_rest = self.sh_coeffs_rest.map(|rest| {
             let device = rest.device();
             let f16_opts = TensorCreationOptions::new(device).with_dtype(DType::F16);
-            if cur_degree == 0 {
-                // Was degree 0 (dummy buffer) — create fresh rest from scratch.
+            if n_rest == 0 {
+                Tensor::<B, 3>::zeros([n, 0, 3], f16_opts)
+            } else if cur_degree == 0 {
                 Tensor::<B, 3>::zeros([n, n_rest, 3], f16_opts)
             } else {
                 let cur_rest = rest.dims()[1];
@@ -140,13 +133,11 @@ impl<B: Backend> Splats<B> {
         let sh_coeffs_dc = sh_coeffs.clone().slice(s![.., 0..1]);
         let [_, n_coeffs, _] = sh_coeffs.dims();
         let f16_opts = TensorCreationOptions::new(sh_coeffs.device()).with_dtype(DType::F16);
+        let [n, _, _] = sh_coeffs.dims();
         let sh_coeffs_rest = if n_coeffs > 1 {
             sh_coeffs.slice(s![.., 1..n_coeffs]).cast(FloatDType::F16)
         } else {
-            // Degree 0: no rest coefficients. Allocate a minimal [1, 1, 3] dummy
-            // (GPU backends don't support zero-size resources). The shader won't
-            // read this because sh_degree == 0 returns before reading rest.
-            Tensor::<B, 3>::zeros([1, 1, 3], f16_opts)
+            Tensor::<B, 3>::zeros([n, 0, 3], f16_opts)
         };
 
         Self {
@@ -158,7 +149,6 @@ impl<B: Backend> Splats<B> {
             ),
             raw_opacities: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
             render_mip: mode == SplatRenderMode::Mip,
-            sh_degree: sh_degree_from_coeffs(n_coeffs as u32),
         }
     }
 
@@ -200,7 +190,8 @@ impl<B: Backend> Splats<B> {
     }
 
     pub fn sh_degree(&self) -> u32 {
-        self.sh_degree
+        let [_, rest_coeffs, _] = self.sh_coeffs_rest.dims();
+        sh_degree_from_coeffs((1 + rest_coeffs) as u32)
     }
 
     pub fn device(&self) -> B::Device {

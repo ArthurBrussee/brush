@@ -28,7 +28,6 @@ pub fn splats_into_autodiff<B: Backend, BDiff: AutodiffBackend<InnerBackend = B>
     splats: Splats<B>,
 ) -> Splats<BDiff> {
     let mip = splats.render_mip;
-    let sh_degree_val = splats.sh_degree;
     let (transforms_id, transforms, _) = splats.transforms.consume();
     let (sh_coeffs_dc_id, sh_coeffs_dc, _) = splats.sh_coeffs_dc.consume();
     let (sh_coeffs_rest_id, sh_coeffs_rest, _) = splats.sh_coeffs_rest.consume();
@@ -52,6 +51,5 @@ pub fn splats_into_autodiff<B: Backend, BDiff: AutodiffBackend<InnerBackend = B>
             Tensor::from_inner(raw_opacity).require_grad(),
         ),
         render_mip: mip,
-        sh_degree: sh_degree_val,
     }
 }
