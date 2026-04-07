@@ -80,12 +80,13 @@ struct ProjectedSplat {
     conic_x: f32,
     conic_y: f32,
     conic_z: f32,
-    // Opacity kept as f32 for precision (affects intersection counting and alpha blending).
+
     color_a: f32,
-    // RGB in f16 for memory savings (visually imperceptible).
+
     color_r: f16,
     color_g: f16,
     color_b: f16,
+
     _pad: f16,
 }
 

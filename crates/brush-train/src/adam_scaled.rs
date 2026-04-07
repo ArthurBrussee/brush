@@ -78,8 +78,7 @@ pub(crate) struct AdamState<B: Backend, const D: usize> {
     pub scaling: Option<Tensor<B, D>>,
     /// When true, the second moment is reduced to a scalar per row. Set by the
     /// caller when initializing state for parameters where per-element variance
-    /// is not needed (e.g. SH coefficients). Lives in state (rather than on the
-    /// optimizer) because `SimpleOptimizer` has no per-parameter config mechanism.
+    /// is not needed.
     pub reduce_moment_2: bool,
 }
 

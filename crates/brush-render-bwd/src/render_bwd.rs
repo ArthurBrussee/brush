@@ -20,7 +20,7 @@ use brush_render::shaders::helpers::ProjectUniforms;
 // Kernel definitions using proc macro
 #[wgsl_kernel(
     source = "src/shaders/project_backwards.wgsl",
-    includes = ["../brush-render/src/shaders/helpers.wgsl"],
+    includes = ["../brush-render/src/shaders/helpers.wgsl", "../brush-render/src/shaders/sh.wgsl"],
 )]
 pub struct ProjectBackwards {
     mip_filter: bool,
@@ -76,7 +76,9 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let hard_floats = client
             .properties()
-            .atomic_type_usage(Type::Scalar(StorageType::Atomic(ElemType::Float(FloatKind::F32))))
+            .atomic_type_usage(Type::Scalar(StorageType::Atomic(ElemType::Float(
+                FloatKind::F32,
+            ))))
             .contains(AtomicUsage::Add);
 
         let webgpu = cfg!(target_family = "wasm");
@@ -188,7 +190,11 @@ impl SplatBwdOps<Self> for MainBackendBase {
             );
             Self::float_cast(rest, FloatDType::F16)
         } else {
-            Self::float_zeros([num_points, 0, 3].into(), &v_transforms.device, FloatDType::F16)
+            Self::float_zeros(
+                [num_points, 0, 3].into(),
+                &v_transforms.device,
+                FloatDType::F16,
+            )
         };
 
         SplatGrads {

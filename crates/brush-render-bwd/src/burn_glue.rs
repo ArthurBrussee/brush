@@ -44,11 +44,8 @@ pub struct RasterizeGrads<B: Backend> {
 /// Final gradients w.r.t. splat inputs from the project backward pass.
 #[derive(Debug, Clone)]
 pub struct SplatGrads<B: Backend> {
-    /// Gradients w.r.t. transforms [`num_points`, 10] = means(3) + quats(4) + log scales(3).
     pub v_transforms: FloatTensor<B>,
-    /// DC coefficient gradients `[num_points, 1, 3]` in f32.
     pub v_coeffs_dc: FloatTensor<B>,
-    /// Rest coefficient gradients `[num_points, C-1, 3]` in f16.
     pub v_coeffs_rest: FloatTensor<B>,
     pub v_raw_opac: FloatTensor<B>,
     pub v_refine_weight: FloatTensor<B>,
@@ -465,7 +462,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             Shape::new([num_points, 1, 3]),
             DType::F32,
         );
-        let rest_coeffs = if coeffs > 1 { coeffs - 1 } else { 0 };
+        let rest_coeffs = coeffs.saturating_sub(1);
         let v_coeffs_rest_out = TensorIr::uninit(
             client.create_empty_handle(),
             Shape::new([num_points, rest_coeffs, 3]),

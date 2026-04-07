@@ -236,7 +236,7 @@ impl SplatTrainer {
                     AdaptorRecord::from_state(AdamState {
                         momentum: None,
                         scaling: Some(rest_lr_scales),
-                        reduce_moment_2: self.config.reduce_second_moment,
+                        reduce_moment_2: true,
                     }),
                 )]))
             } else {
