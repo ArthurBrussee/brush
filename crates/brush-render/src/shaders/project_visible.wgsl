@@ -66,39 +66,39 @@ fn main(
     var rest_id = u32(global_gid) * num_rest;
 
     var coeffs = sh::ShCoeffs();
-    coeffs.dc = read_dc(global_gid);
+    coeffs.b0_c0_ = read_dc(global_gid);
 
     if sh_degree >= 1 {
-        coeffs.ba = read_rest(&rest_id);
-        coeffs.bb = read_rest(&rest_id);
-        coeffs.bc = read_rest(&rest_id);
+        coeffs.b1_c0_ = read_rest(&rest_id);
+        coeffs.b1_c1_ = read_rest(&rest_id);
+        coeffs.b1_c2_ = read_rest(&rest_id);
 
         if sh_degree >= 2 {
-            coeffs.ca = read_rest(&rest_id);
-            coeffs.cb = read_rest(&rest_id);
-            coeffs.cc = read_rest(&rest_id);
-            coeffs.cd = read_rest(&rest_id);
-            coeffs.ce = read_rest(&rest_id);
+            coeffs.b2_c0_ = read_rest(&rest_id);
+            coeffs.b2_c1_ = read_rest(&rest_id);
+            coeffs.b2_c2_ = read_rest(&rest_id);
+            coeffs.b2_c3_ = read_rest(&rest_id);
+            coeffs.b2_c4_ = read_rest(&rest_id);
 
             if sh_degree >= 3 {
-                coeffs.da = read_rest(&rest_id);
-                coeffs.db = read_rest(&rest_id);
-                coeffs.dd = read_rest(&rest_id);
-                coeffs.de = read_rest(&rest_id);
-                coeffs.df = read_rest(&rest_id);
-                coeffs.dg = read_rest(&rest_id);
-                coeffs.dh = read_rest(&rest_id);
+                coeffs.b3_c0_ = read_rest(&rest_id);
+                coeffs.b3_c1_ = read_rest(&rest_id);
+                coeffs.b3_c2_ = read_rest(&rest_id);
+                coeffs.b3_c3_ = read_rest(&rest_id);
+                coeffs.b3_c4_ = read_rest(&rest_id);
+                coeffs.b3_c5_ = read_rest(&rest_id);
+                coeffs.b3_c6_ = read_rest(&rest_id);
 
                 if sh_degree >= 4 {
-                    coeffs.ea = read_rest(&rest_id);
-                    coeffs.eb = read_rest(&rest_id);
-                    coeffs.ec = read_rest(&rest_id);
-                    coeffs.ed = read_rest(&rest_id);
-                    coeffs.ee = read_rest(&rest_id);
-                    coeffs.ef = read_rest(&rest_id);
-                    coeffs.eg = read_rest(&rest_id);
-                    coeffs.eh = read_rest(&rest_id);
-                    coeffs.ei = read_rest(&rest_id);
+                    coeffs.b4_c0_ = read_rest(&rest_id);
+                    coeffs.b4_c1_ = read_rest(&rest_id);
+                    coeffs.b4_c2_ = read_rest(&rest_id);
+                    coeffs.b4_c3_ = read_rest(&rest_id);
+                    coeffs.b4_c4_ = read_rest(&rest_id);
+                    coeffs.b4_c5_ = read_rest(&rest_id);
+                    coeffs.b4_c6_ = read_rest(&rest_id);
+                    coeffs.b4_c7_ = read_rest(&rest_id);
+                    coeffs.b4_c8_ = read_rest(&rest_id);
                 }
             }
         }

@@ -1,11 +1,11 @@
-// SH coefficient struct — field names avoid trailing digits (naga_oil limitation).
-// Band 0: dc. Bands 1-4 use band letter (b/c/d/e) + coefficient letter (a-i).
+// SH coefficient struct — trailing underscore avoids naga_oil's
+// restriction on identifiers ending in a digit.
 struct ShCoeffs {
-    dc: vec3f,
-    ba: vec3f, bb: vec3f, bc: vec3f,
-    ca: vec3f, cb: vec3f, cc: vec3f, cd: vec3f, ce: vec3f,
-    da: vec3f, db: vec3f, dd: vec3f, de: vec3f, df: vec3f, dg: vec3f, dh: vec3f,
-    ea: vec3f, eb: vec3f, ec: vec3f, ed: vec3f, ee: vec3f, ef: vec3f, eg: vec3f, eh: vec3f, ei: vec3f,
+    b0_c0_: vec3f,
+    b1_c0_: vec3f, b1_c1_: vec3f, b1_c2_: vec3f,
+    b2_c0_: vec3f, b2_c1_: vec3f, b2_c2_: vec3f, b2_c3_: vec3f, b2_c4_: vec3f,
+    b3_c0_: vec3f, b3_c1_: vec3f, b3_c2_: vec3f, b3_c3_: vec3f, b3_c4_: vec3f, b3_c5_: vec3f, b3_c6_: vec3f,
+    b4_c0_: vec3f, b4_c1_: vec3f, b4_c2_: vec3f, b4_c3_: vec3f, b4_c4_: vec3f, b4_c5_: vec3f, b4_c6_: vec3f, b4_c7_: vec3f, b4_c8_: vec3f,
 }
 
 const SH_C0: f32 = 0.2820947917738781f;
@@ -22,7 +22,7 @@ fn sh_coeffs_to_color(
     viewdir: vec3f,
     sh: ShCoeffs,
 ) -> vec3f {
-    var colors = SH_C0 * sh.dc;
+    var colors = SH_C0 * sh.b0_c0_;
 
     if (degree == 0) {
         return colors;
@@ -33,7 +33,7 @@ fn sh_coeffs_to_color(
     let z = viewdir.z;
 
     let fTmp0A = 0.48860251190292f;
-    colors += fTmp0A * (-y * sh.ba + z * sh.bb - x * sh.bc);
+    colors += fTmp0A * (-y * sh.b1_c0_ + z * sh.b1_c1_ - x * sh.b1_c2_);
 
     if (degree == 1) {
         return colors;
@@ -51,8 +51,8 @@ fn sh_coeffs_to_color(
     let pSH4 = fTmp1A * fS1;
 
     colors +=
-        pSH4 * sh.ca + pSH5 * sh.cb + pSH6 * sh.cc +
-        pSH7 * sh.cd + pSH8 * sh.ce;
+        pSH4 * sh.b2_c0_ + pSH5 * sh.b2_c1_ + pSH6 * sh.b2_c2_ +
+        pSH7 * sh.b2_c3_ + pSH8 * sh.b2_c4_;
 
     if (degree == 2) {
         return colors;
@@ -70,9 +70,9 @@ fn sh_coeffs_to_color(
     let pSH10 = fTmp1B * fS1;
     let pSH15 = fTmp2A * fC2;
     let pSH9  = fTmp2A * fS2;
-    colors += pSH9 * sh.da + pSH10 * sh.db + pSH11 * sh.dd +
-              pSH12 * sh.de + pSH13 * sh.df + pSH14 * sh.dg +
-              pSH15 * sh.dh;
+    colors += pSH9 * sh.b3_c0_ + pSH10 * sh.b3_c1_ + pSH11 * sh.b3_c2_ +
+              pSH12 * sh.b3_c3_ + pSH13 * sh.b3_c4_ + pSH14 * sh.b3_c5_ +
+              pSH15 * sh.b3_c6_;
 
     if (degree == 3) {
         return colors;
@@ -93,9 +93,9 @@ fn sh_coeffs_to_color(
     let pSH17 = fTmp2B * fS2;
     let pSH24 = fTmp3A * fC3;
     let pSH16 = fTmp3A * fS3;
-    colors += pSH16 * sh.ea + pSH17 * sh.eb + pSH18 * sh.ec +
-              pSH19 * sh.ed + pSH20 * sh.ee + pSH21 * sh.ef +
-              pSH22 * sh.eg + pSH23 * sh.eh + pSH24 * sh.ei;
+    colors += pSH16 * sh.b4_c0_ + pSH17 * sh.b4_c1_ + pSH18 * sh.b4_c2_ +
+              pSH19 * sh.b4_c3_ + pSH20 * sh.b4_c4_ + pSH21 * sh.b4_c5_ +
+              pSH22 * sh.b4_c6_ + pSH23 * sh.b4_c7_ + pSH24 * sh.b4_c8_;
     return colors;
 }
 
@@ -108,14 +108,14 @@ fn sh_coeffs_to_color_vjp(
 ) -> ShCoeffs {
     var v = ShCoeffs();
 
-    v.dc = SH_C0 * v_colors;
+    v.b0_c0_ = SH_C0 * v_colors;
     if (degree == 0) { return v; }
 
     let x = viewdir.x; let y = viewdir.y; let z = viewdir.z;
     let fTmp0A = 0.48860251190292f;
-    v.ba = -fTmp0A * y * v_colors;
-    v.bb = fTmp0A * z * v_colors;
-    v.bc = -fTmp0A * x * v_colors;
+    v.b1_c0_ = -fTmp0A * y * v_colors;
+    v.b1_c1_ = fTmp0A * z * v_colors;
+    v.b1_c2_ = -fTmp0A * x * v_colors;
     if (degree == 1) { return v; }
 
     let z2 = z * z;
@@ -126,9 +126,9 @@ fn sh_coeffs_to_color_vjp(
     let pSH6 = (0.9461746957575601f * z2 - 0.3153915652525201f);
     let pSH4 = fTmp1A * fS1; let pSH5 = fTmp0B * y;
     let pSH7 = fTmp0B * x; let pSH8 = fTmp1A * fC1;
-    v.ca = pSH4 * v_colors; v.cb = pSH5 * v_colors;
-    v.cc = pSH6 * v_colors; v.cd = pSH7 * v_colors;
-    v.ce = pSH8 * v_colors;
+    v.b2_c0_ = pSH4 * v_colors; v.b2_c1_ = pSH5 * v_colors;
+    v.b2_c2_ = pSH6 * v_colors; v.b2_c3_ = pSH7 * v_colors;
+    v.b2_c4_ = pSH8 * v_colors;
     if (degree == 2) { return v; }
 
     let fTmp0C = -2.285228997322329f * z2 + 0.4570457994644658f;
@@ -139,10 +139,10 @@ fn sh_coeffs_to_color_vjp(
     let pSH12 = z * (1.865881662950577f * z2 - 1.119528997770346f);
     let pSH9 = fTmp2A * fS2; let pSH10 = fTmp1B * fS1; let pSH11 = fTmp0C * y;
     let pSH13 = fTmp0C * x; let pSH14 = fTmp1B * fC1; let pSH15 = fTmp2A * fC2;
-    v.da = pSH9 * v_colors; v.db = pSH10 * v_colors;
-    v.dd = pSH11 * v_colors; v.de = pSH12 * v_colors;
-    v.df = pSH13 * v_colors; v.dg = pSH14 * v_colors;
-    v.dh = pSH15 * v_colors;
+    v.b3_c0_ = pSH9 * v_colors; v.b3_c1_ = pSH10 * v_colors;
+    v.b3_c2_ = pSH11 * v_colors; v.b3_c3_ = pSH12 * v_colors;
+    v.b3_c4_ = pSH13 * v_colors; v.b3_c5_ = pSH14 * v_colors;
+    v.b3_c6_ = pSH15 * v_colors;
     if (degree == 3) { return v; }
 
     let fTmp0D = z * (-4.683325804901025f * z2 + 2.007139630671868f);
@@ -155,10 +155,10 @@ fn sh_coeffs_to_color_vjp(
     let pSH16 = fTmp3A * fS3; let pSH17 = fTmp2B * fS2; let pSH18 = fTmp1C * fS1;
     let pSH19 = fTmp0D * y; let pSH21 = fTmp0D * x; let pSH22 = fTmp1C * fC1;
     let pSH23 = fTmp2B * fC2; let pSH24 = fTmp3A * fC3;
-    v.ea = pSH16 * v_colors; v.eb = pSH17 * v_colors;
-    v.ec = pSH18 * v_colors; v.ed = pSH19 * v_colors;
-    v.ee = pSH20 * v_colors; v.ef = pSH21 * v_colors;
-    v.eg = pSH22 * v_colors; v.eh = pSH23 * v_colors;
-    v.ei = pSH24 * v_colors;
+    v.b4_c0_ = pSH16 * v_colors; v.b4_c1_ = pSH17 * v_colors;
+    v.b4_c2_ = pSH18 * v_colors; v.b4_c3_ = pSH19 * v_colors;
+    v.b4_c4_ = pSH20 * v_colors; v.b4_c5_ = pSH21 * v_colors;
+    v.b4_c6_ = pSH22 * v_colors; v.b4_c7_ = pSH23 * v_colors;
+    v.b4_c8_ = pSH24 * v_colors;
     return v;
 }
