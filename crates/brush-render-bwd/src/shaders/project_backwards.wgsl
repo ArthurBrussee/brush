@@ -1,4 +1,3 @@
-enable f16;
 #import helpers;
 #import sh;
 

@@ -9,8 +9,7 @@ pub async fn validate_tensor_val<B: Backend, const D: usize>(
     let data = tensor
         .into_data_async()
         .await
-        .expect("Failed to read tensor data")
-        .convert::<f32>();
+        .expect("Failed to read tensor data");
     let values = data
         .into_vec::<f32>()
         .expect("Failed to convert tensor to f32 vec");

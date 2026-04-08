@@ -1,4 +1,3 @@
-enable f16;
 #import helpers;
 #import sh;
 
@@ -61,7 +60,7 @@ fn main(
     let mean2d = uniforms.focal * mean_c.xy * rz + uniforms.pixel_center;
 
     let sh_degree = uniforms.sh_degree;
-    // DC is read from separate f32 buffer, rest from f16 buffer.
+    // DC is read from separate buffer, rest coefficients from another.
     let num_rest = sh::num_sh_coeffs(sh_degree) - 1u;
     var rest_id = u32(global_gid) * num_rest;
 

@@ -40,29 +40,16 @@ async fn compare<B: Backend, const D1: usize>(
         "Tensor shapes for {name} must match"
     );
 
-    // Cast both to the lower precision of the two, so we test correctness
-    // at the actual working precision (e.g. if one is f16, compare in f16).
-    let target_dtype = if tensor_a.dtype().size() < tensor_b.dtype().size() {
-        tensor_a.dtype()
-    } else {
-        tensor_b.dtype()
-    };
     let data_a = tensor_a
-        .cast(target_dtype)
         .into_data_async()
         .await
         .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:a"))
-        .convert::<f32>();
+        .into_vec::<f32>()
+        .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:a"));
     let data_b = tensor_b
-        .cast(target_dtype)
         .into_data_async()
         .await
         .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:b"))
-        .convert::<f32>();
-    let data_a = data_a
-        .into_vec::<f32>()
-        .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:a"));
-    let data_b = data_b
         .into_vec::<f32>()
         .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:b"));
 
