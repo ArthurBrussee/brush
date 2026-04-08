@@ -100,12 +100,6 @@ struct PackedVec3 {
     z: f32,
 }
 
-struct PackedVec3H {
-    x: f16,
-    y: f16,
-    z: f16,
-}
-
 fn get_bbox(center: vec2f, dims: vec2f, bounds: vec2u) -> vec4u {
     // get bounding box with center and dims, within bounds
     // bounding box coords returned in tile coords, inclusive min, exclusive max

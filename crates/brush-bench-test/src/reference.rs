@@ -193,7 +193,7 @@ async fn test_reference() -> Result<()> {
         let v_dc = splats.sh_coeffs_dc.grad(&grads).context("dc grad")?;
         let [n, _, _] = v_dc.dims();
         let v_dc_ref = v_coeffs_ref.clone().slice(s![0..n, 0..1]);
-        compare("v_coeffs_dc", v_dc, v_dc_ref, 2e-3, 2e-3).await;
+        compare("v_coeffs_dc", v_dc, v_dc_ref, 1e-5, 1e-7).await;
         // Compare rest gradient if present.
         let [_, total_c, _] = v_coeffs_ref.dims();
         if total_c > 1

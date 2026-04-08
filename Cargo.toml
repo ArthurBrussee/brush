@@ -130,22 +130,6 @@ alphanumeric-sort = "1.5.3"
 # wgpu.path = "../wgpu/wgpu"
 # naga.path = "../wgpu/naga"
 
-# Patch cubecl to include zero-sized resource support (tracel-ai/cubecl#1256).
-[patch."https://github.com/tracel-ai/cubecl"]
-cubecl = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-core = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-cpp = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-cpu = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-ir = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-macros = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-macros-internal = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-opt = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-runtime = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-wgpu = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-cubecl-zspace = { git = "https://github.com/ArthurBrussee/cubecl", branch = "zero-size-resources" }
-
 [profile.dev]
 opt-level = 1
 # Reduce debuginfo for faster linking
