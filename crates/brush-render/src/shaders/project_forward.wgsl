@@ -57,8 +57,6 @@ fn main(
     var cov2d = helpers::calc_cov2d(scale, quat, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
     opac *= helpers::compensate_cov2d(&cov2d);
 
-    let conic = helpers::inverse(cov2d);
-
     // compute the projected mean
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
 
@@ -66,9 +64,8 @@ fn main(
         return;
     }
 
-    let conic_packed = vec3f(conic[0][0], conic[0][1], conic[1][1]);
     let power_threshold = log(255.0f * opac);
-    let extent = helpers::compute_bbox_extent(conic_packed, power_threshold);
+    let extent = helpers::compute_bbox_extent(cov2d, power_threshold);
     if extent.x < 0.0 || extent.y < 0.0 {
         return;
     }
@@ -79,6 +76,8 @@ fn main(
     }
 
     // Count tile intersections for this splat.
+    let conic = helpers::inverse(cov2d);
+    let conic_packed = vec3f(conic[0][0], conic[0][1], conic[1][1]);
     let tile_bbox = helpers::get_tile_bbox(mean2d, extent, uniforms.tile_bounds);
     let tile_bbox_min = tile_bbox.xy;
     let tile_bbox_max = tile_bbox.zw;

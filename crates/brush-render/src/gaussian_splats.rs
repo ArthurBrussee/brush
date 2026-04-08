@@ -2,10 +2,7 @@ use burn::{
     Tensor,
     module::{Module, Param, ParamId},
     prelude::Backend,
-    tensor::{
-        DType, FloatDType, TensorCreationOptions, TensorData, TensorPrimitive, activation::sigmoid,
-        s,
-    },
+    tensor::{TensorData, TensorPrimitive, activation::sigmoid, s},
 };
 use clap::ValueEnum;
 use glam::Vec3;
@@ -36,14 +33,14 @@ pub enum TextureMode {
 /// `transforms` stores means(3) + rotations(4) + log scales(3) = 10 floats per splat
 /// as a single contiguous [N, 10] tensor to minimize GPU shader bindings.
 ///
-/// SH coefficients are split into DC (band 0, f32) and rest (bands 1+, f16) for
-/// mixed-precision training: f32 DC, f16 rest.
+/// SH coefficients are split into DC (band 0) and rest (bands 1+) for separate
+/// optimizer treatment (adam-mini on rest).
 #[derive(Module, Debug)]
 pub struct Splats<B: Backend> {
     pub transforms: Param<Tensor<B, 2>>,
-    /// DC (band 0) SH coefficients, shape [N, 1, 3], stored as f32.
+    /// DC (band 0) SH coefficients, shape [N, 1, 3].
     pub sh_coeffs_dc: Param<Tensor<B, 3>>,
-    /// Higher-order SH coefficients (bands 1+), shape [N, C-1, 3], stored as f16.
+    /// Higher-order SH coefficients (bands 1+), shape [N, C-1, 3].
     pub sh_coeffs_rest: Param<Tensor<B, 3>>,
     pub raw_opacities: Param<Tensor<B, 1>>,
 
@@ -95,15 +92,14 @@ impl<B: Backend> Splats<B> {
 
         self.sh_coeffs_rest = self.sh_coeffs_rest.map(|rest| {
             let device = rest.device();
-            let f16_opts = TensorCreationOptions::new(device).with_dtype(DType::F16);
             if n_rest == 0 {
-                Tensor::<B, 3>::zeros([n, 0, 3], f16_opts)
+                Tensor::<B, 3>::zeros([n, 0, 3], &device)
             } else if cur_degree == 0 {
-                Tensor::<B, 3>::zeros([n, n_rest, 3], f16_opts)
+                Tensor::<B, 3>::zeros([n, n_rest, 3], &device)
             } else {
                 let cur_rest = rest.dims()[1];
                 if cur_rest < n_rest {
-                    let zeros = Tensor::<B, 3>::zeros([n, n_rest - cur_rest, 3], f16_opts);
+                    let zeros = Tensor::<B, 3>::zeros([n, n_rest - cur_rest, 3], &device);
                     Tensor::cat(vec![rest, zeros], 1)
                 } else {
                     rest.slice(s![.., 0..n_rest])
@@ -129,15 +125,13 @@ impl<B: Backend> Splats<B> {
 
         let transforms = Tensor::cat(vec![means, rotation, log_scales], 1);
 
-        // Split SH coefficients: DC (band 0) in f32, rest in f16.
+        // Split SH coefficients: DC (band 0) separate from rest (bands 1+).
         let sh_coeffs_dc = sh_coeffs.clone().slice(s![.., 0..1]);
-        let [_, n_coeffs, _] = sh_coeffs.dims();
-        let f16_opts = TensorCreationOptions::new(sh_coeffs.device()).with_dtype(DType::F16);
-        let [n, _, _] = sh_coeffs.dims();
+        let [n, n_coeffs, _] = sh_coeffs.dims();
         let sh_coeffs_rest = if n_coeffs > 1 {
-            sh_coeffs.slice(s![.., 1..n_coeffs]).cast(FloatDType::F16)
+            sh_coeffs.slice(s![.., 1..n_coeffs])
         } else {
-            Tensor::<B, 3>::zeros([n, 0, 3], f16_opts)
+            Tensor::<B, 3>::zeros([n, 0, 3], &sh_coeffs.device())
         };
 
         Self {
@@ -158,7 +152,7 @@ impl<B: Backend> Splats<B> {
         if self.sh_degree() == 0 {
             return dc;
         }
-        let rest = self.sh_coeffs_rest.val().cast(FloatDType::F32);
+        let rest = self.sh_coeffs_rest.val();
         Tensor::cat(vec![dc, rest], 1)
     }
 
@@ -227,7 +221,7 @@ impl<B: Backend> Splats<B> {
             )
             .await;
             validate_tensor_val(
-                self.sh_coeffs_rest.val().cast(FloatDType::F32),
+                self.sh_coeffs_rest.val(),
                 "sh_coeffs_rest",
                 Some(-5.0),
                 Some(5.0),

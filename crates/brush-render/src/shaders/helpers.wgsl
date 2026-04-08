@@ -253,10 +253,14 @@ fn calc_vis(pixel_coord: vec2f, conic: vec3f, xy: vec2f) -> f32 {
     return exp(-calc_sigma(pixel_coord, conic, xy));
 }
 
-// Compute bbox extent from conic (inverse of cov2d).
-// Since cov2d = inv(conic), cov2d[0][0] = conic.z/det, cov2d[1][1] = conic.x/det
-// where conic = (a, b, c) represents [[a,b],[b,c]] and det = a*c - b*b.
-fn compute_bbox_extent(conic: vec3f, power_threshold: f32) -> vec2f {
+fn compute_bbox_extent(cov2d: mat2x2f, power_threshold: f32) -> vec2f {
+    return vec2f(
+        sqrt(2.0f * power_threshold * cov2d[0][0]),
+        sqrt(2.0f * power_threshold * cov2d[1][1]),
+    );
+}
+
+fn compute_bbox_extent_from_conic(conic: vec3f, power_threshold: f32) -> vec2f {
     let det = conic.x * conic.z - conic.y * conic.y;
     if det <= 0.0 {
         return vec2f(-1.0);

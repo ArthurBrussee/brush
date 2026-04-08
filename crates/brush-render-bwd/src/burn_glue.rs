@@ -466,7 +466,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         let v_coeffs_rest_out = TensorIr::uninit(
             client.create_empty_handle(),
             Shape::new([num_points, rest_coeffs, 3]),
-            DType::F16,
+            DType::F32,
         );
         let v_raw_opac_out = TensorIr::uninit(
             client.create_empty_handle(),

@@ -173,27 +173,26 @@ impl SplatBwdOps<Self> for MainBackendBase {
             }
         });
 
-        // Split coefficient gradients: DC [N, 1, 3] stays f32, rest [N, C-1, 3] cast to f16.
+        // Split coefficient gradients: DC [N, 1, 3] and rest [N, C-1, 3].
         let total_coeffs = v_coeffs.shape()[1];
         let v_coeffs_dc = Self::float_slice(
             v_coeffs.clone(),
             &[(0..num_points).into(), (0..1).into(), (0..3).into()],
         );
         let v_coeffs_rest = if total_coeffs > 1 {
-            let rest = Self::float_slice(
+            Self::float_slice(
                 v_coeffs,
                 &[
                     (0..num_points).into(),
                     (1..total_coeffs).into(),
                     (0..3).into(),
                 ],
-            );
-            Self::float_cast(rest, FloatDType::F16)
+            )
         } else {
             Self::float_zeros(
                 [num_points, 0, 3].into(),
                 &v_transforms.device,
-                FloatDType::F16,
+                FloatDType::F32,
             )
         };
 

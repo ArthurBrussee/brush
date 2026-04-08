@@ -35,7 +35,7 @@ fn main(
     let opac = projected.color_a;
 
     let power_threshold = log(opac * 255.0);
-    let extent = helpers::compute_bbox_extent(conic, power_threshold);
+    let extent = helpers::compute_bbox_extent_from_conic(conic, power_threshold);
     let tile_bbox = helpers::get_tile_bbox(mean2d, extent, uniforms.tile_bounds);
     let tile_bbox_min = tile_bbox.xy;
     let tile_bbox_max = tile_bbox.zw;

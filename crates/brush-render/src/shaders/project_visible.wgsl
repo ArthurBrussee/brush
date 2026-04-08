@@ -4,7 +4,7 @@ enable f16;
 
 @group(0) @binding(0) var<storage, read> transforms: array<f32>;
 @group(0) @binding(1) var<storage, read> coeffs_dc: array<helpers::PackedVec3>;
-@group(0) @binding(2) var<storage, read> coeffs_rest: array<helpers::PackedVec3H>;
+@group(0) @binding(2) var<storage, read> coeffs_rest: array<helpers::PackedVec3>;
 @group(0) @binding(3) var<storage, read> raw_opacities: array<f32>;
 @group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
 @group(0) @binding(5) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
@@ -18,7 +18,7 @@ fn read_dc(gid: u32) -> vec3f {
 fn read_rest(base_id: ptr<function, u32>) -> vec3f {
     let c = coeffs_rest[*base_id];
     *base_id += 1u;
-    return vec3f(f32(c.x), f32(c.y), f32(c.z));
+    return vec3f(c.x, c.y, c.z);
 }
 
 const WG_SIZE: u32 = 256u;

@@ -201,7 +201,7 @@ impl SplatTrainer {
                 validate_gradient(g, "sh_coeffs_dc").await;
             }
             if let Some(g) = splats.sh_coeffs_rest.grad(&grads) {
-                validate_gradient(g.cast(burn::tensor::FloatDType::F32), "sh_coeffs_rest").await;
+                validate_gradient(g, "sh_coeffs_rest").await;
             }
             if let Some(g) = splats.raw_opacities.grad(&grads) {
                 validate_gradient(g, "raw_opacity").await;
@@ -236,7 +236,7 @@ impl SplatTrainer {
                     AdaptorRecord::from_state(AdamState {
                         momentum: None,
                         scaling: Some(rest_lr_scales),
-                        reduce_moment_2: true,
+                        reduce_moment_2: self.config.reduce_second_moment,
                     }),
                 )]))
             } else {

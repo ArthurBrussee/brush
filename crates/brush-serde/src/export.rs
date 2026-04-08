@@ -226,12 +226,9 @@ mod tests {
 
         assert_eq!(orig_sh.len(), import_sh.len());
         for (i, (&orig, &imported)) in orig_sh.iter().zip(import_sh.iter()).enumerate() {
-            // Tolerance accounts for f16 rest coefficients (relative precision ~1e-3).
-            let tol = 1e-3_f32 * orig.abs().max(1e-6);
             assert!(
-                (orig - imported).abs() < tol,
-                "SH coeffs mismatch at index {i}: orig={orig}, imported={imported}, diff={}, tol={tol}",
-                (orig - imported).abs(),
+                (orig - imported).abs() < 1e-6_f32,
+                "SH coeffs mismatch at index {i}: orig={orig}, imported={imported}",
             );
         }
     }

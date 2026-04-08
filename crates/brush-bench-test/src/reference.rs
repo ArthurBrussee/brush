@@ -199,9 +199,8 @@ async fn test_reference() -> Result<()> {
         if total_c > 1
             && let Some(v_rest) = splats.sh_coeffs_rest.grad(&grads)
         {
-            let v_rest_f32 = v_rest.cast(burn::tensor::FloatDType::F32);
             let v_rest_ref = v_coeffs_ref.slice(s![0..n, 1..total_c]);
-            compare("v_coeffs_rest", v_rest_f32, v_rest_ref, 2e-3, 2e-3).await;
+            compare("v_coeffs_rest", v_rest, v_rest_ref, 1e-5, 1e-7).await;
         }
 
         let v_transforms = splats.transforms.grad(&grads).context("transforms grad")?;
