@@ -146,7 +146,6 @@ impl<B: Backend> Splats<B> {
         }
     }
 
-    /// Get combined SH coefficients as a single f32 tensor (for serialization/export).
     pub fn sh_coeffs_combined(&self) -> Tensor<B, 3> {
         let dc = self.sh_coeffs_dc.val();
         if self.sh_degree() == 0 {
@@ -292,7 +291,6 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
 ) -> (Tensor<B, 3>, RenderAux<B>) {
     splats.clone().validate_values().await;
 
-    let sh_degree = splats.sh_degree();
     let sh_coeffs_dc = splats.sh_coeffs_dc.into_value();
     let sh_coeffs_rest = splats.sh_coeffs_rest.into_value();
     let raw_opacities = splats.raw_opacities.into_value();
@@ -319,7 +317,6 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
         sh_coeffs_dc.into_primitive().tensor(),
         sh_coeffs_rest.into_primitive().tensor(),
         raw_opacities.into_primitive().tensor(),
-        sh_degree,
         render_mode,
         background,
         use_float,

@@ -5,6 +5,7 @@ use crate::{
     gaussian_splats::SplatRenderMode,
     get_tile_offset::{CHECKS_PER_ITER, get_tile_offsets},
     render_aux::RenderOutput,
+    sh::sh_degree_from_coeffs,
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
 use brush_kernel::bytemuck;
@@ -36,7 +37,6 @@ impl SplatOps<Self> for MainBackendBase {
         sh_coeffs_dc: FloatTensor<Self>,
         sh_coeffs_rest: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
-        sh_degree: u32,
         render_mode: SplatRenderMode,
         background: Vec3,
         bwd_info: bool,
@@ -66,6 +66,7 @@ impl SplatOps<Self> for MainBackendBase {
         let tile_bounds = calc_tile_bounds(img_size);
         let total_splats = transforms.shape()[0];
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
+        let sh_degree = sh_degree_from_coeffs(1 + sh_coeffs_dc.shape()[1] as u32);
 
         let mut project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),

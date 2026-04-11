@@ -562,9 +562,7 @@ impl SplatTrainer {
                 },
                 |x: Tensor<MainBackend, 3>| {
                     let [_, d1, d2] = x.dims();
-                    let opts =
-                        burn::tensor::TensorCreationOptions::new(x.device()).with_dtype(x.dtype());
-                    Tensor::cat(vec![x, Tensor::zeros([refine_count, d1, d2], opts)], 0)
+                    Tensor::cat(vec![x, Tensor::zeros([refine_count, d1, d2], device)], 0)
                 },
                 |x| Tensor::cat(vec![x, Tensor::zeros([refine_count], device)], 0),
             );

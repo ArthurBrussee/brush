@@ -74,7 +74,6 @@ pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
         raw_opac: FloatTensor<B>,
         global_from_compact_gid: IntTensor<B>,
         project_uniforms: ProjectUniforms,
-        sh_degree: u32,
         render_mode: SplatRenderMode,
         v_combined: FloatTensor<B>,
     ) -> SplatGrads<B>;
@@ -95,7 +94,6 @@ struct GaussianBackwardState<B: Backend> {
     tile_offsets: IntTensor<B>,
 
     render_mode: SplatRenderMode,
-    sh_degree: u32,
     background: Vec3,
     img_size: glam::UVec2,
 }
@@ -145,7 +143,6 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
             state.raw_opac,
             state.global_from_compact_gid,
             state.project_uniforms,
-            state.sh_degree,
             state.render_mode,
             rasterize_grads.v_combined,
         );
@@ -244,7 +241,6 @@ where
     } else {
         SplatRenderMode::Default
     };
-    let sh_degree = splats.sh_degree();
     let output = <B as SplatOps<B>>::render(
         camera,
         img_size,
@@ -252,7 +248,6 @@ where
         sh_coeffs_dc,
         sh_coeffs_rest,
         raw_opacity.clone(),
-        sh_degree,
         render_mode,
         background,
         true,
@@ -274,7 +269,6 @@ where
             let state = GaussianBackwardState {
                 transforms,
                 raw_opac: raw_opacity,
-                sh_degree,
                 out_img: output.out_img.clone(),
                 projected_splats: output.projected_splats,
                 project_uniforms: output.project_uniforms,
@@ -398,7 +392,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         raw_opac: FloatTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
-        sh_degree: u32,
         render_mode: SplatRenderMode,
         v_combined: FloatTensor<Self>,
     ) -> SplatGrads<Self> {
@@ -406,7 +399,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         struct CustomOp {
             desc: CustomOpIr,
             render_mode: SplatRenderMode,
-            sh_degree: u32,
             project_uniforms: ProjectUniforms,
         }
 
@@ -432,7 +424,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                     h.get_float_tensor::<MainBackendBase>(raw_opac),
                     h.get_int_tensor::<MainBackendBase>(global_from_compact_gid),
                     self.project_uniforms,
-                    self.sh_degree,
                     self.render_mode,
                     h.get_float_tensor::<MainBackendBase>(v_combined_in),
                 );
@@ -450,7 +441,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
 
         let client = transforms.client.clone();
         let num_points = transforms.shape[0];
-        let coeffs = sh_coeffs_for_degree(sh_degree) as usize;
+        let coeffs = sh_coeffs_for_degree(project_uniforms.sh_degree) as usize;
 
         let v_transforms_out = TensorIr::uninit(
             client.create_empty_handle(),
@@ -500,7 +491,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 OperationIr::Custom(desc.clone()),
                 CustomOp {
                     desc,
-                    sh_degree,
                     render_mode,
                     project_uniforms,
                 },

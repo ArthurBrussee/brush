@@ -115,7 +115,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
         raw_opac: FloatTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
-        sh_degree: u32,
         render_mode: SplatRenderMode,
         v_combined: FloatTensor<Self>,
     ) -> SplatGrads<Self> {
@@ -131,7 +130,12 @@ impl SplatBwdOps<Self> for MainBackendBase {
         // Dense outputs, the kernel scatters compact→global internally.
         let v_transforms = Self::float_zeros([num_points, 10].into(), device, FloatDType::F32);
         let v_coeffs = Self::float_zeros(
-            [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
+            [
+                num_points,
+                sh_coeffs_for_degree(project_uniforms.sh_degree) as usize,
+                3,
+            ]
+            .into(),
             device,
             FloatDType::F32,
         );

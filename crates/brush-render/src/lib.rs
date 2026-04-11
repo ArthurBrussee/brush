@@ -50,7 +50,6 @@ pub trait SplatOps<B: Backend> {
         sh_coeffs_dc: FloatTensor<B>,
         sh_coeffs_rest: FloatTensor<B>,
         raw_opacities: FloatTensor<B>,
-        sh_degree: u32,
         render_mode: SplatRenderMode,
         background: Vec3,
         bwd_info: bool,
