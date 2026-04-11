@@ -66,7 +66,7 @@ impl SplatOps<Self> for MainBackendBase {
         let tile_bounds = calc_tile_bounds(img_size);
         let total_splats = transforms.shape()[0];
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
-        let sh_degree = sh_degree_from_coeffs(1 + sh_coeffs_dc.shape()[1] as u32);
+        let sh_degree = sh_degree_from_coeffs(1 + sh_coeffs_rest.shape()[1] as u32);
 
         let mut project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
