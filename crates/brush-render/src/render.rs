@@ -129,7 +129,9 @@ impl SplatOps<Self> for MainBackendBase {
         };
 
         project_uniforms.num_visible = num_visible;
-        let num_visible_sz = num_visible as usize;
+        // cubecl's FastDivmod trips on zero-sized shape dims, so clamp to >=1
+        // for tensor allocations. The kernel dispatches still use the real count.
+        let num_visible_sz = (num_visible as usize).max(1);
 
         let global_from_compact_gid = {
             // Depth sort only the valid [0..num_visible] entries.
@@ -172,7 +174,7 @@ impl SplatOps<Self> for MainBackendBase {
         });
 
         let num_tiles = tile_bounds.x * tile_bounds.y;
-        let buffer_size = num_intersections as usize;
+        let buffer_size = (num_intersections as usize).max(1);
         let tile_id_from_isect = create_tensor([buffer_size], device, DType::U32);
         let compact_gid_from_isect = create_tensor([buffer_size], device, DType::U32);
 

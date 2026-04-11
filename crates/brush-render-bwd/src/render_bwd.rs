@@ -51,7 +51,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let v_output = into_contiguous(v_output);
 
         let device = &out_img.device;
-        let num_visible = projected_splats.shape()[0];
+        let num_visible = projected_splats.shape()[0].max(1);
 
         let client = &projected_splats.client;
 

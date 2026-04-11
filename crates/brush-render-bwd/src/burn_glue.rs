@@ -355,7 +355,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         let num_visible_val = projected_splats.shape()[0] as u32;
 
         let client = v_output.client.clone();
-        let num_visible = num_visible_val as usize;
+        let num_visible = (num_visible_val as usize).max(1);
 
         let v_combined_out = TensorIr::uninit(
             client.create_empty_handle(),
