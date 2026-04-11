@@ -1,3 +1,4 @@
+enable f16;
 #import helpers
 
 @group(0) @binding(0) var<storage, read> compact_gid_from_isect: array<u32>;
@@ -79,11 +80,9 @@ fn main(
 
             let xy = vec2f(proj.xy_x, proj.xy_y);
             let conic = vec3f(proj.conic_x, proj.conic_y, proj.conic_z);
-            let color = vec4f(proj.color_r, proj.color_g, proj.color_b, proj.color_a);
-
             let delta = xy - pixel_coord;
             let sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
-            let alpha = min(0.999f, color.a * exp(-sigma));
+            let alpha = min(0.999f, proj.color_a * exp(-sigma));
 
             if sigma >= 0.0f && alpha >= 1.0f / 255.0f {
                 let next_T = T * (1.0 - alpha);
@@ -99,7 +98,8 @@ fn main(
                 #endif
 
                 let vis = alpha * T;
-                pix_out += max(color.rgb, vec3f(0.0)) * vis;
+                let color_rgb = max(vec3f(f32(proj.color_r), f32(proj.color_g), f32(proj.color_b)), vec3f(0.0));
+                pix_out += color_rgb * vis;
                 T = next_T;
             }
         }

@@ -1,3 +1,5 @@
+enable f16;
+
 const TILE_WIDTH: u32 = 16u;
 const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 
@@ -78,14 +80,18 @@ struct ProjectedSplat {
     conic_x: f32,
     conic_y: f32,
     conic_z: f32,
-    color_r: f32,
-    color_g: f32,
-    color_b: f32,
+
     color_a: f32,
+
+    color_r: f16,
+    color_g: f16,
+    color_b: f16,
+
+    _pad: f16,
 }
 
 fn create_projected_splat(xy: vec2f, conic: vec3f, color: vec4f) -> ProjectedSplat {
-    return ProjectedSplat(xy.x, xy.y, conic.x, conic.y, conic.z, color.r, color.g, color.b, color.a);
+    return ProjectedSplat(xy.x, xy.y, conic.x, conic.y, conic.z, color.a, f16(color.r), f16(color.g), f16(color.b), f16(0.0));
 }
 
 struct PackedVec3 {
@@ -161,11 +167,6 @@ fn scale_to_mat(scale: vec3f) -> mat3x3f {
     );
 }
 
-fn calc_cov3d(scale: vec3f, quat: vec4f) -> mat3x3f {
-    let M = quat_to_mat(quat) * scale_to_mat(scale);
-    return M * transpose(M);
-}
-
 fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f) -> mat3x2f {
     let lims_pos = (1.15f * vec2f(img_size.xy) - pixel_center) / focal;
     let lims_neg = (-0.15f * vec2f(img_size.xy) - pixel_center) / focal;
@@ -184,11 +185,17 @@ fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f)
     return J;
 }
 
-fn calc_cov2d(cov3d: mat3x3f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f, viewmat: mat4x4f) -> mat2x2f {
-    let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
-    let covar_cam = R * cov3d * transpose(R);
+// Compute 2D covariance directly from scale, quat, and view params.
+fn calc_cov2d(scale: vec3f, quat: vec4f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f, viewmat: mat4x4f) -> mat2x2f {
+    let R_obj = quat_to_mat(quat);
+    let R_cam = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let J = calc_cam_J(mean_c, focal, img_size, pixel_center);
-    return J * covar_cam * transpose(J);
+
+    // V = J * R_cam * R_obj * diag(scale)
+    let N = R_cam * R_obj;
+    let N_s = mat3x3f(N[0] * scale.x, N[1] * scale.y, N[2] * scale.z);
+    let V = J * N_s;
+    return V * transpose(V);
 }
 
 #ifdef MIP_SPLATTING
@@ -244,6 +251,18 @@ fn compute_bbox_extent(cov2d: mat2x2f, power_threshold: f32) -> vec2f {
     return vec2f(
         sqrt(2.0f * power_threshold * cov2d[0][0]),
         sqrt(2.0f * power_threshold * cov2d[1][1]),
+    );
+}
+
+fn compute_bbox_extent_from_conic(conic: vec3f, power_threshold: f32) -> vec2f {
+    let det = conic.x * conic.z - conic.y * conic.y;
+    if det <= 0.0 {
+        return vec2f(-1.0);
+    }
+    let inv_det = 1.0 / det;
+    return vec2f(
+        sqrt(2.0f * power_threshold * conic.z * inv_det),
+        sqrt(2.0f * power_threshold * conic.x * inv_det),
     );
 }
 

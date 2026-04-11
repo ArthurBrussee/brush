@@ -151,11 +151,15 @@ fn wgsl_to_rust_type(ty: Handle<Type>, ctx: &GlobalCtx) -> String {
     match ctx.type_to_string(ty).as_str() {
         "i32" => "i32",
         "u32" | "atomic<u32>" => "u32",
+        "f16" => "u16",
         "f32" | "atomic<i32>" => "f32",
+        "vec2<f16>" => "[u16; 2]",
         "vec2<f32>" => "[f32; 2]",
         "vec2<u32>" => "[u32; 2]",
         "vec2<i32>" => "[i32; 2]",
+        "vec3<f16>" => "[u16; 4]", // vec3 padded to 8 bytes for f16
         "vec3<f32>" | "vec3<u32>" => "[f32; 4]", // vec3 padded to 16 bytes
+        "vec4<f16>" => "[u16; 4]",
         "vec4<f32>" => "[f32; 4]",
         "vec4<u32>" => "[u32; 4]",
         "mat4x4<f32>" => "[[f32; 4]; 4]",
@@ -166,8 +170,11 @@ fn wgsl_to_rust_type(ty: Handle<Type>, ctx: &GlobalCtx) -> String {
 
 fn wgsl_type_alignment(ty: Handle<Type>, ctx: &GlobalCtx) -> usize {
     match ctx.type_to_string(ty).as_str() {
+        "f16" => 2,
         "i32" | "u32" | "f32" | "atomic<u32>" | "atomic<i32>" => 4,
+        "vec2<f16>" => 4,
         "vec2<f32>" | "vec2<u32>" | "vec2<i32>" => 8,
+        "vec3<f16>" | "vec4<f16>" => 8,
         "vec3<f32>" | "vec4<f32>" | "mat4x4<f32>" | "vec3<u32>" | "vec4<u32>" => 16,
         other => panic!("Unknown alignment for: {other}"),
     }
@@ -416,7 +423,11 @@ fn generate_code(
         let fields = t.fields.iter().map(|(fname, ftype)| {
             let fname = format_ident!("{}", fname);
             let ftype: TokenStream2 = ftype.parse().unwrap();
-            quote! { pub #fname: #ftype }
+            if fname.to_string().starts_with('_') {
+                quote! { #fname: #ftype }
+            } else {
+                quote! { pub #fname: #ftype }
+            }
         });
         quote! {
             #[repr(C, align(#align))]

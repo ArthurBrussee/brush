@@ -1,3 +1,4 @@
+enable f16;
 #import helpers;
 
 @group(0) @binding(0) var<storage, read> compact_gid_from_isect: array<u32>;
@@ -118,7 +119,7 @@ fn main(
 
             let xy = vec2f(proj.xy_x, proj.xy_y);
             let conic = vec3f(proj.conic_x, proj.conic_y, proj.conic_z);
-            let color = vec4f(proj.color_r, proj.color_g, proj.color_b, proj.color_a);
+            let color = vec4f(f32(proj.color_r), f32(proj.color_g), f32(proj.color_b), proj.color_a);
 
             let clamped_rgb = max(color.rgb, vec3f(0.0f));
 

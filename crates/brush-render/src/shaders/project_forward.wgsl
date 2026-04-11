@@ -53,8 +53,7 @@ fn main(
     quat *= inverseSqrt(quat_norm_sqr);
 
     var opac = helpers::sigmoid(raw_opacities[global_gid]);
-    let cov3d = helpers::calc_cov3d(scale, quat);
-    var cov2d = helpers::calc_cov2d(cov3d, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
+    var cov2d = helpers::calc_cov2d(scale, quat, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
     opac *= helpers::compensate_cov2d(&cov2d);
 
     // compute the projected mean

@@ -1,4 +1,5 @@
 #import helpers;
+#import sh;
 
 @group(0) @binding(0) var<storage, read> num_visible: u32;
 @group(0) @binding(1) var<storage, read> transforms: array<f32>;
@@ -11,140 +12,6 @@
 @group(0) @binding(7) var<storage, read_write> v_raw_opac: array<f32>;
 @group(0) @binding(8) var<storage, read_write> v_refine_weight: array<f32>;
 @group(0) @binding(9) var<storage, read> uniforms: helpers::ProjectUniforms;
-
-const SH_C0: f32 = 0.2820947917738781f;
-
-struct ShCoeffs {
-    b0_c0: vec3f,
-
-    b1_c0: vec3f,
-    b1_c1: vec3f,
-    b1_c2: vec3f,
-
-    b2_c0: vec3f,
-    b2_c1: vec3f,
-    b2_c2: vec3f,
-    b2_c3: vec3f,
-    b2_c4: vec3f,
-
-    b3_c0: vec3f,
-    b3_c1: vec3f,
-    b3_c2: vec3f,
-    b3_c3: vec3f,
-    b3_c4: vec3f,
-    b3_c5: vec3f,
-    b3_c6: vec3f,
-
-    b4_c0: vec3f,
-    b4_c1: vec3f,
-    b4_c2: vec3f,
-    b4_c3: vec3f,
-    b4_c4: vec3f,
-    b4_c5: vec3f,
-    b4_c6: vec3f,
-    b4_c7: vec3f,
-    b4_c8: vec3f,
-}
-
-fn sh_coeffs_to_color_fast_vjp(
-    degree: u32,
-    viewdir: vec3f,
-    v_colors: vec3f,
-) -> ShCoeffs {
-    var v_coeffs = ShCoeffs();
-
-    // Expects v_colors to be len CHANNELS
-    // and v_coeffs to be num_bases * CHANNELS
-    v_coeffs.b0_c0 = SH_C0 * v_colors;
-
-    if (degree == 0) {
-        return v_coeffs;
-    }
-    let x = viewdir.x;
-    let y = viewdir.y;
-    let z = viewdir.z;
-
-    let fTmp0A = 0.48860251190292f;
-    v_coeffs.b1_c0 = -fTmp0A * y * v_colors;
-    v_coeffs.b1_c1 = fTmp0A * z * v_colors;
-    v_coeffs.b1_c2 = -fTmp0A * x * v_colors;
-
-    if (degree == 1) {
-        return v_coeffs;
-    }
-
-    let z2 = z * z;
-    let fTmp0B = -1.092548430592079f * z;
-    let fTmp1A = 0.5462742152960395f;
-    let fC1 = x * x - y * y;
-    let fS1 = 2.f * x * y;
-    let pSH6 = (0.9461746957575601f * z2 - 0.3153915652525201f);
-    let pSH7 = fTmp0B * x;
-    let pSH5 = fTmp0B * y;
-    let pSH8 = fTmp1A * fC1;
-    let pSH4 = fTmp1A * fS1;
-    v_coeffs.b2_c0 = pSH4 * v_colors;
-    v_coeffs.b2_c1 = pSH5 * v_colors;
-    v_coeffs.b2_c2 = pSH6 * v_colors;
-    v_coeffs.b2_c3 = pSH7 * v_colors;
-    v_coeffs.b2_c4 = pSH8 * v_colors;
-
-    if (degree == 2) {
-        return v_coeffs;
-    }
-
-    let fTmp0C = -2.285228997322329f * z2 + 0.4570457994644658f;
-    let fTmp1B = 1.445305721320277f * z;
-    let fTmp2A = -0.5900435899266435f;
-    let fC2 = x * fC1 - y * fS1;
-    let fS2 = x * fS1 + y * fC1;
-    let pSH12 = z * (1.865881662950577f * z2 - 1.119528997770346f);
-    let pSH13 = fTmp0C * x;
-    let pSH11 = fTmp0C * y;
-    let pSH14 = fTmp1B * fC1;
-    let pSH10 = fTmp1B * fS1;
-    let pSH15 = fTmp2A * fC2;
-    let pSH9  = fTmp2A * fS2;
-    v_coeffs.b3_c0 = pSH9 * v_colors;
-    v_coeffs.b3_c1 = pSH10 * v_colors;
-    v_coeffs.b3_c2 = pSH11 * v_colors;
-    v_coeffs.b3_c3 = pSH12 * v_colors;
-    v_coeffs.b3_c4 = pSH13 * v_colors;
-    v_coeffs.b3_c5 = pSH14 * v_colors;
-    v_coeffs.b3_c6 = pSH15 * v_colors;
-    if (degree == 3) {
-        return v_coeffs;
-    }
-    let fTmp0D = z * (-4.683325804901025f * z2 + 2.007139630671868f);
-    let fTmp1C = 3.31161143515146f * z2 - 0.47308734787878f;
-    let fTmp2B = -1.770130769779931f * z;
-    let fTmp3A = 0.6258357354491763f;
-    let fC3 = x * fC2 - y * fS2;
-    let fS3 = x * fS2 + y * fC2;
-    let pSH20 = (1.984313483298443f * z * pSH12 + -1.006230589874905f * pSH6);
-    let pSH21 = fTmp0D * x;
-    let pSH19 = fTmp0D * y;
-    let pSH22 = fTmp1C * fC1;
-    let pSH18 = fTmp1C * fS1;
-    let pSH23 = fTmp2B * fC2;
-    let pSH17 = fTmp2B * fS2;
-    let pSH24 = fTmp3A * fC3;
-    let pSH16 = fTmp3A * fS3;
-    v_coeffs.b4_c0 = pSH16 * v_colors;
-    v_coeffs.b4_c1 = pSH17 * v_colors;
-    v_coeffs.b4_c2 = pSH18 * v_colors;
-    v_coeffs.b4_c3 = pSH19 * v_colors;
-    v_coeffs.b4_c4 = pSH20 * v_colors;
-    v_coeffs.b4_c5 = pSH21 * v_colors;
-    v_coeffs.b4_c6 = pSH22 * v_colors;
-    v_coeffs.b4_c7 = pSH23 * v_colors;
-    v_coeffs.b4_c8 = pSH24 * v_colors;
-    return v_coeffs;
-}
-
-fn num_sh_coeffs(degree: u32) -> u32 {
-    return (degree + 1) * (degree + 1);
-}
 
 fn write_coeffs(base_id: ptr<function, u32>, val: vec3f) {
     v_coeffs[*base_id + 0] = val.x;
@@ -201,7 +68,7 @@ fn quat_to_mat_vjp(quat: vec4f, v_R: mat3x3f) -> vec4f {
 
 fn inverse_vjp(Minv: mat2x2f, v_Minv: mat2x2f) -> mat2x2f {
     // P = M^-1
-    // df/dM = -P * df/dP * P
+    // b3_c4_/dM = -P * b3_c4_/dP * P
     return mat2x2f(-Minv[0], -Minv[1]) * v_Minv * Minv;
 }
 
@@ -232,19 +99,19 @@ fn persp_proj_vjp(
     let rz = 1.0 / mean3d.z;
     let rz2 = rz * rz;
 
-    // df/dx = fx * rz * df/dpixx
-    // df/dy = fy * rz * df/dpixy
-    // df/dz = - fx * mean.x * rz2 * df/dpixx - fy * mean.y * rz2 * df/dpixy
+    // b3_c4_/dx = fx * rz * b3_c4_/dpixx
+    // b3_c4_/dy = fy * rz * b3_c4_/dpixy
+    // b3_c4_/dz = - fx * mean.x * rz2 * b3_c4_/dpixx - fy * mean.y * rz2 * b3_c4_/dpixy
     var v_mean3d = vec3f(
         focal.x * rz * v_mean2d[0],
         focal.y * rz * v_mean2d[1],
         -(focal.x * x * v_mean2d[0] + focal.y * y * v_mean2d[1]) * rz2
     );
 
-    // df/dx = -fx * rz2 * df/dJ_02
-    // df/dy = -fy * rz2 * df/dJ_12
-    // df/dz = -fx * rz2 * df/dJ_00 - fy * rz2 * df/dJ_11
-    //         + 2 * fx * tx * rz3 * df/dJ_02 + 2 * fy * ty * rz3
+    // b3_c4_/dx = -fx * rz2 * b3_c4_/dJ_02
+    // b3_c4_/dy = -fy * rz2 * b3_c4_/dJ_12
+    // b3_c4_/dz = -fx * rz2 * b3_c4_/dJ_00 - fy * rz2 * b3_c4_/dJ_11
+    //         + 2 * fx * tx * rz3 * b3_c4_/dJ_02 + 2 * fy * ty * rz3
     let rz3 = rz2 * rz;
     let v_J = v_cov2d * J * transpose(cov3d) + transpose(v_cov2d) * J * cov3d;
 
@@ -322,39 +189,39 @@ fn main(
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
 
     let sh_degree = uniforms.sh_degree;
-    let v_coeff = sh_coeffs_to_color_fast_vjp(sh_degree, viewdir, v_color);
-    let num_coeffs = num_sh_coeffs(sh_degree);
+    let v_coeff = sh::sh_coeffs_to_color_vjp(sh_degree, viewdir, v_color);
+    let num_coeffs = sh::num_sh_coeffs(sh_degree);
     var base_id = global_gid * num_coeffs * 3;
 
-    write_coeffs(&base_id, v_coeff.b0_c0);
+    write_coeffs(&base_id, v_coeff.b0_c0_);
     if sh_degree > 0 {
-        write_coeffs(&base_id, v_coeff.b1_c0);
-        write_coeffs(&base_id, v_coeff.b1_c1);
-        write_coeffs(&base_id, v_coeff.b1_c2);
+        write_coeffs(&base_id, v_coeff.b1_c0_);
+        write_coeffs(&base_id, v_coeff.b1_c1_);
+        write_coeffs(&base_id, v_coeff.b1_c2_);
         if sh_degree > 1 {
-            write_coeffs(&base_id, v_coeff.b2_c0);
-            write_coeffs(&base_id, v_coeff.b2_c1);
-            write_coeffs(&base_id, v_coeff.b2_c2);
-            write_coeffs(&base_id, v_coeff.b2_c3);
-            write_coeffs(&base_id, v_coeff.b2_c4);
+            write_coeffs(&base_id, v_coeff.b2_c0_);
+            write_coeffs(&base_id, v_coeff.b2_c1_);
+            write_coeffs(&base_id, v_coeff.b2_c2_);
+            write_coeffs(&base_id, v_coeff.b2_c3_);
+            write_coeffs(&base_id, v_coeff.b2_c4_);
             if sh_degree > 2 {
-                write_coeffs(&base_id, v_coeff.b3_c0);
-                write_coeffs(&base_id, v_coeff.b3_c1);
-                write_coeffs(&base_id, v_coeff.b3_c2);
-                write_coeffs(&base_id, v_coeff.b3_c3);
-                write_coeffs(&base_id, v_coeff.b3_c4);
-                write_coeffs(&base_id, v_coeff.b3_c5);
-                write_coeffs(&base_id, v_coeff.b3_c6);
+                write_coeffs(&base_id, v_coeff.b3_c0_);
+                write_coeffs(&base_id, v_coeff.b3_c1_);
+                write_coeffs(&base_id, v_coeff.b3_c2_);
+                write_coeffs(&base_id, v_coeff.b3_c3_);
+                write_coeffs(&base_id, v_coeff.b3_c4_);
+                write_coeffs(&base_id, v_coeff.b3_c5_);
+                write_coeffs(&base_id, v_coeff.b3_c6_);
                 if sh_degree > 3 {
-                    write_coeffs(&base_id, v_coeff.b4_c0);
-                    write_coeffs(&base_id, v_coeff.b4_c1);
-                    write_coeffs(&base_id, v_coeff.b4_c2);
-                    write_coeffs(&base_id, v_coeff.b4_c3);
-                    write_coeffs(&base_id, v_coeff.b4_c4);
-                    write_coeffs(&base_id, v_coeff.b4_c5);
-                    write_coeffs(&base_id, v_coeff.b4_c6);
-                    write_coeffs(&base_id, v_coeff.b4_c7);
-                    write_coeffs(&base_id, v_coeff.b4_c8);
+                    write_coeffs(&base_id, v_coeff.b4_c0_);
+                    write_coeffs(&base_id, v_coeff.b4_c1_);
+                    write_coeffs(&base_id, v_coeff.b4_c2_);
+                    write_coeffs(&base_id, v_coeff.b4_c3_);
+                    write_coeffs(&base_id, v_coeff.b4_c4_);
+                    write_coeffs(&base_id, v_coeff.b4_c5_);
+                    write_coeffs(&base_id, v_coeff.b4_c6_);
+                    write_coeffs(&base_id, v_coeff.b4_c7_);
+                    write_coeffs(&base_id, v_coeff.b4_c8_);
                 }
             }
         }
@@ -370,8 +237,7 @@ fn main(
     let S = helpers::scale_to_mat(scale);
     let M = rotmat * S;
 
-    let covar = M * transpose(M);
-    var cov2d = helpers::calc_cov2d(covar, mean_c, focal, img_size, pixel_center, viewmat);
+    var cov2d = helpers::calc_cov2d(scale, quat, mean_c, focal, img_size, pixel_center, viewmat);
 
     let filter_comp = helpers::compensate_cov2d(&cov2d);
     let opac = helpers::sigmoid(raw_opac[global_gid]);
@@ -385,22 +251,23 @@ fn main(
     let v_covar2d = inverse_vjp(covar2d_inv, v_covar2d_inv);
 
     // covar_world_to_cam
+    let covar = M * transpose(M);
     let covar_c = R * covar * transpose(R);
 
     // persp_proj_vjp
     let J = helpers::calc_cam_J(mean_c, focal, img_size, pixel_center);
     let v_mean_c = persp_proj_vjp(J, mean_c, covar_c, focal, pixel_center, img_size, v_covar2d, v_mean2d);
-    // cov = J * V * Jt; G = df/dcov = v_cov
-    // -> df/dV = Jt * G * J
-    // -> df/dJ = G * J * Vt + Gt * J * V
+    // cov = J * V * Jt; G = b3_c4_/dcov = v_cov
+    // -> b3_c4_/dV = Jt * G * J
+    // -> b3_c4_/dJ = G * J * Vt + Gt * J * V
     let v_covar_c = transpose(J) * v_covar2d * J;
 
-    // df/dx = -fx * rz2 * df/dJ_02
-    // df/dy = -fy * rz2 * df/dJ_12
-    // df/dz = -fx * rz2 * df/dJ_00 - fy * rz2 * df/dJ_11
-    //         + 2 * fx * tx * rz3 * df/dJ_02 + 2 * fy * ty * rz3
-    // for D = W * X, G = df/dD
-    // df/dW = G * XT, df/dX = WT * G
+    // b3_c4_/dx = -fx * rz2 * b3_c4_/dJ_02
+    // b3_c4_/dy = -fy * rz2 * b3_c4_/dJ_12
+    // b3_c4_/dz = -fx * rz2 * b3_c4_/dJ_00 - fy * rz2 * b3_c4_/dJ_11
+    //         + 2 * fx * tx * rz3 * b3_c4_/dJ_02 + 2 * fy * ty * rz3
+    // for D = W * X, G = b3_c4_/dD
+    // b3_c4_/dW = G * XT, b3_c4_/dX = WT * G
 
     // TODO: Camera gradient is not done yet.
     // var v_R = outer_product(v_mean_c, mean);
@@ -417,11 +284,11 @@ fn main(
     // TODO: Merge with cov calculation.
 
     // https://math.stackexchange.com/a/3850121
-    // for D = W * X, G = df/dD
-    // df/dW = G * XT, df/dX = WT * G
+    // for D = W * X, G = b3_c4_/dD
+    // b3_c4_/dW = G * XT, b3_c4_/dX = WT * G
     // so
     // for D = M * Mt,
-    // df/dM = df/dM + df/dMt = G * M + (Mt * G)t = G * M + Gt * M
+    // b3_c4_/dM = b3_c4_/dM + b3_c4_/dMt = G * M + (Mt * G)t = G * M + Gt * M
     let v_M = (v_covar + transpose(v_covar)) * M;
 
     let v_scale = vec3f(

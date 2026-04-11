@@ -271,8 +271,11 @@ async fn test_gradient_validation() {
     if let Some(g) = splats.transforms.grad(&grads) {
         validate_gradient(g, "transforms").await;
     }
-    if let Some(g) = splats.sh_coeffs.grad(&grads) {
-        validate_gradient(g, "sh_coeffs").await;
+    if let Some(g) = splats.sh_coeffs_dc.grad(&grads) {
+        validate_gradient(g, "sh_coeffs_dc").await;
+    }
+    if let Some(g) = splats.sh_coeffs_rest.grad(&grads) {
+        validate_gradient(g, "sh_coeffs_rest").await;
     }
     if let Some(g) = splats.raw_opacities.grad(&grads) {
         validate_gradient(g, "raw_opacity").await;

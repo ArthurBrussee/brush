@@ -8,8 +8,8 @@ use brush_render::sh::sh_coeffs_for_degree;
 use burn::tensor::ops::IntTensor;
 use burn::tensor::ops::{FloatTensor, FloatTensorOps};
 use burn::tensor::{DType, FloatDType, Shape, TensorMetadata};
-use burn_cubecl::cubecl::features::TypeUsage;
-use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType};
+use burn_cubecl::cubecl::features::AtomicUsage;
+use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType, Type};
 use burn_cubecl::cubecl::server::KernelArguments;
 use burn_cubecl::kernel::into_contiguous;
 use glam::{Vec3, uvec2};
@@ -20,7 +20,7 @@ use brush_render::shaders::helpers::ProjectUniforms;
 // Kernel definitions using proc macro
 #[wgsl_kernel(
     source = "src/shaders/project_backwards.wgsl",
-    includes = ["../brush-render/src/shaders/helpers.wgsl"],
+    includes = ["../brush-render/src/shaders/helpers.wgsl", "../brush-render/src/shaders/sh.wgsl"],
 )]
 pub struct ProjectBackwards {
     mip_filter: bool,
@@ -76,8 +76,10 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let hard_floats = client
             .properties()
-            .type_usage(StorageType::Atomic(ElemType::Float(FloatKind::F32)))
-            .contains(TypeUsage::AtomicAdd);
+            .atomic_type_usage(Type::Scalar(StorageType::Atomic(ElemType::Float(
+                FloatKind::F32,
+            ))))
+            .contains(AtomicUsage::Add);
 
         let webgpu = cfg!(target_family = "wasm");
 
@@ -113,7 +115,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
         raw_opac: FloatTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
-        sh_degree: u32,
         render_mode: SplatRenderMode,
         v_combined: FloatTensor<Self>,
     ) -> SplatGrads<Self> {
@@ -129,7 +130,12 @@ impl SplatBwdOps<Self> for MainBackendBase {
         // Dense outputs, the kernel scatters compact→global internally.
         let v_transforms = Self::float_zeros([num_points, 10].into(), device, FloatDType::F32);
         let v_coeffs = Self::float_zeros(
-            [num_points, sh_coeffs_for_degree(sh_degree) as usize, 3].into(),
+            [
+                num_points,
+                sh_coeffs_for_degree(project_uniforms.sh_degree) as usize,
+                3,
+            ]
+            .into(),
             device,
             FloatDType::F32,
         );
@@ -171,9 +177,33 @@ impl SplatBwdOps<Self> for MainBackendBase {
             }
         });
 
+        // Split coefficient gradients: DC [N, 1, 3] and rest [N, C-1, 3].
+        let total_coeffs = v_coeffs.shape()[1];
+        let v_coeffs_dc = Self::float_slice(
+            v_coeffs.clone(),
+            &[(0..num_points).into(), (0..1).into(), (0..3).into()],
+        );
+        let v_coeffs_rest = if total_coeffs > 1 {
+            Self::float_slice(
+                v_coeffs,
+                &[
+                    (0..num_points).into(),
+                    (1..total_coeffs).into(),
+                    (0..3).into(),
+                ],
+            )
+        } else {
+            Self::float_zeros(
+                [num_points, 0, 3].into(),
+                &v_transforms.device,
+                FloatDType::F32,
+            )
+        };
+
         SplatGrads {
             v_transforms,
-            v_coeffs,
+            v_coeffs_dc,
+            v_coeffs_rest,
             v_raw_opac,
             v_refine_weight,
         }
