@@ -29,7 +29,7 @@ fn main(
     }
 
     if local_id.x < sorting::BIN_COUNT {
-        histogram[local_id.x] = 0u;
+        atomicStore(&histogram[local_id.x], 0u);
     }
     workgroupBarrier();
 
@@ -49,6 +49,6 @@ fn main(
     workgroupBarrier();
     if local_id.x < sorting::BIN_COUNT {
         let num_wgs = sorting::div_ceil(num_keys, sorting::BLOCK_SIZE);
-        counts[local_id.x * num_wgs + group_id] = histogram[local_id.x];
+        counts[local_id.x * num_wgs + group_id] = atomicLoad(&histogram[local_id.x]);
     }
 }

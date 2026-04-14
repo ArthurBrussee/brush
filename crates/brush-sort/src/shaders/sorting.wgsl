@@ -23,6 +23,13 @@ const ELEMENTS_PER_THREAD: u32 = 4;
 
 const BLOCK_SIZE = WG * ELEMENTS_PER_THREAD;
 
+// Upper bound on the number of subgroups inside a workgroup of size WG.
+// Subgroup size varies by hardware: 8/16 on some Intel, 32 on Apple/most Intel/
+// NVIDIA, 64 on AMD wave64. With WG=256 the worst case is SG=8, which gives
+// 32 subgroups. We pad `partials` arrays to 32 so they are correctly sized
+// for any subgroup size in [8, 64].
+const MAX_SUBGROUPS: u32 = 32u;
+
 fn div_ceil(a: u32, b: u32) -> u32 {
     return (a + b - 1u) / b;
 }

@@ -532,8 +532,22 @@ fn generate_code(
                     let source = #get_source_call;
 
                     #[cfg(target_family = "wasm")]
-                    let source = if ["subgroupAdd", "subgroupAny", "subgroupMax", "subgroupBroadcast", "subgroupShuffle"]
-                        .iter().any(|s| source.contains(s))
+                    let source = if [
+                        "subgroupAdd",
+                        "subgroupAny",
+                        "subgroupAll",
+                        "subgroupMax",
+                        "subgroupMin",
+                        "subgroupBroadcast",
+                        "subgroupBroadcastFirst",
+                        "subgroupShuffle",
+                        "subgroupBallot",
+                        "subgroupExclusiveAdd",
+                        "subgroupInclusiveAdd",
+                        "subgroupElect",
+                    ]
+                    .iter()
+                    .any(|s| source.contains(s))
                     {
                         format!("enable subgroups;\n{}", source)
                     } else {
