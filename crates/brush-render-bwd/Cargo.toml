@@ -27,12 +27,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 # Enable debug-validation feature when running tests
-assert_approx_eq.workspace = true
 brush-render = { path = "../brush-render", features = ["debug-validation"] }
-burn-wgpu.workspace = true
-
-[package.metadata.cargo-shear]
-ignored = ["bytemuck"]
 
 [lints]
 workspace = true

@@ -30,7 +30,7 @@ path = "benches/sort_bench.rs"
 getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [package.metadata.cargo-shear]
-ignored = ["bytemuck"]
+ignored = ["bytemuck", "getrandom"]
 
 [lints]
 workspace = true

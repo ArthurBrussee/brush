@@ -16,7 +16,6 @@ brush-vfs.path = "../brush-vfs"
 brush-serde-macros.path = "../brush-serde-macros"
 
 burn.workspace = true
-burn-cubecl.workspace = true
 glam.workspace = true
 serde.workspace = true
 serde-ply.workspace = true
@@ -41,3 +40,6 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["getrandom"]
