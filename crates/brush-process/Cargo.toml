@@ -51,3 +51,6 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["getrandom"]

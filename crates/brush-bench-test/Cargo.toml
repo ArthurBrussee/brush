@@ -10,7 +10,6 @@ brush-render = { path = "../brush-render", features = ["debug-validation"] }
 brush-render-bwd.path = "../brush-render-bwd"
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
-brush-serde = { path = "../brush-serde", features = ["export", "import"] }
 
 anyhow.workspace = true
 image.workspace = true
@@ -18,7 +17,6 @@ glam.workspace = true
 log.workspace = true
 burn = { workspace = true, features = ["autodiff"] }
 burn-cubecl.workspace = true
-bytemuck.workspace = true
 rand.workspace = true
 
 divan = "0.1.17"
@@ -43,3 +41,6 @@ path = "src/training_bench.rs"
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["getrandom"]
