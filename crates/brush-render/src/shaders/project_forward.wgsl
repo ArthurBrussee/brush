@@ -74,7 +74,6 @@ fn main(
         return;
     }
 
-    // Count tile intersections for this splat.
     let conic = helpers::inverse(cov2d);
     let conic_packed = vec3f(conic[0][0], conic[0][1], conic[1][1]);
     let tile_bbox = helpers::get_tile_bbox(mean2d, extent, uniforms.tile_bounds);

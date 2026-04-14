@@ -68,6 +68,10 @@ pub fn radix_argsort(
 
     let max_needed_wgs = max_n.div_ceil(BLOCK_SIZE);
 
+    // Calculate dispatch counts matching the original formula
+    let num_wgs_count = max_n.div_ceil(BLOCK_SIZE);
+    let num_reduce_wgs_count = num_wgs_count.div_ceil(BLOCK_SIZE) * SortCount::BIN_COUNT;
+
     // Handle dynamic vs static dispatch
     let (num_keys_buf, num_wgs, num_reduce_wgs) = {
         // Static dispatch: use full buffer size
@@ -75,9 +79,6 @@ pub fn radix_argsort(
             type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
             Tensor::<Backend, 1, Int>::from_ints([max_n as i32], device).into_primitive()
         };
-        // Calculate dispatch counts matching the original formula
-        let num_wgs_count = max_n.div_ceil(BLOCK_SIZE);
-        let num_reduce_wgs_count = num_wgs_count.div_ceil(BLOCK_SIZE) * SortCount::BIN_COUNT;
         let num_wgs = calc_cube_count_1d(max_n, BLOCK_SIZE);
         let num_reduce_wgs = calc_cube_count_1d(num_reduce_wgs_count, 1);
         (num_keys_buf, num_wgs, num_reduce_wgs)
@@ -105,7 +106,19 @@ pub fn radix_argsort(
         );
 
         {
-            let reduced_buf = create_tensor([BLOCK_SIZE as usize], device, DType::I32);
+            // Size `reduced_buf` to the real number of per-chunk totals. The
+            // sort_scan kernel now walks the whole buffer in BLOCK_SIZE chunks,
+            // so we allocate `num_reduce_wgs_count` slots (rounded up to a
+            // BLOCK_SIZE boundary so the final chunk's load/store can be gated
+            // by a simple `< num_reduce_wgs` check). Previously this was a
+            // fixed BLOCK_SIZE, which silently broke sorts above ~67M keys
+            // because sort_reduce would write past the end of `reduced_buf`
+            // and sort_scan would only cover the first BLOCK_SIZE entries.
+            let reduced_buf_size = num_reduce_wgs_count
+                .div_ceil(BLOCK_SIZE)
+                .max(1)
+                * BLOCK_SIZE;
+            let reduced_buf = create_tensor([reduced_buf_size as usize], device, DType::I32);
 
             client.launch(
                 SortReduce::task(),
@@ -345,6 +358,101 @@ mod tests {
             assert_eq!(
                 keys_inp[original_idx], sorted_key,
                 "Value at index {idx} points to wrong original index"
+            );
+        }
+    }
+
+    // Regression test for a silent corruption in the radix sort that hits at
+    // ~67M keys.
+    //
+    // The pipeline is: sort_count → sort_reduce → sort_scan → sort_scan_add →
+    // sort_scatter. `sort_reduce` writes `num_reduce_wgs` per-chunk totals into
+    // `reduced_buf`, and `sort_scan` is supposed to turn that into an exclusive
+    // prefix sum that `sort_scan_add` then uses as the base offset for each
+    // sort_scatter workgroup. Historically `reduced_buf` was hardcoded to
+    // BLOCK_SIZE (1024) entries and `sort_scan` was a single workgroup that
+    // only covered BLOCK_SIZE entries. Once `num_reduce_wgs > BLOCK_SIZE` —
+    // which happens when `num_wgs > BLOCK_SIZE² / BIN_COUNT = 65536`, i.e.
+    // around 67M keys — the per-chunk totals for the highest-bin chunks were
+    // dropped on the floor and `sort_scan_add` read zeros for those chunks'
+    // base offsets. Sort_scatter then scattered those keys into the wrong
+    // slots, silently overwriting other keys.
+    //
+    // Weaker checks (monotonicity + spot value consistency) miss this: when a
+    // bin-15 key gets overwritten by a smaller bin-0 key, the output is still
+    // monotonic and the (key, value) pair at that slot still references its
+    // own original index. The only way to catch it is to verify that every
+    // input key still appears in the output exactly once. We do that by
+    // sorting a permutation of `[0..N)` and asserting the result is the
+    // identity `[0, 1, ..., N-1]`. Anything else — duplicates, drops,
+    // out-of-order — fails the check.
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_sorting_above_scan_block_size() {
+        // 70M keys: num_wgs ≈ 68360, num_reduce_wgs = 16 * ceil(68360/1024) = 1072,
+        // i.e. 48 entries past the old BLOCK_SIZE = 1024 cap.
+        const NUM_ELEMENTS: usize = 70_000_000;
+
+        // Deterministic shuffle so the test is reproducible without dragging
+        // in `rand`'s seedable RNG plumbing. SplitMix64-based Fisher-Yates.
+        let mut keys_inp: Vec<u32> = (0..NUM_ELEMENTS as u32).collect();
+        {
+            use std::num::Wrapping;
+            let mut state = Wrapping(0xD15EA5Eu64);
+            for i in (1..keys_inp.len()).rev() {
+                state += Wrapping(0x9E3779B97F4A7C15u64);
+                let mut z = state.0;
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+                z ^= z >> 31;
+                let j = (z as usize) % (i + 1);
+                keys_inp.swap(i, j);
+            }
+        }
+        // Use the original index as the value, so we can also check that
+        // (key, value) round-trips cleanly through the sort.
+        let values_inp: Vec<u32> = (0..NUM_ELEMENTS as u32).collect();
+        // values_inp[i] == i, and keys_inp[i] is some unique key. After sort,
+        // ret_keys should be [0..N) and ret_values[k] should equal the
+        // original index `i` such that keys_inp[i] == k.
+        let mut expected_values = vec![0u32; NUM_ELEMENTS];
+        for (i, &k) in keys_inp.iter().enumerate() {
+            expected_values[k as usize] = i as u32;
+        }
+
+        let device = brush_kernel::test_helpers::test_device().await;
+        let keys =
+            Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
+        let values =
+            Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
+        let (ret_keys, ret_values) = radix_argsort(keys, values, 32);
+
+        let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
+            .to_data_async()
+            .await
+            .expect("readback");
+        let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values)
+            .to_data_async()
+            .await
+            .expect("readback");
+
+        let ret_keys_slice = ret_keys.as_slice::<i32>().expect("Wrong type");
+        let ret_values_slice = ret_values.as_slice::<i32>().expect("Wrong type");
+
+        assert_eq!(ret_keys_slice.len(), NUM_ELEMENTS);
+        assert_eq!(ret_values_slice.len(), NUM_ELEMENTS);
+
+        // Strict identity check: every position must hold exactly the right
+        // key and value. A single dropped or duplicated key fails this.
+        for i in 0..NUM_ELEMENTS {
+            assert_eq!(
+                ret_keys_slice[i] as u32, i as u32,
+                "key at sorted index {i} is {}, expected {i}",
+                ret_keys_slice[i]
+            );
+            assert_eq!(
+                ret_values_slice[i] as u32, expected_values[i],
+                "value at sorted index {i} is {}, expected {}",
+                ret_values_slice[i], expected_values[i]
             );
         }
     }
