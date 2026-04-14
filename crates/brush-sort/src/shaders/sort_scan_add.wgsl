@@ -4,7 +4,8 @@
 @group(0) @binding(1) var<storage, read> reduced: array<u32>;
 @group(0) @binding(2) var<storage, read_write> counts: array<u32>;
 
-var<workgroup> sums: array<u32, sorting::WG>;
+// Per-subgroup partial sums for the workgroup-wide scan step.
+var<workgroup> partials: array<u32, sorting::MAX_SUBGROUPS>;
 var<workgroup> lds: array<array<u32, sorting::WG>, sorting::ELEMENTS_PER_THREAD>;
 
 @compute
@@ -13,6 +14,8 @@ fn main(
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(num_workgroups) num_workgroups: vec3<u32>,
+    @builtin(subgroup_size) subgroup_size: u32,
+    @builtin(subgroup_invocation_id) subgroup_invocation_id: u32,
 ) {
     let num_keys = num_keys_arr[0];
     // let num_keys = num_keys_arr[0];
@@ -39,29 +42,54 @@ fn main(
         lds[row][col] = counts[bin_offset + data_index];
     }
     workgroupBarrier();
-    var sum = 0u;
+    // Per-thread serial exclusive scan. After this, lds[i][local_id.x] holds
+    // exclusive prefix sums and `thread_sum` holds the inclusive total of the
+    // thread's column.
+    var thread_sum = 0u;
     for (var i = 0u; i < sorting::ELEMENTS_PER_THREAD; i++) {
         let tmp = lds[i][local_id.x];
-        lds[i][local_id.x] = sum;
-        sum += tmp;
+        lds[i][local_id.x] = thread_sum;
+        thread_sum += tmp;
     }
-    // workgroup prefix sum
-    sums[local_id.x] = sum;
-    for (var i = 0u; i < 8u; i++) {
-        workgroupBarrier();
-        if local_id.x >= (1u << i) {
-            sum += sums[local_id.x - (1u << i)];
-        }
-        workgroupBarrier();
-        sums[local_id.x] = sum;
+
+    // Workgroup-wide exclusive scan with hybrid combine: subgroupExclusiveAdd
+    // in subgroup 0 if num_subgroups fits in a single subgroup (true for SG ≥
+    // 16), serial fallback in thread 0 otherwise.
+    let subgroup_id = local_id.x / subgroup_size;
+    let num_subgroups = sorting::WG / subgroup_size;
+
+    let sg_inclusive = subgroupInclusiveAdd(thread_sum);
+    if subgroup_invocation_id == subgroup_size - 1u {
+        partials[subgroup_id] = sg_inclusive;
     }
     workgroupBarrier();
-    sum = reduced[group_id];
-    if local_id.x > 0u {
-        sum += sums[local_id.x - 1u];
+    if num_subgroups <= subgroup_size {
+        if subgroup_id == 0u {
+            let v = select(0u, partials[subgroup_invocation_id], subgroup_invocation_id < num_subgroups);
+            let scanned = subgroupExclusiveAdd(v);
+            if subgroup_invocation_id < num_subgroups {
+                partials[subgroup_invocation_id] = scanned;
+            }
+        }
+    } else {
+        if local_id.x == 0u {
+            var acc = 0u;
+            for (var i = 0u; i < num_subgroups; i++) {
+                let v = partials[i];
+                partials[i] = acc;
+                acc += v;
+            }
+        }
     }
+    workgroupBarrier();
+
+    // Add the global base for this chunk (`reduced[group_id]`) plus this
+    // thread's exclusive prefix within the workgroup, then push it down to
+    // every entry in this thread's column.
+    let workgroup_exclusive = partials[subgroup_id] + sg_inclusive - thread_sum;
+    let total_base = reduced[group_id] + workgroup_exclusive;
     for (var i = 0u; i < sorting::ELEMENTS_PER_THREAD; i++) {
-        lds[i][local_id.x] += sum;
+        lds[i][local_id.x] += total_base;
     }
     // lds now contains exclusive prefix sum
     // Note: storing inclusive might be slightly cheaper here

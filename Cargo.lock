@@ -1163,6 +1163,7 @@ dependencies = [
  "burn-cubecl",
  "burn-wgpu",
  "bytemuck",
+ "divan",
  "getrandom 0.4.2",
  "rand 0.10.1",
  "tokio",

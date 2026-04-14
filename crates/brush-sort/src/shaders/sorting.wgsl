@@ -23,6 +23,27 @@ const ELEMENTS_PER_THREAD: u32 = 4;
 
 const BLOCK_SIZE = WG * ELEMENTS_PER_THREAD;
 
+// Upper bound on the number of subgroups inside a workgroup of size WG.
+// Subgroup size varies by hardware: 8/16 on some Intel, 32 on Apple/most Intel/
+// NVIDIA, 64 on AMD wave64. With WG=256 the worst case is SG=8, which gives
+// 32 subgroups. We pad `partials` arrays to 32 so they are correctly sized
+// for any subgroup size in [8, 64].
+//
+// Cross-subgroup combine strategy used by every workgroup-wide scan helper:
+//
+//   if num_subgroups <= subgroup_size:
+//       // Fast path: a single subgroupExclusiveAdd in subgroup 0 scans all
+//       // per-subgroup totals in parallel. Hits on every common GPU
+//       // (SG=32, SG=64) because WG=256 gives at most 8 subgroups.
+//   else:
+//       // Slow path: thread 0 serializes the combine. Used only when
+//       // num_subgroups exceeds the subgroup size (SG=8 with WG=256, where
+//       // num_subgroups=32). Rare in practice, but required for correctness.
+//
+// Both branches are gated on a workgroup-uniform condition so the subgroup
+// op stays in uniform control flow.
+const MAX_SUBGROUPS: u32 = 32u;
+
 fn div_ceil(a: u32, b: u32) -> u32 {
     return (a + b - 1u) / b;
 }
