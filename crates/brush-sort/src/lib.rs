@@ -114,10 +114,7 @@ pub fn radix_argsort(
             // fixed BLOCK_SIZE, which silently broke sorts above ~67M keys
             // because sort_reduce would write past the end of `reduced_buf`
             // and sort_scan would only cover the first BLOCK_SIZE entries.
-            let reduced_buf_size = num_reduce_wgs_count
-                .div_ceil(BLOCK_SIZE)
-                .max(1)
-                * BLOCK_SIZE;
+            let reduced_buf_size = num_reduce_wgs_count.div_ceil(BLOCK_SIZE).max(1) * BLOCK_SIZE;
             let reduced_buf = create_tensor([reduced_buf_size as usize], device, DType::I32);
 
             client.launch(

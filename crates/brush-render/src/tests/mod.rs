@@ -223,25 +223,52 @@ fn rng_scene(
     }
 }
 
-fn scene_to_splats(scene: &Scene, device: &<MainBackend as burn::prelude::Backend>::Device) -> Splats<MainBackend> {
+fn scene_to_splats(
+    scene: &Scene,
+    device: &<MainBackend as burn::prelude::Backend>::Device,
+) -> Splats<MainBackend> {
     let n = scene.len();
     let means = Tensor::<MainBackend, 1>::from_floats(
-        scene.means.iter().flatten().copied().collect::<Vec<_>>().as_slice(),
+        scene
+            .means
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>()
+            .as_slice(),
         device,
     )
     .reshape([n, 3]);
     let quats = Tensor::<MainBackend, 1>::from_floats(
-        scene.quats.iter().flatten().copied().collect::<Vec<_>>().as_slice(),
+        scene
+            .quats
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>()
+            .as_slice(),
         device,
     )
     .reshape([n, 4]);
     let log_scales = Tensor::<MainBackend, 1>::from_floats(
-        scene.log_scales.iter().flatten().copied().collect::<Vec<_>>().as_slice(),
+        scene
+            .log_scales
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>()
+            .as_slice(),
         device,
     )
     .reshape([n, 3]);
     let sh = Tensor::<MainBackend, 1>::from_floats(
-        scene.sh_dc.iter().flatten().copied().collect::<Vec<_>>().as_slice(),
+        scene
+            .sh_dc
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>()
+            .as_slice(),
         device,
     )
     .reshape([n, 1, 3]);
@@ -452,11 +479,8 @@ async fn renders_large_rotated_splats() {
     // Large anisotropic scales — exp(3) is ~20 world units, which at distance 5
     // with focal 0.5*img_w projects to hundreds of pixels. Asymmetric so
     // off-diagonal covariance terms after rotation really matter.
-    let log_scales = Tensor::<MainBackend, 2>::random(
-        [num_splats, 3],
-        Distribution::Uniform(1.0, 3.0),
-        &device,
-    );
+    let log_scales =
+        Tensor::<MainBackend, 2>::random([num_splats, 3], Distribution::Uniform(1.0, 3.0), &device);
     let quats = Tensor::<MainBackend, 2>::random(
         [num_splats, 4],
         Distribution::Uniform(-1.0, 1.0),
