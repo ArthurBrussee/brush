@@ -41,10 +41,22 @@ pub enum UiMode {
 }
 
 pub fn create_egui_options() -> WgpuConfiguration {
+    let instance_descriptor = {
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        // Prefer DX12 on Windows: Vulkan + wgpu currently has poor OOM handling.
+        // StaticDxc bundles dxcompiler.dll into the binary (via wgpu's `static-dxc` feature).
+        #[cfg(target_os = "windows")]
+        {
+            desc.backends = wgpu::Backends::DX12;
+            desc.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::StaticDxc;
+        }
+        desc
+    };
+
     WgpuConfiguration {
         wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
             eframe::egui_wgpu::WgpuSetupCreateNew {
-                instance_descriptor: wgpu::InstanceDescriptor::new_without_display_handle(),
+                instance_descriptor,
                 display_handle: None,
                 native_adapter_selector: None,
                 power_preference: wgpu::PowerPreference::HighPerformance,

@@ -86,7 +86,11 @@ rayon = "1.11"
 naga_oil = { version = "0.22", default-features = false }
 
 # Backends are chosen per platform.
-wgpu = { version = "29", default-features = false, features = ["naga-ir"] }
+# `dx12` + `static-dxc` enable DX12 with a bundled DirectX shader compiler on
+# Windows, so we can prefer DX12 over Vulkan (Vulkan + wgpu has poor OOM
+# handling). `static-dxc` requires the MSVC "C++ ATL for v143 build tools"
+# component to be installed.
+wgpu = { version = "29", default-features = false, features = ["naga-ir", "dx12", "static-dxc"] }
 
 serde-ply = "0.2.1"
 

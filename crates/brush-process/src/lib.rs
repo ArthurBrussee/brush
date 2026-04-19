@@ -1,9 +1,12 @@
 #![recursion_limit = "256"]
 
-use burn_wgpu::{
-    RuntimeOptions, WgpuDevice,
-    graphics::{AutoGraphicsApi, GraphicsApi},
-};
+use burn_wgpu::{RuntimeOptions, WgpuDevice, graphics::GraphicsApi};
+
+// Prefer DX12 on Windows: Vulkan + wgpu currently has poor OOM handling.
+#[cfg(target_os = "windows")]
+type SelectedGraphicsApi = burn_wgpu::graphics::Dx12;
+#[cfg(not(target_os = "windows"))]
+type SelectedGraphicsApi = burn_wgpu::graphics::AutoGraphicsApi;
 use wgpu::{Adapter, Device, Queue};
 
 pub mod config;
@@ -36,8 +39,11 @@ fn burn_options() -> RuntimeOptions {
 }
 
 pub async fn burn_init_setup() -> WgpuDevice {
-    burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
-        .await;
+    burn_wgpu::init_setup_async::<SelectedGraphicsApi>(
+        &WgpuDevice::DefaultDevice,
+        burn_options(),
+    )
+    .await;
     connect_device(WgpuDevice::DefaultDevice);
     WgpuDevice::DefaultDevice
 }
@@ -48,7 +54,7 @@ pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuD
         adapter,
         device,
         queue,
-        backend: AutoGraphicsApi::backend(),
+        backend: SelectedGraphicsApi::backend(),
     };
     let burn = burn_wgpu::init_device(setup, burn_options());
     connect_device(burn.clone());
