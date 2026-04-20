@@ -223,9 +223,7 @@ async fn test_multi_step_training() {
         &device,
         BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
     );
-    let _initial_count = splats.num_splats();
 
-    // Run a few training steps
     for _ in 0..3 {
         let (new_splats, stats) = trainer.step(batch.clone(), splats).await;
         splats = new_splats;

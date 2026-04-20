@@ -1,13 +1,14 @@
-use brush_kernel::{CubeTensor, bytemuck, calc_cube_count_1d, create_meta_binding};
+use brush_kernel::{calc_cube_count_1d, create_meta_binding};
 use brush_render::MainBackendBase;
 use brush_render::gaussian_splats::SplatRenderMode;
 use brush_render::shaders::helpers::RasterizeUniforms;
 use brush_wgsl::wgsl_kernel;
 
 use brush_render::sh::sh_coeffs_for_degree;
+use burn::tensor::FloatDType;
+use burn::tensor::TensorMetadata;
 use burn::tensor::ops::IntTensor;
 use burn::tensor::ops::{FloatTensor, FloatTensorOps};
-use burn::tensor::{DType, FloatDType, Shape, TensorMetadata};
 use burn_cubecl::cubecl::features::AtomicUsage;
 use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType, Type};
 use burn_cubecl::cubecl::server::KernelArguments;
@@ -81,13 +82,11 @@ impl SplatBwdOps<Self> for MainBackendBase {
             ))))
             .contains(AtomicUsage::Add);
 
-        let webgpu = cfg!(target_family = "wasm");
-
         tracing::trace_span!("RasterizeBackwards").in_scope(|| {
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
                 client.launch_unchecked(
-                    RasterizeBackwards::task(hard_floats, webgpu),
+                    RasterizeBackwards::task(hard_floats, cfg!(target_family = "wasm")),
                     calc_cube_count_1d(
                         tile_bounds.x * tile_bounds.y * RasterizeBackwards::WORKGROUP_SIZE[0],
                         RasterizeBackwards::WORKGROUP_SIZE[0],
@@ -145,14 +144,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
         let num_visible = project_uniforms.num_visible;
-        // Create GPU buffer from CPU num_visible for the kernel binding.
-        let num_visible_buf = CubeTensor::new_contiguous(
-            client.clone(),
-            device.clone(),
-            Shape::new([1]),
-            client.create_from_slice(bytemuck::cast_slice(&[num_visible])),
-            DType::U32,
-        );
 
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
@@ -162,7 +153,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     calc_cube_count_1d(num_visible, ProjectBackwards::WORKGROUP_SIZE[0]),
                     KernelArguments::new()
                         .with_buffers(vec![
-                            num_visible_buf.handle.binding(),
                             transforms.handle.binding(),
                             raw_opac.handle.binding(),
                             global_from_compact_gid.handle.binding(),

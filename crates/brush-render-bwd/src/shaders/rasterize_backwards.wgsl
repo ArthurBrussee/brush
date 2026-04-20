@@ -49,7 +49,7 @@ fn main(
     @builtin(workgroup_id) wg_id: vec3u,
     @builtin(num_workgroups) num_wgs: vec3u,
     @builtin(local_invocation_index) local_idx: u32,
-    @builtin(subgroup_invocation_id) subgroup_invocation_id: u32
+    @builtin(subgroup_invocation_id) subgroup_invocation_id: u32,
 ) {
     let global_id = helpers::get_global_id(wg_id, num_wgs, local_idx, THREAD_COUNT);
     var pix_locs = array<vec2u, PIXELS_PER_THREAD>();
@@ -178,6 +178,14 @@ fn main(
                 pix_outs[i].a = next_T;
             }
 
+            // Native: `subgroupAny` is subgroup-uniform, so `if anyGrad` is
+            // valid subgroup-scope uniform control flow — we skip the whole
+            // reduction when no lane has a gradient.
+            //
+            // WebGPU: Chrome 146's Tint doesn't actually apply the relaxed
+            // function tag for subgroupAny somehow, so it still rejects this pattern.
+            // Until Tint catches up, fall back to calling subgroupAdd
+            // unconditionally and gating only the atomic write.
             #ifdef WEBGPU
                 let anyGrad = true;
                 let doAdd = subgroupAny(hasGrad) && subgroup_invocation_id == 0u;
@@ -186,7 +194,6 @@ fn main(
                 let doAdd = subgroup_invocation_id == 0u;
             #endif
 
-            // Now do subgroup reduction on thread-accumulated gradients (4x fewer atomics!)
             if anyGrad {
                 let sum_xy = subgroupAdd(v_xy_thread);
                 let sum_conic = subgroupAdd(v_conic_thread);

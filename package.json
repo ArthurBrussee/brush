@@ -17,6 +17,6 @@
     "brush_nextjs"
   ],
   "devDependencies": {
-    "baseline-browser-mapping": "^2.10.0"
+    "baseline-browser-mapping": "^2.10.18"
   }
 }

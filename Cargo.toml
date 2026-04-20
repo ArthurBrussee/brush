@@ -312,3 +312,13 @@ needless_range_loop = "allow"
 
 # This doesn't quite work with Burn:
 single_range_in_vec_init = "allow"
+
+# wgpu fork with WebGPU subgroups feature mapping (needed for our backward
+# kernel's subgroupAdd/subgroupAny on web). Tracks ArthurBrussee/wgpu's v29
+# branch — to be upstreamed via a PR.
+[patch.crates-io]
+wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
+wgpu-core = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
+wgpu-hal = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
+wgpu-types = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
+naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }

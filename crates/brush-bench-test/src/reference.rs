@@ -72,6 +72,19 @@ async fn compare<B: Backend, const D1: usize>(
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_reference() -> Result<()> {
+    #[cfg(target_family = "wasm")]
+    {
+        console_error_panic_hook::set_once();
+        wasm_logger::init(wasm_logger::Config::new(log::Level::Trace));
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Error)
+            .is_test(false)
+            .try_init();
+    }
+
     let device = brush_kernel::test_helpers::test_device().await;
 
     let crab_img = image::load_from_memory(CRAB_PNG)?;

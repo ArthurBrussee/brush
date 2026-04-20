@@ -554,6 +554,7 @@ fn generate_code(
                         source.to_string()
                     };
 
+
                     Ok(CompiledKernel {
                         entrypoint_name: "main".to_owned(),
                         debug_name: Some(#struct_name_str),

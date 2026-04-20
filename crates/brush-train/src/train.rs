@@ -695,6 +695,9 @@ fn scale_down_largest_dim<B: Backend>(scales: Tensor<B, 2>, factor: f32) -> Tens
 
 /// Sample a background color: base + uniform noise in [-strength, +strength], clamped to [0, 1].
 fn sample_background_color(base: glam::Vec3, strength: f32) -> glam::Vec3 {
+    if strength <= 0.0 {
+        return base.clamp(glam::Vec3::ZERO, glam::Vec3::ONE);
+    }
     use rand::RngExt as _;
     let mut rng = rand::rng();
     let noise = glam::Vec3::new(

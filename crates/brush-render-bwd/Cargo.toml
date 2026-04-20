@@ -23,6 +23,7 @@ burn-fusion.workspace = true
 burn-ir.workspace = true
 
 glam.workspace = true
+log.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
