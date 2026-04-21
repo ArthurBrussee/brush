@@ -42,17 +42,17 @@ struct JsonScene {
     /// Image height
     h: Option<f64>,
 
-    /// First radial distortion parameter used by [`OPENCV`, `OPENCV_FISHEYE`]
+    /// First radial distortion parameter used by `OPENCV`/`OPENCV_FISHEYE`
     k1: Option<f64>,
-    /// Second radial distortion parameter used by [`OPENCV`, `OPENCV_FISHEYE`]
+    /// Second radial distortion parameter used by `OPENCV`/`OPENCV_FISHEYE`
     k2: Option<f64>,
-    /// Third radial distortion parameter used by [`OPENCV_FISHEYE`]
+    /// Third radial distortion parameter used by `OPENCV_FISHEYE`
     k3: Option<f64>,
-    /// Fourth radial distortion parameter used by [`OPENCV_FISHEYE`]
+    /// Fourth radial distortion parameter used by `OPENCV_FISHEYE`
     k4: Option<f64>,
-    /// First tangential distortion parameter used by [`OPENCV`]
+    /// First tangential distortion parameter used by `OPENCV`
     p1: Option<f64>,
-    /// Second tangential distortion parameter used by [`OPENCV`]
+    /// Second tangential distortion parameter used by `OPENCV`
     p2: Option<f64>,
 
     frames: Vec<FrameData>,
@@ -81,17 +81,17 @@ struct FrameData {
     h: Option<f64>,
 
     // Nb: These are unused currently until we can optimize distorted cameras.
-    /// First radial distortion parameter used by [`OPENCV`, `OPENCV_FISHEYE`]
+    /// First radial distortion parameter used by `OPENCV`/`OPENCV_FISHEYE`
     k1: Option<f64>,
-    /// Second radial distortion parameter used by [`OPENCV`, `OPENCV_FISHEYE`]
+    /// Second radial distortion parameter used by `OPENCV`/`OPENCV_FISHEYE`
     k2: Option<f64>,
-    /// Third radial distortion parameter used by [`OPENCV_FISHEYE`]
+    /// Third radial distortion parameter used by `OPENCV_FISHEYE`
     k3: Option<f64>,
-    /// Fourth radial distortion parameter used by [`OPENCV_FISHEYE`]
+    /// Fourth radial distortion parameter used by `OPENCV_FISHEYE`
     k4: Option<f64>,
-    /// First tangential distortion parameter used by [`OPENCV`]
+    /// First tangential distortion parameter used by `OPENCV`
     p1: Option<f64>,
-    /// Second tangential distortion parameter used by [`OPENCV`]
+    /// Second tangential distortion parameter used by `OPENCV`
     p2: Option<f64>,
 
     transform_matrix: Vec<Vec<f32>>,

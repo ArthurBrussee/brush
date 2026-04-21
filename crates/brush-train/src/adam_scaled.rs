@@ -49,8 +49,9 @@ struct AdaptiveMomentum {
 ///
 /// When the owning [`AdamState`] has `reduce_moment_2` set, `moment_2` has
 /// size 1 in all trailing dimensions (e.g. \[N, 1, 1\] for D=3), while
-/// `moment_1` retains the full shape. Operations in [`map_opt`](super::map_opt)
-/// must be shape-agnostic along trailing dims to handle both tensors correctly.
+/// `moment_1` retains the full shape. Operations in `map_opt` (in
+/// `train.rs`) must be shape-agnostic along trailing dims to handle both
+/// tensors correctly.
 #[derive(Record, Clone)]
 pub(crate) struct MomentumState<B: Backend, const D: usize> {
     pub moment_1: Tensor<B, D>,

@@ -33,49 +33,82 @@ fn main(
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let mean_c = R * mean + viewmat[3].xyz;
 
-    // Check if this splat is 'valid' (aka visible). Phrase as positive to bail on NaN.
-    if mean_c.z < 0.01 || mean_c.z > 1e10 {
+    // project_forward is the sole visibility gate. All guards are
+    // positive-phrased so NaN reliably fails them (NaN compares
+    // unordered -> every comparison returns false -> the `!ok`
+    // branch bails). Finite out-of-distribution values
+    // (huge log_scales, huge positions) pass. calc_cov2d handles
+    // overflow by clamping.
+    let mean_c_ok =
+        helpers::is_finite_f32(mean_c.x) &&
+        helpers::is_finite_f32(mean_c.y) &&
+        mean_c.z >= 0.01 && mean_c.z <= 1e10;
+    if !mean_c_ok {
         return;
     }
 
-    let scale = exp(vec3f(transforms[base + 7u], transforms[base + 8u], transforms[base + 9u]));
-    var quat = vec4f(transforms[base + 3u], transforms[base + 4u], transforms[base + 5u], transforms[base + 6u]);
-
-    // Skip any invalid rotations. This will mean overtime
-    // these gaussians just die off while optimizing. For the viewer, the importer
-    // atm always normalizes the quaternions.
-    // Phrase as positive to bail on NaN.
-    let quat_norm_sqr = dot(quat, quat);
-    if quat_norm_sqr < 1e-6 {
+    let log_scale_raw = vec3f(transforms[base + 7u], transforms[base + 8u], transforms[base + 9u]);
+    let scale = exp(log_scale_raw);
+    let scale_ok =
+        helpers::is_finite_f32(scale.x) && scale.x >= 0.0 &&
+        helpers::is_finite_f32(scale.y) && scale.y >= 0.0 &&
+        helpers::is_finite_f32(scale.z) && scale.z >= 0.0;
+    if !scale_ok {
         return;
     }
 
-    quat *= inverseSqrt(quat_norm_sqr);
+    let quat_unorm = vec4f(transforms[base + 3u], transforms[base + 4u], transforms[base + 5u], transforms[base + 6u]);
+    let quat_norm_sqr = dot(quat_unorm, quat_unorm);
+    let quat_ok = quat_norm_sqr >= 1e-6 && helpers::is_finite_f32(quat_norm_sqr);
+    if !quat_ok {
+        return;
+    }
 
-    var opac = helpers::sigmoid(raw_opacities[global_gid]);
+    let raw_opac = raw_opacities[global_gid];
+    if !helpers::is_finite_f32(raw_opac) {
+        return;
+    }
+
+    // project_visible uses `normalize` — we do too, so both dispatches
+    // produce bit-identical quaternions. (The old `x * inverseSqrt(dot)`
+    // phrasing was mathematically equivalent but the compiler was free to
+    // pick a different implementation in each kernel.)
+    let quat = normalize(quat_unorm);
+
+    var opac = helpers::sigmoid(raw_opac);
     var cov2d = helpers::calc_cov2d(scale, quat, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
     opac *= helpers::compensate_cov2d(&cov2d);
 
-    // compute the projected mean
+    // Last gate: non-finite cov2d (Inf scale overflow, NaN math) — both
+    // kernels agree on this splat being invisible.
+    if !helpers::is_finite_cov2d(cov2d) {
+        return;
+    }
+
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
 
-    if opac < 1.0 / 255.0 {
+    if !(opac >= 1.0 / 255.0) {
         return;
     }
 
     let power_threshold = log(255.0f * opac);
-    let extent = helpers::compute_bbox_extent(cov2d, power_threshold);
-    if extent.x < 0.0 || extent.y < 0.0 {
-        return;
-    }
 
-    if mean2d.x + extent.x <= 0 || mean2d.x - extent.x >= f32(uniforms.img_size.x) ||
-       mean2d.y + extent.y <= 0 || mean2d.y - extent.y >= f32(uniforms.img_size.y) {
-        return;
-    }
-
+    // Same conic + compute_bbox_extent that MG runs on the stored conic,
+    // so the two dispatches agree on tile count.
     let conic = helpers::inverse(cov2d);
     let conic_packed = vec3f(conic[0][0], conic[0][1], conic[1][1]);
+    let extent = helpers::compute_bbox_extent(conic_packed, power_threshold);
+    if !(extent.x >= 0.0 && extent.y >= 0.0) {
+        return;
+    }
+
+    let bbox_on_screen = mean2d.x + extent.x > 0.0
+        && mean2d.x - extent.x < f32(uniforms.img_size.x)
+        && mean2d.y + extent.y > 0.0
+        && mean2d.y - extent.y < f32(uniforms.img_size.y);
+    if !bbox_on_screen {
+        return;
+    }
     let tile_bbox = helpers::get_tile_bbox(mean2d, extent, uniforms.tile_bounds);
     let tile_bbox_min = tile_bbox.xy;
     let tile_bbox_max = tile_bbox.zw;

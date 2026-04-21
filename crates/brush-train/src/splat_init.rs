@@ -128,30 +128,35 @@ pub fn create_random_splats<B: Backend>(
 }
 
 pub fn bounds_from_pos(percentile: f32, means: &[f32]) -> BoundingBox {
-    // Split into x, y, z values
     let (mut x_vals, mut y_vals, mut z_vals): (Vec<f32>, Vec<f32>, Vec<f32>) = means
         .chunks_exact(3)
         .map(|chunk| (chunk[0], chunk[1], chunk[2]))
         .collect();
-
-    // Filter out NaN and infinite values before sorting
     x_vals.retain(|x| x.is_finite());
     y_vals.retain(|y| y.is_finite());
     z_vals.retain(|z| z.is_finite());
 
-    x_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    y_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    z_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // If any axis is entirely non-finite, fall back to a unit box rather
+    // than panicking on the percentile index.
+    if x_vals.is_empty() || y_vals.is_empty() || z_vals.is_empty() {
+        return BoundingBox::from_min_max(Vec3::splat(-1.0), Vec3::splat(1.0));
+    }
 
-    // Get upper and lower percentiles.
-    let lower_idx = ((1.0 - percentile) / 2.0 * x_vals.len() as f32) as usize;
-    let upper_idx =
-        (x_vals.len() - 1).min(((1.0 + percentile) / 2.0 * x_vals.len() as f32) as usize);
+    x_vals.sort_by(|a, b| a.total_cmp(b));
+    y_vals.sort_by(|a, b| a.total_cmp(b));
+    z_vals.sort_by(|a, b| a.total_cmp(b));
 
-    BoundingBox::from_min_max(
-        Vec3::new(x_vals[lower_idx], y_vals[lower_idx], z_vals[lower_idx]),
-        Vec3::new(x_vals[upper_idx], y_vals[upper_idx], z_vals[upper_idx]),
-    )
+    let pick = |vals: &[f32]| -> (f32, f32) {
+        let n = vals.len();
+        let lo = ((1.0 - percentile) / 2.0 * n as f32) as usize;
+        let hi = (n - 1).min(((1.0 + percentile) / 2.0 * n as f32) as usize);
+        (vals[lo], vals[hi])
+    };
+
+    let (xmin, xmax) = pick(&x_vals);
+    let (ymin, ymax) = pick(&y_vals);
+    let (zmin, zmax) = pick(&z_vals);
+    BoundingBox::from_min_max(Vec3::new(xmin, ymin, zmin), Vec3::new(xmax, ymax, zmax))
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -238,4 +243,57 @@ pub fn to_init_splats<B: Backend>(
     Splats::from_raw(
         data.means, rotations, log_scales, sh_coeffs, opacities, mode, device,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounds_from_pos_all_nan_does_not_panic() {
+        let means = vec![f32::NAN; 30];
+        let bb = bounds_from_pos(0.8, &means);
+        // We expect a finite fallback — no NaN leak, no panic.
+        assert!(bb.center.is_finite(), "center: {:?}", bb.center);
+        assert!(bb.extent.is_finite(), "extent: {:?}", bb.extent);
+    }
+
+    #[test]
+    fn bounds_from_pos_empty_does_not_panic() {
+        let bb = bounds_from_pos(0.8, &[]);
+        assert!(bb.center.is_finite());
+        assert!(bb.extent.is_finite());
+    }
+
+    #[test]
+    fn bounds_from_pos_mixed_nan_and_finite() {
+        // Half NaN, half finite. The finite half should determine the bounds.
+        let mut means = Vec::new();
+        for i in 0..100 {
+            if i % 2 == 0 {
+                means.extend_from_slice(&[f32::NAN, f32::NAN, f32::NAN]);
+            } else {
+                means.extend_from_slice(&[i as f32, i as f32, i as f32]);
+            }
+        }
+        let bb = bounds_from_pos(0.8, &means);
+        assert!(bb.center.is_finite());
+        assert!(bb.extent.is_finite());
+        // Extent should be reasonable (the finite values span 1..99).
+        assert!(bb.extent.x > 0.0 && bb.extent.x < 100.0);
+    }
+
+    #[test]
+    fn bounds_from_pos_one_axis_all_nan() {
+        // x and z are OK, y is all NaN — we must not panic indexing into y.
+        let mut means = Vec::new();
+        for i in 0..50 {
+            means.extend_from_slice(&[i as f32, f32::NAN, i as f32]);
+        }
+        let bb = bounds_from_pos(0.8, &means);
+        // y axis collapses to the fallback, other axes should still be
+        // reasonable.
+        assert!(bb.center.is_finite());
+        assert!(bb.extent.is_finite());
+    }
 }

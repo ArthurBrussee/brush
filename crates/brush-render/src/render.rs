@@ -273,7 +273,13 @@ impl SplatOps<Self> for MainBackendBase {
                     out_img.handle.clone().binding(),
                 ])
                 .with_info(create_meta_binding(rasterize_uniforms));
-            (bindings, create_tensor([1], device, DType::F32))
+            // Zero-init the dummy — `create_tensor` doesn't initialise, and
+            // validate() may read this tensor to check its invariants.
+            // Using `float_zeros` makes that read a well-defined no-op.
+            (
+                bindings,
+                Self::float_zeros([1].into(), device, FloatDType::F32),
+            )
         };
 
         // SAFETY: Kernel checked to have no OOB, bounded loops.

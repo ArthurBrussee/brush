@@ -33,13 +33,15 @@ fn main(
     let conic = vec3f(projected.conic_x, projected.conic_y, projected.conic_z);
     let opac = projected.color_a;
 
+    // Same conic + compute_bbox_extent pair project_forward ran live, so
+    // the two dispatches arrive at identical tile counts.
     let power_threshold = log(opac * 255.0);
-    let extent = helpers::compute_bbox_extent_from_conic(conic, power_threshold);
+    let extent = helpers::compute_bbox_extent(conic, power_threshold);
     let tile_bbox = helpers::get_tile_bbox(mean2d, extent, uniforms.tile_bounds);
     let tile_bbox_min = tile_bbox.xy;
     let tile_bbox_max = tile_bbox.zw;
 
-    // With inclusive prefix sum, use cum[compact_gid - 1] as base (or 0 for first element)
+    // Inclusive prefix sum: use cum[compact_gid - 1] as base (or 0 for first).
     let base_isect_id = select(splat_cum_hit_counts[compact_gid - 1u], 0u, compact_gid == 0u);
 
     var num_tiles_hit = 0u;
@@ -59,14 +61,9 @@ fn main(
         let rect = helpers::tile_rect(vec2u(tx, ty));
         if helpers::will_primitive_contribute(rect, mean2d, conic, power_threshold) {
             let tile_id = tx + ty * uniforms.tile_bounds.x;
-
             let isect_id = base_isect_id + num_tiles_hit;
-            // Nb: isect_id MIGHT be out of bounds here for degenerate cases.
-            // These kernels should be launched with bounds checking, so that these
-            // writes are ignored. This will skip these intersections.
             tile_id_from_isect[isect_id] = tile_id;
             compact_gid_from_isect[isect_id] = compact_gid;
-
             num_tiles_hit += 1u;
         }
     }

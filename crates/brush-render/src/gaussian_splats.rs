@@ -275,10 +275,56 @@ impl<B: Backend> Splats<B> {
     }
 }
 
+impl<B: burn::tensor::backend::AutodiffBackend> Splats<B> {
+    /// Post-backward sibling of `validate_values` — checks that no splat
+    /// parameter gradient has a NaN or ±Inf. Debug-only.
+    ///
+    /// Returns `impl Future` rather than being `async fn` so the fn body
+    /// extracts gradients synchronously (releasing the `&grads` borrow
+    /// before returning), and the returned future only captures owned
+    /// tensors. This keeps callers that span `.await` points `Send`/`Sync`
+    /// even though `B::Gradients` stores `Box<dyn Any + Send>` internally.
+    #[allow(unused_variables)]
+    pub fn validate_grads(
+        &self,
+        grads: &B::Gradients,
+    ) -> impl std::future::Future<Output = ()> + Send {
+        #[cfg(any(test, feature = "debug-validation"))]
+        let (t, dc, rest, opac) = (
+            self.transforms.grad(grads),
+            self.sh_coeffs_dc.grad(grads),
+            self.sh_coeffs_rest.grad(grads),
+            self.raw_opacities.grad(grads),
+        );
+        async move {
+            #[cfg(any(test, feature = "debug-validation"))]
+            {
+                #[cfg(not(target_family = "wasm"))]
+                if std::env::args().any(|a| a == "--bench") {
+                    return;
+                }
+                use crate::validation::validate_gradient;
+                if let Some(g) = t {
+                    validate_gradient(g, "transforms").await;
+                }
+                if let Some(g) = dc {
+                    validate_gradient(g, "sh_coeffs_dc").await;
+                }
+                if let Some(g) = rest {
+                    validate_gradient(g, "sh_coeffs_rest").await;
+                }
+                if let Some(g) = opac {
+                    validate_gradient(g, "raw_opacities").await;
+                }
+            }
+        }
+    }
+}
+
 /// Render splats on a non-differentiable backend.
 ///
-/// NB: This doesn't work on a differentiable backend. Use
-/// [`brush_render_bwd::render_splats`] for that.
+/// NB: This doesn't work on a differentiable backend, use
+/// `brush_render_bwd::render_splats` for that.
 ///
 /// Takes ownership of the splats. Clone before calling if you need to reuse them.
 pub async fn render_splats<B: Backend + SplatOps<B>>(

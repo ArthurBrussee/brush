@@ -39,22 +39,22 @@ jobs:
           cache-workspace-crates: true
 
       - name: check --all-features
-        run: cargo check --locked --all-features --all-targets
+        run: cargo check --locked --workspace --all-features --all-targets
 
       - name: check --no-default-features
-        run: cargo check --locked --no-default-features --all-targets
+        run: cargo check --locked --workspace --no-default-features --all-targets
 
       - name: Rustfmt
         run: cargo fmt --all -- --check
 
       - name: cargo doc
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --workspace --no-deps --all-features
 
       - name: cargo doc --document-private-items
-        run: cargo doc --document-private-items --no-deps --all-features
+        run: cargo doc --workspace --document-private-items --no-deps --all-features
 
       - name: clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   # ---------------------------------------------------------------------------
 

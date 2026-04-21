@@ -32,10 +32,9 @@ use glam::Vec3;
 
 /// Intermediate gradients from the rasterize backward pass.
 ///
-/// Sparse buffer of shape [`num_visible`, 10], indexed by `compact_gid`:
-///   [0..8]: projected splat gradients
-///   [8]:    raw opacity gradient
-///   [9]:    refinement weight
+/// Sparse buffer of shape `[num_visible, 10]`, indexed by `compact_gid`.
+/// Slots 0..8 are projected splat gradients, slot 8 is the raw opacity
+/// gradient, slot 9 is the refinement weight.
 #[derive(Debug, Clone)]
 pub struct RasterizeGrads<B: Backend> {
     pub v_combined: FloatTensor<B>,

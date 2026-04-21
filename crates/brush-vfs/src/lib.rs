@@ -35,7 +35,7 @@ impl<T: AsyncBufRead + SendNotWasm + Unpin> DynRead for T {}
 
 type StreamingReader = Arc<Mutex<Option<Box<dyn DynRead>>>>;
 
-/// Wrapper so Cursor can use Arc<Vec<u8>> without cloning.
+/// Wrapper so `Cursor` can use `Arc<Vec<u8>>` without cloning.
 struct ArcVec(Arc<Vec<u8>>);
 impl AsRef<[u8]> for ArcVec {
     fn as_ref(&self) -> &[u8] {

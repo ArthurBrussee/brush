@@ -288,9 +288,7 @@ async fn render_scene(
     read_finite(output).await
 }
 
-// Determinism: rendering the same scene twice should produce bit-identical
-// output. A data race, uninitialized read, or nondeterministic sort would break
-// this immediately.
+// Same scene rendered twice must produce bit-identical output.
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn render_is_deterministic_on_large_splats() {
     let cam = Camera::new(
@@ -315,10 +313,8 @@ async fn render_is_deterministic_on_large_splats() {
     );
 }
 
-// Hidden-splat invariance: appending a batch of splats that are culled
-// (off-screen / behind camera / near-zero opacity) must not change any pixel.
-// If intersection-buffer sizing or the prefix sum is wrong, the extra splats
-// will perturb the result even though they contribute nothing.
+// Appending culled splats (off-screen / behind camera / near-zero opacity)
+// must leave the render bit-identical.
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn hidden_splats_do_not_perturb_render() {
     let cam = Camera::new(
@@ -361,10 +357,8 @@ async fn hidden_splats_do_not_perturb_render() {
     );
 }
 
-// Front-padding invariance: prepending culled splats at the *start* of the
-// buffer is a more aggressive test — it shifts global_gid for every real
-// splat, so any bug that depends on global_gid indexing (e.g. in the gather
-// step that maps intersect_counts from global to compact order) will show up.
+// Prepending culled splats shifts every real splat's global_gid; any
+// bug in the global→compact gather step would show up as a perturbation.
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn culled_prefix_does_not_perturb_render() {
     let cam = Camera::new(
@@ -395,15 +389,9 @@ async fn culled_prefix_does_not_perturb_render() {
     );
 }
 
-// VERY aggressive stress: hundreds of thousands of fullscreen-sized splats all
-// stacked at the origin. Every splat hits (almost) every tile, so the total
-// intersection count pushes the buffer hard. Validates:
-//   - no NaN/inf
-//   - determinism (render twice, expect bit-identical)
-//   - every tile received contributions
-//
-// The second render of the same scene after a different render is a cache /
-// state test: any stale buffer not properly reset would show up as a diff.
+// 120k fullscreen-sized splats stress the intersection buffer. Checks
+// determinism (even after an unrelated render in between) plus "no dropped
+// tiles" — every tile must receive contributions.
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn mega_stress_fullscreen_splats() {
     let cam = Camera::new(
@@ -469,16 +457,11 @@ async fn renders_large_rotated_splats() {
     let img_size = glam::uvec2(256, 256);
     let device = brush_kernel::test_helpers::test_device().await;
 
-    // A ton of splats, all at the origin, all opaque, all with large/elongated
-    // scales and random rotations. Every splat covers (roughly) the whole
-    // image, so every splat must hit every tile. If the two shaders disagree on
-    // the tile count for even one splat, intersection records for other splats
-    // get clobbered and we see wrong pixels.
+    // Big anisotropic splats stacked at origin — every splat covers the
+    // whole image. If PF and MG disagree on tile count for even one splat,
+    // other splats' intersection records get clobbered.
     let num_splats = 2048;
     let means = Tensor::<MainBackend, 2>::zeros([num_splats, 3], &device);
-    // Large anisotropic scales — exp(3) is ~20 world units, which at distance 5
-    // with focal 0.5*img_w projects to hundreds of pixels. Asymmetric so
-    // off-diagonal covariance terms after rotation really matter.
     let log_scales =
         Tensor::<MainBackend, 2>::random([num_splats, 3], Distribution::Uniform(1.0, 3.0), &device);
     let quats = Tensor::<MainBackend, 2>::random(
@@ -487,7 +470,7 @@ async fn renders_large_rotated_splats() {
         &device,
     );
     let sh_coeffs = Tensor::<MainBackend, 3>::ones([num_splats, 1, 3], &device) * 0.5;
-    // Low per-splat opacity so T stays > early-out threshold for many splats.
+    // Low per-splat opacity so T doesn't hit the early-out for many splats.
     let raw_opacity = Tensor::<MainBackend, 1>::ones([num_splats], &device) * -4.0;
 
     let splats = Splats::from_tensor_data(
@@ -501,8 +484,7 @@ async fn renders_large_rotated_splats() {
     let (output, _aux) =
         render_splats(splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float).await;
 
-    // Every tile should have nonzero alpha. A "dropped" tile would show up as a
-    // block of pure zeros. Scan per-tile mean alpha and assert none are empty.
+    // Every tile must have nonzero alpha — a dropped tile shows up as all zeros.
     let alpha = output
         .slice([0..img_size.y as usize, 0..img_size.x as usize, 3..4])
         .to_data_async()
@@ -531,8 +513,7 @@ async fn renders_large_rotated_splats() {
     }
 }
 
-// A ton of overlapping, extremely anisotropic splats. Exercises the intersection
-// buffer with worst-case per-splat tile coverage.
+// Overlapping anisotropic splats — worst-case per-splat tile coverage.
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn renders_many_large_splats_stress() {
     let cam = Camera::new(
@@ -551,8 +532,6 @@ async fn renders_many_large_splats_stress() {
         Distribution::Uniform(-0.5, 0.5),
         &device,
     );
-    // Highly anisotropic scales — one axis is huge, others are small. Random
-    // rotations turn this into every possible elongated ellipse orientation.
     let log_scales = Tensor::<MainBackend, 2>::random(
         [num_splats, 3],
         Distribution::Uniform(-1.0, 2.5),
@@ -612,8 +591,102 @@ async fn renders_many_large_splats_stress() {
             }
         }
     }
-    // With 200k large random splats everywhere, *every* tile should have
-    // contributions. A nonzero count means some tiles are genuinely empty,
-    // which would indicate intersection-buffer corruption.
+    // With 200k splats everywhere, every tile should have contributions.
     assert_eq!(dropped_tiles, 0, "detected dropped tiles in stress render");
+}
+
+#[wasm_bindgen_test(unsupported = tokio::test)]
+#[should_panic(expected = "NaN")]
+async fn render_panics_loudly_on_nan_positions() {
+    let cam = Camera::new(
+        glam::vec3(0.0, 0.0, -3.0),
+        glam::Quat::IDENTITY,
+        0.5,
+        0.5,
+        glam::vec2(0.5, 0.5),
+    );
+    let img_size = glam::uvec2(32, 32);
+    let device = brush_kernel::test_helpers::test_device().await;
+    let n = 16;
+
+    let mut means_vec = vec![0.0f32; n * 3];
+    means_vec[3] = f32::NAN; // one NaN position
+    let means =
+        Tensor::<MainBackend, 1>::from_floats(means_vec.as_slice(), &device).reshape([n, 3]);
+    let quats: Tensor<MainBackend, 2> =
+        Tensor::<MainBackend, 1>::from_floats([1.0, 0.0, 0.0, 0.0], &device)
+            .unsqueeze_dim(0)
+            .repeat_dim(0, n);
+    let log_scales = Tensor::<MainBackend, 2>::zeros([n, 3], &device);
+    let sh_coeffs = Tensor::<MainBackend, 3>::ones([n, 1, 3], &device);
+    let raw_opacity = Tensor::<MainBackend, 1>::zeros([n], &device);
+    let splats = Splats::from_tensor_data(
+        means,
+        quats,
+        log_scales,
+        sh_coeffs,
+        raw_opacity,
+        SplatRenderMode::Default,
+    );
+    let _ = render_splats(splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float).await;
+}
+
+// Zero-splat Splats constructor must not crash — legitimate mid-training state.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn zero_splats_renders_background() {
+    let _cam = Camera::new(
+        glam::vec3(0.0, 0.0, 0.0),
+        glam::Quat::IDENTITY,
+        0.5,
+        0.5,
+        glam::vec2(0.5, 0.5),
+    );
+    let _img_size = glam::uvec2(32, 32);
+    let device = brush_kernel::test_helpers::test_device().await;
+
+    let splats = Splats::from_tensor_data(
+        Tensor::<MainBackend, 2>::zeros([0, 3], &device),
+        Tensor::<MainBackend, 2>::zeros([0, 4], &device),
+        Tensor::<MainBackend, 2>::zeros([0, 3], &device),
+        Tensor::<MainBackend, 3>::zeros([0, 1, 3], &device),
+        Tensor::<MainBackend, 1>::zeros([0], &device),
+        SplatRenderMode::Default,
+    );
+    assert_eq!(splats.num_splats(), 0);
+}
+
+// Zero-length quats must be culled by PF, adding them to a scene must
+// not change the rendered pixels.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn zero_quaternion_splats_dont_poison_render() {
+    let cam = Camera::new(
+        glam::vec3(0.0, 0.0, -3.0),
+        glam::Quat::IDENTITY,
+        0.5,
+        0.5,
+        glam::vec2(0.5, 0.5),
+    );
+    let img_size = glam::uvec2(64, 64);
+    let device = brush_kernel::test_helpers::test_device().await;
+
+    // Half valid splats, half with zero-length quaternion. The zero-quat ones
+    // should be culled cleanly and the output should match rendering just the
+    // valid half.
+    let valid = rng_scene(500, 1.0, (-1.0, 1.0), (0.0, 2.0), 0xDEAD);
+    let mut with_zeros = valid.clone();
+    // Append 500 splats with zero quaternions at the same valid positions.
+    for i in 0..500 {
+        with_zeros.means.push(valid.means[i]);
+        with_zeros.quats.push([0.0, 0.0, 0.0, 0.0]);
+        with_zeros.log_scales.push(valid.log_scales[i]);
+        with_zeros.sh_dc.push(valid.sh_dc[i]);
+        with_zeros.raw_opacity.push(valid.raw_opacity[i]);
+    }
+
+    let clean = render_scene(&valid, &cam, img_size, &device).await;
+    let with_zeros_px = render_scene(&with_zeros, &cam, img_size, &device).await;
+    assert!(
+        max_abs_diff(&clean, &with_zeros_px) < 1e-5,
+        "zero-quaternion splats perturbed the render (they should have been culled)"
+    );
 }

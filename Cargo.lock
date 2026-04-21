@@ -972,6 +972,7 @@ dependencies = [
  "brush-train",
  "burn",
  "burn-cubecl",
+ "burn-wgpu",
  "console_error_panic_hook",
  "divan",
  "env_logger",
