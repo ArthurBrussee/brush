@@ -1,0 +1,14 @@
+{
+  "goog:chromeOptions": {
+    "args": [
+      "--headless=new",
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu-sandbox",
+      "--enable-unsafe-webgpu",
+      "--enable-features=Vulkan",
+      "--use-vulkan=native",
+      "--enable-unsafe-swiftshader"
+    ]
+  }
+}

@@ -39,36 +39,51 @@ jobs:
           cache-workspace-crates: true
 
       - name: check --all-features
-        run: cargo check --locked --all-features --all-targets
+        run: cargo check --locked --workspace --all-features --all-targets
 
       - name: check --no-default-features
-        run: cargo check --locked --no-default-features --all-targets
+        run: cargo check --locked --workspace --no-default-features --all-targets
 
       - name: Rustfmt
         run: cargo fmt --all -- --check
 
       - name: cargo doc
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --workspace --no-deps --all-features
 
       - name: cargo doc --document-private-items
-        run: cargo doc --document-private-items --no-deps --all-features
+        run: cargo doc --workspace --document-private-items --no-deps --all-features
 
       - name: clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   # ---------------------------------------------------------------------------
 
-  check_wasm:
-    name: Check wasm32 + wasm-bindgen
+  test_wasm:
+    name: Run wasm tests (headless Chrome)
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
+        with:
+          lfs: true
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.93.0
           targets: wasm32-unknown-unknown
 
-      - run: sudo apt-get update && sudo apt-get install libgtk-3-dev libatk1.0-dev
+      - name: Install packages (Linux)
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.0
+        with:
+          packages: libgtk-3-dev libatk1.0-dev mesa-vulkan-drivers
+          version: 1.0
+          execute_install_scripts: true
+
+      - name: Report preinstalled Chrome version
+        run: |
+          google-chrome --version
+          chromedriver --version
+          echo "CHROMEDRIVER=$(command -v chromedriver)" >> "$GITHUB_ENV"
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -76,8 +91,18 @@ jobs:
           shared-key: "brush"
           cache-workspace-crates: true
 
-      - name: Check wasm32
-        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check -p brush-app --lib --target wasm32-unknown-unknown
+      - name: Install wasm-bindgen-cli
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.108
+
+      - name: Run brush-bench-test in headless Chrome
+        env:
+          RUSTFLAGS: --cfg=getrandom_backend="wasm_js"
+          # Force Vulkan loader to use Lavapipe (Mesa software Vulkan); more
+          # accurate than SwiftShader, used by wgpu's own CI.
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: cargo test -p brush-bench-test --target wasm32-unknown-unknown
 
   # ---------------------------------------------------------------------------
 

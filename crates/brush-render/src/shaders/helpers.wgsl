@@ -185,7 +185,23 @@ fn calc_cam_J(mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f)
     return J;
 }
 
-// Compute 2D covariance directly from scale, quat, and view params.
+// Bit-level NaN/Inf test. `x == x` is the textbook check but compilers may
+// fold it to `true` under fast-math; `bitcast` preserves the bit pattern
+// and IEEE-754 Inf/NaN have exponent is 0xFF.
+fn is_finite_f32(x: f32) -> bool {
+    return ((bitcast<u32>(x) >> 23u) & 0xFFu) != 0xFFu;
+}
+
+fn is_finite_cov2d(c: mat2x2f) -> bool {
+    return is_finite_f32(c[0][0]) && is_finite_f32(c[1][1]) && is_finite_f32(c[0][1]);
+}
+
+// 2D covariance from scale, quat and view params. For finite inputs whose
+// V*V^T doesn't overflow, returns cov2d unchanged. For huge-but-finite
+// products (log_scale ≈ 30 → cov2d ≈ 1e28 is a real training state),
+// uniform-scales the whole matrix so max |entry| ≤ 1e18 — keeps det inside
+// f32's limit, preserves PSD and the off-diagonal/diagonal ratio, and
+// visually still reads as "covers the frame".
 fn calc_cov2d(scale: vec3f, quat: vec4f, mean_c: vec3f, focal: vec2f, img_size: vec2u, pixel_center: vec2f, viewmat: mat4x4f) -> mat2x2f {
     let R_obj = quat_to_mat(quat);
     let R_cam = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
@@ -195,7 +211,12 @@ fn calc_cov2d(scale: vec3f, quat: vec4f, mean_c: vec3f, focal: vec2f, img_size: 
     let N = R_cam * R_obj;
     let N_s = mat3x3f(N[0] * scale.x, N[1] * scale.y, N[2] * scale.z);
     let V = J * N_s;
-    return V * transpose(V);
+    let raw = V * transpose(V);
+
+    let lim = 1e18f;
+    let max_abs = max(max(abs(raw[0][0]), abs(raw[1][1])), abs(raw[0][1]));
+    let scale_down = select(1.0, lim / max_abs, max_abs > lim);
+    return raw * scale_down;
 }
 
 #ifdef MIP_SPLATTING
@@ -203,6 +224,17 @@ fn calc_cov2d(scale: vec3f, quat: vec4f, mean_c: vec3f, focal: vec2f, img_size: 
 #else
     const COV_BLUR: f32 = 0.3;
 #endif
+
+// 2x2 det with named intermediates so the compiler can't fuse the two
+// product terms into an FMA. FMA vs separate multiply has ~1 ULP of wiggle.
+// if PF and PV pick different choices, their MIP `filter_comp` factors
+// differ, and the derived `power_threshold` desync breaks the PF/MG tile-hit
+// agreement near contribution boundaries.
+fn det2_strict(m: mat2x2f) -> f32 {
+    let ad = m[0][0] * m[1][1];
+    let bc = m[0][1] * m[1][0];
+    return ad - bc;
+}
 
 fn compensate_cov2d(cov2d: ptr<function, mat2x2f>) -> f32 {
     let cov_start = *cov2d;
@@ -212,9 +244,12 @@ fn compensate_cov2d(cov2d: ptr<function, mat2x2f>) -> f32 {
     cov_end[1][1] += COV_BLUR;
 
 #ifdef MIP_SPLATTING
-    // filter with isotropic gaussian and compute the compensation factor
-    let det_raw = max(determinant(cov_start), 0.0f);
-    let filter_comp = sqrt(det_raw / determinant(cov_end));
+    // Filter with isotropic gaussian and compute the compensation factor.
+    // Uses `det2_strict` rather than `determinant(...)` so project_forward
+    // and project_visible produce bit-identical MIP filter factors.
+    let det_raw = max(det2_strict(cov_start), 0.0f);
+    let det_blurred = det2_strict(cov_end);
+    let filter_comp = sqrt(det_raw / det_blurred);
 #else
     let filter_comp = 1.0f;
 #endif
@@ -247,14 +282,10 @@ fn calc_vis(pixel_coord: vec2f, conic: vec3f, xy: vec2f) -> f32 {
     return exp(-calc_sigma(pixel_coord, conic, xy));
 }
 
-fn compute_bbox_extent(cov2d: mat2x2f, power_threshold: f32) -> vec2f {
-    return vec2f(
-        sqrt(2.0f * power_threshold * cov2d[0][0]),
-        sqrt(2.0f * power_threshold * cov2d[1][1]),
-    );
-}
-
-fn compute_bbox_extent_from_conic(conic: vec3f, power_threshold: f32) -> vec2f {
+// Splat pixel-space half-extent along each axis from a packed conic.
+// Shared by project_forward and map_gaussians_to_intersects so both
+// dispatches compute the same bbox.
+fn compute_bbox_extent(conic: vec3f, power_threshold: f32) -> vec2f {
     let det = conic.x * conic.z - conic.y * conic.y;
     if det <= 0.0 {
         return vec2f(-1.0);

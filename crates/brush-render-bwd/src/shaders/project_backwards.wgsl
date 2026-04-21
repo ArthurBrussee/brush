@@ -1,17 +1,16 @@
 #import helpers;
 #import sh;
 
-@group(0) @binding(0) var<storage, read> num_visible: u32;
-@group(0) @binding(1) var<storage, read> transforms: array<f32>;
-@group(0) @binding(2) var<storage, read> raw_opac: array<f32>;
-@group(0) @binding(3) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(0) var<storage, read> transforms: array<f32>;
+@group(0) @binding(1) var<storage, read> raw_opac: array<f32>;
+@group(0) @binding(2) var<storage, read> global_from_compact_gid: array<u32>;
 // Sparse rasterize grads (indexed by compact_gid, stride 10): projected_splat_grads(8) + opac_grad(1) + refine_weight(1)
-@group(0) @binding(4) var<storage, read_write> v_rasterize_grads: array<f32>;
-@group(0) @binding(5) var<storage, read_write> v_transforms: array<f32>;
-@group(0) @binding(6) var<storage, read_write> v_coeffs: array<f32>;
-@group(0) @binding(7) var<storage, read_write> v_raw_opac: array<f32>;
-@group(0) @binding(8) var<storage, read_write> v_refine_weight: array<f32>;
-@group(0) @binding(9) var<storage, read> uniforms: helpers::ProjectUniforms;
+@group(0) @binding(3) var<storage, read_write> v_rasterize_grads: array<f32>;
+@group(0) @binding(4) var<storage, read_write> v_transforms: array<f32>;
+@group(0) @binding(5) var<storage, read_write> v_coeffs: array<f32>;
+@group(0) @binding(6) var<storage, read_write> v_raw_opac: array<f32>;
+@group(0) @binding(7) var<storage, read_write> v_refine_weight: array<f32>;
+@group(0) @binding(8) var<storage, read> uniforms: helpers::ProjectUniforms;
 
 fn write_coeffs(base_id: ptr<function, u32>, val: vec3f) {
     v_coeffs[*base_id + 0] = val.x;
@@ -161,7 +160,7 @@ fn main(
     @builtin(local_invocation_index) lid: u32,
 ) {
     let compact_gid = helpers::get_global_id(wid, num_wgs, lid, WG_SIZE);
-    if compact_gid >= num_visible {
+    if compact_gid >= uniforms.num_visible {
         return;
     }
 

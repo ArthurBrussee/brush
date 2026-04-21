@@ -30,6 +30,9 @@ images/
 # Ignore bench files by now, need a better solution.
 crates/brush-bench-test/test_cases/bench_data.safetensors
 
+# LPIPS source weights — downloaded locally for lpips-convert, not vendored.
+crates/lpips-convert/lpips_vgg_remapped.pth
+
 # Android files.
 *.iml
 .gradle

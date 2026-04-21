@@ -190,23 +190,7 @@ impl SplatTrainer {
         });
 
         let mut grads = trace_span!("Backward pass").in_scope(|| loss.backward());
-
-        #[cfg(any(feature = "debug-validation", test))]
-        {
-            use brush_render::validation::validate_gradient;
-            if let Some(g) = splats.transforms.grad(&grads) {
-                validate_gradient(g, "transforms").await;
-            }
-            if let Some(g) = splats.sh_coeffs_dc.grad(&grads) {
-                validate_gradient(g, "sh_coeffs_dc").await;
-            }
-            if let Some(g) = splats.sh_coeffs_rest.grad(&grads) {
-                validate_gradient(g, "sh_coeffs_rest").await;
-            }
-            if let Some(g) = splats.raw_opacities.grad(&grads) {
-                validate_gradient(g, "raw_opacity").await;
-            }
-        }
+        splats.validate_grads(&grads).await;
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
             self.sched_mean.step() * median_scale as f64,
@@ -392,10 +376,34 @@ impl SplatTrainer {
             .greater_elem(max_allowed_bounds)
             .any_dim(1)
             .squeeze_dim(1);
+
+        // Prune parameter that's NaN.
+        fn row_non_finite(t: &Tensor<MainBackend, 2>) -> Tensor<MainBackend, 1, Bool> {
+            t.clone().is_finite().bool_not().any_dim(1).squeeze_dim(1)
+        }
+        let transforms_bad = row_non_finite(&splats.transforms.val());
+        let dc_bad = row_non_finite(&splats.sh_coeffs_dc.val().flatten(1, 2));
+        let rest_flat: Tensor<MainBackend, 2> = splats.sh_coeffs_rest.val().flatten(1, 2);
+        // `sh_coeffs_rest` can legitimately be [N, 0] when sh_degree == 0;
+        // skip it in that case since there's nothing to check.
+        let rest_bad = if rest_flat.dims()[1] == 0 {
+            Tensor::<MainBackend, 1, Bool>::from_bool(
+                burn::tensor::TensorData::zeros::<bool, _>([splats.num_splats() as usize]),
+                &device,
+            )
+        } else {
+            row_non_finite(&rest_flat)
+        };
+        let opac_bad = row_non_finite(&splats.raw_opacities.val().unsqueeze_dim(1));
+        let non_finite_mask = transforms_bad
+            .bool_or(dc_bad)
+            .bool_or(rest_bad)
+            .bool_or(opac_bad);
         let prune_mask = alpha_mask
             .bool_or(scale_small)
             .bool_or(scale_big)
-            .bool_or(bound_mask);
+            .bool_or(bound_mask)
+            .bool_or(non_finite_mask);
 
         let (mut splats, refiner, pruned_count) =
             prune_points(splats, &mut record, refiner, prune_mask).await;
@@ -432,9 +440,12 @@ impl SplatTrainer {
 
             let sample_high_grad = grow_count.saturating_sub(pruned_count);
 
-            // Only grow to the max nr. of splats.
+            // Saturating — cur_splats can exceed max_splats if the scene
+            // was loaded above cap, and the u32 underflow would request
+            // ~4B new splats.
             let cur_splats = splats.num_splats() + split_inds.len() as u32;
-            let grow_count = sample_high_grad.min(self.config.max_splats - cur_splats);
+            let headroom = self.config.max_splats.saturating_sub(cur_splats);
+            let grow_count = sample_high_grad.min(headroom);
 
             // If still growing, sample from indices which are over the threshold.
             if grow_count > 0 {
@@ -695,6 +706,9 @@ fn scale_down_largest_dim<B: Backend>(scales: Tensor<B, 2>, factor: f32) -> Tens
 
 /// Sample a background color: base + uniform noise in [-strength, +strength], clamped to [0, 1].
 fn sample_background_color(base: glam::Vec3, strength: f32) -> glam::Vec3 {
+    if strength <= 0.0 {
+        return base.clamp(glam::Vec3::ZERO, glam::Vec3::ONE);
+    }
     use rand::RngExt as _;
     let mut rng = rand::rng();
     let noise = glam::Vec3::new(

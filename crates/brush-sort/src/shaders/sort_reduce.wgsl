@@ -61,12 +61,15 @@ fn main(
     workgroupBarrier();
 
     if num_subgroups <= subgroup_size {
-        if subgroup_id == 0u {
-            let v = select(0u, partials[subgroup_invocation_id], subgroup_invocation_id < num_subgroups);
-            let total = subgroupAdd(v);
-            if subgroup_invocation_id == 0u {
-                reduced[group_id] = total;
-            }
+        // Every subgroup runs the reduce so the call stays in uniform control
+        // flow — Chrome/Tint can't prove `subgroup_id == 0u` is plane-uniform
+        // and rejects subgroup ops gated on it. `partials` is workgroup
+        // storage, so every subgroup reads the same inputs and produces the
+        // same total; only subgroup 0, lane 0 writes back.
+        let v = select(0u, partials[subgroup_invocation_id], subgroup_invocation_id < num_subgroups);
+        let total = subgroupAdd(v);
+        if subgroup_id == 0u && subgroup_invocation_id == 0u {
+            reduced[group_id] = total;
         }
     } else {
         if local_id.x == 0u {

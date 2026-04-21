@@ -1,5 +1,8 @@
 use burn::{prelude::Backend, tensor::Tensor};
 
+/// Scan a tensor for NaN / Inf and out-of-range values. Logs range
+/// violations; under `cfg(test)` / `debug-validation` NaN and Inf are
+/// promoted to hard panics so CI surfaces them.
 pub async fn validate_tensor_val<B: Backend, const D: usize>(
     tensor: Tensor<B, D>,
     name: &str,
@@ -18,12 +21,16 @@ pub async fn validate_tensor_val<B: Backend, const D: usize>(
     let mut inf_count = 0;
     let mut below_min_count = 0;
     let mut above_max_count = 0;
+    let mut first_nan_idx: Option<usize> = None;
+    let mut first_inf_idx: Option<usize> = None;
 
-    for &value in &values {
+    for (i, &value) in values.iter().enumerate() {
         if value.is_nan() {
             nan_count += 1;
+            first_nan_idx.get_or_insert(i);
         } else if value.is_infinite() {
             inf_count += 1;
+            first_inf_idx.get_or_insert(i);
         } else {
             if let Some(min) = min_val
                 && value < min
@@ -40,32 +47,35 @@ pub async fn validate_tensor_val<B: Backend, const D: usize>(
 
     if nan_count > 0 || inf_count > 0 {
         log::error!(
-            "Tensor '{}' contains invalid values: {} NaN, {} infinite (out of {} total).\nSample: {:?}",
-            name,
-            nan_count,
-            inf_count,
+            "tensor '{name}': {nan_count} NaN (first @ {first_nan_idx:?}), \
+             {inf_count} Inf (first @ {first_inf_idx:?}) of {} total",
             values.len(),
-            &values[0..values.len().min(16)]
         );
     }
-
     if below_min_count > 0 {
         log::error!(
-            "Tensor '{}' contains {} values below minimum {} (out of {} total)",
-            name,
-            below_min_count,
+            "tensor '{name}': {below_min_count} values < {} of {}",
             min_val.unwrap(),
-            values.len()
+            values.len(),
+        );
+    }
+    if above_max_count > 0 {
+        log::error!(
+            "tensor '{name}': {above_max_count} values > {} of {}",
+            max_val.unwrap(),
+            values.len(),
         );
     }
 
-    if above_max_count > 0 {
-        log::error!(
-            "Tensor '{}' contains {} values above maximum {} (out of {} total)",
-            name,
-            above_max_count,
-            max_val.unwrap(),
-            values.len()
+    #[cfg(any(test, feature = "debug-validation"))]
+    {
+        assert_eq!(
+            nan_count, 0,
+            "tensor '{name}' has {nan_count} NaNs (first @ {first_nan_idx:?})"
+        );
+        assert_eq!(
+            inf_count, 0,
+            "tensor '{name}' has {inf_count} Infs (first @ {first_inf_idx:?})"
         );
     }
 }

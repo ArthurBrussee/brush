@@ -50,17 +50,14 @@ fn main(
     let R = mat3x3f(viewmat[0].xyz, viewmat[1].xyz, viewmat[2].xyz);
     let mean_c = R * mean + viewmat[3].xyz;
 
+    // PF already culled non-finite-cov2d splats, so trust calc_cov2d here.
     var cov2d = helpers::calc_cov2d(scale, quat, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
     opac *= helpers::compensate_cov2d(&cov2d);
 
     let conic = helpers::inverse(cov2d);
-
-    // compute the projected mean
-    let rz = 1.0 / mean_c.z;
-    let mean2d = uniforms.focal * mean_c.xy * rz + uniforms.pixel_center;
+    let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
 
     let sh_degree = uniforms.sh_degree;
-    // DC is read from separate buffer, rest coefficients from another.
     let num_rest = sh::num_sh_coeffs(sh_degree) - 1u;
     var rest_id = u32(global_gid) * num_rest;
 
@@ -103,15 +100,26 @@ fn main(
         }
     }
 
-    // Write projected splat information.
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
-    var color = sh::sh_coeffs_to_color(sh_degree, viewdir, coeffs) + vec3f(0.5);
+    let color = sh::sh_coeffs_to_color(sh_degree, viewdir, coeffs) + vec3f(0.5);
+
+    // PF doesn't read SH coeffs, so a NaN coeff can still leak into color
+    // here. Scrub NaN/Inf, then clamp to a magnitude that (a) fits in the
+    // f16 color slots of ProjectedSplat without saturating, and (b) keeps
+    // the rasterize backward's `v_alpha = pix.a * clamped_rgb + ...` from
+    // amplifying gradients past f32 range. colors above ~1e3 produce NaN
+    // gradients.
+    let color_finite = vec3f(
+        select(0.0, color.x, helpers::is_finite_f32(color.x)),
+        select(0.0, color.y, helpers::is_finite_f32(color.y)),
+        select(0.0, color.z, helpers::is_finite_f32(color.z)),
+    );
+    let color_clean = clamp(color_finite, vec3f(-100.0), vec3f(100.0));
 
     let conic_packed = vec3f(conic[0][0], conic[0][1], conic[1][1]);
-
     projected[compact_gid] = helpers::create_projected_splat(
         mean2d,
         conic_packed,
-        vec4f(color, opac)
+        vec4f(color_clean, opac)
     );
 }

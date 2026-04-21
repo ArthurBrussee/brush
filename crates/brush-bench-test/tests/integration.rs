@@ -8,7 +8,6 @@ use brush_render::{
     bounding_box::BoundingBox,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
-    validation::validate_gradient,
 };
 use brush_render_bwd::render_splats;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
@@ -223,10 +222,8 @@ async fn test_multi_step_training() {
         &device,
         BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
     );
-    let _initial_count = splats.num_splats();
 
-    // Run a few training steps
-    for _ in 0..3 {
+    for _ in 0..10 {
         let (new_splats, stats) = trainer.step(batch.clone(), splats).await;
         splats = new_splats;
 
@@ -242,6 +239,74 @@ async fn test_multi_step_training() {
     }
 
     assert!(splats.num_splats() > 0);
+}
+
+// Training with a camera pointing away from every splat — num_visible == 0
+// every step. The training loop must not crash on this; all gradients should
+// be zero (or at least finite) and the optimizer step should be a no-op.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn train_with_zero_visible_does_not_crash() {
+    let device = brush_kernel::test_helpers::test_device().await;
+    let splats = generate_test_splats(&device, 200);
+
+    // Camera pointing away from the scene (looking along +Z, scene is at ±5).
+    let camera = Camera::new(
+        Vec3::new(0.0, 0.0, 1000.0),
+        Quat::IDENTITY, // looks along -Z in local space → away from origin
+        45.0,
+        45.0,
+        glam::vec2(0.5, 0.5),
+    );
+
+    let batch = SceneBatch {
+        img_tensor: TensorData::new(vec![0.5f32; 64 * 64 * 3], [64usize, 64, 3]),
+        alpha_mode: AlphaMode::Transparent,
+        camera,
+    };
+
+    let config = TrainConfig::default();
+    let mut trainer = SplatTrainer::new(
+        &config,
+        &device,
+        BoundingBox::from_min_max(Vec3::splat(-2.0), Vec3::splat(2.0)),
+    );
+    let (new_splats, stats) = trainer.step(batch, splats).await;
+    // Should succeed; nothing visible means num_visible ≈ 0.
+    assert!(new_splats.num_splats() > 0);
+    let loss = stats
+        .loss
+        .into_data_async()
+        .await
+        .expect("readback")
+        .as_slice::<f32>()
+        .expect("Wrong type")[0];
+    assert!(
+        loss.is_finite(),
+        "loss went non-finite with empty render: {loss}"
+    );
+}
+
+// Training with a deliberately degenerate bounding box (NaN center) used to
+// crash in `median_size`. After the fix, training must still proceed without
+// panicking — the per-step `lr_mean * median_size` just ends up NaN, which is
+// ultimately harmless because any NaN optimizer update is caught by
+// `validate_gradient` under the debug-validation feature.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn trainer_tolerates_nan_bounds() {
+    let device = brush_kernel::test_helpers::test_device().await;
+    let splats = generate_test_splats(&device, 100);
+    let config = TrainConfig::default();
+
+    // A degenerate bounds with one NaN axis. Before the `total_cmp` fix, this
+    // panicked inside `median_size()` on the first `step` call.
+    let bounds = BoundingBox {
+        center: Vec3::ZERO,
+        extent: Vec3::new(f32::NAN, 1.0, 1.0),
+    };
+    let mut trainer = SplatTrainer::new(&config, &device, bounds);
+    // One step should still proceed.
+    let batch = generate_test_batch((64, 64));
+    let (_splats, _stats) = trainer.step(batch, splats).await;
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
@@ -265,19 +330,6 @@ async fn test_gradient_validation() {
     let rendered: Tensor<DiffBackend, 3> =
         Tensor::from_primitive(TensorPrimitive::Float(result.img));
     let loss = rendered.mean();
-
-    // Compute gradients
     let grads = loss.backward();
-    if let Some(g) = splats.transforms.grad(&grads) {
-        validate_gradient(g, "transforms").await;
-    }
-    if let Some(g) = splats.sh_coeffs_dc.grad(&grads) {
-        validate_gradient(g, "sh_coeffs_dc").await;
-    }
-    if let Some(g) = splats.sh_coeffs_rest.grad(&grads) {
-        validate_gradient(g, "sh_coeffs_rest").await;
-    }
-    if let Some(g) = splats.raw_opacities.grad(&grads) {
-        validate_gradient(g, "raw_opacity").await;
-    }
+    splats.validate_grads(&grads).await;
 }

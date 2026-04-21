@@ -76,6 +76,8 @@ web-sys = { workspace = true, features = [
 wasm-logger = "0.2.0"
 # wasm_js random backend needs to be enabled explicitly.
 getrandom = { version = "0.4", features = ["wasm_js"] }
+# Activate wasm_js for getrandom 0.3 as well (pulled in via `ahash` → `burn-core`).
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 tempfile = "3.23.0"

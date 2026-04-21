@@ -4,22 +4,25 @@ pub(crate) struct Ssim<B: Backend> {
     weights_1d_v: Tensor<B, 4>,
 }
 
-fn gaussian<B: Backend>(window_size: usize, sigma: f32, device: &B::Device) -> Tensor<B, 1> {
-    let window_extent = (window_size / 2) as f32;
-    let vals: Vec<_> = (0..window_size)
-        .map(|x| f32::exp(-(x as f32 - window_extent).powf(2.0) / (2.0 * sigma.powf(2.0))))
-        .collect();
-    let gauss = Tensor::from_floats(vals.as_slice(), device);
-    gauss.clone() / gauss.sum()
-}
-
 impl<B: Backend> Ssim<B> {
     pub fn new(window_size: usize, channels: usize, device: &B::Device) -> Self {
-        // Channels out, in, h, w.
-        let weights_1d_v = gaussian(window_size, 1.5, device)
-            .reshape([window_size, 1])
-            .unsqueeze()
-            .repeat_dim(0, channels);
+        let sigma = 1.5f32;
+        let window_extent = (window_size / 2) as f32;
+        let raw: Vec<f32> = (0..window_size)
+            .map(|x| f32::exp(-(x as f32 - window_extent).powf(2.0) / (2.0 * sigma.powf(2.0))))
+            .collect();
+        let sum: f32 = raw.iter().sum();
+        let normalized: Vec<f32> = raw.into_iter().map(|v| v / sum).collect();
+        let mut data = Vec::with_capacity(channels * window_size);
+        for _ in 0..channels {
+            data.extend_from_slice(&normalized);
+        }
+        let weights_1d_v = Tensor::<B, 1>::from_floats(data.as_slice(), device).reshape([
+            channels,
+            1,
+            window_size,
+            1,
+        ]);
         Self { weights_1d_v }
     }
 
