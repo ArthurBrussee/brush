@@ -276,8 +276,8 @@ impl<B: Backend> Splats<B> {
 }
 
 impl<B: burn::tensor::backend::AutodiffBackend> Splats<B> {
-    /// Post-backward sibling of `validate_values` — checks that no splat
-    /// parameter gradient has a NaN or ±Inf. Debug-only.
+    /// Post-backward variant of `validate_values`, checks that no splat
+    /// parameter gradient has a NaN or Inf. Debug-only.
     ///
     /// Returns `impl Future` rather than being `async fn` so the fn body
     /// extracts gradients synchronously (releasing the `&grads` borrow

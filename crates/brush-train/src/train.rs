@@ -377,21 +377,12 @@ impl SplatTrainer {
             .any_dim(1)
             .squeeze_dim(1);
 
-        // Any parameter that's NaN or ±Inf → prune. `x <= BIG && x >= -BIG`
-        // is false for NaN (unordered) and for ±Inf (out of range), so
-        // negating gives a "non-finite" mask. Flatten each tensor to [N, k]
-        // before reducing over the trailing axes.
-        const FINITE_LIMIT: f32 = 1e30;
-        fn row_non_finite(t: Tensor<MainBackend, 2>) -> Tensor<MainBackend, 1, Bool> {
-            t.clone()
-                .lower_equal_elem(FINITE_LIMIT)
-                .bool_and(t.greater_equal_elem(-FINITE_LIMIT))
-                .bool_not()
-                .any_dim(1)
-                .squeeze_dim(1)
+        // Prune parameter that's NaN.
+        fn row_non_finite(t: &Tensor<MainBackend, 2>) -> Tensor<MainBackend, 1, Bool> {
+            t.clone().is_finite().bool_not().any_dim(1).squeeze_dim(1)
         }
-        let transforms_bad = row_non_finite(splats.transforms.val());
-        let dc_bad = row_non_finite(splats.sh_coeffs_dc.val().flatten(1, 2));
+        let transforms_bad = row_non_finite(&splats.transforms.val());
+        let dc_bad = row_non_finite(&splats.sh_coeffs_dc.val().flatten(1, 2));
         let rest_flat: Tensor<MainBackend, 2> = splats.sh_coeffs_rest.val().flatten(1, 2);
         // `sh_coeffs_rest` can legitimately be [N, 0] when sh_degree == 0;
         // skip it in that case since there's nothing to check.
@@ -401,14 +392,13 @@ impl SplatTrainer {
                 &device,
             )
         } else {
-            row_non_finite(rest_flat)
+            row_non_finite(&rest_flat)
         };
-        let opac_bad = row_non_finite(splats.raw_opacities.val().unsqueeze_dim(1));
+        let opac_bad = row_non_finite(&splats.raw_opacities.val().unsqueeze_dim(1));
         let non_finite_mask = transforms_bad
             .bool_or(dc_bad)
             .bool_or(rest_bad)
             .bool_or(opac_bad);
-
         let prune_mask = alpha_mask
             .bool_or(scale_small)
             .bool_or(scale_big)

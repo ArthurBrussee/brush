@@ -50,9 +50,9 @@ fn main(
     let log_scale_raw = vec3f(transforms[base + 7u], transforms[base + 8u], transforms[base + 9u]);
     let scale = exp(log_scale_raw);
     let scale_ok =
-        helpers::is_finite_f32(scale.x) && scale.x >= 0.0 &&
-        helpers::is_finite_f32(scale.y) && scale.y >= 0.0 &&
-        helpers::is_finite_f32(scale.z) && scale.z >= 0.0;
+        helpers::is_finite_f32(scale.x) &&
+        helpers::is_finite_f32(scale.y) &&
+        helpers::is_finite_f32(scale.z);
     if !scale_ok {
         return;
     }
@@ -69,18 +69,12 @@ fn main(
         return;
     }
 
-    // project_visible uses `normalize` — we do too, so both dispatches
-    // produce bit-identical quaternions. (The old `x * inverseSqrt(dot)`
-    // phrasing was mathematically equivalent but the compiler was free to
-    // pick a different implementation in each kernel.)
     let quat = normalize(quat_unorm);
 
     var opac = helpers::sigmoid(raw_opac);
     var cov2d = helpers::calc_cov2d(scale, quat, mean_c, uniforms.focal, uniforms.img_size, uniforms.pixel_center, viewmat);
     opac *= helpers::compensate_cov2d(&cov2d);
 
-    // Last gate: non-finite cov2d (Inf scale overflow, NaN math) — both
-    // kernels agree on this splat being invisible.
     if !helpers::is_finite_cov2d(cov2d) {
         return;
     }

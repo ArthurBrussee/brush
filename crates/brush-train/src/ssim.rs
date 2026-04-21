@@ -5,36 +5,6 @@ pub(crate) struct Ssim<B: Backend> {
 }
 
 impl<B: Backend> Ssim<B> {
-    // Workaround for a burn-fusion bug on wasm/WebGPU.
-    //
-    // Building the normalized gaussian kernel via the natural lazy chain
-    //     Tensor::from_floats(vals) / vals.sum()
-    //         .reshape([n, 1])
-    //         .unsqueeze()
-    //         .repeat_dim(0, channels)
-    // gives a tensor that is later read back as uninitialized memory inside
-    // conv2d (values like `sum=inf, min≈f32::MAX, max=inf`, varying between
-    // runs), which makes the loss NaN roughly half of the time. Only on
-    // wasm; native works fine. Triggered by `brush-bench-test::test_multi_
-    // step_training` running two trainers in a row with SSIM enabled.
-    //
-    // Diagnostics showed pred_rgb and gt_rgb were finite and l1 was correct;
-    // only the SSIM weights tensor was garbage. Adding any sync point
-    // (even a trivial `Tensor::zeros([4], &device).into_data_async().await`)
-    // between the forward render and the loss computation also hid it. The
-    // deterministic signature when it fires is that exactly the visible
-    // splat indices with non-zero gradients get NaN in their means/opacities.
-    //
-    // We couldn't reduce this to a pure-burn reproducer — it needs state
-    // that brush's custom `launch_unchecked` render kernels leave behind,
-    // which plain burn ops don't replicate. It may be related to the
-    // separately-reported `sum_dim` handle-lookup bug (see
-    // repros/burn_sum_dim_handle/), since both involve burn-fusion's
-    // handling of `sum` + scalar-divide fusion, but that's unconfirmed.
-    //
-    // The workaround is to pre-compute the normalized gaussian on the CPU
-    // and upload it directly at its final 4D shape, bypassing the lazy op
-    // chain entirely.
     pub fn new(window_size: usize, channels: usize, device: &B::Device) -> Self {
         let sigma = 1.5f32;
         let window_extent = (window_size / 2) as f32;
