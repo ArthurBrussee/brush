@@ -82,9 +82,14 @@ fn main(
         }
         workgroupBarrier();
         if num_subgroups <= subgroup_size {
+            // Every subgroup runs the scan so the call stays in uniform
+            // control flow — Chrome/Tint can't prove `subgroup_id == 0u` is
+            // plane-uniform and rejects subgroup ops gated on it. `partials`
+            // is workgroup storage, so every subgroup reads the same inputs
+            // and produces the same scan result; only subgroup 0 writes back.
+            let v = select(0u, partials[subgroup_invocation_id], subgroup_invocation_id < num_subgroups);
+            let scanned = subgroupExclusiveAdd(v);
             if subgroup_id == 0u {
-                let v = select(0u, partials[subgroup_invocation_id], subgroup_invocation_id < num_subgroups);
-                let scanned = subgroupExclusiveAdd(v);
                 if subgroup_invocation_id < num_subgroups {
                     partials[subgroup_invocation_id] = scanned;
                 }

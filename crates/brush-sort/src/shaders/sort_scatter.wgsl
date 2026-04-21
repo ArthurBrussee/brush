@@ -84,9 +84,14 @@ fn main(
             }
             workgroupBarrier();
             if num_subgroups <= subgroup_size {
+                // Every subgroup runs the scan so the call stays in uniform
+                // control flow — Chrome/Tint can't prove `subgroup_id == 0u`
+                // is plane-uniform and rejects subgroup ops gated on it.
+                // `partials` is workgroup storage, so every subgroup produces
+                // the same scan and only subgroup 0 writes back.
+                let v = select(0u, partials[subgroup_invocation_id], subgroup_invocation_id < num_subgroups);
+                let scanned = subgroupExclusiveAdd(v);
                 if subgroup_id == 0u {
-                    let v = select(0u, partials[subgroup_invocation_id], subgroup_invocation_id < num_subgroups);
-                    let scanned = subgroupExclusiveAdd(v);
                     if subgroup_invocation_id < num_subgroups {
                         partials[subgroup_invocation_id] = scanned;
                     }
@@ -143,13 +148,16 @@ fn main(
         // Slow path (SG=8): fall back to a serial scan in thread 0. Same
         // hybrid pattern as the cross-subgroup combine elsewhere.
         if subgroup_size >= sorting::BIN_COUNT {
+            // Every subgroup runs the scan in uniform control flow; only
+            // subgroup 0 writes back. See the note on the packed-histogram
+            // scan above for why we can't gate the op itself on subgroup_id.
+            let v = select(
+                0u,
+                atomicLoad(&local_histogram[subgroup_invocation_id]),
+                subgroup_invocation_id < sorting::BIN_COUNT,
+            );
+            let inclusive = subgroupInclusiveAdd(v);
             if subgroup_id == 0u {
-                let v = select(
-                    0u,
-                    atomicLoad(&local_histogram[subgroup_invocation_id]),
-                    subgroup_invocation_id < sorting::BIN_COUNT,
-                );
-                let inclusive = subgroupInclusiveAdd(v);
                 if subgroup_invocation_id < sorting::BIN_COUNT {
                     lds_scratch[subgroup_invocation_id] = inclusive;
                 }

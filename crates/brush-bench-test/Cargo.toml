@@ -33,6 +33,9 @@ wasm-bindgen-test = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
+# ahash (pulled in via burn-core) uses getrandom 0.3; enable its wasm_js feature
+# so the wasm_js cfg backend can compile.
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 wasm-logger = "0.2"
 console_error_panic_hook = "0.1"
 

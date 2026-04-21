@@ -314,11 +314,37 @@ needless_range_loop = "allow"
 single_range_in_vec_init = "allow"
 
 # wgpu fork with WebGPU subgroups feature mapping (needed for our backward
-# kernel's subgroupAdd/subgroupAny on web). Tracks ArthurBrussee/wgpu's v29
-# branch — to be upstreamed via a PR.
+# kernel's subgroupAdd/subgroupAny on web).
 [patch.crates-io]
 wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
 wgpu-core = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
 wgpu-hal = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
 wgpu-types = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
 naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
+
+[patch."https://github.com/tracel-ai/cubecl"]
+cubecl = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl" }
+cubecl-common = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-common" }
+cubecl-core = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-core" }
+cubecl-cpp = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-cpp" }
+cubecl-cpu = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-cpu" }
+cubecl-cuda = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-cuda" }
+cubecl-hip = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-hip" }
+cubecl-ir = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-ir" }
+cubecl-macros = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-macros" }
+cubecl-macros-internal = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-macros-internal" }
+cubecl-opt = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-opt" }
+cubecl-runtime = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-runtime" }
+cubecl-std = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-std" }
+cubecl-wgpu = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-wgpu" }
+cubecl-zspace = { path = "/Users/arthurbrussee/Documents/cubecl/crates/cubecl-zspace" }
+
+[patch."https://github.com/tracel-ai/cubek"]
+cubek = { path = "/Users/arthurbrussee/Documents/cubek/crates/cubek" }
+cubek-attention = { path = "/Users/arthurbrussee/Documents/cubek/crates/cubek-attention" }
+cubek-convolution = { path = "/Users/arthurbrussee/Documents/cubek/crates/cubek-convolution" }
+cubek-matmul = { path = "/Users/arthurbrussee/Documents/cubek/crates/cubek-matmul" }
+cubek-quant = { path = "/Users/arthurbrussee/Documents/cubek/crates/cubek-quant" }
+cubek-random = { path = "/Users/arthurbrussee/Documents/cubek/crates/cubek-random" }
+cubek-reduce = { path = "/Users/arthurbrussee/Documents/cubek/crates/cubek-reduce" }
+cubek-std = { path = "/Users/arthurbrussee/Documents/cubek/crates/cubek-std" }
