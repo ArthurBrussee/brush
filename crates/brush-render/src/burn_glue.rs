@@ -91,10 +91,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
 
                 h.register_float_tensor::<MainBackendBase>(&out_img.id, self.out_img.clone());
                 h.register_float_tensor::<MainBackendBase>(&visible.id, self.visible.clone());
-                h.register_float_tensor::<MainBackendBase>(
-                    &max_radius.id,
-                    self.max_radius.clone(),
-                );
+                h.register_float_tensor::<MainBackendBase>(&max_radius.id, self.max_radius.clone());
                 h.register_float_tensor::<MainBackendBase>(
                     &projected_splats.id,
                     self.projected_splats.clone(),
