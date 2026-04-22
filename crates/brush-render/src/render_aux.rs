@@ -190,6 +190,9 @@ pub struct RenderAux<B: Backend> {
     pub num_visible: u32,
     pub num_intersections: u32,
     pub visible: FloatTensor<B>,
+    /// Per-splat maximum screen-space radius in pixels (global-gid indexed).
+    /// Zero for splats that were culled / invisible in this view.
+    pub max_radius: FloatTensor<B>,
     pub tile_offsets: IntTensor<B>,
     pub img_size: glam::UVec2,
 }

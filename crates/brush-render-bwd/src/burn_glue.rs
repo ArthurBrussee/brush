@@ -259,6 +259,7 @@ where
         num_visible: output.aux.num_visible,
         num_intersections: output.aux.num_intersections,
         visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(output.aux.visible.clone()),
+        max_radius: <Autodiff<B, C> as AutodiffBackend>::from_inner(output.aux.max_radius.clone()),
         tile_offsets: output.aux.tile_offsets.clone(),
         img_size: output.aux.img_size,
     };
