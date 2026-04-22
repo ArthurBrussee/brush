@@ -9,10 +9,7 @@
 
 use brush_fused_ssim::fused_ssim;
 use brush_render::MainBackend;
-use burn::{
-    backend::Autodiff,
-    tensor::Tensor,
-};
+use burn::{backend::Autodiff, tensor::Tensor};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[cfg(target_family = "wasm")]
@@ -45,21 +42,81 @@ const REF_CASES: &[RefCase] = &[
     // Identical inputs collapse to ~1.0 everywhere — the saturation-clamp
     // in the kernel keeps this exactly bounded; we just check it didn't
     // explode.
-    RefCase { h: 30, w: 50, s1: 0.12, o1: 0.5, s2: 0.12, o2: 0.5,
-        mean: 1.0, mean_sq: 1.0, min: 0.9999999, max: 1.0000001 },
+    RefCase {
+        h: 30,
+        w: 50,
+        s1: 0.12,
+        o1: 0.5,
+        s2: 0.12,
+        o2: 0.5,
+        mean: 1.0,
+        mean_sq: 1.0,
+        min: 0.9999999,
+        max: 1.0000001,
+    },
     // Same shape, phase-shifted — partial similarity.
-    RefCase { h: 30, w: 50, s1: 0.12, o1: 0.5, s2: 0.12, o2: 1.0,
-        mean: 0.8735662, mean_sq: 0.7639209, min: 0.742158, max: 0.9670315 },
+    RefCase {
+        h: 30,
+        w: 50,
+        s1: 0.12,
+        o1: 0.5,
+        s2: 0.12,
+        o2: 1.0,
+        mean: 0.8735662,
+        mean_sq: 0.7639209,
+        min: 0.742158,
+        max: 0.9670315,
+    },
     // Wildly different inputs — covers the negative-SSIM regions.
-    RefCase { h: 30, w: 50, s1: 0.12, o1: 0.5, s2: 0.53, o2: 2.0,
-        mean: 0.0786799, mean_sq: 0.0259744, min: -0.0229384, max: 0.6426152 },
-    RefCase { h: 64, w: 96, s1: 0.0317, o1: 0.5, s2: 0.0317, o2: 0.5,
-        mean: 1.0, mean_sq: 1.0, min: 0.9999999, max: 1.0000001 },
-    RefCase { h: 64, w: 96, s1: 0.05, o1: 0.5, s2: 0.07, o2: 1.0,
-        mean: 0.0400423, mean_sq: 0.2632874, min: -0.7258162, max: 0.9671891 },
+    RefCase {
+        h: 30,
+        w: 50,
+        s1: 0.12,
+        o1: 0.5,
+        s2: 0.53,
+        o2: 2.0,
+        mean: 0.0786799,
+        mean_sq: 0.0259744,
+        min: -0.0229384,
+        max: 0.6426152,
+    },
+    RefCase {
+        h: 64,
+        w: 96,
+        s1: 0.0317,
+        o1: 0.5,
+        s2: 0.0317,
+        o2: 0.5,
+        mean: 1.0,
+        mean_sq: 1.0,
+        min: 0.9999999,
+        max: 1.0000001,
+    },
+    RefCase {
+        h: 64,
+        w: 96,
+        s1: 0.05,
+        o1: 0.5,
+        s2: 0.07,
+        o2: 1.0,
+        mean: 0.0400423,
+        mean_sq: 0.2632874,
+        min: -0.7258162,
+        max: 0.9671891,
+    },
     // Non-square, smaller than one workgroup tile (16×16) in one dim.
-    RefCase { h: 17, w: 41, s1: 0.1, o1: 0.0, s2: 0.13, o2: 1.5,
-        mean: 0.1192551, mean_sq: 0.0478722, min: 0.0014375, max: 0.8366008 },
+    RefCase {
+        h: 17,
+        w: 41,
+        s1: 0.1,
+        o1: 0.0,
+        s2: 0.13,
+        o2: 1.5,
+        mean: 0.1192551,
+        mean_sq: 0.0478722,
+        min: 0.0014375,
+        max: 0.8366008,
+    },
 ];
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
@@ -128,10 +185,8 @@ async fn fused_ssim_backward_runs() {
     let w = 48usize;
     let img1_data = make_img(h, w, 0.05, 0.5);
     let img2_data = make_img(h, w, 0.07, 1.0);
-    let img1 = Tensor::<DiffBack, 1>::from_floats(img1_data.as_slice(), &device)
-        .reshape([h, w, 3]);
-    let img2 = Tensor::<DiffBack, 1>::from_floats(img2_data.as_slice(), &device)
-        .reshape([h, w, 3]);
+    let img1 = Tensor::<DiffBack, 1>::from_floats(img1_data.as_slice(), &device).reshape([h, w, 3]);
+    let img2 = Tensor::<DiffBack, 1>::from_floats(img2_data.as_slice(), &device).reshape([h, w, 3]);
 
     let map = fused_ssim(img1, img2);
     let loss = map.mean();

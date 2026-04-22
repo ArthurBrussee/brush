@@ -236,8 +236,7 @@ impl SplatTrainer {
                     let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
                     let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);
                     loss = loss
-                        + (alpha_input - pred_alpha).abs().mean()
-                            * self.config.match_alpha_weight;
+                        + (alpha_input - pred_alpha).abs().mean() * self.config.match_alpha_weight;
                 }
                 loss
             };

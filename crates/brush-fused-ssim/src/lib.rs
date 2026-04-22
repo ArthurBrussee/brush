@@ -29,9 +29,7 @@ use burn::{
         wgpu::WgpuRuntime,
     },
     prelude::Backend,
-    tensor::{
-        DType, Shape, Tensor, TensorMetadata, TensorPrimitive, ops::FloatTensor,
-    },
+    tensor::{DType, Shape, Tensor, TensorMetadata, TensorPrimitive, ops::FloatTensor},
 };
 use burn_cubecl::{
     CubeRuntime, fusion::FusionCubeRuntime, kernel::into_contiguous, tensor::CubeTensor,
@@ -81,15 +79,7 @@ mod kernels {
     /// Read `img[c, y, x]` with zero-padding for out-of-bounds.
     /// Bounds-checked positions encoded as u32 with sentinel `u32::MAX` for OOB.
     #[cube]
-    fn read_pix<F: Float>(
-        img: &Tensor<F>,
-        c: u32,
-        y: u32,
-        x: u32,
-        oob: bool,
-        h: u32,
-        w: u32,
-    ) -> F {
+    fn read_pix<F: Float>(img: &Tensor<F>, c: u32, y: u32, x: u32, oob: bool, h: u32, w: u32) -> F {
         if oob {
             F::cast_from(0.0_f32)
         } else {
@@ -265,10 +255,7 @@ mod kernels {
             let c_top = F::cast_from(2.0_f32) * mu1 * mu2 + c1_f;
             let d_top = F::cast_from(2.0_f32) * sigma12 + c2_f;
             let raw = (c_top * d_top) / (a * b);
-            let val = F::min(
-                F::cast_from(1.0_f32),
-                F::max(F::cast_from(-1.0_f32), raw),
-            );
+            let val = F::min(F::cast_from(1.0_f32), F::max(F::cast_from(-1.0_f32), raw));
 
             let global_idx = (c * h * w + pix_y * w + pix_x) as usize;
             ssim_map[global_idx] = val;
@@ -673,15 +660,14 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
                 let (inputs, outputs) = self.desc.as_fixed();
                 let [img1, img2, dl_dmap, dm_dmu1, dm_dsigma1_sq, dm_dsigma12] = inputs;
                 let [dl_dimg1] = outputs;
-                let out =
-                    <MainBackendBase as FusedSsimOps<MainBackendBase>>::fused_ssim_backward(
-                        h.get_float_tensor::<MainBackendBase>(img1),
-                        h.get_float_tensor::<MainBackendBase>(img2),
-                        h.get_float_tensor::<MainBackendBase>(dl_dmap),
-                        h.get_float_tensor::<MainBackendBase>(dm_dmu1),
-                        h.get_float_tensor::<MainBackendBase>(dm_dsigma1_sq),
-                        h.get_float_tensor::<MainBackendBase>(dm_dsigma12),
-                    );
+                let out = <MainBackendBase as FusedSsimOps<MainBackendBase>>::fused_ssim_backward(
+                    h.get_float_tensor::<MainBackendBase>(img1),
+                    h.get_float_tensor::<MainBackendBase>(img2),
+                    h.get_float_tensor::<MainBackendBase>(dl_dmap),
+                    h.get_float_tensor::<MainBackendBase>(dm_dmu1),
+                    h.get_float_tensor::<MainBackendBase>(dm_dsigma1_sq),
+                    h.get_float_tensor::<MainBackendBase>(dm_dsigma12),
+                );
                 h.register_float_tensor::<MainBackendBase>(&dl_dimg1.id, out);
             }
         }
@@ -797,8 +783,7 @@ where
         OpsKind::UnTracked(prep) => prep.finish(out.map),
     };
 
-    let map: Tensor<Autodiff<B, C>, 3> =
-        Tensor::from_primitive(TensorPrimitive::Float(map_p));
+    let map: Tensor<Autodiff<B, C>, 3> = Tensor::from_primitive(TensorPrimitive::Float(map_p));
     // Permute back to [H, W, C].
     map.permute([1, 2, 0])
 }
@@ -821,4 +806,3 @@ where
     let map: Tensor<B, 3> = Tensor::from_primitive(TensorPrimitive::Float(out.map));
     map.permute([1, 2, 0])
 }
-
