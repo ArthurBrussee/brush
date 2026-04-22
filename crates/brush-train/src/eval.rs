@@ -47,7 +47,6 @@ pub async fn eval_stats<B: Backend + SplatOps<B> + FusedSsimOps<B>>(
 
     let psnr = mse.recip().log() * 10.0 / std::f32::consts::LN_10;
     let ssim = fused_ssim_eval(render_rgb.clone(), gt_rgb).mean();
-    let _ = device;
 
     Ok(EvalSample {
         gt_img,
