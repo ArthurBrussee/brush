@@ -1033,6 +1033,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "brush-fused-ssim"
+version = "0.3.0"
+dependencies = [
+ "brush-kernel",
+ "brush-render",
+ "burn",
+ "burn-cubecl",
+ "burn-fusion",
+ "burn-ir",
+ "burn-wgpu",
+ "getrandom 0.4.2",
+ "tokio",
+ "wasm-bindgen-test",
+]
+
+[[package]]
 name = "brush-kernel"
 version = "0.3.0"
 dependencies = [
@@ -1205,6 +1221,7 @@ dependencies = [
  "anyhow",
  "ball-tree",
  "brush-dataset",
+ "brush-fused-ssim",
  "brush-kernel",
  "brush-render",
  "brush-render-bwd",

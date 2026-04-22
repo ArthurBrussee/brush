@@ -5,6 +5,7 @@ members = [
     "crates/brush-bench-test",
     "crates/brush-cli",
     "crates/brush-dataset",
+    "crates/brush-fused-ssim",
     "crates/brush-kernel",
     "crates/brush-prefix-sum",
     "crates/brush-process",

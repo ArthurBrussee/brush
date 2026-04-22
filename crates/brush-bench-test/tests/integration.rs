@@ -241,6 +241,97 @@ async fn test_multi_step_training() {
     assert!(splats.num_splats() > 0);
 }
 
+// Masked alpha path: the loss-mean linearity rewrite branches on
+// `AlphaMode::Masked` because mean(err * mask) ≠ mean(err) * mean(mask).
+// Cover that branch so regressions are caught.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn test_training_step_masked_alpha() {
+    let device = brush_kernel::test_helpers::test_device().await;
+    let mut batch = generate_test_batch((64, 64));
+    // The default test batch has 3 channels; widen to 4 with an alpha channel.
+    let img: Vec<f32> = batch.img_tensor.into_vec().unwrap();
+    let pixels = 64 * 64;
+    let mut img4 = Vec::with_capacity(pixels * 4);
+    for i in 0..pixels {
+        img4.extend_from_slice(&img[i * 3..i * 3 + 3]);
+        img4.push(if i % 2 == 0 { 1.0 } else { 0.0 });
+    }
+    batch.img_tensor = TensorData::new(img4, [64, 64, 4]);
+    batch.alpha_mode = AlphaMode::Masked;
+
+    let config = TrainConfig::default();
+    let mut splats = generate_test_splats(&device, 100);
+    let mut trainer = SplatTrainer::new(
+        &config,
+        &device,
+        BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+    );
+
+    for _ in 0..3 {
+        let (new_splats, stats) = trainer.step(batch.clone(), splats).await;
+        splats = new_splats;
+        let loss = stats
+            .loss
+            .into_data_async()
+            .await
+            .expect("readback")
+            .as_slice::<f32>()
+            .expect("Wrong type")[0];
+        assert!(loss.is_finite(), "masked-alpha loss non-finite: {loss}");
+    }
+}
+
+// SH warmup path: train a splat with sh_degree>0 so the warmup branch in
+// `SplatTrainer::step` actually runs. With the warmup-via-slice change, the
+// first iters have `active_sh = 0` so render sees an empty rest tensor; the
+// vjp must still produce zero gradients for the inactive bands, leaving the
+// rest param finite (i.e. the optimizer must not write NaN). Later iters
+// transition into degree 1+ so we exercise the partial-slice path too.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn test_sh_warmup_path() {
+    let device = brush_kernel::test_helpers::test_device().await;
+    let batch = generate_test_batch((64, 64));
+    let config = TrainConfig {
+        // 2 active SH degree, warmup of 4 iters: 2 iters at deg 0, 2 at deg 1.
+        sh_warmup_iters: 4,
+        ..TrainConfig::default()
+    };
+    let splats = generate_test_splats(&device, 50).with_sh_degree(2);
+    let mut splats = splats;
+    let mut trainer = SplatTrainer::new(
+        &config,
+        &device,
+        BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+    );
+
+    for _ in 0..6 {
+        let (new_splats, stats) = trainer.step(batch.clone(), splats).await;
+        splats = new_splats;
+        let loss = stats
+            .loss
+            .into_data_async()
+            .await
+            .expect("readback")
+            .as_slice::<f32>()
+            .expect("Wrong type")[0];
+        assert!(loss.is_finite(), "warmup loss is non-finite: {loss}");
+    }
+
+    // SH rest must remain finite throughout warmup transitions.
+    let rest = splats
+        .sh_coeffs_rest
+        .val()
+        .into_data_async()
+        .await
+        .expect("readback")
+        .into_vec::<f32>()
+        .unwrap();
+    assert!(
+        rest.iter().all(|v| v.is_finite()),
+        "sh_coeffs_rest contains non-finite values after warmup"
+    );
+}
+
 // Training with a camera pointing away from every splat — num_visible == 0
 // every step. The training loop must not crash on this; all gradients should
 // be zero (or at least finite) and the optimizer step should be a no-op.

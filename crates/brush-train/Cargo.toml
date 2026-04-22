@@ -12,6 +12,7 @@ debug-validation = ["brush-render-bwd/debug-validation"]
 brush-render.path = "../brush-render"
 brush-dataset.path = "../brush-dataset"
 brush-render-bwd.path = "../brush-render-bwd"
+brush-fused-ssim.path = "../brush-fused-ssim"
 brush-serde.path = "../brush-serde"
 lpips.path = "../lpips"
 
