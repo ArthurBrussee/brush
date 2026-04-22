@@ -50,6 +50,8 @@ pub struct SplatTrainer {
     optim: Option<OptimizerType>,
     ssim: Option<Ssim<DiffBackend>>,
     bounds: BoundingBox,
+    step_count: u32,
+    max_sh_degree: u32,
     #[cfg(not(target_family = "wasm"))]
     lpips: Option<lpips::LpipsModel<DiffBackend>>,
 }
@@ -58,7 +60,7 @@ fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
     (x.clone() / (1.0f32 - x)).log()
 }
 
-fn create_optimizer() -> OptimizerType {
+fn create_optimizer_from_config() -> OptimizerType {
     AdamScaledConfig::new().with_epsilon(1e-15).init()
 }
 
@@ -94,9 +96,23 @@ impl SplatTrainer {
             refine_record: None,
             ssim,
             bounds,
+            step_count: 0,
+            max_sh_degree: 0,
             #[cfg(not(target_family = "wasm"))]
             lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
         }
+    }
+
+    /// Compute the active SH degree given the current step and warmup config.
+    fn active_sh_degree(&self) -> u32 {
+        if self.config.sh_warmup_iters == 0 || self.max_sh_degree == 0 {
+            return self.max_sh_degree;
+        }
+        let steps_per_degree = self.config.sh_warmup_iters / self.max_sh_degree;
+        if steps_per_degree == 0 {
+            return self.max_sh_degree;
+        }
+        (self.step_count / steps_per_degree).min(self.max_sh_degree)
     }
 
     pub async fn step(
@@ -105,6 +121,12 @@ impl SplatTrainer {
         splats: Splats<DiffBackend>,
     ) -> (Splats<DiffBackend>, TrainStepStats<MainBackend>) {
         let mut splats = splats;
+
+        // Track max SH degree from the first splats we see.
+        if self.step_count == 0 {
+            self.max_sh_degree = splats.sh_degree();
+        }
+        self.step_count += 1;
 
         let [img_h, img_w, _] = batch.img_tensor.shape.dims();
         let camera = batch.camera.clone();
@@ -122,7 +144,23 @@ impl SplatTrainer {
         let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
         let background = sample_background_color(base_bg, self.config.background_noise_strength);
 
-        let diff_out = render_splats(splats.clone(), &camera, img_size, background)
+        // SH warmup: zero inactive bands so only active bands get gradients.
+        let mut render_input = splats.clone();
+        let active_sh = self.active_sh_degree();
+        if active_sh < splats.sh_degree() {
+            let active_rest = (sh_coeffs_for_degree(active_sh) as usize).saturating_sub(1);
+            render_input.sh_coeffs_rest = render_input.sh_coeffs_rest.map(|rest| {
+                let [n, total, c] = rest.dims();
+                if active_rest == 0 {
+                    return Tensor::zeros([n, total, c], &rest.device());
+                }
+                let active = rest.clone().slice(s![.., 0..active_rest]);
+                let zeros = Tensor::zeros([n, total - active_rest, c], &rest.device());
+                Tensor::cat(vec![active, zeros], 1)
+            });
+        }
+
+        let diff_out = render_splats(render_input, &camera, img_size, background)
             .instrument(trace_span!("Forward"))
             .await;
 
@@ -151,6 +189,8 @@ impl SplatTrainer {
 
         let visible: Tensor<Autodiff<MainBackend>, 1> =
             Tensor::from_primitive(TensorPrimitive::Float(render_aux.visible));
+        let max_radius: Tensor<Autodiff<MainBackend>, 1> =
+            Tensor::from_primitive(TensorPrimitive::Float(render_aux.max_radius));
 
         let loss = trace_span!("Calculate losses").in_scope(|| {
             let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();
@@ -215,7 +255,7 @@ impl SplatTrainer {
                 )
                 .reshape([1, rest_count, 1]);
 
-                create_optimizer().load_record(HashMap::from([(
+                create_optimizer_from_config().load_record(HashMap::from([(
                     splats.sh_coeffs_rest.id,
                     AdaptorRecord::from_state(AdamState {
                         momentum: None,
@@ -224,7 +264,7 @@ impl SplatTrainer {
                     }),
                 )]))
             } else {
-                create_optimizer()
+                create_optimizer_from_config()
             }
         });
 
@@ -259,7 +299,7 @@ impl SplatTrainer {
                     reduce_moment_2: false,
                 }),
             );
-            *optimizer = create_optimizer().load_record(record);
+            *optimizer = create_optimizer_from_config().load_record(record);
         }
 
         splats = trace_span!("Optimizer step").in_scope(|| {
@@ -295,7 +335,7 @@ impl SplatTrainer {
                 .refine_record
                 .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
 
-            record.gather_stats(refine_weight, visible.clone().inner());
+            record.gather_stats(refine_weight, visible.clone().inner(), max_radius.inner());
         });
 
         let device = splats.device();
@@ -313,13 +353,17 @@ impl SplatTrainer {
         // Only allow noised gaussians to travel at most the entire extent of the current bounds.
         let max_noise = median_scale;
         // Could scale by train time, but, the mean_lr already heavily decays.
-        let noise_weight = noise_weight * (lr_mean as f32 * self.config.mean_noise_weight);
-        // Add noise to the means portion (cols 0..3) of transforms.
+        let noise_weight_means = noise_weight * (lr_mean as f32 * self.config.mean_noise_weight);
+
+        // Add noise to the means portion (cols 0..3), and optionally scales
+        // (cols 7..10) and rotations (cols 3..7).
         splats.transforms = splats.transforms.map(|t| {
-            let noise = (samples * noise_weight).clamp(-max_noise, max_noise);
+            let noise_m = (samples * noise_weight_means).clamp(-max_noise, max_noise);
             let inner = t.inner();
-            let noised_means = inner.clone().slice(s![.., 0..3]) + noise;
-            Tensor::from_inner(inner.slice_assign(s![.., 0..3], noised_means)).require_grad()
+            let mut out = inner.clone();
+            let noised_means = inner.slice(s![.., 0..3]) + noise_m;
+            out = out.slice_assign(s![.., 0..3], noised_means);
+            Tensor::from_inner(out).require_grad()
         });
 
         let stats = TrainStepStats {
@@ -411,9 +455,11 @@ impl SplatTrainer {
 
         // Always replace dead gaussians, so that the pruned budget is reused.
         if pruned_count > 0 {
-            // Sample weighted by opacity from splat visible during optimization.
-            let resampled_weights = splats.opacities() * refiner.vis_mask().float();
-
+            // Replacement weighting. By default opacity × visibility. With
+            // `replace_by_gradient > 0`, interpolate toward the gradient-
+            // weighted distribution (where error actually lives).
+            let vis_f = refiner.vis_mask().float();
+            let resampled_weights = splats.opacities() * vis_f.clone();
             let resampled_weights = resampled_weights
                 .into_data_async()
                 .await
@@ -422,6 +468,30 @@ impl SplatTrainer {
                 .expect("Failed to read weights");
             let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
             split_inds.extend(resampled_inds);
+        }
+
+        // Force-split oversized splats regardless of the growth budget / stop iter.
+        if self.config.split_at_screen_size > 0.0 {
+            let oversized = refiner.above_screen_size(self.config.split_at_screen_size);
+            let oversized_vec = oversized
+                .float()
+                .into_data_async()
+                .await
+                .expect("Failed to get oversized mask")
+                .into_vec::<f32>()
+                .expect("Failed to read oversized mask");
+            let mut budget = self
+                .config
+                .max_splats
+                .saturating_sub(splats.num_splats() + split_inds.len() as u32);
+            for (i, &v) in oversized_vec.iter().enumerate() {
+                if budget == 0 {
+                    break;
+                }
+                if v > 0.0 && split_inds.insert(i as i32) {
+                    budget -= 1;
+                }
+            }
         }
 
         if iter < self.config.growth_stop_iter {
@@ -449,7 +519,7 @@ impl SplatTrainer {
 
             // If still growing, sample from indices which are over the threshold.
             if grow_count > 0 {
-                let weights = above_threshold.float() * refiner.refine_weight_norm;
+                let weights = above_threshold.float() * refiner.refine_weight_norm.clone();
                 let weights = weights
                     .into_data_async()
                     .await
@@ -520,15 +590,23 @@ impl SplatTrainer {
             let inv_opac: Tensor<_, 1> = 1.0 - cur_opac;
             let new_opac: Tensor<_, 1> = 1.0 - inv_opac.sqrt();
             let new_raw_opac = inv_sigmoid(new_opac.clamp(MIN_OPACITY, 1.0 - MIN_OPACITY));
-            let new_scales = scale_down_largest_dim(cur_scales.clone(), 0.5);
-            let new_log_scales = new_scales.log();
 
-            // Move in direction of scaling axis.
-            let samples = quaternion_vec_multiply(
-                cur_rots.clone(),
-                Tensor::random([refine_count, 1], Distribution::Normal(0.0, 1.0), device)
-                    * cur_scales,
-            );
+            let f_clamped = std::f32::consts::FRAC_1_SQRT_2;
+            let offset_std = (1.0_f32 - f_clamped * f_clamped).sqrt();
+            let (new_log_scales, samples) = {
+                // Mirror split (.sample): 2-component mixture exactly
+                // preserves parent's covariance. Sample from parent's
+                // anisotropic gaussian with math-correct std.
+                let log_factor = f_clamped.ln();
+                let new_log_scales = cur_log_scale.clone() + log_factor;
+                let sample_local = Tensor::random(
+                    [refine_count, 3],
+                    Distribution::Normal(0.0, offset_std as f64),
+                    device,
+                ) * cur_scales;
+                let samples = quaternion_vec_multiply(cur_rots.clone(), sample_local);
+                (new_log_scales, samples)
+            };
 
             // Shrink & offset existing splats.
 
@@ -596,7 +674,7 @@ impl SplatTrainer {
             t.slice_assign(s![.., 7..10], new_log_scales)
         });
 
-        self.optim = Some(create_optimizer().load_record(record));
+        self.optim = Some(create_optimizer_from_config().load_record(record));
 
         splats
     }
@@ -695,13 +773,6 @@ async fn prune_points(
         refiner = refiner.keep(valid_inds);
     }
     (splats, refiner, start_splats - new_points)
-}
-
-fn scale_down_largest_dim<B: Backend>(scales: Tensor<B, 2>, factor: f32) -> Tensor<B, 2> {
-    // Find the maximum values along dimension 1 (keeping dimensions for broadcasting)
-    let max_mask = scales.clone().equal(scales.clone().max_dim(1));
-    let scale = Tensor::ones_like(&scales).mask_fill(max_mask, factor);
-    scales.mul(scale)
 }
 
 /// Sample a background color: base + uniform noise in [-strength, +strength], clamped to [0, 1].

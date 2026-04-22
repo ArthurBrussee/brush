@@ -84,6 +84,7 @@ impl SplatOps<Self> for MainBackendBase {
         let num_visible_buffer = Self::int_zeros([1].into(), device, IntDType::U32);
         let num_intersections_buffer = Self::int_zeros([1].into(), device, IntDType::U32);
         let intersect_counts = Self::int_zeros([total_splats].into(), device, IntDType::U32);
+        let max_radius = Self::float_zeros([total_splats].into(), device, FloatDType::F32);
 
         // Phase 1: Project & cull. Writes num_visible, num_intersections atomically.
         let global_from_presort_gid = create_tensor([total_splats], device, DType::U32);
@@ -104,6 +105,7 @@ impl SplatOps<Self> for MainBackendBase {
                         num_visible_buffer.handle.clone().binding(),
                         intersect_counts.handle.clone().binding(),
                         num_intersections_buffer.handle.clone().binding(),
+                        max_radius.handle.clone().binding(),
                     ])
                     .with_info(create_meta_binding(project_uniforms)),
             );
@@ -300,6 +302,7 @@ impl SplatOps<Self> for MainBackendBase {
                 num_visible,
                 num_intersections,
                 visible,
+                max_radius,
                 tile_offsets,
                 img_size,
             },

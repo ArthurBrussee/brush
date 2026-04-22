@@ -29,7 +29,7 @@ pub struct TrainConfig {
     pub lr_coeffs_dc: f64,
 
     /// How much to divide the learning rate by for higher SH orders.
-    #[arg(long, help_heading = "Training options", default_value = "20.0")]
+    #[arg(long, help_heading = "Training options", default_value = "10.0")]
     pub lr_coeffs_sh_scale: f32,
 
     /// Learning rate for the opacity parameter.
@@ -58,17 +58,28 @@ pub struct TrainConfig {
     pub refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
-    #[arg(long, help_heading = "Refine options", default_value = "0.003")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.0025")]
     pub growth_grad_threshold: f32,
 
     /// What fraction of splats that are deemed as needing to grow do actually grow.
     /// Increase this to make splats grow more aggressively.
-    #[arg(long, help_heading = "Refine options", default_value = "0.2")]
+    #[arg(long, help_heading = "Refine options", default_value = "0.25")]
     pub growth_select_fraction: f32,
 
     /// Period after which splat growth stops.
     #[arg(long, help_heading = "Refine options", default_value = "15000")]
     pub growth_stop_iter: u32,
+
+    /// Force-split any splat whose screen-space extent exceeds this fraction of the
+    /// image dimension in any training view since the last refine. 0 disables.
+    #[arg(long, help_heading = "Refine options", default_value = "0.25")]
+    pub split_at_screen_size: f32,
+
+    /// SH degree warmup period in iterations. During warmup, higher-order SH
+    /// bands are masked so only lower bands are trained, improving early stability.
+    /// Set to 0 to disable warmup and train all bands from the start.
+    #[arg(long, help_heading = "Training options", default_value = "5000")]
+    pub sh_warmup_iters: u32,
 
     /// Weight of SSIM loss (compared to l1 loss)
     #[clap(long, help_heading = "Training options", default_value = "0.2")]
@@ -83,7 +94,7 @@ pub struct TrainConfig {
     pub scale_decay: f32,
 
     /// How long to apply aux losses and augementations for (1 being the full training duration).
-    #[arg(long, help_heading = "Training options", default_value = "0.9")]
+    #[arg(long, help_heading = "Training options", default_value = "0.8")]
     pub aux_loss_time: f32,
 
     /// Weight of l1 loss on alpha if input view has transparency.

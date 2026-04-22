@@ -66,6 +66,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             desc: CustomOpIr,
             out_img: FloatTensor<MainBackendBase>,
             visible: FloatTensor<MainBackendBase>,
+            max_radius: FloatTensor<MainBackendBase>,
             projected_splats: FloatTensor<MainBackendBase>,
             tile_offsets: IntTensor<MainBackendBase>,
             compact_gid_from_isect: IntTensor<MainBackendBase>,
@@ -77,10 +78,11 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 &self,
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime>>>,
             ) {
-                let (_, outputs) = self.desc.as_fixed::<0, 6>();
+                let (_, outputs) = self.desc.as_fixed::<0, 7>();
                 let [
                     out_img,
                     visible,
+                    max_radius,
                     projected_splats,
                     tile_offsets,
                     compact_gid_from_isect,
@@ -89,6 +91,10 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
 
                 h.register_float_tensor::<MainBackendBase>(&out_img.id, self.out_img.clone());
                 h.register_float_tensor::<MainBackendBase>(&visible.id, self.visible.clone());
+                h.register_float_tensor::<MainBackendBase>(
+                    &max_radius.id,
+                    self.max_radius.clone(),
+                );
                 h.register_float_tensor::<MainBackendBase>(
                     &projected_splats.id,
                     self.projected_splats.clone(),
@@ -116,6 +122,11 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         let visible_ir = TensorIr::uninit(
             client.create_empty_handle(),
             out.aux.visible.shape(),
+            DType::F32,
+        );
+        let max_radius_ir = TensorIr::uninit(
+            client.create_empty_handle(),
+            out.aux.max_radius.shape(),
             DType::F32,
         );
         let projected_splats_ir = TensorIr::uninit(
@@ -146,6 +157,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             &[
                 out_img_ir,
                 visible_ir,
+                max_radius_ir,
                 projected_splats_ir,
                 tile_offsets_ir,
                 compact_gid_from_isect_ir,
@@ -156,6 +168,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             desc: desc.clone(),
             out_img: out.out_img,
             visible: out.aux.visible,
+            max_radius: out.aux.max_radius,
             projected_splats: out.projected_splats,
             tile_offsets: out.aux.tile_offsets,
             compact_gid_from_isect: out.compact_gid_from_isect,
@@ -169,6 +182,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         let [
             out_img,
             visible,
+            max_radius,
             projected_splats,
             tile_offsets,
             compact_gid_from_isect,
@@ -181,6 +195,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 num_visible: out.aux.num_visible,
                 num_intersections: out.aux.num_intersections,
                 visible,
+                max_radius,
                 tile_offsets,
                 img_size: out.aux.img_size,
             },
