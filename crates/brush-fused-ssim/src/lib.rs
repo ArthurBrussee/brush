@@ -2,9 +2,7 @@
 //!
 //! Inspired by <https://github.com/rahul-goel/fused-ssim>. Two separable
 //! 11×11 Gaussian blurs plus the full SSIM formula in one shared-memory
-//! pass — replaces 5 `conv2d` calls + ~20 elementwise ops + their
-//! autodiff backward chain (~30 ms at 3K res) with a fused
-//! forward+backward pair (~5 ms).
+//! pass.
 //!
 //! Layout: input is `[C, H, W]` contiguous (one batch). Each workgroup is
 //! 16×16 threads handling one 16×16 output tile of one channel. The
@@ -14,8 +12,7 @@
 //! (`dm_dmu1`, `dm_dsigma1_sq`, `dm_dsigma12`) — paying ~3 image-sized
 //! writes to skip recomputing the blurs in backward. Backward consumes
 //! those + `dL/d(map)` and produces `dL/d(img1)` only; `img2` is treated
-//! as a constant (matches the reference, which is fine because brush
-//! always calls `ssim(pred, gt)`).
+//! as a constant.
 
 use brush_render::MainBackendBase;
 use burn::{
