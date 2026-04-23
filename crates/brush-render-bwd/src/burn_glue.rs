@@ -44,8 +44,7 @@ pub struct RasterizeGrads<B: Backend> {
 #[derive(Debug, Clone)]
 pub struct SplatGrads<B: Backend> {
     pub v_transforms: FloatTensor<B>,
-    pub v_coeffs_dc: FloatTensor<B>,
-    pub v_coeffs_rest: FloatTensor<B>,
+    pub v_coeffs: FloatTensor<B>,
     pub v_raw_opac: FloatTensor<B>,
     pub v_refine_weight: FloatTensor<B>,
 }
@@ -100,7 +99,7 @@ struct GaussianBackwardState<B: Backend> {
 #[derive(Debug)]
 struct RenderBackwards;
 
-const NUM_BWD_ARGS: usize = 5;
+const NUM_BWD_ARGS: usize = 4;
 
 // Implement gradient registration when rendering backwards.
 impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
@@ -122,8 +121,7 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
         let [
             transforms_parent,
             refine_weight,
-            coeffs_dc_parent,
-            coeffs_rest_parent,
+            coeffs_parent,
             raw_opacity_parent,
         ] = ops.parents;
 
@@ -155,12 +153,8 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
             grads.register::<B>(node.id, splat_grads.v_refine_weight);
         }
 
-        if let Some(node) = coeffs_dc_parent {
-            grads.register::<B>(node.id, splat_grads.v_coeffs_dc);
-        }
-
-        if let Some(node) = coeffs_rest_parent {
-            grads.register::<B>(node.id, splat_grads.v_coeffs_rest);
+        if let Some(node) = coeffs_parent {
+            grads.register::<B>(node.id, splat_grads.v_coeffs);
         }
 
         if let Some(node) = raw_opacity_parent {
@@ -203,21 +197,14 @@ where
         .prepare::<C>([
             splats.transforms.val().into_primitive().tensor().node,
             refine_weight_holder.clone().into_primitive().tensor().node,
-            splats.sh_coeffs_dc.val().into_primitive().tensor().node,
-            splats.sh_coeffs_rest.val().into_primitive().tensor().node,
+            splats.sh_coeffs.val().into_primitive().tensor().node,
             splats.raw_opacities.val().into_primitive().tensor().node,
         ])
         .compute_bound()
         .stateful();
 
-    let sh_coeffs_dc = splats
-        .sh_coeffs_dc
-        .val()
-        .into_primitive()
-        .tensor()
-        .into_primitive();
-    let sh_coeffs_rest = splats
-        .sh_coeffs_rest
+    let sh_coeffs = splats
+        .sh_coeffs
         .val()
         .into_primitive()
         .tensor()
@@ -244,8 +231,7 @@ where
         camera,
         img_size,
         transforms.clone(),
-        sh_coeffs_dc,
-        sh_coeffs_rest,
+        sh_coeffs,
         raw_opacity.clone(),
         render_mode,
         background,
@@ -411,13 +397,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
 
                 let [transforms, raw_opac, global_from_compact_gid, v_combined_in] = inputs;
 
-                let [
-                    v_transforms,
-                    v_coeffs_dc,
-                    v_coeffs_rest,
-                    v_raw_opac,
-                    v_refine_weight,
-                ] = outputs;
+                let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
 
                 let grads = <MainBackendBase as SplatBwdOps<MainBackendBase>>::project_bwd(
                     h.get_float_tensor::<MainBackendBase>(transforms),
@@ -429,8 +409,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 );
 
                 h.register_float_tensor::<MainBackendBase>(&v_transforms.id, grads.v_transforms);
-                h.register_float_tensor::<MainBackendBase>(&v_coeffs_dc.id, grads.v_coeffs_dc);
-                h.register_float_tensor::<MainBackendBase>(&v_coeffs_rest.id, grads.v_coeffs_rest);
+                h.register_float_tensor::<MainBackendBase>(&v_coeffs.id, grads.v_coeffs);
                 h.register_float_tensor::<MainBackendBase>(&v_raw_opac.id, grads.v_raw_opac);
                 h.register_float_tensor::<MainBackendBase>(
                     &v_refine_weight.id,
@@ -448,15 +427,9 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             Shape::new([num_points, 10]),
             DType::F32,
         );
-        let v_coeffs_dc_out = TensorIr::uninit(
+        let v_coeffs_out = TensorIr::uninit(
             client.create_empty_handle(),
-            Shape::new([num_points, 1, 3]),
-            DType::F32,
-        );
-        let rest_coeffs = coeffs.saturating_sub(1);
-        let v_coeffs_rest_out = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_points, rest_coeffs, 3]),
+            Shape::new([num_points, coeffs, 3]),
             DType::F32,
         );
         let v_raw_opac_out = TensorIr::uninit(
@@ -478,8 +451,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             &input_tensors.map(|t| t.into_ir()),
             &[
                 v_transforms_out,
-                v_coeffs_dc_out,
-                v_coeffs_rest_out,
+                v_coeffs_out,
                 v_raw_opac_out,
                 v_refine_weight_out,
             ],
@@ -497,18 +469,11 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             )
             .outputs();
 
-        let [
-            v_transforms,
-            v_coeffs_dc,
-            v_coeffs_rest,
-            v_raw_opac,
-            v_refine_weight,
-        ] = outputs;
+        let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
 
         SplatGrads {
             v_transforms,
-            v_coeffs_dc,
-            v_coeffs_rest,
+            v_coeffs,
             v_raw_opac,
             v_refine_weight,
         }

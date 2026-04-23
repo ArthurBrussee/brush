@@ -32,18 +32,11 @@ pub enum TextureMode {
 ///
 /// `transforms` stores means(3) + rotations(4) + log scales(3) = 10 floats per splat
 /// as a single contiguous [N, 10] tensor to minimize GPU shader bindings.
-///
-/// SH coefficients are split into DC (band 0) and rest (bands 1+) for separate
-/// optimizer treatment (adam-mini on rest).
 #[derive(Module, Debug)]
 pub struct Splats<B: Backend> {
     pub transforms: Param<Tensor<B, 2>>,
-    /// DC (band 0) SH coefficients, shape [N, 1, 3].
-    pub sh_coeffs_dc: Param<Tensor<B, 3>>,
-    /// Higher-order SH coefficients (bands 1+), shape [N, C-1, 3].
-    pub sh_coeffs_rest: Param<Tensor<B, 3>>,
+    pub sh_coeffs: Param<Tensor<B, 3>>,
     pub raw_opacities: Param<Tensor<B, 1>>,
-
     #[module(skip)]
     pub render_mip: bool,
 }
@@ -86,24 +79,17 @@ impl<B: Backend> Splats<B> {
 
     /// Set the SH degree of this splat to be equal to `sh_degree`
     pub fn with_sh_degree(mut self, sh_degree: u32) -> Self {
-        let n_rest = sh_coeffs_for_degree(sh_degree) as usize - 1;
+        let n_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
         let n = self.num_splats() as usize;
-        let cur_degree = self.sh_degree();
 
-        self.sh_coeffs_rest = self.sh_coeffs_rest.map(|rest| {
-            let device = rest.device();
-            if n_rest == 0 {
-                Tensor::<B, 3>::zeros([n, 0, 3], &device)
-            } else if cur_degree == 0 {
-                Tensor::<B, 3>::zeros([n, n_rest, 3], &device)
+        self.sh_coeffs = self.sh_coeffs.map(|coeffs| {
+            let device = coeffs.device();
+            let cur = coeffs.dims()[1];
+            if cur < n_coeffs {
+                let zeros = Tensor::<B, 3>::zeros([n, n_coeffs - cur, 3], &device);
+                Tensor::cat(vec![coeffs, zeros], 1)
             } else {
-                let cur_rest = rest.dims()[1];
-                if cur_rest < n_rest {
-                    let zeros = Tensor::<B, 3>::zeros([n, n_rest - cur_rest, 3], &device);
-                    Tensor::cat(vec![rest, zeros], 1)
-                } else {
-                    rest.slice(s![.., 0..n_rest])
-                }
+                coeffs.slice(s![.., 0..n_coeffs])
             }
             .detach()
             .require_grad()
@@ -125,34 +111,12 @@ impl<B: Backend> Splats<B> {
 
         let transforms = Tensor::cat(vec![means, rotation, log_scales], 1);
 
-        // Split SH coefficients: DC (band 0) separate from rest (bands 1+).
-        let sh_coeffs_dc = sh_coeffs.clone().slice(s![.., 0..1]);
-        let [n, n_coeffs, _] = sh_coeffs.dims();
-        let sh_coeffs_rest = if n_coeffs > 1 {
-            sh_coeffs.slice(s![.., 1..n_coeffs])
-        } else {
-            Tensor::<B, 3>::zeros([n, 0, 3], &sh_coeffs.device())
-        };
-
         Self {
             transforms: Param::initialized(ParamId::new(), transforms.detach().require_grad()),
-            sh_coeffs_dc: Param::initialized(ParamId::new(), sh_coeffs_dc.detach().require_grad()),
-            sh_coeffs_rest: Param::initialized(
-                ParamId::new(),
-                sh_coeffs_rest.detach().require_grad(),
-            ),
+            sh_coeffs: Param::initialized(ParamId::new(), sh_coeffs.detach().require_grad()),
             raw_opacities: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
             render_mip: mode == SplatRenderMode::Mip,
         }
-    }
-
-    pub fn sh_coeffs_combined(&self) -> Tensor<B, 3> {
-        let dc = self.sh_coeffs_dc.val();
-        if self.sh_degree() == 0 {
-            return dc;
-        }
-        let rest = self.sh_coeffs_rest.val();
-        Tensor::cat(vec![dc, rest], 1)
     }
 
     /// Get means (positions) — slice of transforms columns 0..3.
@@ -183,8 +147,8 @@ impl<B: Backend> Splats<B> {
     }
 
     pub fn sh_degree(&self) -> u32 {
-        let [_, rest_coeffs, _] = self.sh_coeffs_rest.dims();
-        sh_degree_from_coeffs((1 + rest_coeffs) as u32)
+        let [_, n_coeffs, _] = self.sh_coeffs.dims();
+        sh_degree_from_coeffs(n_coeffs as u32)
     }
 
     pub fn device(&self) -> B::Device {
@@ -212,20 +176,7 @@ impl<B: Backend> Splats<B> {
             let scales = self.scales();
             validate_tensor_val(scales.clone(), "scales", Some(1e-20), Some(10000.0)).await;
             // Validate SH coefficients
-            validate_tensor_val(
-                self.sh_coeffs_dc.val(),
-                "sh_coeffs_dc",
-                Some(-5.0),
-                Some(5.0),
-            )
-            .await;
-            validate_tensor_val(
-                self.sh_coeffs_rest.val(),
-                "sh_coeffs_rest",
-                Some(-5.0),
-                Some(5.0),
-            )
-            .await;
+            validate_tensor_val(self.sh_coeffs.val(), "sh_coeffs", Some(-5.0), Some(5.0)).await;
             // Validate pre-activation opacity (raw_opacity) and post-activation opacity
             validate_tensor_val(
                 self.raw_opacities.val(),
@@ -256,21 +207,12 @@ impl<B: Backend> Splats<B> {
                 n_opacity, num_splats as usize,
                 "Inconsistent number of splats in opacity"
             );
-            let [n_dc, dc_coeffs, dc_dims] = self.sh_coeffs_dc.dims();
-            assert_eq!(dc_dims, 3, "SH DC must have 3 color channels");
-            assert_eq!(dc_coeffs, 1, "SH DC must have exactly 1 coefficient");
+            let [n_sh, _, sh_dims] = self.sh_coeffs.dims();
+            assert_eq!(sh_dims, 3, "SH coeffs must have 3 color channels");
             assert_eq!(
-                n_dc, num_splats as usize,
-                "Inconsistent number of splats in SH DC"
+                n_sh, num_splats as usize,
+                "Inconsistent number of splats in SH coeffs"
             );
-            if self.sh_degree() > 0 {
-                let [n_rest, _rest_coeffs, rest_dims] = self.sh_coeffs_rest.dims();
-                assert_eq!(rest_dims, 3, "SH rest must have 3 color channels");
-                assert_eq!(
-                    n_rest, num_splats as usize,
-                    "Inconsistent number of splats in SH rest"
-                );
-            }
         }
     }
 }
@@ -290,10 +232,9 @@ impl<B: burn::tensor::backend::AutodiffBackend> Splats<B> {
         grads: &B::Gradients,
     ) -> impl std::future::Future<Output = ()> + Send {
         #[cfg(any(test, feature = "debug-validation"))]
-        let (t, dc, rest, opac) = (
+        let (t, sh, opac) = (
             self.transforms.grad(grads),
-            self.sh_coeffs_dc.grad(grads),
-            self.sh_coeffs_rest.grad(grads),
+            self.sh_coeffs.grad(grads),
             self.raw_opacities.grad(grads),
         );
         async move {
@@ -307,11 +248,8 @@ impl<B: burn::tensor::backend::AutodiffBackend> Splats<B> {
                 if let Some(g) = t {
                     validate_gradient(g, "transforms").await;
                 }
-                if let Some(g) = dc {
-                    validate_gradient(g, "sh_coeffs_dc").await;
-                }
-                if let Some(g) = rest {
-                    validate_gradient(g, "sh_coeffs_rest").await;
+                if let Some(g) = sh {
+                    validate_gradient(g, "sh_coeffs").await;
                 }
                 if let Some(g) = opac {
                     validate_gradient(g, "raw_opacities").await;
@@ -337,8 +275,7 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
 ) -> (Tensor<B, 3>, RenderAux<B>) {
     splats.clone().validate_values().await;
 
-    let sh_coeffs_dc = splats.sh_coeffs_dc.into_value();
-    let sh_coeffs_rest = splats.sh_coeffs_rest.into_value();
+    let sh_coeffs = splats.sh_coeffs.into_value();
     let raw_opacities = splats.raw_opacities.into_value();
     let transforms = if let Some(scale) = splat_scale {
         let t = splats.transforms.into_value();
@@ -360,8 +297,7 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
         camera,
         img_size,
         transforms.into_primitive().tensor(),
-        sh_coeffs_dc.into_primitive().tensor(),
-        sh_coeffs_rest.into_primitive().tensor(),
+        sh_coeffs.into_primitive().tensor(),
         raw_opacities.into_primitive().tensor(),
         render_mode,
         background,

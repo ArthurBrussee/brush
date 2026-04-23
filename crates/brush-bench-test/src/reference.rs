@@ -189,19 +189,10 @@ async fn test_reference() -> Result<()> {
 
         let v_coeffs_ref =
             safetensor_to_burn::<DiffBack, 3>(&tensors.tensor("v_coeffs")?, &device).inner();
-        // Compare DC gradient (first coeff) against reference slice.
-        let v_dc = splats.sh_coeffs_dc.grad(&grads).context("dc grad")?;
-        let [n, _, _] = v_dc.dims();
-        let v_dc_ref = v_coeffs_ref.clone().slice(s![0..n, 0..1]);
-        compare("v_coeffs_dc", v_dc, v_dc_ref, 1e-5, 1e-7).await;
-        // Compare rest gradient if present.
-        let [_, total_c, _] = v_coeffs_ref.dims();
-        if total_c > 1
-            && let Some(v_rest) = splats.sh_coeffs_rest.grad(&grads)
-        {
-            let v_rest_ref = v_coeffs_ref.slice(s![0..n, 1..total_c]);
-            compare("v_coeffs_rest", v_rest, v_rest_ref, 1e-5, 1e-7).await;
-        }
+        let v_coeffs = splats.sh_coeffs.grad(&grads).context("coeffs grad")?;
+        let [n, c, _] = v_coeffs.dims();
+        let v_coeffs_ref = v_coeffs_ref.slice(s![0..n, 0..c]);
+        compare("v_coeffs", v_coeffs, v_coeffs_ref, 1e-5, 1e-7).await;
 
         let v_transforms = splats.transforms.grad(&grads).context("transforms grad")?;
         // Slice transforms gradient: means(0..3), quats(3..7), log_scales(7..10)

@@ -148,14 +148,11 @@ impl SplatTrainer {
         let mut render_input = splats.clone();
         let active_sh = self.active_sh_degree();
         if active_sh < splats.sh_degree() {
-            let active_rest = (sh_coeffs_for_degree(active_sh) as usize).saturating_sub(1);
-            render_input.sh_coeffs_rest = render_input.sh_coeffs_rest.map(|rest| {
-                let [n, total, c] = rest.dims();
-                if active_rest == 0 {
-                    return Tensor::zeros([n, total, c], &rest.device());
-                }
-                let active = rest.clone().slice(s![.., 0..active_rest]);
-                let zeros = Tensor::zeros([n, total - active_rest, c], &rest.device());
+            let active_coeffs = sh_coeffs_for_degree(active_sh) as usize;
+            render_input.sh_coeffs = render_input.sh_coeffs.map(|coeffs| {
+                let [n, total, c] = coeffs.dims();
+                let active = coeffs.clone().slice(s![.., 0..active_coeffs]);
+                let zeros = Tensor::zeros([n, total - active_coeffs, c], &coeffs.device());
                 Tensor::cat(vec![active, zeros], 1)
             });
         }
@@ -244,28 +241,25 @@ impl SplatTrainer {
 
         let optimizer = self.optim.get_or_insert_with(|| {
             let sh_degree = splats.sh_degree();
-            let rest_count = (sh_coeffs_for_degree(sh_degree) - 1) as i32;
+            let num_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
 
-            if rest_count > 0 {
-                // Rest coefficients get scaled LR and reduced second moment.
-                let rest_lr_scale = 1.0 / self.config.lr_coeffs_sh_scale;
-                let rest_lr_scales = Tensor::<_, 1>::from_floats(
-                    vec![rest_lr_scale; rest_count as usize].as_slice(),
-                    &device,
-                )
-                .reshape([1, rest_count, 1]);
-
-                create_optimizer_from_config().load_record(HashMap::from([(
-                    splats.sh_coeffs_rest.id,
-                    AdaptorRecord::from_state(AdamState {
-                        momentum: None,
-                        scaling: Some(rest_lr_scales),
-                        reduce_moment_2: self.config.reduce_second_moment,
-                    }),
-                )]))
-            } else {
-                create_optimizer_from_config()
+            // DC (band 0) uses full LR; bands 1+ are scaled down.
+            let mut scales = vec![1.0f32; num_coeffs];
+            let rest_scale = 1.0 / self.config.lr_coeffs_sh_scale;
+            for s in &mut scales[1..] {
+                *s = rest_scale;
             }
+            let sh_lr_scales = Tensor::<_, 1>::from_floats(scales.as_slice(), &device)
+                .reshape([1, num_coeffs as i32, 1]);
+
+            create_optimizer_from_config().load_record(HashMap::from([(
+                splats.sh_coeffs.id,
+                AdaptorRecord::from_state(AdamState {
+                    momentum: None,
+                    scaling: Some(sh_lr_scales),
+                    reduce_moment_2: self.config.reduce_second_moment,
+                }),
+            )]))
         });
 
         // Update per-component LR scaling for the transforms param.
@@ -309,11 +303,8 @@ impl SplatTrainer {
                 optimizer.step(1.0, splats, grad_transforms)
             });
             splats = trace_span!("SH Coeffs step").in_scope(|| {
-                let grad_coeff = GradientsParams::from_params(
-                    &mut grads,
-                    &splats,
-                    &[splats.sh_coeffs_dc.id, splats.sh_coeffs_rest.id],
-                );
+                let grad_coeff =
+                    GradientsParams::from_params(&mut grads, &splats, &[splats.sh_coeffs.id]);
                 optimizer.step(lr_coeffs, splats, grad_coeff)
             });
             splats = trace_span!("Opacity step").in_scope(|| {
@@ -426,23 +417,9 @@ impl SplatTrainer {
             t.clone().is_finite().bool_not().any_dim(1).squeeze_dim(1)
         }
         let transforms_bad = row_non_finite(&splats.transforms.val());
-        let dc_bad = row_non_finite(&splats.sh_coeffs_dc.val().flatten(1, 2));
-        let rest_flat: Tensor<MainBackend, 2> = splats.sh_coeffs_rest.val().flatten(1, 2);
-        // `sh_coeffs_rest` can legitimately be [N, 0] when sh_degree == 0;
-        // skip it in that case since there's nothing to check.
-        let rest_bad = if rest_flat.dims()[1] == 0 {
-            Tensor::<MainBackend, 1, Bool>::from_bool(
-                burn::tensor::TensorData::zeros::<bool, _>([splats.num_splats() as usize]),
-                &device,
-            )
-        } else {
-            row_non_finite(&rest_flat)
-        };
+        let sh_bad = row_non_finite(&splats.sh_coeffs.val().flatten(1, 2));
         let opac_bad = row_non_finite(&splats.raw_opacities.val().unsqueeze_dim(1));
-        let non_finite_mask = transforms_bad
-            .bool_or(dc_bad)
-            .bool_or(rest_bad)
-            .bool_or(opac_bad);
+        let non_finite_mask = transforms_bad.bool_or(sh_bad).bool_or(opac_bad);
         let prune_mask = alpha_mask
             .bool_or(scale_small)
             .bool_or(scale_big)
@@ -575,8 +552,7 @@ impl SplatTrainer {
             );
             let cur_rots = cur_rots_raw / magnitudes;
             let cur_log_scale = cur_transforms.slice(s![.., 7..10]);
-            let cur_coeff_dc = splats.sh_coeffs_dc.val().select(0, refine_inds.clone());
-            let cur_coeff_rest = splats.sh_coeffs_rest.val().select(0, refine_inds.clone());
+            let cur_sh_coeffs = splats.sh_coeffs.val().select(0, refine_inds.clone());
             let cur_raw_opac = splats.raw_opacities.val().select(0, refine_inds.clone());
 
             // The amount to offset the scale and opacity should maybe depend on how far away we have sampled these gaussians,
@@ -637,17 +613,12 @@ impl SplatTrainer {
                 splats,
                 &mut record,
                 |x| Tensor::cat(vec![x, new_transforms], 0),
-                |x| Tensor::cat(vec![x, cur_coeff_dc], 0),
-                |x| Tensor::cat(vec![x, cur_coeff_rest], 0),
+                |x| Tensor::cat(vec![x, cur_sh_coeffs], 0),
                 |x| Tensor::cat(vec![x, new_raw_opac], 0),
                 // Read dims from tensor: moment_2 may have reduced trailing dims.
                 |x: Tensor<MainBackend, 2>| {
                     let d1 = x.dims()[1];
                     Tensor::cat(vec![x, Tensor::zeros([refine_count, d1], device)], 0)
-                },
-                |x: Tensor<MainBackend, 3>| {
-                    let [_, d1, d2] = x.dims();
-                    Tensor::cat(vec![x, Tensor::zeros([refine_count, d1, d2], device)], 0)
                 },
                 |x: Tensor<MainBackend, 3>| {
                     let [_, d1, d2] = x.dims();
@@ -684,44 +655,17 @@ fn map_splats_and_opt(
     mut splats: Splats<MainBackend>,
     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, DiffBackend>>,
     map_transforms: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
-    map_coeffs_dc: impl FnOnce(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
-    map_coeffs_rest: impl FnOnce(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
+    map_sh_coeffs: impl FnOnce(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
     map_opac: impl FnOnce(Tensor<MainBackend, 1>) -> Tensor<MainBackend, 1>,
 
     map_opt_transforms: impl Fn(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
-    map_opt_coeffs_dc: impl Fn(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
-    map_opt_coeffs_rest: impl Fn(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
+    map_opt_sh_coeffs: impl Fn(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
     map_opt_opac: impl Fn(Tensor<MainBackend, 1>) -> Tensor<MainBackend, 1>,
 ) -> Splats<MainBackend> {
     splats.transforms = splats.transforms.map(map_transforms);
     map_opt(splats.transforms.id, record, &map_opt_transforms);
-    splats.sh_coeffs_dc = splats.sh_coeffs_dc.map(map_coeffs_dc);
-    map_opt(splats.sh_coeffs_dc.id, record, &map_opt_coeffs_dc);
-
-    // `sh_coeffs_rest` is `[N, 0, 3]` at sh_degree == 0. burn-fusion
-    // trips a panic in `slice_assign` for zero-sized dims, so
-    // skip the callbacks and rebuild the tensor (and its optimizer moments)
-    // with the new row count directly.
-    if splats.sh_coeffs_rest.val().dims()[1] == 0 {
-        let new_n = splats.transforms.val().dims()[0];
-        let device = splats.sh_coeffs_rest.val().device();
-        splats.sh_coeffs_rest = splats
-            .sh_coeffs_rest
-            .map(|_| Tensor::<MainBackend, 3>::zeros([new_n, 0, 3], &device));
-        if let Some(rec) = record.remove(&splats.sh_coeffs_rest.id) {
-            let mut state: AdamState<_, 3> = rec.into_state();
-            state.momentum = state.momentum.map(|mut m| {
-                m.moment_1 = Tensor::zeros([new_n, 0, 3], &device);
-                m.moment_2 = Tensor::zeros([new_n, 0, 3], &device);
-                m
-            });
-            record.insert(splats.sh_coeffs_rest.id, AdaptorRecord::from_state(state));
-        }
-    } else {
-        splats.sh_coeffs_rest = splats.sh_coeffs_rest.map(map_coeffs_rest);
-        map_opt(splats.sh_coeffs_rest.id, record, &map_opt_coeffs_rest);
-    }
-
+    splats.sh_coeffs = splats.sh_coeffs.map(map_sh_coeffs);
+    map_opt(splats.sh_coeffs.id, record, &map_opt_sh_coeffs);
     splats.raw_opacities = splats.raw_opacities.map(map_opac);
     map_opt(splats.raw_opacities.id, record, &map_opt_opac);
     splats
@@ -784,8 +728,6 @@ async fn prune_points(
         splats = map_splats_and_opt(
             splats,
             record,
-            |x| x.select(0, valid_inds.clone()),
-            |x| x.select(0, valid_inds.clone()),
             |x| x.select(0, valid_inds.clone()),
             |x| x.select(0, valid_inds.clone()),
             |x| x.select(0, valid_inds.clone()),
