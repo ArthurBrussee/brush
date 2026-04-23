@@ -36,10 +36,7 @@ pub fn splats_into_autodiff<B: Backend, BDiff: AutodiffBackend<InnerBackend = B>
             transforms_id,
             Tensor::from_inner(transforms).require_grad(),
         ),
-        sh_coeffs: Param::initialized(
-            sh_coeffs_id,
-            Tensor::from_inner(sh_coeffs).require_grad(),
-        ),
+        sh_coeffs: Param::initialized(sh_coeffs_id, Tensor::from_inner(sh_coeffs).require_grad()),
         raw_opacities: Param::initialized(
             raw_opacity_id,
             Tensor::from_inner(raw_opacity).require_grad(),
