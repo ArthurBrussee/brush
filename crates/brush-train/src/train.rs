@@ -87,8 +87,6 @@ impl SplatTrainer {
             (config.lr_scale_end / config.lr_scale).powf(1.0 / config.total_train_iters as f64);
         let lr_scale = ExponentialLrSchedulerConfig::new(config.lr_scale, decay);
 
-        // Fused SSIM kernel uses a hardcoded 11-tap Gaussian (sigma=1.5);
-        // matches the prior `Ssim::new(11, 3, ..)` configuration.
         let ssim_enabled = config.ssim_weight > 0.0;
 
         Self {
@@ -104,18 +102,6 @@ impl SplatTrainer {
             #[cfg(not(target_family = "wasm"))]
             lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
         }
-    }
-
-    /// Compute the active SH degree given the current step and warmup config.
-    fn active_sh_degree(&self) -> u32 {
-        if self.config.sh_warmup_iters == 0 || self.max_sh_degree == 0 {
-            return self.max_sh_degree;
-        }
-        let steps_per_degree = self.config.sh_warmup_iters / self.max_sh_degree;
-        if steps_per_degree == 0 {
-            return self.max_sh_degree;
-        }
-        (self.step_count / steps_per_degree).min(self.max_sh_degree)
     }
 
     pub async fn step(
@@ -147,27 +133,7 @@ impl SplatTrainer {
         let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
         let background = sample_background_color(base_bg, self.config.background_noise_strength);
 
-        // SH warmup: only feed the *active* SH bands to the renderer.
-        //
-        // Render derives `sh_degree` from `sh_coeffs_rest.shape()[1]`, so a
-        // sliced rest tensor naturally drives a smaller-degree SH evaluation.
-        // The slice op's vjp zero-pads the gradient back to the full param
-        // shape, leaving inactive bands' gradients at 0 (no Adam update).
-        //
-        // Old code re-built a full-size [N, total, 3] tensor with `cat([active, zeros])`
-        // every step — a ~500 MB write at 5M splats with sh_degree=2.
-        let mut render_input = splats.clone();
-        let active_sh = self.active_sh_degree();
-        if active_sh < splats.sh_degree() {
-            let active_coeffs = sh_coeffs_for_degree(active_sh) as usize;
-            render_input.sh_coeffs = render_input.sh_coeffs.map(|coeffs| {
-                let [n, total, c] = coeffs.dims();
-                let active = coeffs.clone().slice(s![.., 0..active_coeffs]);
-                let zeros = Tensor::zeros([n, total - active_coeffs, c], &coeffs.device());
-                Tensor::cat(vec![active, zeros], 1)
-            });
-        }
-
+        let render_input = splats.clone();
         let diff_out = render_splats(render_input, &camera, img_size, background)
             .instrument(trace_span!("Forward"))
             .await;
@@ -264,28 +230,29 @@ impl SplatTrainer {
             self.config.lr_opac,
         );
 
-        let optimizer = self.optim.get_or_insert_with(|| {
-            let sh_degree = splats.sh_degree();
-            let num_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
+        let optimizer =
+            self.optim.get_or_insert_with(|| {
+                let sh_degree = splats.sh_degree();
+                let num_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
 
-            // DC (band 0) uses full LR; bands 1+ are scaled down.
-            let mut scales = vec![1.0f32; num_coeffs];
-            let rest_scale = 1.0 / self.config.lr_coeffs_sh_scale;
-            for s in &mut scales[1..] {
-                *s = rest_scale;
-            }
-            let sh_lr_scales = Tensor::<_, 1>::from_floats(scales.as_slice(), &device)
-                .reshape([1, num_coeffs as i32, 1]);
+                // DC (band 0) uses full LR; bands 1+ are scaled down.
+                let mut scales = vec![1.0f32; num_coeffs];
+                let rest_scale = 1.0 / self.config.lr_coeffs_sh_scale;
+                for s in &mut scales[1..] {
+                    *s = rest_scale;
+                }
+                let sh_lr_scales = Tensor::<_, 1>::from_floats(scales.as_slice(), &device)
+                    .reshape([1, num_coeffs as i32, 1]);
 
-            create_optimizer_from_config().load_record(HashMap::from([(
-                splats.sh_coeffs.id,
-                AdaptorRecord::from_state(AdamState {
-                    momentum: None,
-                    scaling: Some(sh_lr_scales),
-                    reduce_moment_2: self.config.reduce_second_moment,
-                }),
-            )]))
-        });
+                create_optimizer_from_config().load_record(HashMap::from([(
+                    splats.sh_coeffs.id,
+                    AdaptorRecord::from_state(AdamState {
+                        momentum: None,
+                        scaling: Some(sh_lr_scales),
+                        reduce_moment_2: self.config.reduce_second_moment,
+                    }),
+                )]))
+            });
 
         // Update per-component LR scaling for the transforms param.
         // transforms layout: means(3) + rotations(4) + log_scales(3)

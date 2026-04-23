@@ -978,7 +978,6 @@ dependencies = [
  "console_error_panic_hook",
  "divan",
  "env_logger",
- "futures-lite",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
  "glam",

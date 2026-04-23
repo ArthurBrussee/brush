@@ -184,6 +184,7 @@ fn main(
         v_conics.x != 0.0f || v_conics.y != 0.0f || v_conics.z != 0.0f ||
         v_color.x != 0.0f || v_color.y != 0.0f || v_color.z != 0.0f ||
         v_alpha_in != 0.0f || v_refine_in != 0.0f;
+
     if !any_grad {
         return;
     }

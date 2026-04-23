@@ -82,11 +82,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
             ))))
             .contains(AtomicUsage::Add);
 
-        // Drain any queued-up work (SSIM bwd, L1 bwd, etc.) so the
-        // RasterizeBackwards span doesn't measure leftover work.
-        if brush_render::render::PROFILE_SYNC.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = futures_lite::future::block_on(client.sync());
-        }
         tracing::trace_span!("RasterizeBackwards").in_scope(|| {
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
@@ -107,9 +102,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
                         ])
                         .with_info(create_meta_binding(rasterize_uniforms)),
                 );
-            }
-            if brush_render::render::PROFILE_SYNC.load(std::sync::atomic::Ordering::Relaxed) {
-                let _ = futures_lite::future::block_on(client.sync());
             }
         });
 
@@ -153,12 +145,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let num_visible = project_uniforms.num_visible;
 
-        // Drain the float_zeros for v_transforms / v_coeffs / v_raw_opac /
-        // v_refine_weight (allocated above) so the span isn't measuring
-        // ~889 MB of buffer zeroing on top of the kernel itself.
-        if brush_render::render::PROFILE_SYNC.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = futures_lite::future::block_on(client.sync());
-        }
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
             unsafe {
@@ -178,9 +164,6 @@ impl SplatBwdOps<Self> for MainBackendBase {
                         ])
                         .with_info(create_meta_binding(project_uniforms)),
                 );
-            }
-            if brush_render::render::PROFILE_SYNC.load(std::sync::atomic::Ordering::Relaxed) {
-                let _ = futures_lite::future::block_on(client.sync());
             }
         });
 

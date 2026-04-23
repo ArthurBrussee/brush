@@ -21,7 +21,6 @@ burn = { workspace = true, features = ["autodiff"] }
 burn-cubecl.workspace = true
 burn-wgpu.workspace = true
 rand.workspace = true
-futures-lite = "2"
 
 divan = "0.1.17"
 safetensors.workspace = true
