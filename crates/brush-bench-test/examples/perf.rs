@@ -407,6 +407,14 @@ fn main() {
     let iters: usize = parse_arg(&args, "--iters", 12);
     let warmup: usize = parse_arg(&args, "--warmup", 3);
     let show_phases = args.iter().any(|a| a == "--phases");
+    let kernel_sync = args.iter().any(|a| a == "--kernel-sync");
+    if kernel_sync {
+        // Each render kernel will be followed by a blocking GPU sync, so the
+        // surrounding tracing spans measure true GPU time. Throws step
+        // throughput out the window — only useful with --phases.
+        brush_render::render::PROFILE_SYNC
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 
     let table = Arc::new(Mutex::new(PhaseStats::default()));
     let enabled = Arc::new(std::sync::atomic::AtomicBool::new(false));

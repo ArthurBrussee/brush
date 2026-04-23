@@ -28,6 +28,19 @@ pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
     )
 }
 
+/// Profiling switch. When true, every render kernel is followed by a
+/// blocking sync, so the surrounding `tracing` spans measure true GPU time
+/// rather than CPU launch time. Off by default — bench harnesses flip it
+/// on for a few iterations.
+pub static PROFILE_SYNC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[inline]
+fn maybe_sync(client: &burn_cubecl::cubecl::client::ComputeClient<WgpuRuntime>) {
+    if PROFILE_SYNC.load(std::sync::atomic::Ordering::Relaxed) {
+        let _ = futures_lite::future::block_on(client.sync());
+    }
+}
+
 impl SplatOps<Self> for MainBackendBase {
     #[allow(clippy::too_many_arguments)]
     async fn render(
@@ -84,25 +97,31 @@ impl SplatOps<Self> for MainBackendBase {
         let global_from_presort_gid = create_tensor([total_splats], device, DType::U32);
         let depths = create_tensor([total_splats], device, DType::F32);
 
-        tracing::trace_span!("ProjectSplats").in_scope(||
-        // SAFETY: Kernel checked to have no OOB, bounded loops.
-        unsafe {
-            client.launch_unchecked(
-                ProjectSplats::task(mip_splat),
-                calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
-                KernelArguments::new()
-                    .with_buffers(vec![
-                        transforms.handle.clone().binding(),
-                        raw_opacities.handle.clone().binding(),
-                        global_from_presort_gid.handle.clone().binding(),
-                        depths.handle.clone().binding(),
-                        num_visible_buffer.handle.clone().binding(),
-                        intersect_counts.handle.clone().binding(),
-                        num_intersections_buffer.handle.clone().binding(),
-                        max_radius.handle.clone().binding(),
-                    ])
-                    .with_info(create_meta_binding(project_uniforms)),
-            );
+        // Drain any queued-up work from earlier ops so the ProjectSplats
+        // span isn't measuring leftover Adam / loss kernels from the prior
+        // step.
+        maybe_sync(&client);
+        tracing::trace_span!("ProjectSplats").in_scope(|| {
+            // SAFETY: Kernel checked to have no OOB, bounded loops.
+            unsafe {
+                client.launch_unchecked(
+                    ProjectSplats::task(mip_splat),
+                    calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
+                    KernelArguments::new()
+                        .with_buffers(vec![
+                            transforms.handle.clone().binding(),
+                            raw_opacities.handle.clone().binding(),
+                            global_from_presort_gid.handle.clone().binding(),
+                            depths.handle.clone().binding(),
+                            num_visible_buffer.handle.clone().binding(),
+                            intersect_counts.handle.clone().binding(),
+                            num_intersections_buffer.handle.clone().binding(),
+                            max_radius.handle.clone().binding(),
+                        ])
+                        .with_info(create_meta_binding(project_uniforms)),
+                );
+            }
+            maybe_sync(&client);
         });
 
         // Read both atomic counts in one transaction BEFORE the sort.
@@ -137,16 +156,23 @@ impl SplatOps<Self> for MainBackendBase {
             let global_from_presort_gid =
                 Self::int_slice(global_from_presort_gid, &[(0..num_visible_sz).into()]);
 
-            let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort")
-                .in_scope(|| radix_argsort(depths, global_from_presort_gid, 32));
+            let (_, global_from_compact_gid) = tracing::trace_span!("DepthSort").in_scope(|| {
+                let r = radix_argsort(depths, global_from_presort_gid, 32);
+                maybe_sync(&client);
+                r
+            });
             global_from_compact_gid
         };
 
         // Reorder intersection counts from global_gid to compact (depth-sorted) order.
         let compact_counts = Self::int_gather(0, intersect_counts, global_from_compact_gid.clone());
+        maybe_sync(&client);
 
-        let cum_tiles_hit =
-            tracing::trace_span!("PrefixSumGaussHits").in_scope(|| prefix_sum(compact_counts));
+        let cum_tiles_hit = tracing::trace_span!("PrefixSumGaussHits").in_scope(|| {
+            let r = prefix_sum(compact_counts);
+            maybe_sync(&client);
+            r
+        });
         let proj_size = size_of::<shaders::helpers::ProjectedSplat>() / size_of::<f32>();
         let projected_splats = create_tensor([num_visible_sz, proj_size], device, DType::F32);
 
@@ -167,6 +193,7 @@ impl SplatOps<Self> for MainBackendBase {
                         .with_info(create_meta_binding(project_uniforms)),
                 );
             }
+            maybe_sync(&client);
         });
 
         let num_tiles = tile_bounds.x * tile_bounds.y;
@@ -193,12 +220,17 @@ impl SplatOps<Self> for MainBackendBase {
                     ])
                     .with_info(create_meta_binding(map_uniforms)),
             );
+            maybe_sync(&client);
         });
 
         // ---- Tile sort ----
         let bits = u32::BITS - num_tiles.leading_zeros();
-        let (tile_id_from_isect, compact_gid_from_isect) = tracing::trace_span!("Tile sort")
-            .in_scope(|| radix_argsort(tile_id_from_isect, compact_gid_from_isect, bits));
+        let (tile_id_from_isect, compact_gid_from_isect) =
+            tracing::trace_span!("Tile sort").in_scope(|| {
+                let r = radix_argsort(tile_id_from_isect, compact_gid_from_isect, bits);
+                maybe_sync(&client);
+                r
+            });
 
         // ---- GetTileOffsets ----
         let cube_dim = CubeDim::new_1d(256);
@@ -219,17 +251,20 @@ impl SplatOps<Self> for MainBackendBase {
             )
         };
 
-        // SAFETY: Safe kernel.
-        unsafe {
-            get_tile_offsets::launch_unchecked::<WgpuRuntime>(
-                &client,
-                calc_cube_count_1d(num_intersections, cube_dim.x * CHECKS_PER_ITER),
-                cube_dim,
-                tile_id_from_isect.into_tensor_arg(),
-                tile_offsets.clone().into_tensor_arg(),
-                num_inter_tensor.into_tensor_arg(),
-            );
-        }
+        tracing::trace_span!("GetTileOffsets").in_scope(|| {
+            // SAFETY: Safe kernel.
+            unsafe {
+                get_tile_offsets::launch_unchecked::<WgpuRuntime>(
+                    &client,
+                    calc_cube_count_1d(num_intersections, cube_dim.x * CHECKS_PER_ITER),
+                    cube_dim,
+                    tile_id_from_isect.into_tensor_arg(),
+                    tile_offsets.clone().into_tensor_arg(),
+                    num_inter_tensor.into_tensor_arg(),
+                );
+            }
+            maybe_sync(&client);
+        });
 
         // ---- Rasterize ----
         let rasterize_uniforms = shaders::helpers::RasterizeUniforms {
@@ -277,17 +312,20 @@ impl SplatOps<Self> for MainBackendBase {
             )
         };
 
-        // SAFETY: Kernel checked to have no OOB, bounded loops.
-        unsafe {
-            client.launch_unchecked(
-                Rasterize::task(bwd_info),
-                calc_cube_count_1d(
-                    num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
-                    shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
-                ),
-                bindings,
-            );
-        }
+        tracing::trace_span!("Rasterize").in_scope(|| {
+            // SAFETY: Kernel checked to have no OOB, bounded loops.
+            unsafe {
+                client.launch_unchecked(
+                    Rasterize::task(bwd_info),
+                    calc_cube_count_1d(
+                        num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
+                        shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
+                    ),
+                    bindings,
+                );
+            }
+            maybe_sync(&client);
+        });
 
         RenderOutput {
             out_img,

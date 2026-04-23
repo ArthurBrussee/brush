@@ -25,6 +25,7 @@ burn-ir.workspace = true
 glam.workspace = true
 log.workspace = true
 tracing.workspace = true
+futures-lite = "2"
 
 [dev-dependencies]
 # Enable debug-validation feature when running tests
