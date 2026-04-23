@@ -697,8 +697,31 @@ fn map_splats_and_opt(
     map_opt(splats.transforms.id, record, &map_opt_transforms);
     splats.sh_coeffs_dc = splats.sh_coeffs_dc.map(map_coeffs_dc);
     map_opt(splats.sh_coeffs_dc.id, record, &map_opt_coeffs_dc);
-    splats.sh_coeffs_rest = splats.sh_coeffs_rest.map(map_coeffs_rest);
-    map_opt(splats.sh_coeffs_rest.id, record, &map_opt_coeffs_rest);
+
+    // `sh_coeffs_rest` is `[N, 0, 3]` at sh_degree == 0. burn-fusion
+    // trips a panic in `slice_assign` for zero-sized dims, so
+    // skip the callbacks and rebuild the tensor (and its optimizer moments)
+    // with the new row count directly.
+    if splats.sh_coeffs_rest.val().dims()[1] == 0 {
+        let new_n = splats.transforms.val().dims()[0];
+        let device = splats.sh_coeffs_rest.val().device();
+        splats.sh_coeffs_rest = splats
+            .sh_coeffs_rest
+            .map(|_| Tensor::<MainBackend, 3>::zeros([new_n, 0, 3], &device));
+        if let Some(rec) = record.remove(&splats.sh_coeffs_rest.id) {
+            let mut state: AdamState<_, 3> = rec.into_state();
+            state.momentum = state.momentum.map(|mut m| {
+                m.moment_1 = Tensor::zeros([new_n, 0, 3], &device);
+                m.moment_2 = Tensor::zeros([new_n, 0, 3], &device);
+                m
+            });
+            record.insert(splats.sh_coeffs_rest.id, AdaptorRecord::from_state(state));
+        }
+    } else {
+        splats.sh_coeffs_rest = splats.sh_coeffs_rest.map(map_coeffs_rest);
+        map_opt(splats.sh_coeffs_rest.id, record, &map_opt_coeffs_rest);
+    }
+
     splats.raw_opacities = splats.raw_opacities.map(map_opac);
     map_opt(splats.raw_opacities.id, record, &map_opt_opac);
     splats
