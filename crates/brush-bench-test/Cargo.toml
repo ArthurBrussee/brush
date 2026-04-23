@@ -10,6 +10,8 @@ brush-render = { path = "../brush-render", features = ["debug-validation"] }
 brush-render-bwd.path = "../brush-render-bwd"
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
+brush-fused-ssim.path = "../brush-fused-ssim"
+brush-serde.path = "../brush-serde"
 
 anyhow.workspace = true
 image.workspace = true
@@ -23,6 +25,8 @@ rand.workspace = true
 divan = "0.1.17"
 safetensors.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 brush-rerun = { path = "../brush-rerun" }

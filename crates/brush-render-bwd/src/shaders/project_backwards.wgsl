@@ -166,6 +166,29 @@ fn main(
 
     let global_gid = global_from_compact_gid[compact_gid];
 
+    // Read upstream rasterize grads first. rasterize_bwd only writes for
+    // splats that contributed to a pixel; non-contributing splats leave
+    // v_rasterize_grads at its zero-init value. For those, every output
+    // gradient (v_transforms, v_coeffs, v_raw_opac, v_refine_weight) is
+    // also zero — and since the dense output buffers are zero-init, we
+    // can return without writing anything at all.
+    let rg_base = compact_gid * 10u;
+    let v_mean2d = vec2f(v_rasterize_grads[rg_base], v_rasterize_grads[rg_base + 1u]);
+    let v_conics = vec3f(v_rasterize_grads[rg_base + 2u], v_rasterize_grads[rg_base + 3u], v_rasterize_grads[rg_base + 4u]);
+    let v_color = vec3f(v_rasterize_grads[rg_base + 5u], v_rasterize_grads[rg_base + 6u], v_rasterize_grads[rg_base + 7u]);
+    let v_alpha_in = v_rasterize_grads[rg_base + 8u];
+    let v_refine_in = v_rasterize_grads[rg_base + 9u];
+
+    let any_grad =
+        v_mean2d.x != 0.0f || v_mean2d.y != 0.0f ||
+        v_conics.x != 0.0f || v_conics.y != 0.0f || v_conics.z != 0.0f ||
+        v_color.x != 0.0f || v_color.y != 0.0f || v_color.z != 0.0f ||
+        v_alpha_in != 0.0f || v_refine_in != 0.0f;
+
+    if !any_grad {
+        return;
+    }
+
     let viewmat = uniforms.viewmat;
     let focal = uniforms.focal;
     let img_size = uniforms.img_size;
@@ -178,12 +201,6 @@ fn main(
     let quat_unorm = vec4f(transforms[tbase + 3u], transforms[tbase + 4u], transforms[tbase + 5u], transforms[tbase + 6u]);
     // Safe to normalize, quats with norm 0 are invisible.
     let quat = normalize(quat_unorm);
-
-    // Read from sparse rasterize grads buffer (indexed by compact_gid, stride 10).
-    let rg_base = compact_gid * 10u;
-    let v_mean2d = vec2f(v_rasterize_grads[rg_base], v_rasterize_grads[rg_base + 1u]);
-    let v_conics = vec3f(v_rasterize_grads[rg_base + 2u], v_rasterize_grads[rg_base + 3u], v_rasterize_grads[rg_base + 4u]);
-    let v_color = vec3f(v_rasterize_grads[rg_base + 5u], v_rasterize_grads[rg_base + 6u], v_rasterize_grads[rg_base + 7u]);
 
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
 
@@ -241,9 +258,9 @@ fn main(
     let filter_comp = helpers::compensate_cov2d(&cov2d);
     let opac = helpers::sigmoid(raw_opac[global_gid]);
     // Write opacity gradient to dense output buffer (scatter compact→global happens here).
-    v_raw_opac[global_gid] = filter_comp * v_rasterize_grads[rg_base + 8u] * opac * (1.0 - opac);
+    v_raw_opac[global_gid] = filter_comp * v_alpha_in * opac * (1.0 - opac);
     // Write refine weight to dense output buffer (scatter compact→global).
-    v_refine_weight[global_gid] = v_rasterize_grads[rg_base + 9u];
+    v_refine_weight[global_gid] = v_refine_in;
 
     let covar2d_inv = helpers::inverse(cov2d);
     let v_covar2d_inv = mat2x2f(vec2f(v_conics.x, v_conics.y * 0.5f), vec2f(v_conics.y * 0.5f, v_conics.z));

@@ -84,25 +84,29 @@ impl SplatOps<Self> for MainBackendBase {
         let global_from_presort_gid = create_tensor([total_splats], device, DType::U32);
         let depths = create_tensor([total_splats], device, DType::F32);
 
-        tracing::trace_span!("ProjectSplats").in_scope(||
-        // SAFETY: Kernel checked to have no OOB, bounded loops.
-        unsafe {
-            client.launch_unchecked(
-                ProjectSplats::task(mip_splat),
-                calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
-                KernelArguments::new()
-                    .with_buffers(vec![
-                        transforms.handle.clone().binding(),
-                        raw_opacities.handle.clone().binding(),
-                        global_from_presort_gid.handle.clone().binding(),
-                        depths.handle.clone().binding(),
-                        num_visible_buffer.handle.clone().binding(),
-                        intersect_counts.handle.clone().binding(),
-                        num_intersections_buffer.handle.clone().binding(),
-                        max_radius.handle.clone().binding(),
-                    ])
-                    .with_info(create_meta_binding(project_uniforms)),
-            );
+        // Drain any queued-up work from earlier ops so the ProjectSplats
+        // span isn't measuring leftover Adam / loss kernels from the prior
+        // step.
+        tracing::trace_span!("ProjectSplats").in_scope(|| {
+            // SAFETY: Kernel checked to have no OOB, bounded loops.
+            unsafe {
+                client.launch_unchecked(
+                    ProjectSplats::task(mip_splat),
+                    calc_cube_count_1d(total_splats as u32, ProjectSplats::WORKGROUP_SIZE[0]),
+                    KernelArguments::new()
+                        .with_buffers(vec![
+                            transforms.handle.clone().binding(),
+                            raw_opacities.handle.clone().binding(),
+                            global_from_presort_gid.handle.clone().binding(),
+                            depths.handle.clone().binding(),
+                            num_visible_buffer.handle.clone().binding(),
+                            intersect_counts.handle.clone().binding(),
+                            num_intersections_buffer.handle.clone().binding(),
+                            max_radius.handle.clone().binding(),
+                        ])
+                        .with_info(create_meta_binding(project_uniforms)),
+                );
+            }
         });
 
         // Read both atomic counts in one transaction BEFORE the sort.
@@ -219,17 +223,19 @@ impl SplatOps<Self> for MainBackendBase {
             )
         };
 
-        // SAFETY: Safe kernel.
-        unsafe {
-            get_tile_offsets::launch_unchecked::<WgpuRuntime>(
-                &client,
-                calc_cube_count_1d(num_intersections, cube_dim.x * CHECKS_PER_ITER),
-                cube_dim,
-                tile_id_from_isect.into_tensor_arg(),
-                tile_offsets.clone().into_tensor_arg(),
-                num_inter_tensor.into_tensor_arg(),
-            );
-        }
+        tracing::trace_span!("GetTileOffsets").in_scope(|| {
+            // SAFETY: Safe kernel.
+            unsafe {
+                get_tile_offsets::launch_unchecked::<WgpuRuntime>(
+                    &client,
+                    calc_cube_count_1d(num_intersections, cube_dim.x * CHECKS_PER_ITER),
+                    cube_dim,
+                    tile_id_from_isect.into_tensor_arg(),
+                    tile_offsets.clone().into_tensor_arg(),
+                    num_inter_tensor.into_tensor_arg(),
+                );
+            }
+        });
 
         // ---- Rasterize ----
         let rasterize_uniforms = shaders::helpers::RasterizeUniforms {
@@ -277,17 +283,19 @@ impl SplatOps<Self> for MainBackendBase {
             )
         };
 
-        // SAFETY: Kernel checked to have no OOB, bounded loops.
-        unsafe {
-            client.launch_unchecked(
-                Rasterize::task(bwd_info),
-                calc_cube_count_1d(
-                    num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
-                    shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
-                ),
-                bindings,
-            );
-        }
+        tracing::trace_span!("Rasterize").in_scope(|| {
+            // SAFETY: Kernel checked to have no OOB, bounded loops.
+            unsafe {
+                client.launch_unchecked(
+                    Rasterize::task(bwd_info),
+                    calc_cube_count_1d(
+                        num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
+                        shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
+                    ),
+                    bindings,
+                );
+            }
+        });
 
         RenderOutput {
             out_img,

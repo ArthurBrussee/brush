@@ -75,12 +75,6 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "0.25")]
     pub split_at_screen_size: f32,
 
-    /// SH degree warmup period in iterations. During warmup, higher-order SH
-    /// bands are masked so only lower bands are trained, improving early stability.
-    /// Set to 0 to disable warmup and train all bands from the start.
-    #[arg(long, help_heading = "Training options", default_value = "5000")]
-    pub sh_warmup_iters: u32,
-
     /// Weight of SSIM loss (compared to l1 loss)
     #[clap(long, help_heading = "Training options", default_value = "0.2")]
     pub ssim_weight: f32,

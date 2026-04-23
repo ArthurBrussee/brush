@@ -5,11 +5,11 @@ use crate::{
     multinomial::multinomial_sample,
     quat_vec::quaternion_vec_multiply,
     splat_init::bounds_from_pos,
-    ssim::Ssim,
     stats::RefineRecord,
 };
 
 use brush_dataset::scene::SceneBatch;
+use brush_fused_ssim::fused_ssim;
 use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
@@ -48,7 +48,9 @@ pub struct SplatTrainer {
     sched_scale: ExponentialLrScheduler,
     refine_record: Option<RefineRecord<MainBackend>>,
     optim: Option<OptimizerType>,
-    ssim: Option<Ssim<DiffBackend>>,
+    /// `true` when SSIM loss is enabled — `Ssim` no longer needs construction
+    /// because the fused [`brush_fused_ssim::fused_ssim`] kernel is stateless.
+    ssim_enabled: bool,
     bounds: BoundingBox,
     step_count: u32,
     max_sh_degree: u32,
@@ -85,8 +87,7 @@ impl SplatTrainer {
             (config.lr_scale_end / config.lr_scale).powf(1.0 / config.total_train_iters as f64);
         let lr_scale = ExponentialLrSchedulerConfig::new(config.lr_scale, decay);
 
-        const SSIM_WINDOW_SIZE: usize = 11; // Could be configurable but meh, rather keep consistent.
-        let ssim = (config.ssim_weight > 0.0).then(|| Ssim::new(SSIM_WINDOW_SIZE, 3, device));
+        let ssim_enabled = config.ssim_weight > 0.0;
 
         Self {
             config: config.clone(),
@@ -94,25 +95,13 @@ impl SplatTrainer {
             sched_scale: lr_scale.init().expect("Scale lr schedule must be valid."),
             optim: None,
             refine_record: None,
-            ssim,
+            ssim_enabled,
             bounds,
             step_count: 0,
             max_sh_degree: 0,
             #[cfg(not(target_family = "wasm"))]
             lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
         }
-    }
-
-    /// Compute the active SH degree given the current step and warmup config.
-    fn active_sh_degree(&self) -> u32 {
-        if self.config.sh_warmup_iters == 0 || self.max_sh_degree == 0 {
-            return self.max_sh_degree;
-        }
-        let steps_per_degree = self.config.sh_warmup_iters / self.max_sh_degree;
-        if steps_per_degree == 0 {
-            return self.max_sh_degree;
-        }
-        (self.step_count / steps_per_degree).min(self.max_sh_degree)
     }
 
     pub async fn step(
@@ -144,19 +133,7 @@ impl SplatTrainer {
         let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
         let background = sample_background_color(base_bg, self.config.background_noise_strength);
 
-        // SH warmup: zero inactive bands so only active bands get gradients.
-        let mut render_input = splats.clone();
-        let active_sh = self.active_sh_degree();
-        if active_sh < splats.sh_degree() {
-            let active_coeffs = sh_coeffs_for_degree(active_sh) as usize;
-            render_input.sh_coeffs = render_input.sh_coeffs.map(|coeffs| {
-                let [n, total, c] = coeffs.dims();
-                let active = coeffs.clone().slice(s![.., 0..active_coeffs]);
-                let zeros = Tensor::zeros([n, total - active_coeffs, c], &coeffs.device());
-                Tensor::cat(vec![active, zeros], 1)
-            });
-        }
-
+        let render_input = splats.clone();
         let diff_out = render_splats(render_input, &camera, img_size, background)
             .instrument(trace_span!("Forward"))
             .await;
@@ -192,27 +169,41 @@ impl SplatTrainer {
         let loss = trace_span!("Calculate losses").in_scope(|| {
             let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();
 
-            let total_err = if let Some(ssim) = &self.ssim {
-                let ssim_err = ssim.ssim(pred_rgb.clone(), gt_rgb.clone());
-                l1_rgb * (1.0 - self.config.ssim_weight) - (ssim_err * self.config.ssim_weight)
-            } else {
-                l1_rgb
-            };
+            // Mean is linear, so for non-Masked alpha modes we can take per-term
+            // means and combine scalars instead of building an [H, W, 3] combined
+            // error tensor. Saves a few full-image elementwise ops in the
+            // forward+backward at no precision cost (same accumulation order at
+            // the per-image level — the subsequent scalar arithmetic is
+            // vacuously identical).
+            let masked_alpha = has_alpha && batch.alpha_mode == AlphaMode::Masked;
 
-            let total_err = if has_alpha {
-                let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
-
-                if batch.alpha_mode == AlphaMode::Masked {
-                    total_err * alpha_input
+            let loss = if masked_alpha {
+                // Need per-pixel error to multiply by the alpha mask, so
+                // fall back to the per-pixel composition.
+                let total_err = if self.ssim_enabled {
+                    let ssim_err = fused_ssim(pred_rgb.clone(), gt_rgb.clone());
+                    l1_rgb * (1.0 - self.config.ssim_weight) - (ssim_err * self.config.ssim_weight)
                 } else {
-                    let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);
-                    total_err + (alpha_input - pred_alpha).abs() * self.config.match_alpha_weight
-                }
+                    l1_rgb
+                };
+                let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
+                (total_err * alpha_input).mean()
             } else {
-                total_err
+                let l1_mean = l1_rgb.mean();
+                let mut loss = if self.ssim_enabled {
+                    let ssim_mean = fused_ssim(pred_rgb.clone(), gt_rgb.clone()).mean();
+                    l1_mean * (1.0 - self.config.ssim_weight) - ssim_mean * self.config.ssim_weight
+                } else {
+                    l1_mean
+                };
+                if has_alpha {
+                    let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
+                    let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);
+                    loss = loss
+                        + (alpha_input - pred_alpha).abs().mean() * self.config.match_alpha_weight;
+                }
+                loss
             };
-
-            let loss = total_err.mean();
 
             // TODO: Support masked lpips.
             #[cfg(not(target_family = "wasm"))]
@@ -239,28 +230,29 @@ impl SplatTrainer {
             self.config.lr_opac,
         );
 
-        let optimizer = self.optim.get_or_insert_with(|| {
-            let sh_degree = splats.sh_degree();
-            let num_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
+        let optimizer =
+            self.optim.get_or_insert_with(|| {
+                let sh_degree = splats.sh_degree();
+                let num_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
 
-            // DC (band 0) uses full LR; bands 1+ are scaled down.
-            let mut scales = vec![1.0f32; num_coeffs];
-            let rest_scale = 1.0 / self.config.lr_coeffs_sh_scale;
-            for s in &mut scales[1..] {
-                *s = rest_scale;
-            }
-            let sh_lr_scales = Tensor::<_, 1>::from_floats(scales.as_slice(), &device)
-                .reshape([1, num_coeffs as i32, 1]);
+                // DC (band 0) uses full LR; bands 1+ are scaled down.
+                let mut scales = vec![1.0f32; num_coeffs];
+                let rest_scale = 1.0 / self.config.lr_coeffs_sh_scale;
+                for s in &mut scales[1..] {
+                    *s = rest_scale;
+                }
+                let sh_lr_scales = Tensor::<_, 1>::from_floats(scales.as_slice(), &device)
+                    .reshape([1, num_coeffs as i32, 1]);
 
-            create_optimizer_from_config().load_record(HashMap::from([(
-                splats.sh_coeffs.id,
-                AdaptorRecord::from_state(AdamState {
-                    momentum: None,
-                    scaling: Some(sh_lr_scales),
-                    reduce_moment_2: self.config.reduce_second_moment,
-                }),
-            )]))
-        });
+                create_optimizer_from_config().load_record(HashMap::from([(
+                    splats.sh_coeffs.id,
+                    AdaptorRecord::from_state(AdamState {
+                        momentum: None,
+                        scaling: Some(sh_lr_scales),
+                        reduce_moment_2: self.config.reduce_second_moment,
+                    }),
+                )]))
+            });
 
         // Update per-component LR scaling for the transforms param.
         // transforms layout: means(3) + rotations(4) + log_scales(3)
@@ -351,9 +343,11 @@ impl SplatTrainer {
         splats.transforms = splats.transforms.map(|t| {
             let noise_m = (samples * noise_weight_means).clamp(-max_noise, max_noise);
             let inner = t.inner();
-            let mut out = inner.clone();
-            let noised_means = inner.slice(s![.., 0..3]) + noise_m;
-            out = out.slice_assign(s![.., 0..3], noised_means);
+            // slice + slice_assign with a clone of inner avoids holding two
+            // refs across slice_assign — `inner` is consumed by slice_assign
+            // and the resulting buffer is the only writer.
+            let noised_means = inner.clone().slice(s![.., 0..3]) + noise_m;
+            let out = inner.slice_assign(s![.., 0..3], noised_means);
             Tensor::from_inner(out).require_grad()
         });
 

@@ -5,6 +5,7 @@ members = [
     "crates/brush-bench-test",
     "crates/brush-cli",
     "crates/brush-dataset",
+    "crates/brush-fused-ssim",
     "crates/brush-kernel",
     "crates/brush-prefix-sum",
     "crates/brush-process",
@@ -135,11 +136,8 @@ opt-level = 1
 # Reduce debuginfo for faster linking
 debug = 1
 
-# The profile that 'dist' will build with
-[profile.dist]
-inherits = "release"
+[profile.release]
 lto = "thin"
-# debug = true # good for profilers
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }

@@ -23,6 +23,12 @@ var<workgroup> local_batch: array<helpers::ProjectedSplat, helpers::TILE_SIZE>;
     var<workgroup> load_gid: array<u32, helpers::TILE_SIZE>;
 #endif
 
+// Per-workgroup count of pixels that have terminated (alpha-saturated or
+// off-image). When this reaches TILE_SIZE we can stop loading more splats:
+// every remaining thread would no-op anyway, so skipping the load+barrier
+// pair changes nothing about the output.
+var<workgroup> num_done_atomic: atomic<u32>;
+
 // kernel function for rasterizing each tile
 // each thread treats a single pixel
 // each thread group uses the same gaussian data in a tile
@@ -57,14 +63,29 @@ fn main(
     var pix_out = vec3f(0.0);
     var done = !inside;
 
+    // Seed the workgroup-wide done counter with off-image pixels.
+    if local_idx == 0u { atomicStore(&num_done_atomic, 0u); }
+    workgroupBarrier();
+    if done { atomicAdd(&num_done_atomic, 1u); }
+    workgroupBarrier();
+
     // each thread loads one gaussian at a time before rasterizing its
     // designated pixel
     for (var batch_start = range.x; batch_start < range.y; batch_start += helpers::TILE_SIZE) {
+        // Bail when every pixel in this workgroup is alpha-saturated or
+        // off-image. atomicLoad without an extra barrier may read a stale
+        // (lower) count — that's fine, it just defers the early-exit by
+        // one batch.
+        if atomicLoad(&num_done_atomic) >= helpers::TILE_SIZE { break; }
+
         // process gaussians in the current batch for this pixel
         let remaining = min(helpers::TILE_SIZE, range.y - batch_start);
 
         let load_isect_id = batch_start + local_idx;
-        let compact_gid = compact_gid_from_isect[load_isect_id];
+        var compact_gid = 0u;
+        if local_idx < remaining {
+            compact_gid = compact_gid_from_isect[load_isect_id];
+        }
 
         workgroupBarrier();
         if local_idx < remaining {
@@ -75,6 +96,7 @@ fn main(
         }
         workgroupBarrier();
 
+        let was_done = done;
         for (var t = 0u; !done && t < remaining; t++) {
             let proj = local_batch[t];
 
@@ -102,6 +124,9 @@ fn main(
                 pix_out += color_rgb * vis;
                 T = next_T;
             }
+        }
+        if !was_done && done {
+            atomicAdd(&num_done_atomic, 1u);
         }
     }
 
