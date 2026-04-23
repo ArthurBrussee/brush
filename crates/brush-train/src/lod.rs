@@ -41,9 +41,17 @@ pub async fn decimate_to_count(
     splats.sh_coeffs_dc = splats
         .sh_coeffs_dc
         .map(|c| c.select(0, keep_tensor.clone()));
-    splats.sh_coeffs_rest = splats
-        .sh_coeffs_rest
-        .map(|c| c.select(0, keep_tensor.clone()));
+    // sh_degree == 0 leaves `sh_coeffs_rest` at `[N, 0, 3]`; rebuild rather
+    // than `select`-ing, since burn-fusion mishandles zero-sized dims.
+    if splats.sh_coeffs_rest.val().dims()[1] == 0 {
+        splats.sh_coeffs_rest = splats
+            .sh_coeffs_rest
+            .map(|_| Tensor::zeros([target_count as usize, 0, 3], &device));
+    } else {
+        splats.sh_coeffs_rest = splats
+            .sh_coeffs_rest
+            .map(|c| c.select(0, keep_tensor.clone()));
+    }
     splats.raw_opacities = splats
         .raw_opacities
         .map(|o| o.select(0, keep_tensor.clone()));
