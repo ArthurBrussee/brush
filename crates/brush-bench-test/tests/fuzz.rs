@@ -180,7 +180,6 @@ async fn render_raw(
         img_size,
         cube_tensor(device, [n, 10], &transforms),
         cube_tensor(device, [n, 1, 3], dc),
-        cube_tensor(device, [n, 0, 3], &[]),
         cube_tensor(device, [n], opac),
         mode,
         glam::Vec3::ZERO,

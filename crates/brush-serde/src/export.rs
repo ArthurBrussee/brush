@@ -84,7 +84,7 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<DynamicPly, Ex
     let data = Transaction::default()
         .register(splats.transforms.val())
         .register(splats.raw_opacities.val())
-        .register(splats.sh_coeffs_combined().permute([0, 2, 1])) // Permute to inria format ([n, channel, coeffs]).
+        .register(splats.sh_coeffs.val().permute([0, 2, 1])) // Permute to inria format ([n, channel, coeffs]).
         .execute_async()
         .await
         .map_err(|_fetch| ExportError::FetchFailed)?;
@@ -210,14 +210,16 @@ mod tests {
 
     async fn assert_coeffs_match(orig: &Splats<MainBackend>, imported: &Splats<MainBackend>) {
         let orig_sh: Vec<f32> = orig
-            .sh_coeffs_combined()
+            .sh_coeffs
+            .val()
             .into_data_async()
             .await
             .unwrap()
             .into_vec()
             .expect("Failed to convert SH coefficients to vector");
         let import_sh: Vec<f32> = imported
-            .sh_coeffs_combined()
+            .sh_coeffs
+            .val()
             .into_data_async()
             .await
             .unwrap()

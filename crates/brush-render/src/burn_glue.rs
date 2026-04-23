@@ -22,8 +22,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         camera: &Camera,
         img_size: glam::UVec2,
         transforms: FloatTensor<Self>,
-        sh_coeffs_dc: FloatTensor<Self>,
-        sh_coeffs_rest: FloatTensor<Self>,
+        sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
@@ -36,12 +35,9 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         let base_transforms = client
             .clone()
             .resolve_tensor_float::<MainBackendBase>(transforms);
-        let base_sh_coeffs_dc = client
+        let base_sh_coeffs = client
             .clone()
-            .resolve_tensor_float::<MainBackendBase>(sh_coeffs_dc);
-        let base_sh_coeffs_rest = client
-            .clone()
-            .resolve_tensor_float::<MainBackendBase>(sh_coeffs_rest);
+            .resolve_tensor_float::<MainBackendBase>(sh_coeffs);
         let base_raw_opac = client
             .clone()
             .resolve_tensor_float::<MainBackendBase>(raw_opacities);
@@ -51,8 +47,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             camera,
             img_size,
             base_transforms,
-            base_sh_coeffs_dc,
-            base_sh_coeffs_rest,
+            base_sh_coeffs,
             base_raw_opac,
             render_mode,
             background,

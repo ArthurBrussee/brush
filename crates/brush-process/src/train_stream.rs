@@ -285,8 +285,7 @@ pub(crate) async fn train_stream(
                 let mut splats = splats.train();
                 splats.transforms = splats.transforms.map(|m| m.require_grad());
                 splats.raw_opacities = splats.raw_opacities.map(|m| m.require_grad());
-                splats.sh_coeffs_dc = splats.sh_coeffs_dc.map(|m| m.require_grad());
-                splats.sh_coeffs_rest = splats.sh_coeffs_rest.map(|m| m.require_grad());
+                splats.sh_coeffs = splats.sh_coeffs.map(|m| m.require_grad());
 
                 let (new_splats, stats) = trainer.step(batch, splats).await;
                 (new_splats.valid(), stats)

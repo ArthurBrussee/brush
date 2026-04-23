@@ -2,20 +2,14 @@
 #import sh;
 
 @group(0) @binding(0) var<storage, read> transforms: array<f32>;
-@group(0) @binding(1) var<storage, read> coeffs_dc: array<helpers::PackedVec3>;
-@group(0) @binding(2) var<storage, read> coeffs_rest: array<helpers::PackedVec3>;
-@group(0) @binding(3) var<storage, read> raw_opacities: array<f32>;
-@group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
-@group(0) @binding(5) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
-@group(0) @binding(6) var<storage, read> uniforms: helpers::ProjectUniforms;
+@group(0) @binding(1) var<storage, read> coeffs: array<helpers::PackedVec3>;
+@group(0) @binding(2) var<storage, read> raw_opacities: array<f32>;
+@group(0) @binding(3) var<storage, read> global_from_compact_gid: array<u32>;
+@group(0) @binding(4) var<storage, read_write> projected: array<helpers::ProjectedSplat>;
+@group(0) @binding(5) var<storage, read> uniforms: helpers::ProjectUniforms;
 
-fn read_dc(gid: u32) -> vec3f {
-    let c = coeffs_dc[gid];
-    return vec3f(c.x, c.y, c.z);
-}
-
-fn read_rest(base_id: ptr<function, u32>) -> vec3f {
-    let c = coeffs_rest[*base_id];
+fn read_coeff(base_id: ptr<function, u32>) -> vec3f {
+    let c = coeffs[*base_id];
     *base_id += 1u;
     return vec3f(c.x, c.y, c.z);
 }
@@ -58,50 +52,50 @@ fn main(
     let mean2d = uniforms.focal * mean_c.xy * (1.0 / mean_c.z) + uniforms.pixel_center;
 
     let sh_degree = uniforms.sh_degree;
-    let num_rest = sh::num_sh_coeffs(sh_degree) - 1u;
-    var rest_id = u32(global_gid) * num_rest;
+    let num_coeffs = sh::num_sh_coeffs(sh_degree);
+    var coeff_id = u32(global_gid) * num_coeffs;
 
-    var coeffs = sh::ShCoeffs();
-    coeffs.b0_c0_ = read_dc(global_gid);
+    var sh_coeffs = sh::ShCoeffs();
+    sh_coeffs.b0_c0_ = read_coeff(&coeff_id);
 
     if sh_degree >= 1 {
-        coeffs.b1_c0_ = read_rest(&rest_id);
-        coeffs.b1_c1_ = read_rest(&rest_id);
-        coeffs.b1_c2_ = read_rest(&rest_id);
+        sh_coeffs.b1_c0_ = read_coeff(&coeff_id);
+        sh_coeffs.b1_c1_ = read_coeff(&coeff_id);
+        sh_coeffs.b1_c2_ = read_coeff(&coeff_id);
 
         if sh_degree >= 2 {
-            coeffs.b2_c0_ = read_rest(&rest_id);
-            coeffs.b2_c1_ = read_rest(&rest_id);
-            coeffs.b2_c2_ = read_rest(&rest_id);
-            coeffs.b2_c3_ = read_rest(&rest_id);
-            coeffs.b2_c4_ = read_rest(&rest_id);
+            sh_coeffs.b2_c0_ = read_coeff(&coeff_id);
+            sh_coeffs.b2_c1_ = read_coeff(&coeff_id);
+            sh_coeffs.b2_c2_ = read_coeff(&coeff_id);
+            sh_coeffs.b2_c3_ = read_coeff(&coeff_id);
+            sh_coeffs.b2_c4_ = read_coeff(&coeff_id);
 
             if sh_degree >= 3 {
-                coeffs.b3_c0_ = read_rest(&rest_id);
-                coeffs.b3_c1_ = read_rest(&rest_id);
-                coeffs.b3_c2_ = read_rest(&rest_id);
-                coeffs.b3_c3_ = read_rest(&rest_id);
-                coeffs.b3_c4_ = read_rest(&rest_id);
-                coeffs.b3_c5_ = read_rest(&rest_id);
-                coeffs.b3_c6_ = read_rest(&rest_id);
+                sh_coeffs.b3_c0_ = read_coeff(&coeff_id);
+                sh_coeffs.b3_c1_ = read_coeff(&coeff_id);
+                sh_coeffs.b3_c2_ = read_coeff(&coeff_id);
+                sh_coeffs.b3_c3_ = read_coeff(&coeff_id);
+                sh_coeffs.b3_c4_ = read_coeff(&coeff_id);
+                sh_coeffs.b3_c5_ = read_coeff(&coeff_id);
+                sh_coeffs.b3_c6_ = read_coeff(&coeff_id);
 
                 if sh_degree >= 4 {
-                    coeffs.b4_c0_ = read_rest(&rest_id);
-                    coeffs.b4_c1_ = read_rest(&rest_id);
-                    coeffs.b4_c2_ = read_rest(&rest_id);
-                    coeffs.b4_c3_ = read_rest(&rest_id);
-                    coeffs.b4_c4_ = read_rest(&rest_id);
-                    coeffs.b4_c5_ = read_rest(&rest_id);
-                    coeffs.b4_c6_ = read_rest(&rest_id);
-                    coeffs.b4_c7_ = read_rest(&rest_id);
-                    coeffs.b4_c8_ = read_rest(&rest_id);
+                    sh_coeffs.b4_c0_ = read_coeff(&coeff_id);
+                    sh_coeffs.b4_c1_ = read_coeff(&coeff_id);
+                    sh_coeffs.b4_c2_ = read_coeff(&coeff_id);
+                    sh_coeffs.b4_c3_ = read_coeff(&coeff_id);
+                    sh_coeffs.b4_c4_ = read_coeff(&coeff_id);
+                    sh_coeffs.b4_c5_ = read_coeff(&coeff_id);
+                    sh_coeffs.b4_c6_ = read_coeff(&coeff_id);
+                    sh_coeffs.b4_c7_ = read_coeff(&coeff_id);
+                    sh_coeffs.b4_c8_ = read_coeff(&coeff_id);
                 }
             }
         }
     }
 
     let viewdir = normalize(mean - uniforms.camera_position.xyz);
-    let color = sh::sh_coeffs_to_color(sh_degree, viewdir, coeffs) + vec3f(0.5);
+    let color = sh::sh_coeffs_to_color(sh_degree, viewdir, sh_coeffs) + vec3f(0.5);
 
     // PF doesn't read SH coeffs, so a NaN coeff can still leak into color
     // here. Scrub NaN/Inf, then clamp to a magnitude that (a) fits in the

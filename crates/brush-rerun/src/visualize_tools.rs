@@ -52,7 +52,7 @@ mod visualize_tools_impl {
                 let means = splats.means().into_data_async().await?.into_vec::<f32>()?;
                 let means = means.chunks(3).map(|c| glam::vec3(c[0], c[1], c[2]));
 
-                let base_rgb = splats.sh_coeffs_dc.val() * SH_C0 + 0.5;
+                let base_rgb = splats.sh_coeffs.val().slice(s![.., 0..1]) * SH_C0 + 0.5;
 
                 let transparency = splats.opacities();
 
