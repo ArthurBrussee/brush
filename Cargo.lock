@@ -965,10 +965,12 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "brush-dataset",
+ "brush-fused-ssim",
  "brush-kernel",
  "brush-render",
  "brush-render-bwd",
  "brush-rerun",
+ "brush-serde",
  "brush-train",
  "burn",
  "burn-cubecl",
@@ -976,6 +978,7 @@ dependencies = [
  "console_error_panic_hook",
  "divan",
  "env_logger",
+ "futures-lite",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
  "glam",
@@ -985,6 +988,8 @@ dependencies = [
  "rerun",
  "safetensors 0.7.0",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "wasm-bindgen-test",
  "wasm-logger",
 ]
@@ -1029,6 +1034,22 @@ dependencies = [
  "tokio",
  "tokio_with_wasm",
  "tracing",
+ "wasm-bindgen-test",
+]
+
+[[package]]
+name = "brush-fused-ssim"
+version = "0.3.0"
+dependencies = [
+ "brush-kernel",
+ "brush-render",
+ "burn",
+ "burn-cubecl",
+ "burn-fusion",
+ "burn-ir",
+ "burn-wgpu",
+ "getrandom 0.4.2",
+ "tokio",
  "wasm-bindgen-test",
 ]
 
@@ -1205,6 +1226,7 @@ dependencies = [
  "anyhow",
  "ball-tree",
  "brush-dataset",
+ "brush-fused-ssim",
  "brush-kernel",
  "brush-render",
  "brush-render-bwd",

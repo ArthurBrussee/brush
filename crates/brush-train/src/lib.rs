@@ -9,7 +9,6 @@ pub mod train;
 mod adam_scaled;
 mod multinomial;
 mod quat_vec;
-mod ssim;
 mod stats;
 
 mod splat_init;

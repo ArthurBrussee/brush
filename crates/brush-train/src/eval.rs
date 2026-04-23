@@ -11,7 +11,7 @@ use burn::tensor::{Tensor, s};
 use glam::Vec3;
 use image::DynamicImage;
 
-use crate::ssim::Ssim;
+use brush_fused_ssim::{FusedSsimOps, fused_ssim_eval};
 
 pub struct EvalSample<B: Backend> {
     pub gt_img: DynamicImage,
@@ -21,7 +21,7 @@ pub struct EvalSample<B: Backend> {
     pub render_aux: RenderAux<B>,
 }
 
-pub async fn eval_stats<B: Backend + SplatOps<B>>(
+pub async fn eval_stats<B: Backend + SplatOps<B> + FusedSsimOps<B>>(
     splats: Splats<B>,
     gt_cam: &Camera,
     gt_img: DynamicImage,
@@ -46,8 +46,7 @@ pub async fn eval_stats<B: Backend + SplatOps<B>>(
     let mse = (render_rgb.clone() - gt_rgb.clone()).powi_scalar(2).mean();
 
     let psnr = mse.recip().log() * 10.0 / std::f32::consts::LN_10;
-    let ssim_measure = Ssim::new(11, 3, device);
-    let ssim = ssim_measure.ssim(render_rgb.clone(), gt_rgb).mean();
+    let ssim = fused_ssim_eval(render_rgb.clone(), gt_rgb).mean();
 
     Ok(EvalSample {
         gt_img,

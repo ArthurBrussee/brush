@@ -36,9 +36,21 @@ enable f16;
 
 const THREAD_COUNT: u32 = 64u;
 const PIXELS_PER_THREAD: u32 = 4u;
+const TILE_PIXELS: u32 = THREAD_COUNT * PIXELS_PER_THREAD;
 var<workgroup> local_batch: array<helpers::ProjectedSplat, THREAD_COUNT>;
 
+// Cache compact_gid alongside each batched splat so the per-splat inner
+// loop's atomic write doesn't re-read `compact_gid_from_isect` from
+// global memory every iteration.
+var<workgroup> local_compact_gid: array<u32, THREAD_COUNT>;
+
 var<workgroup> range_uniform: vec2u;
+
+// Per-workgroup count of pixels that have terminated (alpha-saturated or
+// off-image). Each thread owns PIXELS_PER_THREAD pixels; once all
+// TILE_PIXELS are done we stop loading more splats — every remaining
+// per-pixel update would be a no-op.
+var<workgroup> num_done_atomic: atomic<u32>;
 
 // kernel function for rasterizing each tile
 // each thread treats a single pixel
@@ -59,6 +71,7 @@ fn main(
     var dones = array<bool, PIXELS_PER_THREAD>();
     var rgb_pixel_finals = array<vec4f, PIXELS_PER_THREAD>();
 
+    var initial_done_count = 0u;
     for (var i = 0u; i < PIXELS_PER_THREAD; i++) {
         // Process 4 consecutive pixels in the original linear order
         let thread_id = global_id * PIXELS_PER_THREAD + i;
@@ -75,6 +88,7 @@ fn main(
             dones[i] = false;
         } else {
             dones[i] = true;
+            initial_done_count += 1u;
         }
 
         pix_outs[i] = vec4f(0.0, 0.0, 0.0, 1.0);
@@ -90,23 +104,38 @@ fn main(
         tile_offsets[tile_id * 2 + 1],
     );
 
+    // Seed the workgroup-wide done counter with off-image pixels.
+    if local_idx == 0u { atomicStore(&num_done_atomic, 0u); }
+    workgroupBarrier();
+    if initial_done_count > 0u { atomicAdd(&num_done_atomic, initial_done_count); }
+    workgroupBarrier();
+
     // Stupid hack as Chrome isn't convinced the range variable is uniform, which it better be.
     let range = workgroupUniformLoad(&range_uniform);
 
     // each thread loads one gaussian at a time before rasterizing its
     // designated pixels
     for (var batch_start = range.x; batch_start < range.y; batch_start += THREAD_COUNT) {
+        // Bail when every pixel in this workgroup is alpha-saturated or
+        // off-image — the per-pixel update is a no-op for done pixels.
+        if atomicLoad(&num_done_atomic) >= TILE_PIXELS { break; }
+
         // process gaussians in the current batch for this pixel
         let remaining = min(THREAD_COUNT, range.y - batch_start);
         let load_isect_id = batch_start + local_idx;
-        let compact_gid = compact_gid_from_isect[load_isect_id];
+        var compact_gid = 0u;
+        if local_idx < remaining {
+            compact_gid = compact_gid_from_isect[load_isect_id];
+        }
 
         workgroupBarrier();
         if local_idx < remaining {
             local_batch[local_idx] = projected[compact_gid];
+            local_compact_gid[local_idx] = compact_gid;
         }
         workgroupBarrier();
 
+        var newly_done_count = 0u;
         for (var t = 0u; t < remaining; t++) {
             var v_xy_thread = vec2f(0.0f);
             var v_conic_thread = vec3f(0.0f);
@@ -139,6 +168,7 @@ fn main(
                 let next_T = pix_outs[i].a * (1.0f - alpha);
                 if next_T <= 1e-4f {
                     dones[i] = true;
+                    newly_done_count += 1u;
                     continue;
                 }
 
@@ -202,7 +232,7 @@ fn main(
                 let sum_refine = subgroupAdd(v_refine_thread);
 
                 if doAdd {
-                    let base = compact_gid_from_isect[batch_start + t] * 10u;
+                    let base = local_compact_gid[t] * 10u;
 
                     write_grads_atomic(base + 0u, sum_xy.x);
                     write_grads_atomic(base + 1u, sum_xy.y);
@@ -216,6 +246,9 @@ fn main(
                     write_grads_atomic(base + 9u, sum_refine);
                 }
             }
+        }
+        if newly_done_count > 0u {
+            atomicAdd(&num_done_atomic, newly_done_count);
         }
     }
 }
