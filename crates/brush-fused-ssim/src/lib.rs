@@ -1,4 +1,4 @@
-//! Fused SSIM forward + backward in [`cubecl`].
+//! Fused SSIM forward + backward in cubecl.
 //!
 //! Inspired by <https://github.com/rahul-goel/fused-ssim>. Two separable
 //! 11×11 Gaussian blurs plus the full SSIM formula in one shared-memory
@@ -7,12 +7,6 @@
 //! Layout: input is `[C, H, W]` contiguous (one batch). Each workgroup is
 //! 16×16 threads handling one 16×16 output tile of one channel. The
 //! workgroup grid is `(tiles_x, tiles_y, C)`.
-//!
-//! Forward stores 3 partial-derivative tensors for backward
-//! (`dm_dmu1`, `dm_dsigma1_sq`, `dm_dsigma12`) — paying ~3 image-sized
-//! writes to skip recomputing the blurs in backward. Backward consumes
-//! those + `dL/d(map)` and produces `dL/d(img1)` only; `img2` is treated
-//! as a constant.
 
 use brush_render::MainBackendBase;
 use burn::{
@@ -38,9 +32,6 @@ use burn_fusion::{
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 
 mod kernels {
-    // Bring `cubecl` into scope under that exact name so `#[cube]`
-    // resolves — brush-train doesn't depend on cubecl directly, but
-    // burn-cubecl re-exports it.
     use burn_cubecl::cubecl;
     use burn_cubecl::cubecl::cube;
     use burn_cubecl::cubecl::frontend::CompilationArg;
@@ -87,7 +78,7 @@ mod kernels {
 
     /// Compute `(clamped y, clamped x, oob_flag)` for a tile-relative position.
     /// `local_*` are in `0..SHARED_*` (26). Subtracting HALO=5 from
-    /// `tile_y0+local_y` can underflow at the image's top-left edge — we
+    /// `tile_y0+local_y` can underflow at the image's top-left edge. We
     /// detect that and saturate the address to 0 so the OOB sentinel is
     /// safe to index even for the load that won't actually use the value.
     #[cube]
@@ -394,8 +385,7 @@ mod kernels {
     }
 }
 
-/// Output of the fused SSIM forward — the user-facing map plus three saved
-/// tensors needed by the backward.
+/// Output of the fused SSIM forward
 #[derive(Debug, Clone)]
 pub struct FusedSsimForward<B: Backend> {
     pub map: FloatTensor<B>,
@@ -519,7 +509,7 @@ fn launch_backward<R: CubeRuntime>(
     );
 
     let client = img1.client.clone();
-    // SAFETY: same boundary guarantees as the forward — `coords`/`read_pix`
+    // SAFETY: same boundary guarantees as the forward - `coords`/`read_pix`
     // for halo loads and `pix_x < w && pix_y < h` for the per-pixel write.
     unsafe {
         kernels::fused_ssim_backward_kernel::launch_unchecked::<f32, R>(
@@ -734,10 +724,9 @@ impl<B: Backend + FusedSsimOps<B>> Backward<B, 1> for FusedSsimBackward {
     }
 }
 
-/// Fused SSIM forward+backward in [`cubecl`]. Drop-in replacement for a
+/// Fused SSIM forward+backward in cubecl. Drop-in replacement for a
 /// conv2d-based SSIM loss. `img1` is differentiable; `img2` is treated
-/// as a constant (no gradient computed) — matches the reference and works
-/// fine for brush since we always call `ssim(pred, gt)`.
+/// as a constant (no gradient computed).
 ///
 /// Inputs are `[H, W, C]` to match the existing `Ssim::ssim` signature.
 pub fn fused_ssim<B, C>(
@@ -785,7 +774,7 @@ where
     map.permute([1, 2, 0])
 }
 
-/// Forward-only fused SSIM for non-differentiable backends — used by eval.
+/// Forward-only fused SSIM for non-differentiable backends, used by eval.
 ///
 /// Same kernel as [`fused_ssim`] but skips storing the saved-for-backward
 /// partial-derivative tensors.
