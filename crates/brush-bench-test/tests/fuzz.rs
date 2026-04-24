@@ -504,9 +504,7 @@ async fn fuzz_bwd_random_scenes_gradients_are_finite() {
         let diff =
             brush_render_bwd::render_splats(splats.clone(), &cam, img_size, glam::Vec3::ZERO).await;
         let img: Tensor<DiffBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(diff.img));
-        let loss = img.mean();
-        let grads = loss.backward();
-        splats.validate_grads(&grads).await;
+        splats.bwd_validate(img.mean()).await;
     }
 }
 
@@ -537,9 +535,7 @@ async fn fuzz_bwd_extreme_inputs_stay_finite() {
                     .await;
             let img: Tensor<DiffBackend, 3> =
                 Tensor::from_primitive(TensorPrimitive::Float(diff.img));
-            let loss = img.mean();
-            let grads = loss.backward();
-            splats.validate_grads(&grads).await;
+            splats.bwd_validate(img.mean()).await;
         }
     }
 }

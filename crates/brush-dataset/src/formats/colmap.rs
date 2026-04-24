@@ -40,11 +40,10 @@ pub(crate) async fn load_dataset(
     let (cam_path, img_path) = if let Some(path) = vfs.files_ending_in("cameras.bin").next() {
         let path = path.parent().expect("unreachable");
         (path.join("cameras.bin"), path.join("images.bin"))
-    } else if let Some(path) = vfs.files_ending_in("cameras.txt").next() {
+    } else {
+        let path = vfs.files_ending_in("cameras.txt").next()?;
         let path = path.parent().expect("unreachable");
         (path.join("cameras.txt"), path.join("images.txt"))
-    } else {
-        return None;
     };
     Some(load_dataset_inner(vfs, load_args, cam_path, img_path).await)
 }

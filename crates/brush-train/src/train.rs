@@ -217,8 +217,7 @@ impl SplatTrainer {
             loss
         });
 
-        let mut grads = trace_span!("Backward pass").in_scope(|| loss.backward());
-        splats.validate_grads(&grads).await;
+        let mut grads = splats.bwd_validate(loss.clone()).await;
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
             self.sched_mean.step() * median_scale as f64,

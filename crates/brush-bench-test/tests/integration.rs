@@ -326,10 +326,7 @@ async fn test_gradient_validation() {
 
     // Clone splats since render_splats takes ownership and we need splats for gradient validation
     let result = render_splats(splats.clone(), &camera, img_size, Vec3::ZERO).await;
-
     let rendered: Tensor<DiffBackend, 3> =
         Tensor::from_primitive(TensorPrimitive::Float(result.img));
-    let loss = rendered.mean();
-    let grads = loss.backward();
-    splats.validate_grads(&grads).await;
+    splats.bwd_validate(rendered.mean()).await;
 }

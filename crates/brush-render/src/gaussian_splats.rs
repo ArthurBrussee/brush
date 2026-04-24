@@ -220,42 +220,36 @@ impl<B: Backend> Splats<B> {
 impl<B: burn::tensor::backend::AutodiffBackend> Splats<B> {
     /// Post-backward variant of `validate_values`, checks that no splat
     /// parameter gradient has a NaN or Inf. Debug-only.
-    ///
-    /// Returns `impl Future` rather than being `async fn` so the fn body
-    /// extracts gradients synchronously (releasing the `&grads` borrow
-    /// before returning), and the returned future only captures owned
-    /// tensors. This keeps callers that span `.await` points `Send`/`Sync`
-    /// even though `B::Gradients` stores `Box<dyn Any + Send>` internally.
     #[allow(unused_variables)]
-    pub fn validate_grads(
-        &self,
-        grads: &B::Gradients,
-    ) -> impl std::future::Future<Output = ()> + Send {
+    pub async fn bwd_validate(&self, loss: Tensor<B, 1>) -> B::Gradients {
+        let grads = loss.backward();
         #[cfg(any(test, feature = "debug-validation"))]
         let (t, sh, opac) = (
-            self.transforms.grad(grads),
-            self.sh_coeffs.grad(grads),
-            self.raw_opacities.grad(grads),
+            self.transforms.grad(&grads),
+            self.sh_coeffs.grad(&grads),
+            self.raw_opacities.grad(&grads),
         );
-        async move {
-            #[cfg(any(test, feature = "debug-validation"))]
-            {
-                #[cfg(not(target_family = "wasm"))]
-                if std::env::args().any(|a| a == "--bench") {
-                    return;
-                }
-                use crate::validation::validate_gradient;
-                if let Some(g) = t {
-                    validate_gradient(g, "transforms").await;
-                }
-                if let Some(g) = sh {
-                    validate_gradient(g, "sh_coeffs").await;
-                }
-                if let Some(g) = opac {
-                    validate_gradient(g, "raw_opacities").await;
-                }
+
+        #[cfg(any(test, feature = "debug-validation"))]
+        {
+            use crate::validation::validate_gradient;
+
+            #[cfg(not(target_family = "wasm"))]
+            if std::env::args().any(|a| a == "--bench") {
+                return grads;
+            }
+            if let Some(g) = t {
+                validate_gradient(g, "transforms").await;
+            }
+            if let Some(g) = sh {
+                validate_gradient(g, "sh_coeffs").await;
+            }
+            if let Some(g) = opac {
+                validate_gradient(g, "raw_opacities").await;
             }
         }
+
+        grads
     }
 }
 
