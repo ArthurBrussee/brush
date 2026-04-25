@@ -91,7 +91,11 @@ jobs:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: |
           set -euo pipefail
-          python3 -m pip install --quiet --user chromedriver-autoinstaller
+          # CI macOS uses Homebrew's Python which is PEP 668-locked.
+          # --break-system-packages is fine here since the runner is
+          # disposable.
+          python3 -m pip install --quiet --user --break-system-packages \
+            chromedriver-autoinstaller
           # The package looks at $PATH for chrome; point it at the
           # binary setup-chrome installed.
           export PATH="$(dirname "$CHROME_BIN"):$PATH"
