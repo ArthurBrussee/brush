@@ -63,7 +63,7 @@ jobs:
     # macOS runner so Chrome WebGPU has a real Metal-backed GPU. The
     # Linux runners only offer software Vulkan (Lavapipe), which doesn't
     # expose `shader-f16` and brush shaders need it.
-    runs-on: macos-latest
+    runs-on: namespace-profile-macos
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
@@ -143,7 +143,7 @@ jobs:
   tests:
     name: Run tests
     # We run the tests on macOS because it will run with an actual GPU
-    runs-on: macos-latest
+    runs-on: namespace-profile-macos
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
