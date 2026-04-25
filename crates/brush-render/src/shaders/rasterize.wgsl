@@ -76,7 +76,8 @@ fn main(
         // off-image. atomicLoad without an extra barrier may read a stale
         // (lower) count — that's fine, it just defers the early-exit by
         // one batch.
-        if atomicLoad(&num_done_atomic) >= helpers::TILE_SIZE { break; }
+        if workgroupUniformLoad(&num_done_atomic) >= helpers::TILE_SIZE { break; }
+
 
         // process gaussians in the current batch for this pixel
         let remaining = min(helpers::TILE_SIZE, range.y - batch_start);

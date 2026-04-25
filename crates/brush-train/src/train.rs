@@ -78,6 +78,7 @@ pub async fn get_splat_bounds<B: Backend>(splats: Splats<B>, percentile: f32) ->
 }
 
 impl SplatTrainer {
+    #[allow(unused_variables)]
     pub fn new(config: &TrainConfig, device: &WgpuDevice, bounds: BoundingBox) -> Self {
         let decay =
             (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_train_iters as f64);

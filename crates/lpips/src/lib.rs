@@ -166,7 +166,7 @@ pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
 mod tests {
     use super::load_vgg_lpips;
     use burn::backend::Wgpu;
-    use burn::tensor::TensorData;
+    use burn::tensor::{ElementConversion, TensorData};
     use burn::tensor::{Tensor, backend::Backend};
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -184,16 +184,9 @@ mod tests {
     }
 
     async fn read_scalar<B: Backend>(t: Tensor<B, 1>) -> f32 {
-        t.into_data_async()
-            .await
-            .expect("readback")
-            .as_slice::<f32>()
-            .expect("Wrong type")[0]
+        t.into_scalar_async().await.expect("readback").elem()
     }
 
-    /// Structural checks on the LPIPS model. These are invariant over
-    /// numerical drift in burn's conv/pool implementations and only catch
-    /// real bugs like a weight-layout regression or asymmetric conv.
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_structural_properties() {
         let device = brush_kernel::test_helpers::test_device().await;
@@ -213,20 +206,7 @@ mod tests {
         assert!((ab - ba).abs() < 1e-5, "asymmetric: ab = {ab}, ba = {ba}");
     }
 
-    // FIXME: burn's conv numerics have drifted. Bisect (2026-04-21)
-    // pinned this to cubek commit 662610b7 "Refactor matmul types for
-    // a Tile enum (#191)". With burn at 0e05dc6e + cubecl at 96d5f722:
-    //   cubek be1fef47 (just before #191) → 0.6571 ✅
-    //   cubek 662610b7 (#191 itself)       → 0.61968625 ❌
-    // The regression is in the matmul tile refactor — LPIPS's VGG conv
-    // layers go through cubek-matmul on wgpu, so every layer picks up
-    // a small drift that accumulates to ~5.7%. Weights are
-    // byte-identical (regenerated 2026-04-21 from the lpips-convert
-    // .pth), LPIPS model code is unchanged, and the PyTorch reference
-    // 0.6571019887924194 was re-confirmed. Ignored until cubek #191 is
-    // fixed upstream so the drift doesn't silently hide other bugs.
     #[wasm_bindgen_test(unsupported = tokio::test)]
-    #[ignore = "burn conv/pool drift (0.6197 vs PyTorch reference 0.6571); see FIXME above"]
     async fn test_matches_pytorch_reference() {
         let device = brush_kernel::test_helpers::test_device().await;
         let image1 = image::load_from_memory(APPLE_PNG).expect("Failed to load apple.png");

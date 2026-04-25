@@ -5,6 +5,7 @@ use crate::{
 };
 use assert_approx_eq::assert_approx_eq;
 use burn::tensor::{Distribution, Tensor};
+use burn_wgpu::WgpuDevice;
 use glam::Vec3;
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -223,10 +224,7 @@ fn rng_scene(
     }
 }
 
-fn scene_to_splats(
-    scene: &Scene,
-    device: &<MainBackend as burn::prelude::Backend>::Device,
-) -> Splats<MainBackend> {
+fn scene_to_splats(scene: &Scene, device: &WgpuDevice) -> Splats<MainBackend> {
     let n = scene.len();
     let means = Tensor::<MainBackend, 1>::from_floats(
         scene
@@ -280,7 +278,7 @@ async fn render_scene(
     scene: &Scene,
     cam: &Camera,
     img_size: glam::UVec2,
-    device: &<MainBackend as burn::prelude::Backend>::Device,
+    device: &WgpuDevice,
 ) -> Vec<f32> {
     let splats = scene_to_splats(scene, device);
     let (output, _aux) =

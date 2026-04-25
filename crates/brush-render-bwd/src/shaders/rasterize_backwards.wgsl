@@ -118,7 +118,7 @@ fn main(
     for (var batch_start = range.x; batch_start < range.y; batch_start += THREAD_COUNT) {
         // Bail when every pixel in this workgroup is alpha-saturated or
         // off-image — the per-pixel update is a no-op for done pixels.
-        if atomicLoad(&num_done_atomic) >= TILE_PIXELS { break; }
+        if workgroupUniformLoad(&num_done_atomic) >= TILE_PIXELS { break; }
 
         // process gaussians in the current batch for this pixel
         let remaining = min(THREAD_COUNT, range.y - batch_start);

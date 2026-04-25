@@ -8,20 +8,20 @@ use crate::{
     sh::sh_degree_from_coeffs,
     shaders::{self, MapGaussiansToIntersect, ProjectSplats, ProjectVisible, Rasterize},
 };
-use brush_kernel::bytemuck;
 use brush_kernel::calc_cube_count_1d;
 use brush_kernel::create_meta_binding;
 use brush_kernel::create_tensor;
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::tensor::ops::{FloatTensor, FloatTensorOps, IntTensorOps};
-use burn::tensor::{DType, FloatDType, Int, IntDType, Shape, Tensor, TensorMetadata, Transaction};
+use burn::tensor::{DType, FloatDType, Int, IntDType, Tensor, TensorMetadata, Transaction};
 use burn_cubecl::cubecl::server::KernelArguments;
 use burn_cubecl::kernel::into_contiguous;
-use burn_wgpu::{CubeDim, CubeTensor, WgpuRuntime};
+use burn_wgpu::{CubeDim, WgpuRuntime};
 use glam::{Vec3, uvec2};
 
-pub(crate) fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
+#[doc(hidden)]
+pub fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
     uvec2(
         img_size.x.div_ceil(shaders::helpers::TILE_WIDTH),
         img_size.y.div_ceil(shaders::helpers::TILE_WIDTH),
@@ -212,17 +212,6 @@ impl SplatOps<Self> for MainBackendBase {
             IntDType::U32,
         );
 
-        let num_inter_tensor = {
-            let data: [u32; 1] = [num_intersections];
-            CubeTensor::new_contiguous(
-                client.clone(),
-                device.clone(),
-                Shape::new([1]),
-                client.create_from_slice(bytemuck::cast_slice(&data)),
-                DType::U32,
-            )
-        };
-
         tracing::trace_span!("GetTileOffsets").in_scope(|| {
             // SAFETY: Safe kernel.
             unsafe {
@@ -230,9 +219,9 @@ impl SplatOps<Self> for MainBackendBase {
                     &client,
                     calc_cube_count_1d(num_intersections, cube_dim.x * CHECKS_PER_ITER),
                     cube_dim,
+                    num_intersections,
                     tile_id_from_isect.into_tensor_arg(),
                     tile_offsets.clone().into_tensor_arg(),
-                    num_inter_tensor.into_tensor_arg(),
                 );
             }
         });

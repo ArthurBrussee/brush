@@ -14,7 +14,8 @@ pub use crate::gaussian_splats::{TextureMode, render_splats};
 pub use crate::render_aux::{RenderAux, RenderOutput};
 
 mod burn_glue;
-mod dim_check;
+#[doc(hidden)]
+pub mod dim_check;
 pub mod render_aux;
 pub mod shaders;
 
@@ -26,7 +27,8 @@ mod tests;
 pub mod bounding_box;
 pub mod camera;
 pub mod gaussian_splats;
-mod get_tile_offset;
+#[doc(hidden)]
+pub mod get_tile_offset;
 pub mod render;
 pub mod validation;
 
