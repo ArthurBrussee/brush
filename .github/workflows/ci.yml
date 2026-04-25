@@ -66,8 +66,13 @@ jobs:
     # `family=g4dn.xlarge` picks the cheapest NVIDIA T4 instance.
     runs-on:
       - runs-on=${{ github.run_id }}
-      - family=g4dn.xlarge
-      - spot=price       # use Spot when available, On-Demand fallback
+      # TODO: switch back to family=g4dn.xlarge once the AWS GPU
+      # quota lands. c5.xlarge is non-GPU and uses the default
+      # standard-instance vCPU bucket which new accounts have headroom
+      # in — lets us verify the runs-on integration end-to-end while
+      # the GPU quota request is pending.
+      - family=c5.xlarge
+      - spot=price
     # Don't spend AWS minutes on fork PRs.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 45
