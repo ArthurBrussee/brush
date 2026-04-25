@@ -60,11 +60,10 @@ jobs:
 
   test_wasm:
     name: Run wasm tests (headless Chrome)
-    # Linux + fresh Mesa Lavapipe. Recent Mesa exposes
-    # `VK_KHR_shader_float16_int8` and Vulkan timestamp queries, which
-    # Chrome surfaces to WebGPU as `shader-f16` and `timestamp-query`
-    # — the two features brush shaders depend on. Old reason for going
-    # macOS (older Mesa missing shader-f16) no longer applies.
+    # Linux + latest Mesa Lavapipe via kisak's PPA. Stock ubuntu-24.04
+    # ships Mesa 24.0; the PPA bumps to 25.x which has materially
+    # better software coverage of `shader-f16`, `timestamp-query`, and
+    # subgroup ops — exactly the features WebGPU on Chrome needs.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -77,8 +76,13 @@ jobs:
           toolchain: 1.93.0
           targets: wasm32-unknown-unknown
 
-      - name: Install Mesa Lavapipe + GPU prerequisites
+      - name: Install latest Mesa + Lavapipe (kisak/turtle)
+        # Stock Ubuntu Mesa is too old to expose enough Vulkan features
+        # for Chrome WebGPU. The kisak/turtle PPA tracks the latest
+        # released Mesa, which gives Lavapipe good coverage of
+        # shader-float16/int8, timestamp queries, and compute subgroups.
         run: |
+          sudo add-apt-repository -y ppa:kisak/turtle
           sudo apt-get update
           sudo apt-get install -y \
             mesa-vulkan-drivers \
@@ -86,10 +90,16 @@ jobs:
             vulkan-tools \
             libegl1 \
             libgles2
-          # Confirm Lavapipe is the device Chrome will see, and dump
-          # which Vulkan features it exposes.
+          echo "::group::dpkg -l | mesa-vulkan-drivers"
+          dpkg -l mesa-vulkan-drivers | tail -1
+          echo "::endgroup::"
           echo "::group::vulkaninfo --summary"
           vulkaninfo --summary || true
+          echo "::endgroup::"
+          # Full feature dump (greppable later for shaderFloat16,
+          # timestampPeriod, subgroupSupportedOperations, etc.).
+          echo "::group::vulkaninfo (full)"
+          vulkaninfo 2>&1 | head -400 || true
           echo "::endgroup::"
 
       - name: Install Chrome
