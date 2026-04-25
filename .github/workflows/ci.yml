@@ -60,10 +60,12 @@ jobs:
 
   test_wasm:
     name: Run wasm tests (headless Chrome)
-    # macOS runner so Chrome WebGPU has a real Metal-backed GPU. The
-    # Linux runners only offer software Vulkan (Lavapipe), which doesn't
-    # expose `shader-f16` and brush shaders need it.
-    runs-on: namespace-profile-macos
+    # Linux + fresh Mesa Lavapipe. Recent Mesa exposes
+    # `VK_KHR_shader_float16_int8` and Vulkan timestamp queries, which
+    # Chrome surfaces to WebGPU as `shader-f16` and `timestamp-query`
+    # — the two features brush shaders depend on. Old reason for going
+    # macOS (older Mesa missing shader-f16) no longer applies.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
@@ -75,6 +77,21 @@ jobs:
           toolchain: 1.93.0
           targets: wasm32-unknown-unknown
 
+      - name: Install Mesa Lavapipe + GPU prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            mesa-vulkan-drivers \
+            libvulkan1 \
+            vulkan-tools \
+            libegl1 \
+            libgles2
+          # Confirm Lavapipe is the device Chrome will see, and dump
+          # which Vulkan features it exposes.
+          echo "::group::vulkaninfo --summary"
+          vulkaninfo --summary || true
+          echo "::endgroup::"
+
       - name: Install Chrome
         id: setup-chrome
         uses: browser-actions/setup-chrome@v1
@@ -83,33 +100,19 @@ jobs:
           install-dependencies: true
 
       - name: Install matching chromedriver via chromedriver-autoinstaller
-        # Python helper that detects the installed Chrome's exact build
-        # and downloads the matching chromedriver. Avoids the
-        # major-version drift a generic "stable chromedriver" install
-        # can introduce.
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: |
           set -euo pipefail
-          # CI macOS uses Homebrew's Python which is PEP 668-locked.
-          # --break-system-packages is fine here since the runner is
-          # disposable.
           python3 -m pip install --quiet --user --break-system-packages \
             chromedriver-autoinstaller
-          # The package looks at $PATH for chrome; point it at the
-          # binary setup-chrome installed.
           export PATH="$(dirname "$CHROME_BIN"):$PATH"
-          # The package logs to stdout alongside printing the path, so
-          # take only the last line (the actual path).
           DRIVER_PATH="$(python3 -c 'import chromedriver_autoinstaller; print(chromedriver_autoinstaller.install())' | tail -n1)"
           echo "Installed chromedriver at: $DRIVER_PATH"
-          ls -la "$DRIVER_PATH"
           "$DRIVER_PATH" --version
-          # Wrap chromedriver so wasm-bindgen-test invocation runs it
-          # with --verbose --log-path so we get real Chrome stderr
-          # captured when it dies. wasm-bindgen-test-runner doesn't let
-          # us pass args to chromedriver, so we sneak them in via a
-          # wrapper script invoked through CHROMEDRIVER.
+          # Wrap chromedriver so wasm-bindgen-test invokes it with
+          # --verbose --log-path; the runner captures stdout, this
+          # captures the rest (including any spawned Chrome stderr).
           mkdir -p "$RUNNER_TEMP/wrappers"
           WRAPPER="$RUNNER_TEMP/wrappers/chromedriver"
           cat > "$WRAPPER" <<EOF
@@ -158,12 +161,6 @@ jobs:
           else
             echo "no chromedriver log at $CHROMEDRIVER_LOG"
           fi
-          echo "::group::Chrome crash dumps (~/Library/Logs/DiagnosticReports)"
-          ls -la ~/Library/Logs/DiagnosticReports 2>/dev/null || true
-          for f in ~/Library/Logs/DiagnosticReports/Chrom* ~/Library/Logs/DiagnosticReports/Google* 2>/dev/null; do
-            [ -f "$f" ] && { echo "--- $f ---"; cat "$f"; }
-          done
-          echo "::endgroup::"
 
   # ---------------------------------------------------------------------------
 
