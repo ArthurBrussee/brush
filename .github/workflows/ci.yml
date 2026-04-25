@@ -82,6 +82,13 @@ jobs:
           chrome-version: stable
           install-dependencies: true
 
+      - name: Ensure /usr/local/bin exists
+        # nanasess/setup-chromedriver hardcodes /usr/local/bin as its
+        # install path. Namespace's Apple Silicon macOS image doesn't
+        # create that dir by default (Homebrew is under /opt/homebrew),
+        # so the action's `mv` fails. Pre-create it.
+        run: sudo mkdir -p /usr/local/bin
+
       - name: Install chromedriver matched to installed Chrome
         # Auto-detects the installed Chrome's version and downloads the
         # exact matching chromedriver from the Chrome-for-Testing CDN.
