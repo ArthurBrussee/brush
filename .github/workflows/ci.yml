@@ -63,12 +63,11 @@ jobs:
     # runs-on.com — ephemeral AWS EC2 GPU instance per job. Real
     # NVIDIA Vulkan exposes `shader-f16` and `timestamp-query` (the
     # features brush WebGPU shaders need); software Lavapipe doesn't.
-    # `family=g4dn.xlarge` picks the cheapest NVIDIA T4 instance, and
-    # `image=ubuntu24-full-x64-gpu` selects the runs-on Ubuntu image
-    # with NVIDIA drivers + CUDA preinstalled.
+    # `family=g4dn.xlarge` picks the cheapest NVIDIA T4 instance.
     runs-on:
       - runs-on=${{ github.run_id }}
       - family=g4dn.xlarge
+      - spot=price       # use Spot when available, On-Demand fallback
     # Don't spend AWS minutes on fork PRs.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 45
@@ -194,8 +193,13 @@ jobs:
 
   tests:
     name: Run tests
-    # We run the tests on macOS because it will run with an actual GPU
-    runs-on: namespace-profile-macos
+    # Native tests need a real GPU too (brush-render's tests hit wgpu).
+    # Same runs-on.com Linux GPU runner as the wasm job.
+    runs-on:
+      - runs-on=${{ github.run_id }}
+      - family=g4dn.xlarge
+      - spot=price
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
@@ -206,11 +210,23 @@ jobs:
         with:
           toolchain: 1.93.0
 
+      - name: Confirm GPU + Vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y vulkan-tools libvulkan1
+          echo "::group::nvidia-smi"
+          nvidia-smi || true
+          echo "::endgroup::"
+          echo "::group::vulkaninfo --summary"
+          vulkaninfo --summary || true
+          echo "::endgroup::"
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v2"
           shared-key: "brush"
           cache-workspace-crates: true
+          cache-on-failure: true
           # Save the cache even when tests fail. Without this, a streak
           # of failing runs slowly invalidates the cache (cache only
           # restores, never refreshes), and every later run rebuilds
