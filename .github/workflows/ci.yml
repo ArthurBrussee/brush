@@ -58,33 +58,6 @@ jobs:
 
   # ---------------------------------------------------------------------------
 
-  test_wasm:
-    name: Run wasm tests (headless Chrome on Modal GPU)
-    runs-on: ubuntu-22.04
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          lfs: true
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Modal
-        run: pip install --quiet modal
-
-      - name: Run wasm tests on Modal GPU
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          PYTHONUNBUFFERED: "1"
-        run: modal run ci/modal_runner.py::run_wasm
-
-  # ---------------------------------------------------------------------------
-
   cargo-deny:
     strategy:
       fail-fast: false
@@ -110,26 +83,33 @@ jobs:
   # ---------------------------------------------------------------------------
 
   tests:
-    name: Run native tests (Modal GPU)
-    runs-on: ubuntu-22.04
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    name: Run tests
+    # macOS for the real Metal-backed GPU. Wasm/Chrome WebGPU CI is gone
+    # — Linux runners can't expose enough Vulkan features, macOS paravirt
+    # GPUs hide timestamp-query, and serverless GPU clouds (Modal/RunPod)
+    # are compute-only without graphics drivers. Until something better
+    # comes along, just run the native tests here.
+    runs-on: macos-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
           lfs: true
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@master
         with:
-          python-version: "3.11"
+          toolchain: 1.93.0
 
-      - name: Install Modal
-        run: pip install --quiet modal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v2"
+          shared-key: "brush"
+          cache-workspace-crates: true
+          cache-on-failure: true
 
-      - name: Run native tests on Modal GPU
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          PYTHONUNBUFFERED: "1"
-        run: modal run ci/modal_runner.py::run_native
+      - name: Run tests
+        run: cargo test --all --all-features
+
+      - name: Run doc-tests
+        run: cargo test --all --all-features --doc
+</content>
