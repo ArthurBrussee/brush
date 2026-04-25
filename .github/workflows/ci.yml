@@ -96,6 +96,30 @@ jobs:
         # but chromedriver came from somewhere else.
         uses: nanasess/setup-chromedriver@v2
 
+      - name: Strip macOS quarantine from Chrome + chromedriver
+        # Chrome-for-Testing builds aren't notarized. On GitHub-hosted
+        # macOS runners that's already worked around; on Namespace's
+        # macOS image Gatekeeper kills the binaries on first launch
+        # (chromedriver dies with SIGKILL right after startup). Clearing
+        # com.apple.quarantine recursively on both binaries (and the
+        # Chrome.app bundle) lets them run.
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: |
+          set -e
+          CHROMEDRIVER_BIN="$(command -v chromedriver)"
+          # Walk back to the .app bundle, since signed children look
+          # at the bundle's quarantine flag too.
+          CHROME_APP="$CHROME_BIN"
+          while [ "$CHROME_APP" != "/" ] && [ "${CHROME_APP##*.}" != "app" ]; do
+            CHROME_APP="$(dirname "$CHROME_APP")"
+          done
+          for path in "$CHROME_BIN" "$CHROMEDRIVER_BIN" "$CHROME_APP"; do
+            if [ -e "$path" ]; then
+              sudo xattr -dr com.apple.quarantine "$path" || true
+            fi
+          done
+
       - name: Report versions
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
