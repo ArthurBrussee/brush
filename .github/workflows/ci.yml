@@ -75,17 +75,26 @@ jobs:
           toolchain: 1.93.0
           targets: wasm32-unknown-unknown
 
-      - name: Install Chrome + chromedriver
-        # GitHub macOS runners don't ship Chrome by default; use browser-actions
-        # to grab a matching Chrome + chromedriver pair.
+      - name: Install Chrome (Chrome for Testing channel)
+        id: setup-chrome
         uses: browser-actions/setup-chrome@v1
         with:
           chrome-version: stable
-          install-chromedriver: true
+          install-dependencies: true
 
-      - name: Report Chrome version
+      - name: Install chromedriver matched to installed Chrome
+        # Auto-detects the installed Chrome's version and downloads the
+        # exact matching chromedriver from the Chrome-for-Testing CDN.
+        # Avoids the major-version drift we hit when Chrome is "stable"
+        # but chromedriver came from somewhere else.
+        uses: nanasess/setup-chromedriver@v2
+
+      - name: Report versions
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: |
-          chrome --version || google-chrome --version
+          "$CHROME_BIN" --version
+          which chromedriver
           chromedriver --version
           echo "CHROMEDRIVER=$(command -v chromedriver)" >> "$GITHUB_ENV"
 
