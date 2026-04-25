@@ -75,34 +75,60 @@ jobs:
           toolchain: 1.93.0
           targets: wasm32-unknown-unknown
 
-      - name: Install Chrome (Chrome for Testing channel)
+      - name: Install Chrome + matched chromedriver
+        # Use setup-chrome's bundled chromedriver to guarantee matching
+        # Chrome+ChromeDriver versions. nanasess/setup-chromedriver was
+        # installing a major version newer than Chrome on this runner,
+        # which caused Chrome to get SIGKILL'd as soon as the driver
+        # tried to talk to it. Single source of versions = no drift.
         id: setup-chrome
         uses: browser-actions/setup-chrome@v1
         with:
           chrome-version: stable
           install-dependencies: true
+          install-chromedriver: true
 
-      - name: Ensure /usr/local/bin exists
-        # nanasess/setup-chromedriver hardcodes /usr/local/bin as its
-        # install path. Namespace's Apple Silicon macOS image doesn't
-        # create that dir by default (Homebrew is under /opt/homebrew),
-        # so the action's `mv` fails. Pre-create it.
-        run: sudo mkdir -p /usr/local/bin
-
-      - name: Install chromedriver matched to installed Chrome
-        # Auto-detects the installed Chrome's version and downloads the
-        # exact matching chromedriver from the Chrome-for-Testing CDN.
-        # Avoids the major-version drift we hit when Chrome is "stable"
-        # but chromedriver came from somewhere else.
-        uses: nanasess/setup-chromedriver@v2
-
-      - name: Disable Gatekeeper
-        # Chrome-for-Testing builds aren't notarized; on GH-hosted macOS
-        # runners that's worked around already, on Namespace's image
-        # the binaries get SIGKILL'd shortly after launch. xattr -dr
-        # hits a read-only filesystem on this image, so disable the
-        # whole assessment subsystem instead.
-        run: sudo spctl --master-disable || true
+      - name: Smoke test Chrome alone
+        # The wasm tests fail with chromedriver SIGKILL right after
+        # `Visiting http://...`. This step bypasses chromedriver and
+        # runs Chrome standalone with verbose logging so we can tell
+        # whether Chrome itself is dying (e.g. GPU process crash on
+        # the paravirt Metal driver) or it's a chromedriver-side bug.
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: |
+          set +e
+          echo "::group::chrome --version"
+          "$CHROME_BIN" --version
+          echo "::endgroup::"
+          echo "::group::chrome about:blank with verbose logging"
+          "$CHROME_BIN" \
+            --headless=new \
+            --no-sandbox \
+            --disable-dev-shm-usage \
+            --enable-unsafe-webgpu \
+            --enable-webgpu-developer-features \
+            --enable-logging=stderr \
+            --v=1 \
+            --dump-dom about:blank \
+            > /tmp/chrome-blank.out 2>&1
+          echo "exit=$?"
+          tail -100 /tmp/chrome-blank.out
+          echo "::endgroup::"
+          echo "::group::chrome chrome://gpu with verbose logging"
+          "$CHROME_BIN" \
+            --headless=new \
+            --no-sandbox \
+            --disable-dev-shm-usage \
+            --enable-unsafe-webgpu \
+            --enable-webgpu-developer-features \
+            --enable-logging=stderr \
+            --v=1 \
+            --dump-dom chrome://gpu \
+            > /tmp/chrome-gpu.out 2>&1
+          echo "exit=$?"
+          tail -200 /tmp/chrome-gpu.out
+          echo "::endgroup::"
 
       - name: Report versions
         env:
@@ -118,6 +144,11 @@ jobs:
           prefix-key: "v2"
           shared-key: "brush"
           cache-workspace-crates: true
+          # Save the cache even when tests fail. Without this, a streak
+          # of failing runs slowly invalidates the cache (cache only
+          # restores, never refreshes), and every later run rebuilds
+          # workspace crates from a stale base.
+          cache-on-failure: true
 
       - name: Install wasm-bindgen-cli
         uses: taiki-e/install-action@v2
@@ -174,6 +205,11 @@ jobs:
           prefix-key: "v2"
           shared-key: "brush"
           cache-workspace-crates: true
+          # Save the cache even when tests fail. Without this, a streak
+          # of failing runs slowly invalidates the cache (cache only
+          # restores, never refreshes), and every later run rebuilds
+          # workspace crates from a stale base.
+          cache-on-failure: true
 
       - name: Run tests
         run: cargo test --all --all-features

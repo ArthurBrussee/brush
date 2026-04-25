@@ -11,7 +11,10 @@
 
       "--enable-features=Vulkan",
       "--use-vulkan=native",
-      "--enable-unsafe-swiftshader"
+      "--enable-unsafe-swiftshader",
+
+      "--enable-logging=stderr",
+      "--v=1"
     ]
   }
 }
