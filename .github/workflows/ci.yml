@@ -88,48 +88,6 @@ jobs:
           install-dependencies: true
           install-chromedriver: true
 
-      - name: Smoke test Chrome alone
-        # The wasm tests fail with chromedriver SIGKILL right after
-        # `Visiting http://...`. This step bypasses chromedriver and
-        # runs Chrome standalone with verbose logging so we can tell
-        # whether Chrome itself is dying (e.g. GPU process crash on
-        # the paravirt Metal driver) or it's a chromedriver-side bug.
-        env:
-          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
-        run: |
-          set +e
-          echo "::group::chrome --version"
-          "$CHROME_BIN" --version
-          echo "::endgroup::"
-          echo "::group::chrome about:blank with verbose logging"
-          "$CHROME_BIN" \
-            --headless=new \
-            --no-sandbox \
-            --disable-dev-shm-usage \
-            --enable-unsafe-webgpu \
-            --enable-webgpu-developer-features \
-            --enable-logging=stderr \
-            --v=1 \
-            --dump-dom about:blank \
-            > /tmp/chrome-blank.out 2>&1
-          echo "exit=$?"
-          tail -100 /tmp/chrome-blank.out
-          echo "::endgroup::"
-          echo "::group::chrome chrome://gpu with verbose logging"
-          "$CHROME_BIN" \
-            --headless=new \
-            --no-sandbox \
-            --disable-dev-shm-usage \
-            --enable-unsafe-webgpu \
-            --enable-webgpu-developer-features \
-            --enable-logging=stderr \
-            --v=1 \
-            --dump-dom chrome://gpu \
-            > /tmp/chrome-gpu.out 2>&1
-          echo "exit=$?"
-          tail -200 /tmp/chrome-gpu.out
-          echo "::endgroup::"
-
       - name: Report versions
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
