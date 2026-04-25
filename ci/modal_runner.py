@@ -89,15 +89,19 @@ image = (
 
 app = modal.App("brush-ci")
 
-# Mount the local workspace into the container at /workspace, excluding
-# build artifacts so the upload is small. Modal de-dupes file blobs across
-# runs, so subsequent uploads are quick.
-brush_mount = modal.Mount.from_local_dir(
+
+def _ignore_workspace(path: Path) -> bool:
+    """Skip build/git/node noise when uploading the workspace."""
+    s = str(path)
+    return "/target/" in s or "/.git/" in s or "/node_modules/" in s
+
+
+# Attach the local workspace to the runtime image at /workspace. Modal
+# de-dupes file blobs across runs, so subsequent uploads are quick.
+image = image.add_local_dir(
     str(REPO_ROOT),
-    remote_path="/workspace",
-    condition=lambda p: "/target/" not in p
-    and "/.git/" not in p
-    and "/node_modules/" not in p,
+    "/workspace",
+    ignore=_ignore_workspace,
 )
 
 
@@ -109,7 +113,7 @@ def _run(cmd: list[str], env: dict[str, str] | None = None) -> None:
         sys.exit(result.returncode)
 
 
-@app.function(image=image, gpu="T4", timeout=60 * 60, mounts=[brush_mount])
+@app.function(image=image, gpu="T4", timeout=60 * 60)
 def run_native() -> None:
     import os
 
@@ -125,7 +129,7 @@ def run_native() -> None:
     _run(["cargo", "test", "--all", "--all-features", "--doc"], env=env)
 
 
-@app.function(image=image, gpu="T4", timeout=60 * 60, mounts=[brush_mount])
+@app.function(image=image, gpu="T4", timeout=60 * 60)
 def run_wasm() -> None:
     import os
 
