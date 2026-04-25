@@ -69,7 +69,6 @@ jobs:
     runs-on:
       - runs-on=${{ github.run_id }}
       - family=g4dn.xlarge
-      - image=ubuntu24-full-x64-gpu
     # Don't spend AWS minutes on fork PRs.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 45
