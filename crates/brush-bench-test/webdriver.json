@@ -4,8 +4,11 @@
       "--headless=new",
       "--no-sandbox",
       "--disable-dev-shm-usage",
-      "--disable-gpu-sandbox",
+
       "--enable-unsafe-webgpu",
+      "--enable-webgpu-developer-features",
+      "--enable-dawn-features=allow_unsafe_apis,use_user_defined_labels_in_backend",
+
       "--enable-features=Vulkan",
       "--use-vulkan=native",
       "--enable-unsafe-swiftshader"
