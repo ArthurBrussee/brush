@@ -82,8 +82,13 @@ image = (
         # chromedriver-autoinstaller needs to write somewhere; pre-install.
         "python3 -c 'import chromedriver_autoinstaller; "
         "chromedriver_autoinstaller.install()'",
-        # wasm-bindgen test runner.
-        "cargo install wasm-bindgen-cli --version 0.2.108 --locked",
+        # wasm-bindgen test runner. Clear the cargo registry/git
+        # caches afterwards so Modal can mount empty Volumes on those
+        # paths at runtime — Modal refuses to mount over non-empty
+        # directories. The actually-installed binary stays in
+        # /root/.cargo/bin.
+        "cargo install wasm-bindgen-cli --version 0.2.108 --locked "
+        "&& rm -rf /root/.cargo/registry /root/.cargo/git",
     )
 )
 
