@@ -107,4 +107,3 @@ jobs:
 
       - name: Run doc-tests
         run: cargo test --all --all-features --doc
-</content>
