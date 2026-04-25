@@ -49,6 +49,7 @@ image = (
         "mesa-vulkan-drivers",
         "libegl1",
         "libgles2",
+        "iproute2",
         # Chrome runtime deps:
         "fonts-liberation",
         "libasound2",
@@ -174,10 +175,17 @@ def run_wasm() -> None:
     # chromedriver was failing with "bind() failed: Cannot assign
     # requested address" — diagnose + repair the container's
     # loopback / hosts setup so Chrome can talk to itself.
+    def _try(cmd: list[str]) -> None:
+        try:
+            subprocess.run(cmd, check=False)
+        except FileNotFoundError:
+            print(f"({cmd[0]} not found)", flush=True)
+
     print("::group::network state", flush=True)
-    subprocess.run(["cat", "/etc/hosts"], check=False)
-    subprocess.run(["ip", "-4", "addr"], check=False)
-    subprocess.run(["ip", "-6", "addr"], check=False)
+    _try(["cat", "/etc/hosts"])
+    _try(["ip", "-4", "addr"])
+    _try(["ip", "-6", "addr"])
+    _try(["getent", "ahosts", "localhost"])
     print("::endgroup::", flush=True)
     # Make sure 127.0.0.1 is present in /etc/hosts (some container
     # base images ship without it, which breaks any tool that
@@ -194,10 +202,8 @@ def run_wasm() -> None:
                 f.write("::1 localhost\n")
         print("Patched /etc/hosts", flush=True)
     # Bring loopback up explicitly, in case Modal didn't.
-    subprocess.run(["ip", "link", "set", "lo", "up"], check=False)
-    subprocess.run(
-        ["ip", "addr", "add", "127.0.0.1/8", "dev", "lo"], check=False
-    )
+    _try(["ip", "link", "set", "lo", "up"])
+    _try(["ip", "addr", "add", "127.0.0.1/8", "dev", "lo"])
 
     # chromedriver-autoinstaller installs into the python user dir on the
     # baked image; resolve where it landed so wasm-bindgen-test can find it.
