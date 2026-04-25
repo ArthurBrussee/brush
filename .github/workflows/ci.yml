@@ -75,27 +75,51 @@ jobs:
           toolchain: 1.93.0
           targets: wasm32-unknown-unknown
 
-      - name: Install Chrome + matched chromedriver
-        # Use setup-chrome's bundled chromedriver to guarantee matching
-        # Chrome+ChromeDriver versions. nanasess/setup-chromedriver was
-        # installing a major version newer than Chrome on this runner,
-        # which caused Chrome to get SIGKILL'd as soon as the driver
-        # tried to talk to it. Single source of versions = no drift.
+      - name: Install Chrome
         id: setup-chrome
         uses: browser-actions/setup-chrome@v1
         with:
           chrome-version: stable
           install-dependencies: true
-          install-chromedriver: true
+
+      - name: Install matching chromedriver via chromedriver-autoinstaller
+        # Python helper that detects the installed Chrome's exact build
+        # and downloads the matching chromedriver. Avoids the
+        # major-version drift a generic "stable chromedriver" install
+        # can introduce.
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --user chromedriver-autoinstaller
+          # The package looks at $PATH for chrome; point it at the
+          # binary setup-chrome installed.
+          export PATH="$(dirname "$CHROME_BIN"):$PATH"
+          DRIVER_PATH="$(python3 -c 'import chromedriver_autoinstaller; print(chromedriver_autoinstaller.install())')"
+          echo "Installed chromedriver at: $DRIVER_PATH"
+          ls -la "$DRIVER_PATH"
+          "$DRIVER_PATH" --version
+          # Wrap chromedriver so wasm-bindgen-test invocation runs it
+          # with --verbose --log-path so we get real Chrome stderr
+          # captured when it dies. wasm-bindgen-test-runner doesn't let
+          # us pass args to chromedriver, so we sneak them in via a
+          # wrapper script invoked through CHROMEDRIVER.
+          mkdir -p "$RUNNER_TEMP/wrappers"
+          WRAPPER="$RUNNER_TEMP/wrappers/chromedriver"
+          cat > "$WRAPPER" <<EOF
+          #!/usr/bin/env bash
+          exec "$DRIVER_PATH" --verbose --log-path="$RUNNER_TEMP/chromedriver.log" "\$@"
+          EOF
+          chmod +x "$WRAPPER"
+          echo "CHROMEDRIVER=$WRAPPER" >> "$GITHUB_ENV"
+          echo "CHROMEDRIVER_LOG=$RUNNER_TEMP/chromedriver.log" >> "$GITHUB_ENV"
 
       - name: Report versions
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: |
           "$CHROME_BIN" --version
-          which chromedriver
-          chromedriver --version
-          echo "CHROMEDRIVER=$(command -v chromedriver)" >> "$GITHUB_ENV"
+          "$CHROMEDRIVER" --version
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -117,6 +141,23 @@ jobs:
         env:
           RUSTFLAGS: --cfg=getrandom_backend="wasm_js"
         run: cargo test -p brush-bench-test --target wasm32-unknown-unknown
+
+      - name: Dump chromedriver verbose log
+        if: always()
+        run: |
+          if [ -f "$CHROMEDRIVER_LOG" ]; then
+            echo "::group::chromedriver.log"
+            cat "$CHROMEDRIVER_LOG"
+            echo "::endgroup::"
+          else
+            echo "no chromedriver log at $CHROMEDRIVER_LOG"
+          fi
+          echo "::group::Chrome crash dumps (~/Library/Logs/DiagnosticReports)"
+          ls -la ~/Library/Logs/DiagnosticReports 2>/dev/null || true
+          for f in ~/Library/Logs/DiagnosticReports/Chrom* ~/Library/Logs/DiagnosticReports/Google* 2>/dev/null; do
+            [ -f "$f" ] && { echo "--- $f ---"; cat "$f"; }
+          done
+          echo "::endgroup::"
 
   # ---------------------------------------------------------------------------
 

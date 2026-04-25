@@ -2,8 +2,12 @@
   "goog:chromeOptions": {
     "args": [
       "--headless=new",
+
       "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-gpu-sandbox",
       "--disable-dev-shm-usage",
+      "--no-zygote",
 
       "--enable-unsafe-webgpu",
       "--enable-webgpu-developer-features",
