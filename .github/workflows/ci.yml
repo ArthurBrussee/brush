@@ -99,7 +99,9 @@ jobs:
           # The package looks at $PATH for chrome; point it at the
           # binary setup-chrome installed.
           export PATH="$(dirname "$CHROME_BIN"):$PATH"
-          DRIVER_PATH="$(python3 -c 'import chromedriver_autoinstaller; print(chromedriver_autoinstaller.install())')"
+          # The package logs to stdout alongside printing the path, so
+          # take only the last line (the actual path).
+          DRIVER_PATH="$(python3 -c 'import chromedriver_autoinstaller; print(chromedriver_autoinstaller.install())' | tail -n1)"
           echo "Installed chromedriver at: $DRIVER_PATH"
           ls -la "$DRIVER_PATH"
           "$DRIVER_PATH" --version
