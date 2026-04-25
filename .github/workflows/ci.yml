@@ -59,116 +59,28 @@ jobs:
   # ---------------------------------------------------------------------------
 
   test_wasm:
-    name: Run wasm tests (headless Chrome)
-    # runs-on.com — ephemeral AWS EC2 GPU instance per job. Real
-    # NVIDIA Vulkan exposes `shader-f16` and `timestamp-query` (the
-    # features brush WebGPU shaders need); software Lavapipe doesn't.
-    # `family=g4dn.xlarge` picks the cheapest NVIDIA T4 instance.
-    runs-on:
-      - runs-on=${{ github.run_id }}
-      # TODO: switch back to family=g4dn.xlarge once the AWS GPU
-      # quota lands. c5.xlarge is non-GPU and uses the default
-      # standard-instance vCPU bucket which new accounts have headroom
-      # in — lets us verify the runs-on integration end-to-end while
-      # the GPU quota request is pending.
-      - family=c5.xlarge
-      - spot=price
-    # Don't spend AWS minutes on fork PRs.
+    name: Run wasm tests (headless Chrome on Modal GPU)
+    runs-on: ubuntu-22.04
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
           lfs: true
 
-      - uses: dtolnay/rust-toolchain@master
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          toolchain: 1.93.0
-          targets: wasm32-unknown-unknown
+          python-version: "3.11"
 
-      - name: Confirm GPU + Vulkan
-        # Sanity-check the runner has the GPU and the right Vulkan
-        # driver before spending build time. If `nvidia-smi` is empty
-        # or `vulkaninfo` reports llvmpipe, the runner label is wrong.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y vulkan-tools libvulkan1
-          echo "::group::nvidia-smi"
-          nvidia-smi || true
-          echo "::endgroup::"
-          echo "::group::vulkaninfo --summary"
-          vulkaninfo --summary || true
-          echo "::endgroup::"
+      - name: Install Modal
+        run: pip install --quiet modal
 
-      - name: Install Chrome
-        id: setup-chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
-          install-dependencies: true
-
-      - name: Install matching chromedriver via chromedriver-autoinstaller
+      - name: Run wasm tests on Modal GPU
         env:
-          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
-        run: |
-          set -euo pipefail
-          python3 -m pip install --quiet --user --break-system-packages \
-            chromedriver-autoinstaller
-          export PATH="$(dirname "$CHROME_BIN"):$PATH"
-          DRIVER_PATH="$(python3 -c 'import chromedriver_autoinstaller; print(chromedriver_autoinstaller.install())' | tail -n1)"
-          echo "Installed chromedriver at: $DRIVER_PATH"
-          "$DRIVER_PATH" --version
-          # Wrap chromedriver so wasm-bindgen-test invokes it with
-          # --verbose --log-path; the runner captures stdout, this
-          # captures the rest (including any spawned Chrome stderr).
-          mkdir -p "$RUNNER_TEMP/wrappers"
-          WRAPPER="$RUNNER_TEMP/wrappers/chromedriver"
-          cat > "$WRAPPER" <<EOF
-          #!/usr/bin/env bash
-          exec "$DRIVER_PATH" --verbose --log-path="$RUNNER_TEMP/chromedriver.log" "\$@"
-          EOF
-          chmod +x "$WRAPPER"
-          echo "CHROMEDRIVER=$WRAPPER" >> "$GITHUB_ENV"
-          echo "CHROMEDRIVER_LOG=$RUNNER_TEMP/chromedriver.log" >> "$GITHUB_ENV"
-
-      - name: Report versions
-        env:
-          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
-        run: |
-          "$CHROME_BIN" --version
-          "$CHROMEDRIVER" --version
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v2"
-          shared-key: "brush"
-          cache-workspace-crates: true
-          # Save the cache even when tests fail. Without this, a streak
-          # of failing runs slowly invalidates the cache (cache only
-          # restores, never refreshes), and every later run rebuilds
-          # workspace crates from a stale base.
-          cache-on-failure: true
-
-      - name: Install wasm-bindgen-cli
-        uses: taiki-e/install-action@v2
-        with:
-          tool: wasm-bindgen-cli@0.2.108
-
-      - name: Run brush-bench-test in headless Chrome
-        env:
-          RUSTFLAGS: --cfg=getrandom_backend="wasm_js"
-        run: cargo test -p brush-bench-test --target wasm32-unknown-unknown
-
-      - name: Dump chromedriver verbose log
-        if: always()
-        run: |
-          if [ -f "$CHROMEDRIVER_LOG" ]; then
-            echo "::group::chromedriver.log"
-            cat "$CHROMEDRIVER_LOG"
-            echo "::endgroup::"
-          else
-            echo "no chromedriver log at $CHROMEDRIVER_LOG"
-          fi
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal run ci/modal_runner.py::run_wasm
 
   # ---------------------------------------------------------------------------
 
@@ -197,14 +109,8 @@ jobs:
   # ---------------------------------------------------------------------------
 
   tests:
-    name: Run tests
-    # Native tests need a real GPU too (brush-render's tests hit wgpu).
-    # Same runs-on.com Linux GPU runner as the wasm job.
-    runs-on:
-      - runs-on=${{ github.run_id }}
-      # TODO: switch back to family=g4dn.xlarge once the AWS GPU quota lands.
-      - family=c5.xlarge
-      - spot=price
+    name: Run native tests (Modal GPU)
+    runs-on: ubuntu-22.04
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 60
     steps:
@@ -212,34 +118,16 @@ jobs:
         with:
           lfs: true
 
-      - uses: dtolnay/rust-toolchain@master
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          toolchain: 1.93.0
+          python-version: "3.11"
 
-      - name: Confirm GPU + Vulkan
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y vulkan-tools libvulkan1
-          echo "::group::nvidia-smi"
-          nvidia-smi || true
-          echo "::endgroup::"
-          echo "::group::vulkaninfo --summary"
-          vulkaninfo --summary || true
-          echo "::endgroup::"
+      - name: Install Modal
+        run: pip install --quiet modal
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: "v2"
-          shared-key: "brush"
-          cache-workspace-crates: true
-          # Save the cache even when tests fail. Without this, a streak
-          # of failing runs slowly invalidates the cache (cache only
-          # restores, never refreshes), and every later run rebuilds
-          # workspace crates from a stale base.
-          cache-on-failure: true
-
-      - name: Run tests
-        run: cargo test --all --all-features
-
-      - name: Run doc-tests
-        run: cargo test --all --all-features --doc
+      - name: Run native tests on Modal GPU
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal run ci/modal_runner.py::run_native
