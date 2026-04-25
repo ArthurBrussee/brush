@@ -6,15 +6,14 @@ use burn::backend::wgpu::WgpuDevice;
 pub async fn test_device() -> WgpuDevice {
     #[cfg(target_family = "wasm")]
     {
-        use std::cell::Cell;
-        thread_local! {
-            static INITIALIZED: Cell<bool> = const { Cell::new(false) };
-        }
-        if !INITIALIZED.with(|c| c.get()) {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        let mut should_init = false;
+        INIT.call_once(|| should_init = true);
+
+        if should_init {
             console_error_panic_hook::set_once();
-            // Initialise once. Errors from a second init call mean the
-            // logger is already installed by another test crate; ignore.
-            let _ = wasm_logger::init(wasm_logger::Config::new(log::Level::Warn));
+            wasm_logger::init(wasm_logger::Config::new(log::Level::Warn));
 
             let setup = burn_wgpu::init_setup_async::<burn_wgpu::graphics::AutoGraphicsApi>(
                 &WgpuDevice::DefaultDevice,
@@ -43,7 +42,6 @@ pub async fn test_device() -> WgpuDevice {
                 setup.device.features(),
                 setup.device.limits(),
             );
-            INITIALIZED.with(|c| c.set(true));
         }
     }
     WgpuDevice::DefaultDevice
