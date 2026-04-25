@@ -84,11 +84,6 @@ jobs:
 
   tests:
     name: Run tests
-    # macOS for the real Metal-backed GPU. Wasm/Chrome WebGPU CI is gone
-    # — Linux runners can't expose enough Vulkan features, macOS paravirt
-    # GPUs hide timestamp-query, and serverless GPU clouds (Modal/RunPod)
-    # are compute-only without graphics drivers. Until something better
-    # comes along, just run the native tests here.
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
