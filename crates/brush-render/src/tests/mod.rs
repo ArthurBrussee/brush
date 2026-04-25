@@ -647,6 +647,7 @@ async fn render_panics_loudly_on_nan_positions() {
 // background color. Reading pixels back forces fusion to flush, which is
 // what catches bugs in the empty-tensor code paths.
 #[wasm_bindgen_test(unsupported = tokio::test)]
+#[ignore = "Needs CubeCL patch for 0 sized dispatch."]
 async fn zero_splats_renders_background() {
     let cam = Camera::new(
         glam::vec3(0.0, 0.0, -3.0),
