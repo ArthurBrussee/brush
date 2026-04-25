@@ -202,7 +202,8 @@ jobs:
     # Same runs-on.com Linux GPU runner as the wasm job.
     runs-on:
       - runs-on=${{ github.run_id }}
-      - family=g4dn.xlarge
+      # TODO: switch back to family=g4dn.xlarge once the AWS GPU quota lands.
+      - family=c5.xlarge
       - spot=price
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 60
