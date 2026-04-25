@@ -80,6 +80,7 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          PYTHONUNBUFFERED: "1"
         run: modal run ci/modal_runner.py::run_wasm
 
   # ---------------------------------------------------------------------------
@@ -130,4 +131,5 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          PYTHONUNBUFFERED: "1"
         run: modal run ci/modal_runner.py::run_native

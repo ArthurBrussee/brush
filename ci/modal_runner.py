@@ -104,16 +104,42 @@ image = image.add_local_dir(
     ignore=_ignore_workspace,
 )
 
+# Persistent caches across CI runs. Three volumes so we don't shadow
+# `/root/.cargo/bin` (where rustup put cargo/rustc/wasm-bindgen-cli at
+# image build time):
+#   - registry: ~/.cargo/registry  (downloaded crate sources + index)
+#   - git: ~/.cargo/git            (git dep sources, e.g. burn/cubecl)
+#   - target: /workspace/target    (compiled artifacts)
+# Cargo's mtime-based fingerprint will still recompile workspace crates
+# whose sources changed, but registry+git deps stay cached — that's the
+# bulk of brush's build time (burn, cubecl, wgpu).
+cargo_registry_vol = modal.Volume.from_name(
+    "brush-cargo-registry", create_if_missing=True
+)
+cargo_git_vol = modal.Volume.from_name("brush-cargo-git", create_if_missing=True)
+cargo_target_vol = modal.Volume.from_name(
+    "brush-cargo-target", create_if_missing=True
+)
+CACHE_VOLUMES = {
+    "/root/.cargo/registry": cargo_registry_vol,
+    "/root/.cargo/git": cargo_git_vol,
+    "/workspace/target": cargo_target_vol,
+}
+
 
 def _run(cmd: list[str], env: dict[str, str] | None = None) -> None:
     """Stream subprocess output to Modal's logs and raise on non-zero exit."""
     print(f"+ {' '.join(cmd)}", flush=True)
-    result = subprocess.run(cmd, cwd="/workspace", env=env)
+    # `stdbuf -oL -eL` forces line buffering so cargo/Chrome output reaches
+    # Modal's log stream (and from there GitHub Actions) without
+    # multi-second batching delays.
+    full_cmd = ["stdbuf", "-oL", "-eL", *cmd]
+    result = subprocess.run(full_cmd, cwd="/workspace", env=env)
     if result.returncode != 0:
         sys.exit(result.returncode)
 
 
-@app.function(image=image, gpu="T4", timeout=60 * 60)
+@app.function(image=image, gpu="T4", timeout=60 * 60, volumes=CACHE_VOLUMES)
 def run_native() -> None:
     import os
 
@@ -129,7 +155,7 @@ def run_native() -> None:
     _run(["cargo", "test", "--all", "--all-features", "--doc"], env=env)
 
 
-@app.function(image=image, gpu="T4", timeout=60 * 60)
+@app.function(image=image, gpu="T4", timeout=60 * 60, volumes=CACHE_VOLUMES)
 def run_wasm() -> None:
     import os
 
@@ -139,6 +165,34 @@ def run_wasm() -> None:
     print("::group::vulkaninfo --summary", flush=True)
     subprocess.run(["vulkaninfo", "--summary"], check=False)
     print("::endgroup::", flush=True)
+
+    # chromedriver was failing with "bind() failed: Cannot assign
+    # requested address" — diagnose + repair the container's
+    # loopback / hosts setup so Chrome can talk to itself.
+    print("::group::network state", flush=True)
+    subprocess.run(["cat", "/etc/hosts"], check=False)
+    subprocess.run(["ip", "-4", "addr"], check=False)
+    subprocess.run(["ip", "-6", "addr"], check=False)
+    print("::endgroup::", flush=True)
+    # Make sure 127.0.0.1 is present in /etc/hosts (some container
+    # base images ship without it, which breaks any tool that
+    # `bind()`s on `localhost` resolved via gethostbyname).
+    with open("/etc/hosts", "r") as f:
+        hosts = f.read()
+    needs_v4 = "127.0.0.1" not in hosts
+    needs_v6 = "::1" not in hosts
+    if needs_v4 or needs_v6:
+        with open("/etc/hosts", "a") as f:
+            if needs_v4:
+                f.write("127.0.0.1 localhost\n")
+            if needs_v6:
+                f.write("::1 localhost\n")
+        print("Patched /etc/hosts", flush=True)
+    # Bring loopback up explicitly, in case Modal didn't.
+    subprocess.run(["ip", "link", "set", "lo", "up"], check=False)
+    subprocess.run(
+        ["ip", "addr", "add", "127.0.0.1/8", "dev", "lo"], check=False
+    )
 
     # chromedriver-autoinstaller installs into the python user dir on the
     # baked image; resolve where it landed so wasm-bindgen-test can find it.
