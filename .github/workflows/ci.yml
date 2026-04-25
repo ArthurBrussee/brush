@@ -226,7 +226,6 @@ jobs:
           prefix-key: "v2"
           shared-key: "brush"
           cache-workspace-crates: true
-          cache-on-failure: true
           # Save the cache even when tests fail. Without this, a streak
           # of failing runs slowly invalidates the cache (cache only
           # restores, never refreshes), and every later run rebuilds
