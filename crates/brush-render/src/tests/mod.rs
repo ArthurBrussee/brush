@@ -14,9 +14,8 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn renders_at_all() {
-    // Check if rendering doesn't hard crash or anything.
-    // These are some zero-sized gaussians, so we know
-    // what the result should look like.
+    // Splats sit at the camera origin so they're culled by the near plane.
+    // With a black background that means every pixel must read back as zero.
     let cam = Camera::new(
         glam::vec3(0.0, 0.0, 0.0),
         glam::Quat::IDENTITY,
@@ -118,8 +117,16 @@ async fn renders_many_splats() {
         raw_opacity,
         SplatRenderMode::Default,
     );
-    let (_output, _render_aux) =
+    let (output, aux) =
         render_splats(splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float).await;
+
+    assert!(
+        aux.num_visible > 0,
+        "30M splats in front of camera, none survived projection"
+    );
+    let pixels = read_finite(output).await;
+    let any_nonbg = pixels.chunks_exact(4).any(|c| c[3] > 1e-3);
+    assert!(any_nonbg, "30M splats rendered to an entirely empty image");
 }
 
 // ---------- Shared helpers for the stress / invariance tests ----------
@@ -599,8 +606,9 @@ async fn renders_many_large_splats_stress() {
     assert_eq!(dropped_tiles, 0, "detected dropped tiles in stress render");
 }
 
+#[allow(clippy::should_panic_without_expect)]
 #[wasm_bindgen_test(unsupported = tokio::test)]
-#[should_panic(expected = "NaN")]
+#[should_panic]
 async fn render_panics_loudly_on_nan_positions() {
     let cam = Camera::new(
         glam::vec3(0.0, 0.0, -3.0),
@@ -635,17 +643,19 @@ async fn render_panics_loudly_on_nan_positions() {
     let _ = render_splats(splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float).await;
 }
 
-// Zero-splat Splats constructor must not crash — legitimate mid-training state.
+// Zero-splat Splats must not crash and must render every pixel as the
+// background color. Reading pixels back forces fusion to flush, which is
+// what catches bugs in the empty-tensor code paths.
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn zero_splats_renders_background() {
-    let _cam = Camera::new(
-        glam::vec3(0.0, 0.0, 0.0),
+    let cam = Camera::new(
+        glam::vec3(0.0, 0.0, -3.0),
         glam::Quat::IDENTITY,
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
     );
-    let _img_size = glam::uvec2(32, 32);
+    let img_size = glam::uvec2(32, 32);
     let device = brush_kernel::test_helpers::test_device().await;
 
     let splats = Splats::from_tensor_data(
@@ -657,6 +667,30 @@ async fn zero_splats_renders_background() {
         SplatRenderMode::Default,
     );
     assert_eq!(splats.num_splats(), 0);
+
+    let bg = glam::vec3(0.7, 0.3, 0.1);
+    let (output, _aux) = render_splats(splats, &cam, img_size, bg, None, TextureMode::Float).await;
+    let pixels = output
+        .to_data_async()
+        .await
+        .expect("readback")
+        .to_vec::<f32>()
+        .expect("data vec");
+    let n_pixels = (img_size.x * img_size.y) as usize;
+    assert_eq!(pixels.len(), n_pixels * 4);
+    for (i, chunk) in pixels.chunks_exact(4).enumerate() {
+        let [r, g, b, a] = [chunk[0], chunk[1], chunk[2], chunk[3]];
+        assert!(
+            (r - bg.x).abs() < 1e-5
+                && (g - bg.y).abs() < 1e-5
+                && (b - bg.z).abs() < 1e-5
+                && a.abs() < 1e-5,
+            "pixel {i} = ({r}, {g}, {b}, {a}), expected background ({}, {}, {}, 0)",
+            bg.x,
+            bg.y,
+            bg.z,
+        );
+    }
 }
 
 // Zero-length quats must be culled by PF, adding them to a scene must

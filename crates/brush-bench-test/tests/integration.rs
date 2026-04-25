@@ -160,20 +160,27 @@ async fn test_splat_generation() {
 async fn test_forward_rendering() {
     let device = brush_kernel::test_helpers::test_device().await;
     let splats = generate_test_splats(&device, 1000);
-
-    // Just verify we can create the splats successfully
     assert_eq!(splats.num_splats(), 1000);
 
-    // Check that the tensor data is accessible
-    let means_data = splats
-        .means()
+    let camera = Camera::new(
+        Vec3::new(0.0, 0.0, -8.0),
+        Quat::IDENTITY,
+        45.0,
+        45.0,
+        glam::vec2(0.5, 0.5),
+    );
+    let img_size = glam::uvec2(64, 64);
+    let result = render_splats(splats, &camera, img_size, Vec3::ZERO).await;
+
+    assert!(result.render_aux.num_visible > 0, "no splats rendered");
+    let pixels: Tensor<DiffBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(result.img));
+    let data = pixels
         .into_data_async()
         .await
         .expect("readback")
         .into_vec::<f32>()
-        .unwrap();
-    assert_eq!(means_data.len(), 3000);
-    assert!(means_data.iter().all(|&x| x.is_finite()));
+        .expect("Wrong type");
+    assert!(data.iter().all(|&v| v.is_finite()));
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
@@ -304,9 +311,15 @@ async fn trainer_tolerates_nan_bounds() {
         extent: Vec3::new(f32::NAN, 1.0, 1.0),
     };
     let mut trainer = SplatTrainer::new(&config, &device, bounds);
-    // One step should still proceed.
     let batch = generate_test_batch((64, 64));
-    let (_splats, _stats) = trainer.step(batch, splats).await;
+    let (_splats, stats) = trainer.step(batch, splats).await;
+    let _ = stats
+        .loss
+        .into_data_async()
+        .await
+        .expect("readback")
+        .as_slice::<f32>()
+        .expect("Wrong type")[0];
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
