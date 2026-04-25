@@ -6,12 +6,8 @@
   "scripts": {
     "dev": "cd brush_nextjs && npm run dev",
     "dev:viewer": "cd brush_nextjs && npm run dev:viewer",
-    "release": "cd brush_nextjs && npm run release",
-    "release:viewer": "cd brush_nextjs && npm run release:viewer",
     "build": "cd brush_nextjs && npm run build",
-    "build:viewer": "cd brush_nextjs && npm run build:viewer",
-    "build:wasm-dev": "cd brush_nextjs && npm run build:wasm-dev",
-    "build:wasm-dev-viewer": "cd brush_nextjs && npm run build:wasm-dev-viewer"
+    "build:viewer": "cd brush_nextjs && npm run build:viewer"
   },
   "workspaces": [
     "brush_nextjs"

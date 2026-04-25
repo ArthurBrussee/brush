@@ -11,6 +11,11 @@ burn.workspace = true
 burn-cubecl.workspace = true
 burn-wgpu.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
+log.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+console_error_panic_hook = "0.1"
+wasm-logger = "0.2"
 
 [lints]
 workspace = true

@@ -191,8 +191,6 @@ impl<B: Backend> Splats<B> {
             // Scales should be positive and reasonable
             validate_tensor_val(scales, "scales", Some(1e-6), Some(100.0)).await;
 
-            assert!(num_splats > 0, "Splats must contain at least one splat");
-
             let [n_transforms, t_dims] = self.transforms.dims();
             assert_eq!(
                 t_dims, 10,
