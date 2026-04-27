@@ -49,7 +49,7 @@ First install rust 1.88+. You can run tests with `cargo test --all`. Brush uses 
 Use `cargo run --release` from the workspace root to make an optimized build. Use `cargo run` to run a debug build. 
 
 ### Web
-Brush can be compiled to WASM. Run `npm run dev` to start the demo website using Next.js, see the brush_nextjs directory.
+Brush can be compiled to WASM. Run `npm run dev` to start the demo website using Next.js, see the web directory in app/brush-app/web.
 
 Brush uses [`wasm-pack`](https://drager.github.io/wasm-pack/) to build the WASM bundle. You can also use it without a bundler, see [wasm-pack's documentation](https://drager.github.io/wasm-pack/book/).
 

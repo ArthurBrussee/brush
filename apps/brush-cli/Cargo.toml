@@ -1,0 +1,28 @@
+[package]
+name = "brush-cli"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+
+[dependencies]
+brush-process.path = "../../crates/brush-process"
+
+indicatif.workspace = true
+indicatif-log-bridge = "0.2"
+clap.workspace = true
+tracing.workspace = true
+tokio-stream.workspace = true
+humantime.workspace = true
+log.workspace = true
+env_logger.workspace = true
+anyhow.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
+[lints]
+workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["getrandom"]

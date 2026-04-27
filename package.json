@@ -4,13 +4,11 @@
   "description": "Brush",
   "private": true,
   "scripts": {
-    "dev": "cd brush_nextjs && npm run dev",
-    "dev:viewer": "cd brush_nextjs && npm run dev:viewer",
-    "build": "cd brush_nextjs && npm run build",
-    "build:viewer": "cd brush_nextjs && npm run build:viewer"
+    "dev": "cd apps/brush-app/web && npm run dev",
+    "build": "cd apps/brush-app/web && npm run build"
   },
   "workspaces": [
-    "brush_nextjs"
+    "apps/brush-app/web"
   ],
   "devDependencies": {
     "baseline-browser-mapping": "^2.10.18"

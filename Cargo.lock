@@ -931,23 +931,33 @@ dependencies = [
  "android_logger",
  "anyhow",
  "brush-cli",
+ "brush-dataset",
  "brush-process",
- "brush-ui",
- "brush-vfs",
+ "brush-render",
+ "brush-serde",
+ "burn",
  "burn-cubecl",
+ "burn-wgpu",
+ "bytemuck",
  "clap",
  "eframe",
  "egui",
+ "egui_tiles",
  "env_logger",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
  "glam",
+ "humantime",
+ "image",
  "jni",
  "log",
+ "rand 0.10.1",
  "rrfd",
+ "serde",
  "tempfile",
  "tokio",
  "tokio-stream",
+ "tokio_with_wasm",
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
@@ -955,6 +965,8 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-logger",
  "web-sys",
+ "web-time",
+ "wgpu",
  "winapi",
  "winit",
 ]
@@ -997,12 +1009,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "brush-c"
+version = "0.3.0"
+dependencies = [
+ "brush-process",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "brush-cli"
 version = "0.3.0"
 dependencies = [
  "anyhow",
  "brush-process",
- "brush-vfs",
  "clap",
  "env_logger",
  "getrandom 0.4.2",
@@ -1053,6 +1074,17 @@ dependencies = [
  "getrandom 0.4.2",
  "tokio",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "brush-js"
+version = "0.3.0"
+dependencies = [
+ "brush-process",
+ "getrandom 0.3.4",
+ "getrandom 0.4.2",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -1253,39 +1285,6 @@ dependencies = [
  "tokio",
  "tracing",
  "wasm-bindgen-test",
-]
-
-[[package]]
-name = "brush-ui"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "brush-dataset",
- "brush-process",
- "brush-render",
- "brush-serde",
- "brush-vfs",
- "burn",
- "burn-cubecl",
- "burn-wgpu",
- "bytemuck",
- "eframe",
- "egui",
- "egui_tiles",
- "glam",
- "humantime",
- "image",
- "log",
- "rand 0.10.1",
- "rrfd",
- "serde",
- "tokio",
- "tokio-stream",
- "tokio_with_wasm",
- "tracing",
- "wasm-bindgen",
- "web-time",
- "wgpu",
 ]
 
 [[package]]

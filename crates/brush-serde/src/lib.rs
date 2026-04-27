@@ -1,23 +1,18 @@
 #![recursion_limit = "256"]
 
-#[cfg(feature = "export")]
 pub mod export;
-#[cfg(feature = "import")]
 pub mod import;
 pub mod ply_gaussian;
 pub mod quant;
 
 // Re-export main functionality
-#[cfg(feature = "export")]
 pub use export::{ExportError, splat_to_ply};
-#[cfg(feature = "import")]
 pub use import::{
     ParseMetadata, SplatData, SplatMessage, load_splat_from_ply, stream_splat_from_ply,
 };
 pub use ply_gaussian::PlyGaussian;
 
 // Re-export serde-ply types for compatibility
-#[cfg(feature = "import")]
 pub use serde_ply::DeserializeError;
 
 #[cfg(test)]
