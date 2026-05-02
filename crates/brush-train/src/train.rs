@@ -441,8 +441,11 @@ impl SplatTrainer {
             split_inds.extend(resampled_inds);
         }
 
-        // Force-split oversized splats regardless of the growth budget / stop iter.
-        if self.config.split_at_screen_size > 0.0 {
+        // Force-split oversized splats, gated by growth_stop_iter. Without
+        // the gate, oversized splats from an init ply keep splitting past
+        // the stop iter when there isn't enough training time for them to
+        // shrink first.
+        if self.config.split_at_screen_size > 0.0 && iter < self.config.growth_stop_iter {
             let oversized = refiner.above_screen_size(self.config.split_at_screen_size);
             let oversized_vec = oversized
                 .float()
