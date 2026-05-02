@@ -401,9 +401,12 @@ impl ScenePanel {
             return;
         };
 
-        let target = if dp < POS_EPS && dr < ROT_EPS { 1.0 } else { 0.0 };
-        self.pose_match_alpha =
-            target + (self.pose_match_alpha - target) * (-dt / TAU).exp();
+        let target = if dp < POS_EPS && dr < ROT_EPS {
+            1.0
+        } else {
+            0.0
+        };
+        self.pose_match_alpha = target + (self.pose_match_alpha - target) * (-dt / TAU).exp();
         if (self.pose_match_alpha - target).abs() < 1.0 / 256.0 {
             self.pose_match_alpha = target;
         } else {
