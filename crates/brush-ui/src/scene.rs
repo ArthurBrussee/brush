@@ -121,6 +121,19 @@ pub struct ScenePanel {
     #[cfg(feature = "training")]
     #[serde(skip)]
     settings_popup: Option<Arc<Mutex<SettingsPopup>>>,
+    #[cfg(feature = "training")]
+    #[serde(skip)]
+    dataset: Option<brush_dataset::Dataset>,
+    #[cfg(feature = "training")]
+    #[serde(skip)]
+    scene_scale: f32,
+    #[cfg(feature = "training")]
+    #[serde(skip)]
+    pose_match_alpha: f32,
+    /// Kept across frames so the framing geometry stays stable while bars fade out.
+    #[cfg(feature = "training")]
+    #[serde(skip)]
+    last_match_cam: Option<brush_render::camera::Camera>,
 }
 
 impl ScenePanel {
@@ -352,6 +365,122 @@ impl ScenePanel {
         self.last_rendered_iter = 0;
         self.warnings.clear();
         self.seen_warning_count = 0;
+        #[cfg(feature = "training")]
+        {
+            self.dataset = None;
+            self.scene_scale = 0.0;
+            self.pose_match_alpha = 0.0;
+            self.last_match_cam = None;
+        }
+    }
+
+    /// Fade in letterbox/pillarbox bars while the user is sitting on a dataset
+    /// reference pose, snap them out when they nudge off it.
+    #[cfg(feature = "training")]
+    fn update_and_draw_reference_pose_bars(
+        &mut self,
+        ui: &egui::Ui,
+        rect: Rect,
+        camera: &brush_render::camera::Camera,
+        dt: f32,
+    ) {
+        // Tight epsilons: focus_view sets the camera bit-for-bit, so anything past
+        // float-precision noise is the user moving.
+        const POS_EPS: f32 = 1e-4;
+        const ROT_EPS: f32 = 1e-3;
+        const FADE_IN: f32 = 0.5;
+        const FADE_OUT: f32 = 0.15;
+        const MAX_ALPHA: f32 = 160.0;
+
+        let scale = self.scene_scale.max(0.1);
+
+        let matched = self.dataset.as_ref().and_then(|d| {
+            d.train
+                .views
+                .iter()
+                .chain(d.eval.iter().flat_map(|s| s.views.iter()))
+                .find(|v| {
+                    let dp = (camera.position - v.camera.position).length() / scale;
+                    let dr = camera.rotation.angle_between(v.camera.rotation);
+                    dp < POS_EPS && dr < ROT_EPS
+                })
+                .map(|v| v.camera.clone())
+        });
+
+        let target = if matched.is_some() { 1.0 } else { 0.0 };
+        if matched.is_some() {
+            self.last_match_cam = matched;
+        }
+
+        let prev = self.pose_match_alpha;
+        let dt = dt.clamp(0.0, 0.1);
+        self.pose_match_alpha = if target > prev {
+            (prev + dt / FADE_IN).min(target)
+        } else {
+            (prev - dt / FADE_OUT).max(target)
+        };
+
+        if self.pose_match_alpha != target {
+            ui.ctx().request_repaint();
+        }
+
+        if self.pose_match_alpha <= 0.0 {
+            self.last_match_cam = None;
+            return;
+        }
+
+        let Some(view_cam) = self.last_match_cam.as_ref() else {
+            return;
+        };
+
+        let alpha = (self.pose_match_alpha * MAX_ALPHA) as u8;
+        if alpha == 0 {
+            return;
+        }
+
+        let cur_x = (camera.fov_x * 0.5).tan() as f32;
+        let cur_y = (camera.fov_y * 0.5).tan() as f32;
+        let ref_x = (view_cam.fov_x * 0.5).tan() as f32;
+        let ref_y = (view_cam.fov_y * 0.5).tan() as f32;
+        let frac_x = (ref_x / cur_x.max(1e-6)).clamp(0.0, 1.0);
+        let frac_y = (ref_y / cur_y.max(1e-6)).clamp(0.0, 1.0);
+
+        let bar = Color32::from_rgba_unmultiplied(0, 0, 0, alpha);
+        let painter = ui.painter_at(rect);
+
+        let bar_h = rect.height() * (1.0 - frac_y) * 0.5;
+        if bar_h > 0.5 {
+            painter.rect_filled(
+                Rect::from_min_size(rect.min, egui::vec2(rect.width(), bar_h)),
+                0.0,
+                bar,
+            );
+            painter.rect_filled(
+                Rect::from_min_size(
+                    egui::pos2(rect.min.x, rect.max.y - bar_h),
+                    egui::vec2(rect.width(), bar_h),
+                ),
+                0.0,
+                bar,
+            );
+        }
+
+        let bar_w = rect.width() * (1.0 - frac_x) * 0.5;
+        if bar_w > 0.5 {
+            painter.rect_filled(
+                Rect::from_min_size(rect.min, egui::vec2(bar_w, rect.height())),
+                0.0,
+                bar,
+            );
+            painter.rect_filled(
+                Rect::from_min_size(
+                    egui::pos2(rect.max.x - bar_w, rect.min.y),
+                    egui::vec2(bar_w, rect.height()),
+                ),
+                0.0,
+                bar,
+            );
+        }
     }
 
     fn draw_controls_help(ui: &mut egui::Ui, min_width: Option<f32>) {
@@ -801,6 +930,13 @@ impl AppPane for ScenePanel {
                 settings.background = Some(glam::vec3(bg[0], bg[1], bg[2]));
                 process.set_cam_settings(&settings);
             }
+            #[cfg(feature = "training")]
+            ProcessMessage::TrainMessage(brush_process::message::TrainMessage::Dataset {
+                dataset,
+            }) => {
+                self.scene_scale = dataset.train.bounds().extent.length();
+                self.dataset = Some(dataset.clone());
+            }
             _ => {}
         }
     }
@@ -979,9 +1115,12 @@ impl AppPane for ScenePanel {
                 if let Some(grid) = &mut self.grid {
                     let model_ltw = process.model_local_to_world();
                     let grid_opacity = process.get_grid_opacity();
-                    grid.paint(rect, camera, model_ltw, grid_opacity, ui);
+                    grid.paint(rect, camera.clone(), model_ltw, grid_opacity, ui);
                 }
             });
+
+            #[cfg(feature = "training")]
+            self.update_and_draw_reference_pose_bars(ui, rect, &camera, delta_time);
 
             if interactive {
                 self.draw_play_pause(ui, rect);
