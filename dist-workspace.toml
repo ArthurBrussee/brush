@@ -1,5 +1,5 @@
 [workspace]
-members = ["cargo:./crates/brush-app"]
+members = ["cargo:./apps/brush-app"]
 
 # Config for 'dist'
 [dist]
