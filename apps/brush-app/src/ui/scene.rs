@@ -228,7 +228,7 @@ impl ScenePanel {
             let settings = self.settings_popup.clone().unwrap();
             async move |initial| {
                 let fut = settings.lock().unwrap().start_pick(initial);
-                fut.await
+                Some(fut.await)
             }
         }));
     }

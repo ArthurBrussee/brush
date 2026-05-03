@@ -3,6 +3,7 @@ pub mod camera_controls;
 
 pub mod ui_process;
 
+pub mod log_panel;
 mod panels;
 mod scene;
 pub mod splat_backbuffer;

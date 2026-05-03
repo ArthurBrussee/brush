@@ -2,4 +2,3 @@ node_modules/
 dist/
 pkg/
 .DS_Store
-*.tsbuildinfo

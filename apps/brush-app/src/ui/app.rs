@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tracing::trace_span;
 
 use crate::ui::{
-    UiMode, camera_controls::CameraClamping, datasets::DatasetPanel, panels::AppPane,
-    scene::ScenePanel, settings_panel::SettingsPanel, stats::StatsPanel,
+    UiMode, camera_controls::CameraClamping, datasets::DatasetPanel, log_panel::LogPanel,
+    panels::AppPane, scene::ScenePanel, settings_panel::SettingsPanel, stats::StatsPanel,
     training_panel::TrainingPanel, ui_process::UiProcess,
 };
 
@@ -24,6 +24,7 @@ pub enum Pane {
     Dataset(#[serde(skip)] DatasetPanel),
     Training(#[serde(skip)] TrainingPanel),
     Settings(#[serde(skip)] SettingsPanel),
+    Log(#[serde(skip)] LogPanel),
 }
 
 impl Pane {
@@ -34,6 +35,7 @@ impl Pane {
             Self::Dataset(p) => p,
             Self::Training(p) => p,
             Self::Settings(p) => p,
+            Self::Log(p) => p,
         }
     }
 
@@ -44,6 +46,7 @@ impl Pane {
             Self::Dataset(p) => p,
             Self::Training(p) => p,
             Self::Settings(p) => p,
+            Self::Log(p) => p,
         }
     }
 
@@ -67,6 +70,11 @@ impl Pane {
 
     fn settings() -> RefCell<Self> {
         RefCell::new(Self::Settings(SettingsPanel::default()))
+    }
+
+    fn log() -> RefCell<Self> {
+        #[allow(clippy::default_constructed_unit_structs)] // Pane derives Default via serde.
+        RefCell::new(Self::Log(LogPanel::default()))
     }
 }
 
@@ -161,6 +169,7 @@ impl App {
             let dataset_pane = tiles.insert_pane(Pane::dataset());
             let training_pane = tiles.insert_pane(Pane::training());
             let settings_pane = tiles.insert_pane(Pane::settings());
+            let log_pane = tiles.insert_pane(Pane::log());
             Self::build_default_layout(
                 &mut tiles,
                 scene_pane,
@@ -168,6 +177,7 @@ impl App {
                 dataset_pane,
                 training_pane,
                 settings_pane,
+                log_pane,
             )
         };
 
@@ -176,23 +186,17 @@ impl App {
 
     /// Check if the loaded tree has all the required panels.
     fn is_tree_valid(tree: &egui_tiles::Tree<PaneRef>) -> bool {
-        let has_scene = tree.tiles.iter().any(|(_, tile)| {
-            matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Scene(_)))
-        });
-
-        let has_stats = tree.tiles.iter().any(|(_, tile)| {
-                matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Stats(_)))
-            });
-        let has_dataset = tree.tiles.iter().any(|(_, tile)| {
-                matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Dataset(_)))
-            });
-        let has_training = tree.tiles.iter().any(|(_, tile)| {
-                matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Training(_)))
-            });
-        let has_settings = tree.tiles.iter().any(|(_, tile)| {
-                matches!(tile, egui_tiles::Tile::Pane(p) if matches!(&*p.borrow(), Pane::Settings(_)))
-            });
-        has_scene && has_stats && has_dataset && has_training && has_settings
+        fn has<F: Fn(&Pane) -> bool>(tree: &egui_tiles::Tree<PaneRef>, f: F) -> bool {
+            tree.tiles.iter().any(|(_, tile)| {
+                matches!(tile, egui_tiles::Tile::Pane(p) if f(&p.borrow()))
+            })
+        }
+        has(tree, |p| matches!(p, Pane::Scene(_)))
+            && has(tree, |p| matches!(p, Pane::Stats(_)))
+            && has(tree, |p| matches!(p, Pane::Dataset(_)))
+            && has(tree, |p| matches!(p, Pane::Training(_)))
+            && has(tree, |p| matches!(p, Pane::Settings(_)))
+            && has(tree, |p| matches!(p, Pane::Log(_)))
     }
 
     pub fn new(
@@ -252,9 +256,10 @@ impl App {
         dataset_pane: TileId,
         training_pane: TileId,
         settings_pane: TileId,
+        log_pane: TileId,
     ) -> TileId {
-        // Stats and Settings share a tabbed area
-        let bottom_tabs = tiles.insert_tab_tile(vec![stats_pane, settings_pane]);
+        // Stats / Log / Settings share a tabbed area
+        let bottom_tabs = tiles.insert_tab_tile(vec![stats_pane, log_pane, settings_pane]);
 
         let mut sidebar = egui_tiles::Linear::new(
             egui_tiles::LinearDir::Vertical,
@@ -327,6 +332,7 @@ impl eframe::App for App {
             let dataset_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Dataset(_)));
             let training_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Training(_)));
             let settings_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Settings(_)));
+            let log_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Log(_)));
 
             // Remove all container tiles
             let container_ids: Vec<TileId> = tree
@@ -346,6 +352,7 @@ impl eframe::App for App {
                 dataset_pane,
                 training_pane,
                 settings_pane,
+                log_pane,
             ));
         }
 

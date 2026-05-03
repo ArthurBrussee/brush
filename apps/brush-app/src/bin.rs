@@ -51,16 +51,20 @@ fn main() -> Result<(), anyhow::Error> {
             let init_process = args.source.map(|source| {
                 create_process(source, {
                     let cli_config = args.train_stream.clone();
-                    async move |init| brush_process::args_file::merge_configs(&init, &cli_config)
+                    async move |init| {
+                        Some(brush_process::args_file::merge_configs(&init, &cli_config))
+                    }
                 })
             });
 
             if args.with_viewer {
                 use crate::ui::app::App;
 
-                env_logger::builder()
+                let logger = env_logger::Builder::from_default_env()
                     .target(env_logger::Target::Stdout)
-                    .init();
+                    .build();
+                let max = logger.filter();
+                crate::ui::log_panel::install_global_logger(Box::new(logger), max);
 
                 let icon = eframe::icon_data::from_png_bytes(
                     &include_bytes!("../assets/icon-256.png")[..],

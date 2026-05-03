@@ -27,14 +27,19 @@ use burn_cubecl::cubecl::config::{CubeClRuntimeConfig, RuntimeConfig, streaming:
 use burn_wgpu::WgpuRuntime;
 use tokio_stream::{Stream, StreamExt};
 
-/// Set `CubeCL` global runtime config. Call once on process startup.
+/// Set `CubeCL` global runtime config. Idempotent — `CubeClRuntimeConfig::set`
+/// panics if called twice, but in browsers React's `StrictMode` and similar
+/// host conventions can re-init us, so guard with [`std::sync::Once`].
 pub fn cubecl_startup() {
-    CubeClRuntimeConfig::set(CubeClRuntimeConfig {
-        streaming: StreamingConfig {
-            max_streams: 1,
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        CubeClRuntimeConfig::set(CubeClRuntimeConfig {
+            streaming: StreamingConfig {
+                max_streams: 1,
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
+        });
     });
 }
 
@@ -65,6 +70,14 @@ pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuD
     burn
 }
 
+/// Initialize Burn with a wgpu setup the host already owns. Useful when
+/// integrating with an existing wgpu/WebGPU application that wants to share
+/// its device with Brush so tensor buffers can flow back into the host's
+/// render pipeline without copies.
+pub fn burn_init_external(adapter: Adapter, device: Device, queue: Queue) -> WgpuDevice {
+    burn_init_device(adapter, device, queue)
+}
+
 use crate::{message::ProcessMessage, slot::Slot, train_stream::train_stream};
 
 pub trait ProcessStream: Stream<Item = Result<ProcessMessage, Error>> + SendNotWasm {}
@@ -80,7 +93,11 @@ use tokio::sync::SetOnce;
 static DEVICE: SetOnce<WgpuDevice> = SetOnce::const_new();
 
 pub(crate) fn connect_device(device: WgpuDevice) {
-    DEVICE.set(device).unwrap();
+    // Idempotent: hosts that re-init us (e.g. React StrictMode in dev)
+    // would otherwise panic on the second `set`. The first device wins —
+    // subsequent ones are dropped. Burn's compute server keeps the device
+    // it was constructed against, so this is consistent.
+    let _ = DEVICE.set(device);
 }
 
 pub async fn wait_for_device() -> &'static WgpuDevice {
@@ -93,10 +110,35 @@ pub async fn wait_for_device() -> &'static WgpuDevice {
 /// otherwise defaults) and returns the final config to use. This allows the caller to
 /// modify or override settings as needed.
 pub fn create_process<
-    Fun: FnOnce(crate::config::TrainStreamConfig) -> Fut + Send + 'static,
-    Fut: Future<Output = crate::config::TrainStreamConfig> + Send,
+    Fun: FnOnce(crate::config::TrainStreamConfig) -> Fut + SendNotWasm + 'static,
+    Fut: Future<Output = Option<crate::config::TrainStreamConfig>> + SendNotWasm,
 >(
     source: DataSource,
+    config_fn: Fun,
+) -> RunningProcess {
+    create_process_inner(source, None, config_fn)
+}
+
+/// Create a running process from an already-mounted VFS. `display_name` is
+/// echoed back via `ProcessMessage::StartLoading` and shown to users; it
+/// does not affect data loading.
+pub fn create_process_from_vfs<
+    Fun: FnOnce(crate::config::TrainStreamConfig) -> Fut + SendNotWasm + 'static,
+    Fut: Future<Output = Option<crate::config::TrainStreamConfig>> + SendNotWasm,
+>(
+    vfs: std::sync::Arc<brush_vfs::BrushVfs>,
+    display_name: String,
+    config_fn: Fun,
+) -> RunningProcess {
+    create_process_inner(DataSource::Path(display_name), Some(vfs), config_fn)
+}
+
+fn create_process_inner<
+    Fun: FnOnce(crate::config::TrainStreamConfig) -> Fut + SendNotWasm + 'static,
+    Fut: Future<Output = Option<crate::config::TrainStreamConfig>> + SendNotWasm,
+>(
+    source: DataSource,
+    prebuilt_vfs: Option<std::sync::Arc<brush_vfs::BrushVfs>>,
     config_fn: Fun,
 ) -> RunningProcess {
     let splat_view = Slot::default();
@@ -106,7 +148,10 @@ pub fn create_process<
         log::info!("Starting process with source {source:?}");
         emitter.emit(ProcessMessage::NewProcess).await;
 
-        let vfs = source.clone().into_vfs().await?;
+        let vfs = match prebuilt_vfs {
+            Some(vfs) => vfs,
+            None => source.clone().into_vfs().await?,
+        };
         let vfs_counts = vfs.file_count();
 
         if vfs_counts == 0 {
@@ -205,9 +250,14 @@ pub fn create_process<
 
             emitter.emit(ProcessMessage::DoneLoading).await;
         } else {
-            // Pass initial config (from args.txt or defaults) to the callback
+            // Pass initial config (from args.txt or defaults) to the callback.
+            // Returning `None` from `config_fn` aborts cleanly without
+            // surfacing as an error.
             let base_config = initial_config.unwrap_or_default();
-            let config = config_fn(base_config).await;
+            let Some(config) = config_fn(base_config).await else {
+                log::info!("config_fn returned None — aborting before training");
+                return Ok(());
+            };
             train_stream(vfs, config, emitter, splat_view).await?;
         };
 

@@ -1,8 +1,7 @@
-'use client';
-
 import { useEffect, useRef, useState } from 'react';
-import { CameraSettings, EmbeddedApp, UiMode } from '../../pkg/brush_app';
 import { Vector3 } from 'three';
+
+import { CameraSettings, EmbeddedApp, UiMode } from '../pkg/brush_app';
 
 interface BrushViewerProps {
   url?: string | null;
@@ -21,28 +20,37 @@ export default function BrushViewer(props: BrushViewerProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!canvasRef.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let cancelled = false;
 
-    const canvasId = `brush-canvas-${Date.now()}`;
-    canvasRef.current.id = canvasId;
-
-    const initApp = async () => {
+    (async () => {
       try {
         const brushApp = new EmbeddedApp();
-        await brushApp.start(canvasId);
-        setApp(brushApp);
+        await brushApp.start(canvas);
+        if (!cancelled) setApp(brushApp);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        if (cancelled) return;
+        // eframe/wasm errors are often raw JsValue (string), not Error instances.
+        // eslint-disable-next-line no-console
+        console.error('Brush start failed:', err);
+        setError(
+          err instanceof Error
+            ? err.message
+            : typeof err === 'string'
+              ? err
+              : String(err),
+        );
       }
-    };
+    })();
 
-    initApp();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (app && props.url) {
-      app.load_url(props.url);
-    }
+    if (app && props.url) app.load_url(props.url);
   }, [app, props.url]);
 
   useEffect(() => {
@@ -53,17 +61,19 @@ export default function BrushViewer(props: BrushViewerProps) {
 
   useEffect(() => {
     if (app) {
-      app.set_cam_settings(new CameraSettings(
-        undefined, // background,
-        props.speedScale,
-        props.minFocusDistance,
-        props.maxFocusDistance,
-        undefined, // min_pitch,
-        undefined, // max_pitch
-        undefined, // min_yaw,
-        undefined, // max_yaw
-        undefined, // splat_scale
-      ));
+      app.set_cam_settings(
+        new CameraSettings(
+          undefined, // background
+          props.speedScale,
+          props.minFocusDistance,
+          props.maxFocusDistance,
+          undefined, // min_pitch
+          undefined, // max_pitch
+          undefined, // min_yaw
+          undefined, // max_yaw
+          undefined, // splat_scale
+        ),
+      );
     }
   }, [app, props.url, props.speedScale, props.minFocusDistance, props.maxFocusDistance]);
 
@@ -77,23 +87,21 @@ export default function BrushViewer(props: BrushViewerProps) {
   }, [app, props.url, props.focalPoint, props.focusDistance, props.cameraRotation]);
 
   return (
-    <div style={{
-      width: '100vw',
-      height: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-    }}>
+    <div
+      style={{
+        width: '100vw',
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
       {error ? (
         <div style={{ color: '#ff6b6b' }}>Error: {error}</div>
       ) : (
         <canvas
           ref={canvasRef}
-          style={{
-            width: '100%',
-            height: '100%',
-            display: 'block'
-          }}
+          style={{ width: '100%', height: '100%', display: 'block' }}
         />
       )}
     </div>

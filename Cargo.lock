@@ -963,7 +963,6 @@ dependencies = [
  "tracing-tracy",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-logger",
  "web-sys",
  "web-time",
  "wgpu",
@@ -1081,10 +1080,23 @@ name = "brush-js"
 version = "0.3.0"
 dependencies = [
  "brush-process",
+ "brush-render",
+ "brush-vfs",
+ "burn",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
+ "log",
+ "rrfd",
+ "serde",
+ "serde-wasm-bindgen",
+ "tokio",
+ "tokio-stream",
+ "tokio_with_wasm",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-logger",
+ "web-sys",
+ "wgpu",
 ]
 
 [[package]]
@@ -6183,7 +6195,6 @@ checksum = "96a1fe2275b68991faded2c80aa4a33dba398b77d276038b8f50701a22e55918"
 [[package]]
 name = "naga"
 version = "29.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v29#9b65f9ecde148f1e6f7e240e6e65c1b850e13bb1"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -6940,15 +6951,6 @@ name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "ordered-float"
-version = "5.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7d950ca161dc355eaf28f82b11345ed76c6e1f6eb1f4f4479e0323b9e2fbd0e"
 dependencies = [
  "num-traits",
 ]
@@ -9372,6 +9374,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "serde_bytes"
 version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10069,7 +10082,7 @@ dependencies = [
  "nix",
  "num-derive",
  "num-traits",
- "ordered-float 4.6.0",
+ "ordered-float",
  "pest",
  "pest_derive",
  "phf",
@@ -11586,7 +11599,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f2ab60e120fd6eaa68d9567f3226e876684639d22a4219b313ff69ec0ccd5ac"
 dependencies = [
  "log",
- "ordered-float 4.6.0",
+ "ordered-float",
  "strsim",
  "thiserror 1.0.69",
  "wezterm-dynamic-derive",
@@ -11619,7 +11632,6 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "29.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v29#9b65f9ecde148f1e6f7e240e6e65c1b850e13bb1"
 dependencies = [
  "arrayvec",
  "bitflags 2.11.1",
@@ -11648,7 +11660,6 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "29.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v29#9b65f9ecde148f1e6f7e240e6e65c1b850e13bb1"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -11681,7 +11692,6 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "29.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v29#9b65f9ecde148f1e6f7e240e6e65c1b850e13bb1"
 dependencies = [
  "wgpu-hal",
 ]
@@ -11689,7 +11699,6 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "29.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v29#9b65f9ecde148f1e6f7e240e6e65c1b850e13bb1"
 dependencies = [
  "wgpu-hal",
 ]
@@ -11697,7 +11706,6 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-wasm"
 version = "29.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v29#9b65f9ecde148f1e6f7e240e6e65c1b850e13bb1"
 dependencies = [
  "wgpu-hal",
 ]
@@ -11705,7 +11713,6 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "29.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v29#9b65f9ecde148f1e6f7e240e6e65c1b850e13bb1"
 dependencies = [
  "wgpu-hal",
 ]
@@ -11713,7 +11720,6 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "29.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v29#9b65f9ecde148f1e6f7e240e6e65c1b850e13bb1"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -11742,7 +11748,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
  "once_cell",
- "ordered-float 5.3.0",
+ "ordered-float",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
@@ -11765,7 +11771,6 @@ dependencies = [
 [[package]]
 name = "wgpu-naga-bridge"
 version = "29.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v29#9b65f9ecde148f1e6f7e240e6e65c1b850e13bb1"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -11774,7 +11779,6 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "29.0.1"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=v29#9b65f9ecde148f1e6f7e240e6e65c1b850e13bb1"
 dependencies = [
  "bitflags 2.11.1",
  "bytemuck",

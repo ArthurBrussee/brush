@@ -22,6 +22,11 @@ pub struct DirectoryHandle {
 }
 
 impl DirectoryHandle {
+    /// Wrap a `FileSystemDirectoryHandle` obtained from JS (e.g. `showDirectoryPicker`).
+    pub fn from_handle(handle: web_sys::FileSystemDirectoryHandle) -> Self {
+        Self { handle }
+    }
+
     /// Get a file handle for the given path within this directory.
     /// The path can contain subdirectories (e.g., "subdir/file.txt").
     pub async fn get_file(&self, path: &std::path::Path) -> Result<web_sys::File, PickFileError> {

@@ -1,7 +1,6 @@
 use brush_process::DataSource;
 use brush_process::{create_process, cubecl_startup};
 use glam::{EulerRot, Quat, Vec3};
-use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 use crate::ui::UiMode;
@@ -78,7 +77,10 @@ impl EmbeddedApp {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         #[cfg(debug_assertions)]
-        wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
+        crate::ui::log_panel::install_global_logger(
+            Box::new(crate::ui::log_panel::ConsoleLogger),
+            log::LevelFilter::Info,
+        );
 
         cubecl_startup();
 
@@ -87,25 +89,15 @@ impl EmbeddedApp {
         }
     }
 
-    /// Call this once from JavaScript to start your app.
+    /// Call this once from JavaScript to start the app, attaching it to the
+    /// given canvas. Pass the `HTMLCanvasElement` directly to avoid id-based
+    /// races with frameworks (e.g. React `StrictMode`) that mount twice.
     #[wasm_bindgen]
-    pub async fn start(&self, canvas_name: &str) -> Result<(), wasm_bindgen::JsValue> {
+    pub async fn start(
+        &self,
+        canvas: web_sys::HtmlCanvasElement,
+    ) -> Result<(), wasm_bindgen::JsValue> {
         let wgpu_options = crate::ui::create_egui_options();
-        let document = web_sys::window()
-            .ok_or_else(|| JsValue::from_str("Failed to get window"))?
-            .document()
-            .ok_or_else(|| JsValue::from_str("Failed to get document"))?;
-        let canvas = document
-            .get_element_by_id(canvas_name)
-            .ok_or_else(|| {
-                JsValue::from_str(&format!("Failed to find canvas with id: {canvas_name}"))
-            })?
-            .dyn_into::<web_sys::HtmlCanvasElement>()
-            .map_err(|_e| {
-                JsValue::from_str(&format!(
-                    "Found canvas {canvas_name} was in fact not a canvas"
-                ))
-            })?;
         self.runner
             .start(
                 canvas,
@@ -125,7 +117,7 @@ impl EmbeddedApp {
         if let Some(app) = self.runner.app_mut::<App>() {
             app.context().connect_to_process(create_process(
                 DataSource::Url(url.to_owned()),
-                async move |init| init,
+                async move |init| Some(init),
             ));
         }
     }
