@@ -2,7 +2,16 @@ enable f16;
 #import helpers
 
 @group(0) @binding(0) var<storage, read> compact_gid_from_isect: array<u32>;
-@group(0) @binding(1) var<storage, read> tile_offsets: array<u32>;
+// In the bwd path the forward shrinks tile_offsets[tile*2+1] to "one past
+// the last splat that any pixel actually consumed" so the backward kernel's
+// outer loop can stop early. The forward already loaded its own copy of
+// the range into `range_uniform` before any write, so the in-place mutation
+// is safe within the kernel.
+#ifdef BWD_INFO
+    @group(0) @binding(1) var<storage, read_write> tile_offsets: array<u32>;
+#else
+    @group(0) @binding(1) var<storage, read> tile_offsets: array<u32>;
+#endif
 @group(0) @binding(2) var<storage, read> projected: array<helpers::ProjectedSplat>;
 
 #ifdef BWD_INFO
@@ -28,6 +37,14 @@ var<workgroup> local_batch: array<helpers::ProjectedSplat, helpers::TILE_SIZE>;
 // every remaining thread would no-op anyway, so skipping the load+barrier
 // pair changes nothing about the output.
 var<workgroup> num_done_atomic: atomic<u32>;
+
+#ifdef BWD_INFO
+// Tile-wide max of the (one-past) intersection index any pixel actually
+// consumed. We feed this back into tile_offsets so the backward kernel's
+// outer loop runs over a tighter range. atomicMax against this from each
+// pixel gives the right tile-wide value with no additional barriers.
+var<workgroup> max_useful_isect: atomic<u32>;
+#endif
 
 // kernel function for rasterizing each tile
 // each thread treats a single pixel
@@ -62,9 +79,18 @@ fn main(
     var T = 1.0;
     var pix_out = vec3f(0.0);
     var done = !inside;
+    // Per-pixel "one past last consumed isect index". Updated whenever a
+    // splat actually contributes to this pixel; at end-of-kernel reduced
+    // workgroup-wide to shrink tile_offsets for the backward.
+    var last_useful_isect: u32 = range.x;
 
     // Seed the workgroup-wide done counter with off-image pixels.
-    if local_idx == 0u { atomicStore(&num_done_atomic, 0u); }
+    if local_idx == 0u {
+        atomicStore(&num_done_atomic, 0u);
+        #ifdef BWD_INFO
+            atomicStore(&max_useful_isect, range.x);
+        #endif
+    }
     workgroupBarrier();
     if done { atomicAdd(&num_done_atomic, 1u); }
     workgroupBarrier();
@@ -124,6 +150,10 @@ fn main(
                 let color_rgb = max(vec3f(f32(proj.color_r), f32(proj.color_g), f32(proj.color_b)), vec3f(0.0));
                 pix_out += color_rgb * vis;
                 T = next_T;
+                // (batch_start + t) is the isect index of the splat we
+                // just consumed; +1 gives the exclusive end the backward
+                // wants in tile_offsets[tile*2+1].
+                last_useful_isect = batch_start + t + 1u;
             }
         }
         if !was_done && done {
@@ -144,4 +174,14 @@ fn main(
             out_img[pix_id] = packed;
         #endif
     }
+
+    // Reduce per-pixel `last_useful_isect` workgroup-wide and shrink
+    // tile_offsets[tile*2+1] for the backward.
+    #ifdef BWD_INFO
+        atomicMax(&max_useful_isect, last_useful_isect);
+        workgroupBarrier();
+        if local_idx == 0u {
+            tile_offsets[tile_id * 2u + 1u] = atomicLoad(&max_useful_isect);
+        }
+    #endif
 }

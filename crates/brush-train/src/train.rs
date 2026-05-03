@@ -9,7 +9,7 @@ use crate::{
 };
 
 use brush_dataset::scene::SceneBatch;
-use brush_fused_ssim::fused_ssim;
+use brush_fused_ssim::fused_image_loss;
 use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
@@ -168,35 +168,26 @@ impl SplatTrainer {
             Tensor::from_primitive(TensorPrimitive::Float(render_aux.max_radius));
 
         let loss = trace_span!("Calculate losses").in_scope(|| {
-            let l1_rgb = (pred_rgb.clone() - gt_rgb.clone()).abs();
-
-            // Mean is linear, so for non-Masked alpha modes we can take per-term
-            // means and combine scalars instead of building an [H, W, 3] combined
-            // error tensor. Saves a few full-image elementwise ops in the
-            // forward+backward at no precision cost (same accumulation order at
-            // the per-image level — the subsequent scalar arithmetic is
-            // vacuously identical).
+            // Brush's RGB loss is `(1 - w) * L1 - w * SSIM` per pixel. The
+            // fused L1+SSIM kernel computes that combined error in a single
+            // pass (one shared-mem load of pred and gt) instead of the
+            // previous `(pred - gt).abs() + fused_ssim(...)` chain that
+            // materialised two intermediate `[H, W, 3]` tensors.
             let masked_alpha = has_alpha && batch.alpha_mode == AlphaMode::Masked;
 
+            let (l1_w, ssim_w) = if self.ssim_enabled {
+                (1.0 - self.config.ssim_weight, -self.config.ssim_weight)
+            } else {
+                (1.0, 0.0)
+            };
+
             let loss = if masked_alpha {
-                // Need per-pixel error to multiply by the alpha mask, so
-                // fall back to the per-pixel composition.
-                let total_err = if self.ssim_enabled {
-                    let ssim_err = fused_ssim(pred_rgb.clone(), gt_rgb.clone());
-                    l1_rgb * (1.0 - self.config.ssim_weight) - (ssim_err * self.config.ssim_weight)
-                } else {
-                    l1_rgb
-                };
+                let total_err = fused_image_loss(pred_rgb.clone(), gt_rgb.clone(), l1_w, ssim_w);
                 let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
                 (total_err * alpha_input).mean()
             } else {
-                let l1_mean = l1_rgb.mean();
-                let mut loss = if self.ssim_enabled {
-                    let ssim_mean = fused_ssim(pred_rgb.clone(), gt_rgb.clone()).mean();
-                    l1_mean * (1.0 - self.config.ssim_weight) - ssim_mean * self.config.ssim_weight
-                } else {
-                    l1_mean
-                };
+                let mut loss =
+                    fused_image_loss(pred_rgb.clone(), gt_rgb.clone(), l1_w, ssim_w).mean();
                 if has_alpha {
                     let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
                     let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);

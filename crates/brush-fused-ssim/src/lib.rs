@@ -105,21 +105,19 @@ mod kernels {
         F::new(comptime![GAUSS[i as usize]])
     }
 
-    /// Forward kernel: writes SSIM map per pixel and (when training) the three
-    /// partial derivative tensors used by the backward pass.
-    // The cubek macro emits `x = x + y` patterns inside its expansion of the
-    // launch glue; clippy can't see through to suppress them itself.
     #[allow(clippy::assign_op_pattern)]
     #[cube(launch_unchecked)]
     pub fn fused_ssim_forward_kernel<F: Float>(
         img1: &Tensor<F>,
         img2: &Tensor<F>,
-        ssim_map: &mut Tensor<F>,
+        loss_map: &mut Tensor<F>,
         dm_dmu1: &mut Tensor<F>,
         dm_dsigma1_sq: &mut Tensor<F>,
         dm_dsigma12: &mut Tensor<F>,
         h: u32,
         w: u32,
+        l1_weight: f32,
+        ssim_weight: f32,
         #[comptime] train: bool,
     ) {
         let c = CUBE_POS_Z;
@@ -246,7 +244,17 @@ mod kernels {
             let val = F::min(F::cast_from(1.0_f32), F::max(F::cast_from(-1.0_f32), raw));
 
             let global_idx = (c * h * w + pix_y * w + pix_x) as usize;
-            ssim_map[global_idx] = val;
+
+            // Center-pixel L1. mu1, mu2 are blurred — for L1 we want raw
+            // pixel values, which already live in `s_tile` with the halo.
+            let center = ((UNIT_POS_Y + HALO) * SHARED_X + (UNIT_POS_X + HALO)) as usize;
+            let p1_center = s_tile[center * 2];
+            let p2_center = s_tile[center * 2 + 1];
+            let l1 = F::abs(p1_center - p2_center);
+
+            let l1_w = F::cast_from(l1_weight);
+            let ssim_w = F::cast_from(ssim_weight);
+            loss_map[global_idx] = l1_w * l1 + ssim_w * val;
 
             if train {
                 let clamped = raw < F::cast_from(-1.0_f32) || raw > F::cast_from(1.0_f32);
@@ -273,8 +281,12 @@ mod kernels {
         }
     }
 
-    /// Backward kernel: takes upstream gradient `dl_dmap` and the three saved
-    /// partial derivatives, plus `img1` and `img2`, and writes `dl_dimg1`.
+    /// Backward kernel for the combined L1 + SSIM loss. Takes upstream
+    /// gradient `dl_dmap = dL/d(loss_map)` and reproduces the chain
+    /// through both terms: SSIM via the saved partials and the gaussian
+    /// convolution, L1 via `sign(img1 - img2) * dL/d(loss_map)` at the
+    /// same pixel. Both contributions are scaled by their respective
+    /// weights and summed before write.
     #[allow(clippy::assign_op_pattern)]
     #[cube(launch_unchecked)]
     pub fn fused_ssim_backward_kernel<F: Float>(
@@ -287,6 +299,8 @@ mod kernels {
         dl_dimg1: &mut Tensor<F>,
         h: u32,
         w: u32,
+        l1_weight: f32,
+        ssim_weight: f32,
     ) {
         let c = CUBE_POS_Z;
         let tile_y0 = CUBE_POS_Y * BLOCK_Y;
@@ -380,7 +394,24 @@ mod kernels {
             let idx = (c * h * w + pix_y * w + pix_x) as usize;
             let p1 = img1[idx];
             let p2 = img2[idx];
-            dl_dimg1[idx] = s0 + (F::cast_from(2.0_f32) * p1) * s1 + p2 * s2;
+            // SSIM gradient via the existing chain rule.
+            let ssim_grad = s0 + (F::cast_from(2.0_f32) * p1) * s1 + p2 * s2;
+            // L1 gradient: sign(p1 - p2) * dL/d(loss_map) at this pixel.
+            // sign(0) = 0 so exactly-equal pixels don't pull either way.
+            let diff = p1 - p2;
+            let zero = F::cast_from(0.0_f32);
+            let one = F::cast_from(1.0_f32);
+            let l1_sign = if diff > zero {
+                one
+            } else if diff < zero {
+                F::cast_from(-1.0_f32)
+            } else {
+                zero
+            };
+            let chain_center = dl_dmap[idx];
+            let l1_w = F::cast_from(l1_weight);
+            let ssim_w = F::cast_from(ssim_weight);
+            dl_dimg1[idx] = ssim_w * ssim_grad + l1_w * l1_sign * chain_center;
         }
     }
 }
@@ -396,15 +427,19 @@ pub struct FusedSsimForward<B: Backend> {
 
 /// Backend-level operations needed by the autodiff wrapper.
 pub trait FusedSsimOps<B: Backend> {
-    /// Forward. Inputs are `[C, H, W]`. Outputs all match shape. `train`
-    /// controls whether the saved-for-backward tensors are filled.
+    /// Forward. Inputs are `[C, H, W]`. Outputs `loss_map = l1_weight *
+    /// |img1 - img2| + ssim_weight * ssim(img1, img2)` in the same shape.
+    /// `train` controls whether the saved-for-backward tensors are filled.
     fn fused_ssim_forward(
         img1: FloatTensor<B>,
         img2: FloatTensor<B>,
+        l1_weight: f32,
+        ssim_weight: f32,
         train: bool,
     ) -> FusedSsimForward<B>;
 
-    /// Backward. Returns `dL/d(img1)`. `img2` has no gradient.
+    /// Backward. Returns `dL/d(img1)` for the same weighted loss the
+    /// forward built.
     #[allow(clippy::too_many_arguments)]
     fn fused_ssim_backward(
         img1: FloatTensor<B>,
@@ -413,6 +448,8 @@ pub trait FusedSsimOps<B: Backend> {
         dm_dmu1: FloatTensor<B>,
         dm_dsigma1_sq: FloatTensor<B>,
         dm_dsigma12: FloatTensor<B>,
+        l1_weight: f32,
+        ssim_weight: f32,
     ) -> FloatTensor<B>;
 }
 
@@ -426,9 +463,12 @@ fn alloc_zeros<R: CubeRuntime>(template: &CubeTensor<R>) -> CubeTensor<R> {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn launch_forward<R: CubeRuntime>(
     img1: CubeTensor<R>,
     img2: CubeTensor<R>,
+    l1_weight: f32,
+    ssim_weight: f32,
     train: bool,
 ) -> (CubeTensor<R>, CubeTensor<R>, CubeTensor<R>, CubeTensor<R>) {
     use burn_cubecl::cubecl;
@@ -471,6 +511,8 @@ fn launch_forward<R: CubeRuntime>(
             dm_dsigma12.clone().into_tensor_arg(),
             h as u32,
             w as u32,
+            l1_weight,
+            ssim_weight,
             train,
         );
     }
@@ -486,6 +528,8 @@ fn launch_backward<R: CubeRuntime>(
     dm_dmu1: CubeTensor<R>,
     dm_dsigma1_sq: CubeTensor<R>,
     dm_dsigma12: CubeTensor<R>,
+    l1_weight: f32,
+    ssim_weight: f32,
 ) -> CubeTensor<R> {
     use burn_cubecl::cubecl;
     use cubecl::prelude::{CubeCount, CubeDim};
@@ -525,6 +569,8 @@ fn launch_backward<R: CubeRuntime>(
             dl_dimg1.clone().into_tensor_arg(),
             h as u32,
             w as u32,
+            l1_weight,
+            ssim_weight,
         );
     }
 
@@ -537,9 +583,12 @@ impl FusedSsimOps<Self> for MainBackendBase {
     fn fused_ssim_forward(
         img1: FloatTensor<Self>,
         img2: FloatTensor<Self>,
+        l1_weight: f32,
+        ssim_weight: f32,
         train: bool,
     ) -> FusedSsimForward<Self> {
-        let (map, dm_dmu1, dm_dsigma1_sq, dm_dsigma12) = launch_forward(img1, img2, train);
+        let (map, dm_dmu1, dm_dsigma1_sq, dm_dsigma12) =
+            launch_forward(img1, img2, l1_weight, ssim_weight, train);
         FusedSsimForward {
             map,
             dm_dmu1,
@@ -555,8 +604,19 @@ impl FusedSsimOps<Self> for MainBackendBase {
         dm_dmu1: FloatTensor<Self>,
         dm_dsigma1_sq: FloatTensor<Self>,
         dm_dsigma12: FloatTensor<Self>,
+        l1_weight: f32,
+        ssim_weight: f32,
     ) -> FloatTensor<Self> {
-        launch_backward(img1, img2, dl_dmap, dm_dmu1, dm_dsigma1_sq, dm_dsigma12)
+        launch_backward(
+            img1,
+            img2,
+            dl_dmap,
+            dm_dmu1,
+            dm_dsigma1_sq,
+            dm_dsigma12,
+            l1_weight,
+            ssim_weight,
+        )
     }
 }
 
@@ -566,11 +626,15 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
     fn fused_ssim_forward(
         img1: FloatTensor<Self>,
         img2: FloatTensor<Self>,
+        l1_weight: f32,
+        ssim_weight: f32,
         train: bool,
     ) -> FusedSsimForward<Self> {
         #[derive(Debug)]
         struct CustomOp {
             desc: CustomOpIr,
+            l1_weight: f32,
+            ssim_weight: f32,
             train: bool,
         }
         impl Operation<FusionCubeRuntime<WgpuRuntime>> for CustomOp {
@@ -584,6 +648,8 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
                 let out = <MainBackendBase as FusedSsimOps<MainBackendBase>>::fused_ssim_forward(
                     h.get_float_tensor::<MainBackendBase>(img1),
                     h.get_float_tensor::<MainBackendBase>(img2),
+                    self.l1_weight,
+                    self.ssim_weight,
                     self.train,
                 );
                 h.register_float_tensor::<MainBackendBase>(&map.id, out.map);
@@ -611,6 +677,8 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
         );
         let op = CustomOp {
             desc: desc.clone(),
+            l1_weight,
+            ssim_weight,
             train,
         };
 
@@ -634,10 +702,14 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
         dm_dmu1: FloatTensor<Self>,
         dm_dsigma1_sq: FloatTensor<Self>,
         dm_dsigma12: FloatTensor<Self>,
+        l1_weight: f32,
+        ssim_weight: f32,
     ) -> FloatTensor<Self> {
         #[derive(Debug)]
         struct CustomOp {
             desc: CustomOpIr,
+            l1_weight: f32,
+            ssim_weight: f32,
         }
         impl Operation<FusionCubeRuntime<WgpuRuntime>> for CustomOp {
             fn execute(
@@ -654,6 +726,8 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
                     h.get_float_tensor::<MainBackendBase>(dm_dmu1),
                     h.get_float_tensor::<MainBackendBase>(dm_dsigma1_sq),
                     h.get_float_tensor::<MainBackendBase>(dm_dsigma12),
+                    self.l1_weight,
+                    self.ssim_weight,
                 );
                 h.register_float_tensor::<MainBackendBase>(&dl_dimg1.id, out);
             }
@@ -671,7 +745,11 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
             &inputs.map(|t| t.into_ir()),
             &[dl_dimg1_out],
         );
-        let op = CustomOp { desc: desc.clone() };
+        let op = CustomOp {
+            desc: desc.clone(),
+            l1_weight,
+            ssim_weight,
+        };
 
         let outputs = client
             .register(stream, OperationIr::Custom(desc), op)
@@ -693,6 +771,8 @@ struct FusedSsimState<B: Backend> {
     dm_dmu1: FloatTensor<B>,
     dm_dsigma1_sq: FloatTensor<B>,
     dm_dsigma12: FloatTensor<B>,
+    l1_weight: f32,
+    ssim_weight: f32,
 }
 
 impl<B: Backend + FusedSsimOps<B>> Backward<B, 1> for FusedSsimBackward {
@@ -716,6 +796,8 @@ impl<B: Backend + FusedSsimOps<B>> Backward<B, 1> for FusedSsimBackward {
             state.dm_dmu1,
             state.dm_dsigma1_sq,
             state.dm_dsigma12,
+            state.l1_weight,
+            state.ssim_weight,
         );
 
         if let Some(node) = img1_parent {
@@ -724,14 +806,17 @@ impl<B: Backend + FusedSsimOps<B>> Backward<B, 1> for FusedSsimBackward {
     }
 }
 
-/// Fused SSIM forward+backward in cubecl. Drop-in replacement for a
-/// conv2d-based SSIM loss. `img1` is differentiable; `img2` is treated
-/// as a constant (no gradient computed).
+/// Combined L1 + SSIM image loss in a single fused kernel.
 ///
-/// Inputs are `[H, W, C]` to match the existing `Ssim::ssim` signature.
-pub fn fused_ssim<B, C>(
+/// Returns a `[H, W, C]` per-pixel map of `l1_weight * |img1 - img2| +
+/// ssim_weight * ssim(img1, img2)`. The caller reduces with `.mean()` to
+/// get the scalar loss; backward routes the upstream gradient through
+/// both terms in one shader pass.
+pub fn fused_image_loss<B, C>(
     img1: Tensor<Autodiff<B, C>, 3>,
     img2: Tensor<Autodiff<B, C>, 3>,
+    l1_weight: f32,
+    ssim_weight: f32,
 ) -> Tensor<Autodiff<B, C>, 3>
 where
     B: Backend + FusedSsimOps<B>,
@@ -753,7 +838,13 @@ where
     let train = matches!(prep, OpsKind::Tracked(_));
     let img1_p = img1_inner.primitive;
     let img2_p = img2_inner.primitive;
-    let out = B::fused_ssim_forward(img1_p.clone(), img2_p.clone(), train);
+    let out = B::fused_ssim_forward(
+        img1_p.clone(),
+        img2_p.clone(),
+        l1_weight,
+        ssim_weight,
+        train,
+    );
 
     let map_p = match prep {
         OpsKind::Tracked(prep) => {
@@ -763,6 +854,8 @@ where
                 dm_dmu1: out.dm_dmu1,
                 dm_dsigma1_sq: out.dm_dsigma1_sq,
                 dm_dsigma12: out.dm_dsigma12,
+                l1_weight,
+                ssim_weight,
             };
             prep.finish(state, out.map)
         }
@@ -772,6 +865,17 @@ where
     let map: Tensor<Autodiff<B, C>, 3> = Tensor::from_primitive(TensorPrimitive::Float(map_p));
     // Permute back to [H, W, C].
     map.permute([1, 2, 0])
+}
+
+pub fn fused_ssim<B, C>(
+    img1: Tensor<Autodiff<B, C>, 3>,
+    img2: Tensor<Autodiff<B, C>, 3>,
+) -> Tensor<Autodiff<B, C>, 3>
+where
+    B: Backend + FusedSsimOps<B>,
+    C: CheckpointStrategy,
+{
+    fused_image_loss(img1, img2, 0.0, 1.0)
 }
 
 /// Forward-only fused SSIM for non-differentiable backends, used by eval.
@@ -787,7 +891,8 @@ where
 
     let img1_p = img1_chw.into_primitive().tensor();
     let img2_p = img2_chw.into_primitive().tensor();
-    let out = B::fused_ssim_forward(img1_p, img2_p, false);
+    // Pure SSIM map for eval: l1_weight = 0, ssim_weight = 1.
+    let out = B::fused_ssim_forward(img1_p, img2_p, 0.0, 1.0, false);
 
     let map: Tensor<B, 3> = Tensor::from_primitive(TensorPrimitive::Float(out.map));
     map.permute([1, 2, 0])
