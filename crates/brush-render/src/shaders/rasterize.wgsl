@@ -176,8 +176,7 @@ fn main(
     }
 
     // Reduce per-pixel `last_useful_isect` workgroup-wide and shrink
-    // tile_offsets[tile*2+1] for the backward. Only relevant on the bwd
-    // path — the inference path doesn't read it back.
+    // tile_offsets[tile*2+1] for the backward.
     #ifdef BWD_INFO
         atomicMax(&max_useful_isect, last_useful_isect);
         workgroupBarrier();

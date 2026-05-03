@@ -11,23 +11,23 @@
 use brush_render::MainBackendBase;
 use burn::{
     backend::{
+        Autodiff,
         autodiff::{
             checkpoint::{base::Checkpointer, strategy::CheckpointStrategy},
             grads::Gradients,
             ops::{Backward, Ops, OpsKind},
         },
         wgpu::WgpuRuntime,
-        Autodiff,
     },
     prelude::Backend,
-    tensor::{ops::FloatTensor, DType, Shape, Tensor, TensorMetadata, TensorPrimitive},
+    tensor::{DType, Shape, Tensor, TensorMetadata, TensorPrimitive, ops::FloatTensor},
 };
 use burn_cubecl::{
-    fusion::FusionCubeRuntime, kernel::into_contiguous, tensor::CubeTensor, CubeRuntime,
+    CubeRuntime, fusion::FusionCubeRuntime, kernel::into_contiguous, tensor::CubeTensor,
 };
 use burn_fusion::{
-    stream::{Operation, OperationStreams},
     Fusion, FusionHandle,
+    stream::{Operation, OperationStreams},
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 
@@ -105,15 +105,6 @@ mod kernels {
         F::new(comptime![GAUSS[i as usize]])
     }
 
-    /// Forward kernel: writes a per-pixel `loss = l1_weight * |img1 - img2|
-    /// + ssim_weight * ssim_map` map and (when training) the three partial
-    /// derivative tensors used by the backward pass.
-    ///
-    /// To recover SSIM-only behaviour (eval) pass `l1_weight = 0,
-    /// ssim_weight = 1`. To compute Brush's `(1 - w) * L1 - w * SSIM`
-    /// training loss, pass `l1_weight = 1 - w, ssim_weight = -w`.
-    // The cubek macro emits `x = x + y` patterns inside its expansion of the
-    // launch glue; clippy can't see through to suppress them itself.
     #[allow(clippy::assign_op_pattern)]
     #[cube(launch_unchecked)]
     pub fn fused_ssim_forward_kernel<F: Float>(
@@ -448,7 +439,7 @@ pub trait FusedSsimOps<B: Backend> {
     ) -> FusedSsimForward<B>;
 
     /// Backward. Returns `dL/d(img1)` for the same weighted loss the
-    /// forward built. `img2` has no gradient.
+    /// forward built.
     #[allow(clippy::too_many_arguments)]
     fn fused_ssim_backward(
         img1: FloatTensor<B>,
@@ -821,10 +812,6 @@ impl<B: Backend + FusedSsimOps<B>> Backward<B, 1> for FusedSsimBackward {
 /// ssim_weight * ssim(img1, img2)`. The caller reduces with `.mean()` to
 /// get the scalar loss; backward routes the upstream gradient through
 /// both terms in one shader pass.
-///
-/// To recover plain SSIM (eval), pass `l1_weight = 0, ssim_weight = 1`.
-/// For Brush's `(1 - w) * L1 - w * SSIM` training loss, pass
-/// `l1_weight = 1 - w, ssim_weight = -w`.
 pub fn fused_image_loss<B, C>(
     img1: Tensor<Autodiff<B, C>, 3>,
     img2: Tensor<Autodiff<B, C>, 3>,
@@ -880,7 +867,6 @@ where
     map.permute([1, 2, 0])
 }
 
-/// Drop-in replacement for the old SSIM-only path: returns the SSIM map.
 pub fn fused_ssim<B, C>(
     img1: Tensor<Autodiff<B, C>, 3>,
     img2: Tensor<Autodiff<B, C>, 3>,
