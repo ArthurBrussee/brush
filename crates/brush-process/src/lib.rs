@@ -57,6 +57,10 @@ pub async fn burn_init_setup() -> WgpuDevice {
     WgpuDevice::DefaultDevice
 }
 
+/// Initialize Burn with a wgpu setup the host already owns. Useful when
+/// integrating with an existing wgpu/WebGPU application that wants to share
+/// its device with Brush so tensor buffers can flow back into the host's
+/// render pipeline without copies.
 pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuDevice {
     let setup = burn_wgpu::WgpuSetup {
         instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()), // unused... need to fix this in Burn.
@@ -68,14 +72,6 @@ pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuD
     let burn = burn_wgpu::init_device(setup, burn_options());
     connect_device(burn.clone());
     burn
-}
-
-/// Initialize Burn with a wgpu setup the host already owns. Useful when
-/// integrating with an existing wgpu/WebGPU application that wants to share
-/// its device with Brush so tensor buffers can flow back into the host's
-/// render pipeline without copies.
-pub fn burn_init_external(adapter: Adapter, device: Device, queue: Queue) -> WgpuDevice {
-    burn_init_device(adapter, device, queue)
 }
 
 use crate::{message::ProcessMessage, slot::Slot, train_stream::train_stream};
@@ -93,11 +89,7 @@ use tokio::sync::SetOnce;
 static DEVICE: SetOnce<WgpuDevice> = SetOnce::const_new();
 
 pub(crate) fn connect_device(device: WgpuDevice) {
-    // Idempotent: hosts that re-init us (e.g. React StrictMode in dev)
-    // would otherwise panic on the second `set`. The first device wins —
-    // subsequent ones are dropped. Burn's compute server keeps the device
-    // it was constructed against, so this is consistent.
-    let _ = DEVICE.set(device);
+    DEVICE.set(device).unwrap();
 }
 
 pub async fn wait_for_device() -> &'static WgpuDevice {
@@ -116,31 +108,6 @@ pub fn create_process<
     source: DataSource,
     config_fn: Fun,
 ) -> RunningProcess {
-    create_process_inner(source, None, config_fn)
-}
-
-/// Create a running process from an already-mounted VFS. `display_name` is
-/// echoed back via `ProcessMessage::StartLoading` and shown to users; it
-/// does not affect data loading.
-pub fn create_process_from_vfs<
-    Fun: FnOnce(crate::config::TrainStreamConfig) -> Fut + SendNotWasm + 'static,
-    Fut: Future<Output = Option<crate::config::TrainStreamConfig>> + SendNotWasm,
->(
-    vfs: std::sync::Arc<brush_vfs::BrushVfs>,
-    display_name: String,
-    config_fn: Fun,
-) -> RunningProcess {
-    create_process_inner(DataSource::Path(display_name), Some(vfs), config_fn)
-}
-
-fn create_process_inner<
-    Fun: FnOnce(crate::config::TrainStreamConfig) -> Fut + SendNotWasm + 'static,
-    Fut: Future<Output = Option<crate::config::TrainStreamConfig>> + SendNotWasm,
->(
-    source: DataSource,
-    prebuilt_vfs: Option<std::sync::Arc<brush_vfs::BrushVfs>>,
-    config_fn: Fun,
-) -> RunningProcess {
     let splat_view = Slot::default();
     let splat_state_cl = splat_view.clone();
 
@@ -148,10 +115,7 @@ fn create_process_inner<
         log::info!("Starting process with source {source:?}");
         emitter.emit(ProcessMessage::NewProcess).await;
 
-        let vfs = match prebuilt_vfs {
-            Some(vfs) => vfs,
-            None => source.clone().into_vfs().await?,
-        };
+        let vfs = source.clone().into_vfs().await?;
         let vfs_counts = vfs.file_count();
 
         if vfs_counts == 0 {

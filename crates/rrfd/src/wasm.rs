@@ -16,7 +16,7 @@ use crate::PickFileError;
 
 /// A handle to a directory picked by the user via the File System Access API.
 /// Can be used to read files on demand by path.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DirectoryHandle {
     handle: web_sys::FileSystemDirectoryHandle,
 }

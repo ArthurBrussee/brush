@@ -90,8 +90,7 @@ impl EmbeddedApp {
     }
 
     /// Call this once from JavaScript to start the app, attaching it to the
-    /// given canvas. Pass the `HTMLCanvasElement` directly to avoid id-based
-    /// races with frameworks (e.g. React `StrictMode`) that mount twice.
+    /// given canvas
     #[wasm_bindgen]
     pub async fn start(
         &self,

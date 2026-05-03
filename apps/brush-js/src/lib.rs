@@ -2,16 +2,15 @@
 
 #![cfg(target_family = "wasm")]
 
-use std::sync::Arc;
-
 use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_process::slot::Slot;
-use brush_process::{ProcessStream, burn_init_setup, create_process_from_vfs, cubecl_startup};
+use brush_process::{
+    DataSource, ProcessStream, burn_init_device, burn_init_setup, create_process, cubecl_startup,
+};
 use brush_render::MainBackend;
 use brush_render::gaussian_splats::Splats;
-use brush_vfs::BrushVfs;
-use std::pin::Pin;
 use serde::Serialize;
+use std::pin::Pin;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 use wasm_bindgen::prelude::*;
@@ -219,10 +218,6 @@ impl BrushSplats {
     }
 }
 
-// -------------------------------------------------------------------------------------------
-// BrushApp + Training
-// -------------------------------------------------------------------------------------------
-
 /// Owns the Brush runtime state (wgpu device, panic hook, etc.). Holds nothing
 /// per-training-run — each [`Self::start_training_from_directory`] call
 /// returns a fresh [`Training`] you drive yourself.
@@ -268,7 +263,7 @@ impl BrushApp {
         let adapter = wgpu::webgpu_backend::WebAdapter::from_handle(adapter);
         let device = wgpu::webgpu_backend::WebDevice::from_handle(device);
         let queue = wgpu::webgpu_backend::WebQueue::from_handle(queue);
-        brush_process::burn_init_external(
+        burn_init_device(
             wgpu::Adapter::from_webgpu(adapter),
             wgpu::Device::from_webgpu(device),
             wgpu::Queue::from_webgpu(queue),
@@ -291,23 +286,23 @@ impl BrushApp {
     /// To pause, just stop pumping; the training loop back-pressures
     /// because nothing is consuming messages.
     #[wasm_bindgen(js_name = startTrainingFromDirectory)]
-    pub async fn start_training_from_directory(
+    pub fn start_training_from_directory(
         &self,
         handle: web_sys::FileSystemDirectoryHandle,
         config_fn: js_sys::Function,
-    ) -> Result<Training, JsValue> {
+    ) -> Training {
         let display_name = handle.name();
         let dir = rrfd::wasm::DirectoryHandle::from_handle(handle);
-        let vfs = Arc::new(BrushVfs::from_directory_handle(dir).await.map_err(js_err)?);
+        let source = DataSource::PickedDirectory(dir, display_name);
 
-        let process = create_process_from_vfs(vfs, display_name, async move |init| {
+        let process = create_process(source, async move |init| {
             bridge_config_callback(config_fn, init).await
         });
 
-        Ok(Training {
+        Training {
             stream: Mutex::new(process.stream),
             splat_view: process.splat_view,
-        })
+        }
     }
 }
 
@@ -342,9 +337,7 @@ impl Training {
         let mut steps_taken: u32 = 0;
         loop {
             match stream.next().await {
-                Some(Ok(ProcessMessage::TrainMessage(TrainMessage::TrainConfig { .. }))) => {
-                    continue;
-                }
+                Some(Ok(ProcessMessage::TrainMessage(TrainMessage::TrainConfig { .. }))) => {}
                 Some(Ok(msg)) => {
                     let is_step = matches!(
                         &msg,
@@ -374,10 +367,6 @@ impl Training {
             .map(|inner| BrushSplats { inner })
     }
 }
-
-// -------------------------------------------------------------------------------------------
-// Helpers
-// -------------------------------------------------------------------------------------------
 
 /// Round-trip the initial `TrainStreamConfig` through a JS async callback.
 /// Returns `None` to signal "user cancelled" — the JS callback can throw,
@@ -449,10 +438,6 @@ fn tensor_buffer_js<const D: usize>(
         .resolve_tensor_float::<MainBackendBase>(fusion_tensor);
     let resource = cube_tensor.client.get_resource(cube_tensor.handle).ok()?;
     resource.resource().buffer.as_webgpu().map(|w| w.raw_js())
-}
-
-fn js_err<E: std::fmt::Display>(e: E) -> JsValue {
-    JsValue::from_str(&format!("{e}"))
 }
 
 fn js_err_str(s: &str) -> JsValue {

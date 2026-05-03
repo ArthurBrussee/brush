@@ -11,6 +11,7 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@webgpu/types": "^0.1.69",
     "typescript": "^5.8.3",
     "vite": "^7.1.13",
     "vite-plugin-top-level-await": "^1.6.0",

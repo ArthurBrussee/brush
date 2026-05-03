@@ -6195,6 +6195,7 @@ checksum = "96a1fe2275b68991faded2c80aa4a33dba398b77d276038b8f50701a22e55918"
 [[package]]
 name = "naga"
 version = "29.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop#86132464b6b732a9b30a762f89e9037c12b024a1"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -11632,6 +11633,7 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "29.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop#86132464b6b732a9b30a762f89e9037c12b024a1"
 dependencies = [
  "arrayvec",
  "bitflags 2.11.1",
@@ -11660,6 +11662,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "29.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop#86132464b6b732a9b30a762f89e9037c12b024a1"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -11692,6 +11695,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "29.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop#86132464b6b732a9b30a762f89e9037c12b024a1"
 dependencies = [
  "wgpu-hal",
 ]
@@ -11699,6 +11703,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "29.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop#86132464b6b732a9b30a762f89e9037c12b024a1"
 dependencies = [
  "wgpu-hal",
 ]
@@ -11706,6 +11711,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-wasm"
 version = "29.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop#86132464b6b732a9b30a762f89e9037c12b024a1"
 dependencies = [
  "wgpu-hal",
 ]
@@ -11713,6 +11719,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "29.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop#86132464b6b732a9b30a762f89e9037c12b024a1"
 dependencies = [
  "wgpu-hal",
 ]
@@ -11720,6 +11727,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "29.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop#86132464b6b732a9b30a762f89e9037c12b024a1"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -11771,6 +11779,7 @@ dependencies = [
 [[package]]
 name = "wgpu-naga-bridge"
 version = "29.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop#86132464b6b732a9b30a762f89e9037c12b024a1"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -11779,6 +11788,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "29.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop#86132464b6b732a9b30a762f89e9037c12b024a1"
 dependencies = [
  "bitflags 2.11.1",
  "bytemuck",

@@ -10,10 +10,6 @@ import {
 
 import { PointRenderer, type Camera } from './point_renderer';
 
-// -------------------------------------------------------------------------------------------
-// Sidebar UI
-// -------------------------------------------------------------------------------------------
-
 const root = new Container({ flex: true });
 document.getElementById('ui')!.appendChild(root.dom);
 
@@ -118,9 +114,9 @@ async function ensureApp(): Promise<BrushApp> {
   // Brush needs the same adapter capabilities it would request itself when
   // owning its device — notably `subgroups` for the backward kernels, and
   // the maxed-out limits for large vertex / storage buffers.
-  const features = [...(adapter.features as unknown as Iterable<GPUFeatureName>)].filter(
-    (f) => f !== 'mappable-primary-buffers',
-  );
+  // `mappable-primary-buffers` is a Chrome-experimental feature that some
+  // adapters report but reject in `requestDevice` — strip it out.
+  const features = [...adapter.features].filter((f) => f !== 'mappable-primary-buffers') as GPUFeatureName[];
   const requiredLimits: Record<string, number> = {};
   for (const k in adapter.limits) {
     const v = (adapter.limits as unknown as Record<string, number>)[k];
@@ -288,7 +284,7 @@ trainBtn.on('click', async () => {
     training = null;
 
     let started = false;
-    const t = await a.startTrainingFromDirectory(dir, async (initialConfig: ConfigDoc) => {
+    const t = a.startTrainingFromDirectory(dir, async (initialConfig: ConfigDoc) => {
       const finalConfig = await showConfigPopup(initialConfig);
       if (!finalConfig) {
         // Returning null tells brush-process to abort the training stream
@@ -324,9 +320,9 @@ pauseBtn.on('click', () => {
 
 cancelBtn.on('click', () => {
   if (!training) return;
-  // Drop the training run — the pump loop will see `nextMessage` return null
-  // on its next iteration and exit. Any in-flight Burn work is cancelled
-  // when the underlying stream is dropped.
+  // Drop the training run — the pump loop will see `trainSteps` return [] on
+  // its next iteration and exit. Any in-flight Burn work is cancelled when
+  // the underlying stream is dropped.
   training.free();
   training = null;
   // If we were paused, kick the pump so it observes the cleared training.

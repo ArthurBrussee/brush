@@ -54,8 +54,7 @@ impl Log for ChainedLogger {
 }
 
 /// Install a logger that captures records for [`LogPanel`] in addition to
-/// forwarding them to `inner`. Idempotent failure: if a global logger has
-/// already been installed by the host, the call returns without panicking.
+/// forwarding them to `inner`.
 pub fn install_global_logger(inner: Box<dyn Log>, max_level: LevelFilter) {
     log::set_max_level(max_level);
     let _ = log::set_boxed_logger(Box::new(ChainedLogger { inner }));
