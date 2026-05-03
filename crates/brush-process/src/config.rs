@@ -39,7 +39,6 @@ pub struct ProcessConfig {
 
 #[derive(Parser, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[cfg(feature = "training")]
 pub struct TrainStreamConfig {
     #[clap(flatten)]
     #[serde(flatten)]
@@ -58,13 +57,8 @@ pub struct TrainStreamConfig {
     pub rerun_config: brush_rerun::RerunConfig,
 }
 
-#[cfg(feature = "training")]
 impl Default for TrainStreamConfig {
     fn default() -> Self {
         Self::parse_from([""])
     }
 }
-
-#[cfg(not(feature = "training"))]
-#[derive(Parser, Default, Clone)]
-pub struct TrainStreamConfig {}

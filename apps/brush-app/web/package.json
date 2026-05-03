@@ -1,0 +1,29 @@
+{
+  "name": "brush-app-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:wasm-dev": "wasm-pack build .. --dev --target bundler --out-dir web/pkg",
+    "build:wasm-release": "wasm-pack build .. --release --target bundler --out-dir web/pkg",
+    "dev": "npm run build:wasm-dev && vite",
+    "build": "npm run build:wasm-release && cross-env BRUSH_BASE_PATH=/brush-demo vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@types/three": "^0.175.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "three": "^0.175.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^5.0.0",
+    "cross-env": "^7.0.3",
+    "typescript": "^5.8.3",
+    "vite": "^7.1.13",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.5.0"
+  }
+}

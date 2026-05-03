@@ -1,0 +1,112 @@
+#![recursion_limit = "256"]
+
+// The desktop binary only compiles on native platforms.
+// On WASM, brush-app is used as a library (cdylib) via wasm.rs instead.
+#[cfg(not(target_family = "wasm"))]
+mod ui;
+
+#[cfg(not(target_family = "wasm"))]
+#[allow(clippy::unnecessary_wraps)]
+fn main() -> Result<(), anyhow::Error> {
+    use brush_cli::Cli;
+    use brush_process::{create_process, cubecl_startup};
+    use clap::Parser;
+
+    let args = Cli::parse().validate()?;
+
+    cubecl_startup();
+
+    #[cfg(target_family = "windows")]
+    {
+        use winapi::um::wincon::GetConsoleProcessList;
+
+        let mut buffer = [0u32; 1];
+
+        // Safety: FFI. Buffer is valid for duration of call
+        let is_console = unsafe { GetConsoleProcessList(buffer.as_mut_ptr(), 1) != 1 };
+
+        if args.with_viewer && !is_console {
+            // Safety: FFI
+            unsafe {
+                winapi::um::wincon::FreeConsole();
+            };
+        }
+    }
+
+    #[cfg(feature = "tracy")]
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        tracing::subscriber::set_global_default(
+            tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
+        )
+        .expect("Failed to set tracing subscriber");
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to initialize tokio runtime")
+        .block_on(async move {
+            let init_process = args.source.map(|source| {
+                create_process(source, {
+                    let cli_config = args.train_stream.clone();
+                    async move |init| {
+                        Some(brush_process::args_file::merge_configs(&init, &cli_config))
+                    }
+                })
+            });
+
+            if args.with_viewer {
+                use crate::ui::app::App;
+
+                let logger = env_logger::Builder::from_default_env()
+                    .target(env_logger::Target::Stdout)
+                    .build();
+                let max = logger.filter();
+                crate::ui::log_panel::install_global_logger(Box::new(logger), max);
+
+                let icon = eframe::icon_data::from_png_bytes(
+                    &include_bytes!("../assets/icon-256.png")[..],
+                )
+                .expect("Failed to load icon");
+
+                let native_options = eframe::NativeOptions {
+                    viewport: egui::ViewportBuilder::default()
+                        .with_inner_size(egui::Vec2::new(1450.0, 1200.0))
+                        .with_active(true)
+                        .with_icon(std::sync::Arc::new(icon)),
+                    wgpu_options: ui::create_egui_options(),
+                    persist_window: true,
+                    ..Default::default()
+                };
+
+                let title = if cfg!(debug_assertions) {
+                    "Brush  -  Debug"
+                } else {
+                    "Brush"
+                };
+
+                eframe::run_native(
+                    title,
+                    native_options,
+                    Box::new(move |cc| Ok(Box::new(App::new(cc, init_process)))),
+                )?;
+            } else {
+                brush_process::burn_init_setup().await;
+                brush_cli::run_cli_ui(
+                    init_process.expect("Must provide a source"),
+                    args.train_stream,
+                )
+                .await?;
+            }
+
+            anyhow::Result::<(), anyhow::Error>::Ok(())
+        })?;
+
+    Ok(())
+}
+
+// On WASM, just stub a dummy main.
+#[cfg(target_family = "wasm")]
+fn main() {}

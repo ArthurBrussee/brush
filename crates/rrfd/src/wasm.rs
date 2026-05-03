@@ -16,12 +16,17 @@ use crate::PickFileError;
 
 /// A handle to a directory picked by the user via the File System Access API.
 /// Can be used to read files on demand by path.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DirectoryHandle {
     handle: web_sys::FileSystemDirectoryHandle,
 }
 
 impl DirectoryHandle {
+    /// Wrap a `FileSystemDirectoryHandle` obtained from JS (e.g. `showDirectoryPicker`).
+    pub fn from_handle(handle: web_sys::FileSystemDirectoryHandle) -> Self {
+        Self { handle }
+    }
+
     /// Get a file handle for the given path within this directory.
     /// The path can contain subdirectories (e.g., "subdir/file.txt").
     pub async fn get_file(&self, path: &std::path::Path) -> Result<web_sys::File, PickFileError> {

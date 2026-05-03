@@ -8,7 +8,6 @@ license.workspace = true
 
 [features]
 debug-validation = ["brush-train/debug-validation"]
-training = ["dep:brush-train", "dep:brush-dataset", "dep:brush-rerun", "brush-serde/export"]
 
 [dependencies]
 brush-render.path = "../brush-render"
@@ -39,9 +38,9 @@ tokio = { workspace = true, features = ["io-util", "rt"] }
 tokio-stream.workspace = true
 tokio_with_wasm.workspace = true
 
-brush-train = { path = "../brush-train", optional = true }
-brush-dataset = { path = "../brush-dataset", optional = true }
-brush-rerun = { path = "../brush-rerun", optional = true }
+brush-train = { path = "../brush-train" }
+brush-dataset = { path = "../brush-dataset"}
+brush-rerun = { path = "../brush-rerun" }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

@@ -555,7 +555,7 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
     Ok(())
 }
 
-#[cfg(all(test, feature = "export"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::export::splat_to_ply;

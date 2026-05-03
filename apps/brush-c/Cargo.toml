@@ -1,0 +1,23 @@
+[package]
+name = "brush-c"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+
+[lib]
+name = "brush_c"
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[dependencies]
+brush-process.path = "../../crates/brush-process"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
+tokio-stream.workspace = true
+
+[dev-dependencies]
+tempfile = "3.23.0"
+
+[lints]
+workspace = true

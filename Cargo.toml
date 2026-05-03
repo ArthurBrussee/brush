@@ -1,9 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/brush-app",
+    "apps/brush-app",
+    "apps/brush-c",
+    "apps/brush-cli",
+    "apps/brush-js",
+
     "crates/brush-bench-test",
-    "crates/brush-cli",
     "crates/brush-dataset",
     "crates/brush-fused-ssim",
     "crates/brush-kernel",
@@ -16,7 +19,6 @@ members = [
     "crates/brush-serde-macros",
     "crates/brush-sort",
     "crates/brush-train",
-    "crates/brush-ui",
     "crates/brush-vfs",
     "crates/brush-wgsl",
     "crates/colmap-reader",
@@ -24,7 +26,7 @@ members = [
     "crates/lpips-convert",
     "crates/rrfd",
 ]
-default-members = ["crates/brush-app"]
+default-members = ["apps/brush-app"]
 
 [workspace.package]
 edition = "2024"
@@ -311,11 +313,14 @@ needless_range_loop = "allow"
 # This doesn't quite work with Burn:
 single_range_in_vec_init = "allow"
 
-# wgpu fork with WebGPU subgroups feature mapping (needed for our backward
-# kernel's subgroupAdd/subgroupAny on web).
+# wgpu fork with WebGPU subgroups feature mapping + JS interop accessors
+# (needed for our backward kernel's subgroupAdd/subgroupAny on web, and for
+# brush-js to expose the underlying GPUDevice/GPUBuffer to JS).
 [patch.crates-io]
-wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
-wgpu-core = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
-wgpu-hal = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
-wgpu-types = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
-naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "v29" }
+wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+wgpu-core = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+wgpu-hal = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+wgpu-types = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+# To iterate locally on the wgpu fork, swap the lines above for:
+#   wgpu = { path = "../wgpu/wgpu" } (and same for wgpu-core / wgpu-hal / wgpu-types / naga)

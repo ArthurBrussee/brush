@@ -5,11 +5,6 @@ version.workspace = true
 readme.workspace = true
 license.workspace = true
 
-[features]
-default = ["import"]
-import = []
-export = []
-
 [dependencies]
 brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"

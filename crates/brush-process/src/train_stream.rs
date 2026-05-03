@@ -2,6 +2,7 @@ use crate::{
     config::TrainStreamConfig,
     message::{ProcessMessage, TrainMessage},
     slot::Slot,
+    wait_for_device,
 };
 use anyhow::Context;
 use async_fn_stream::TryStreamEmitter;
@@ -40,7 +41,6 @@ use web_time::{Duration, Instant};
 pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
     train_stream_config: TrainStreamConfig,
-    device: WgpuDevice,
     emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
     splat_slot: Slot<Splats<MainBackend>>,
 ) -> anyhow::Result<()> {
@@ -58,7 +58,8 @@ pub(crate) async fn train_stream(
     let process_config = &train_stream_config.process_config;
     log::info!("Using seed {}", process_config.seed);
 
-    <MainBackend as Backend>::seed(&device, process_config.seed);
+    let device = wait_for_device().await;
+    <MainBackend as Backend>::seed(device, process_config.seed);
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     log::info!("Loading dataset");
@@ -110,7 +111,7 @@ pub(crate) async fn train_stream(
             .render_mode
             .or(msg.meta.render_mode)
             .unwrap_or(SplatRenderMode::Default);
-        let splats = to_init_splats(msg.data, render_mode, &device);
+        let splats = to_init_splats(msg.data, render_mode, device);
         (msg.meta.up_axis, splats)
     } else {
         // Default: just use random splats
@@ -133,7 +134,7 @@ pub(crate) async fn train_stream(
             scene_scale,
             &mut rng,
             render_mode,
-            &device,
+            device,
         );
         (None, splats)
     };
@@ -157,7 +158,7 @@ pub(crate) async fn train_stream(
     emitter.emit(ProcessMessage::DoneLoading).await;
 
     // Start with memory cleared out.
-    let client = WgpuRuntime::client(&device);
+    let client = WgpuRuntime::client(device);
     client.memory_cleanup();
 
     let mut eval_scene = dataset.eval;
@@ -165,7 +166,7 @@ pub(crate) async fn train_stream(
     let mut train_duration = Duration::from_secs(0);
     let mut dataloader = SceneLoader::new(&dataset.train, 42);
     let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
-    let mut trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
+    let mut trainer = SplatTrainer::new(&train_stream_config.train_config, device, bounds);
 
     // Get the dataset name from the base path (if available) for interpolation.
     let dataset_name = vfs
@@ -243,7 +244,7 @@ pub(crate) async fn train_stream(
             log::info!("LOD {current_lod}/{lod_levels}: Computing sensitivity scores...");
             splat_slot
                 .act(0, |s: Splats<MainBackend>| async {
-                    let scores = compute_pup_scores(s.clone(), &dataset.train, &device).await;
+                    let scores = compute_pup_scores(s.clone(), &dataset.train, device).await;
                     (decimate_to_count(s, &scores, target_count).await, ())
                 })
                 .await
@@ -252,7 +253,7 @@ pub(crate) async fn train_stream(
             let after = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
             log::info!("LOD {current_lod}/{lod_levels}: {before} -> {after} splats");
 
-            let client = WgpuRuntime::client(&device);
+            let client = WgpuRuntime::client(device);
             client.memory_cleanup();
 
             let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(current_lod as i32);
@@ -265,7 +266,7 @@ pub(crate) async fn train_stream(
 
             let bounds =
                 get_splat_bounds(splat_slot.clone_main().await.unwrap(), BOUND_PERCENTILE).await;
-            trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
+            trainer = SplatTrainer::new(&train_stream_config.train_config, device, bounds);
 
             log::info!(
                 "LOD {current_lod}/{lod_levels}: Training for {lod_refine_steps} steps (image scale {:.0}%)",
@@ -341,7 +342,7 @@ pub(crate) async fn train_stream(
                 .then(|| export_path.clone());
 
             let res = run_eval(
-                &device,
+                device,
                 &emitter,
                 &visualize,
                 splat_slot.clone_main().await.unwrap(),
@@ -411,7 +412,7 @@ pub(crate) async fn train_stream(
                     .unwrap();
             }
 
-            visualize.log_memory(iter, &WgpuRuntime::client(&device).memory_usage()?)?;
+            visualize.log_memory(iter, &WgpuRuntime::client(device).memory_usage()?)?;
             if refine.num_added > 0 {
                 visualize.log_refine_stats(iter, &refine).unwrap();
             }

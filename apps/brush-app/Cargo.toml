@@ -1,0 +1,114 @@
+[package]
+name = "brush-app"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Lib for android NDK and WASM.
+[lib]
+name = "brush_app"
+crate-type = ["cdylib", "rlib"]
+
+# Bin for desktop platforms.
+[[bin]]
+name = "brush"
+path = "src/bin.rs"
+
+[features]
+tracy = ["dep:tracing-subscriber", "dep:tracing-tracy"]
+debug-validation = ["brush-render/debug-validation", "brush-process/debug-validation"]
+
+[dependencies]
+# Brush deps.
+brush-process.path = "../../crates/brush-process"
+brush-dataset.path = "../../crates/brush-dataset"
+brush-render.path = "../../crates/brush-render"
+brush-serde.path = "../../crates/brush-serde"
+
+rrfd.path = "../../crates/rrfd"
+
+
+burn-cubecl.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+
+egui.workspace = true
+eframe.workspace = true
+
+anyhow.workspace = true
+tracing.workspace = true
+log.workspace = true
+
+tracing-subscriber = { workspace = true, optional = true }
+tracing-tracy = { workspace = true, optional = true }
+
+
+serde.workspace = true
+burn.workspace = true
+burn-wgpu.workspace = true
+glam.workspace = true
+rand.workspace = true
+egui_tiles.workspace = true
+wgpu.workspace = true
+tokio_with_wasm = { workspace = true, features = ["rt"] }
+web-time.workspace = true
+humantime.workspace = true
+wasm-bindgen.workspace = true
+bytemuck = { version = "1.14", features = ["derive"] }
+
+image = { workspace = true }
+
+# On desktop platforms
+[target.'cfg(any(target_family = "unix", target_family = "windows"))'.dependencies]
+brush-cli.path = "../brush-cli"
+
+winit = { version = "0.30", features = ["default"] }
+clap.workspace = true
+env_logger.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
+
+[target.'cfg(target_family = "windows")'.dependencies]
+winapi.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { version = "0.30", features = ["android-game-activity"] }
+tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
+android_logger = "0.15.0"
+jni = "0.22"
+
+# On WASM
+[target.'cfg(target_family = "wasm")'.dependencies]
+glam.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt"] }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "HtmlCanvasElement",
+    "console",
+] }
+# wasm_js random backend needs to be enabled explicitly.
+getrandom = { version = "0.4", features = ["wasm_js"] }
+# Activate wasm_js for getrandom 0.3 as well (pulled in via `ahash` → `burn-core`).
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+tempfile = "3.23.0"
+
+[package.metadata.wasm-pack.profile.dev.wasm-bindgen]
+dwarf-debug-info = true
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+    "-Oz",
+    "--converge",
+    "--enable-bulk-memory",
+    "--enable-nontrapping-float-to-int",
+]
+
+[package.metadata.cargo-shear]
+ignored = ["getrandom", "wasm-bindgen-futures"]
+
+[lints]
+workspace = true

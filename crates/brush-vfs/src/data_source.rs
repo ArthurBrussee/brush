@@ -14,6 +14,12 @@ pub enum DataSource {
     PickDirectory,
     Url(String),
     Path(String),
+    /// A directory handle the host has already obtained (e.g. via JS
+    /// `showDirectoryPicker`). Constructed programmatically — never
+    /// (de)serialised from CLI args or saved state.
+    #[cfg(target_family = "wasm")]
+    #[serde(skip)]
+    PickedDirectory(rrfd::wasm::DirectoryHandle, String),
 }
 
 // Implement FromStr to allow Clap to parse string arguments into DataSource
@@ -38,6 +44,8 @@ impl fmt::Display for DataSource {
             Self::PickDirectory => write!(f, "Directory"),
             Self::Url(_) => write!(f, "URL"),
             Self::Path(_) => write!(f, "Path"),
+            #[cfg(target_family = "wasm")]
+            Self::PickedDirectory(_, name) => write!(f, "{name}"),
         }
     }
 }
@@ -87,6 +95,10 @@ impl DataSource {
             #[cfg(target_family = "wasm")]
             Self::Path(_) => {
                 panic!("Cannot load from filesystem path on WASM");
+            }
+            #[cfg(target_family = "wasm")]
+            Self::PickedDirectory(handle, _) => {
+                Ok(Arc::new(BrushVfs::from_directory_handle(handle).await?))
             }
         }
     }
