@@ -117,10 +117,8 @@ pub struct ScenePanel {
     last_rendered_iter: u32,
     #[serde(skip)]
     settings_popup: Option<Arc<Mutex<SettingsPopup>>>,
-    #[cfg(feature = "training")]
     #[serde(skip)]
     dataset: Option<brush_dataset::Dataset>,
-    #[cfg(feature = "training")]
     #[serde(skip)]
     pose_match_alpha: f32,
 }
@@ -350,16 +348,12 @@ impl ScenePanel {
         self.last_rendered_iter = 0;
         self.warnings.clear();
         self.seen_warning_count = 0;
-        #[cfg(feature = "training")]
-        {
-            self.dataset = None;
-            self.pose_match_alpha = 0.0;
-        }
+        self.dataset = None;
+        self.pose_match_alpha = 0.0;
     }
 
     /// Fade in letterbox/pillarbox bars while the user is sitting on a dataset
     /// reference pose, fade them back out when they nudge off it.
-    #[cfg(feature = "training")]
     fn update_and_draw_reference_pose_bars(
         &mut self,
         ui: &egui::Ui,
@@ -895,7 +889,6 @@ impl AppPane for ScenePanel {
                 settings.background = Some(glam::vec3(bg[0], bg[1], bg[2]));
                 process.set_cam_settings(&settings);
             }
-            #[cfg(feature = "training")]
             ProcessMessage::TrainMessage(brush_process::message::TrainMessage::Dataset {
                 dataset,
             }) => {
@@ -1083,7 +1076,6 @@ impl AppPane for ScenePanel {
                 }
             });
 
-            #[cfg(feature = "training")]
             self.update_and_draw_reference_pose_bars(ui, rect, &camera, delta_time);
 
             if interactive {
