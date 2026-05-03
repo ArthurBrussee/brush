@@ -1,11 +1,11 @@
 #![cfg(not(target_family = "wasm"))]
 
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use brush_c::{train_and_save, ProgressMessage, TrainExitCode, TrainOptions};
+use brush_c::{ProgressMessage, TrainExitCode, TrainOptions, train_and_save};
 
 #[repr(C)]
 struct CallbackState {

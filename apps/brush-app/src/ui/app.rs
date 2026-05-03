@@ -187,9 +187,9 @@ impl App {
     /// Check if the loaded tree has all the required panels.
     fn is_tree_valid(tree: &egui_tiles::Tree<PaneRef>) -> bool {
         fn has<F: Fn(&Pane) -> bool>(tree: &egui_tiles::Tree<PaneRef>, f: F) -> bool {
-            tree.tiles.iter().any(|(_, tile)| {
-                matches!(tile, egui_tiles::Tile::Pane(p) if f(&p.borrow()))
-            })
+            tree.tiles
+                .iter()
+                .any(|(_, tile)| matches!(tile, egui_tiles::Tile::Pane(p) if f(&p.borrow())))
         }
         has(tree, |p| matches!(p, Pane::Scene(_)))
             && has(tree, |p| matches!(p, Pane::Stats(_)))
