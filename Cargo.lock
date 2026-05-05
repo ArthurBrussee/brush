@@ -197,7 +197,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -208,7 +208,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -946,7 +946,7 @@ dependencies = [
  "env_logger",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
- "glam",
+ "glam 0.32.1",
  "humantime",
  "image",
  "jni",
@@ -994,7 +994,7 @@ dependencies = [
  "env_logger",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
- "glam",
+ "glam 0.32.1",
  "image",
  "log",
  "rand 0.10.1",
@@ -1045,7 +1045,7 @@ dependencies = [
  "clap",
  "colmap-reader",
  "getrandom 0.4.2",
- "glam",
+ "glam 0.32.1",
  "image",
  "itertools 0.14.0",
  "log",
@@ -1146,7 +1146,7 @@ dependencies = [
  "burn-wgpu",
  "clap",
  "getrandom 0.4.2",
- "glam",
+ "glam 0.32.1",
  "log",
  "rand 0.10.1",
  "serde",
@@ -1178,7 +1178,7 @@ dependencies = [
  "clap",
  "futures-lite",
  "getrandom 0.4.2",
- "glam",
+ "glam 0.32.1",
  "log",
  "serde",
  "tokio",
@@ -1199,7 +1199,7 @@ dependencies = [
  "burn-ir",
  "bytemuck",
  "futures-lite",
- "glam",
+ "glam 0.32.1",
  "log",
  "tracing",
 ]
@@ -1215,7 +1215,7 @@ dependencies = [
  "burn",
  "burn-cubecl",
  "clap",
- "glam",
+ "glam 0.32.1",
  "image",
  "rerun",
  "serde",
@@ -1232,7 +1232,7 @@ dependencies = [
  "brush-vfs",
  "burn",
  "getrandom 0.4.2",
- "glam",
+ "glam 0.32.1",
  "serde",
  "serde-ply",
  "thiserror 2.0.18",
@@ -1286,7 +1286,7 @@ dependencies = [
  "burn-cubecl",
  "clap",
  "getrandom 0.4.2",
- "glam",
+ "glam 0.32.1",
  "hashbrown 0.16.1",
  "image",
  "log",
@@ -2321,7 +2321,7 @@ dependencies = [
 name = "colmap-reader"
 version = "0.3.0"
 dependencies = [
- "glam",
+ "glam 0.32.1",
  "log",
  "tokio",
  "tokio_with_wasm",
@@ -2355,7 +2355,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3500,7 +3500,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3992,7 +3992,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4705,6 +4705,15 @@ name = "glam"
 version = "0.30.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19fc433e8437a212d1b6f1e68c7824af3aed907da60afa994e7f542d18d12aa9"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "glam"
+version = "0.32.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
 dependencies = [
  "serde_core",
 ]
@@ -5446,7 +5455,7 @@ dependencies = [
  "portable-atomic-util",
  "serde_core",
  "wasm-bindgen",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5950,7 +5959,7 @@ version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c96b82556b0d4aa25cd4771b64ef9bde7c120afb588a083fcb242bf01e4a09b"
 dependencies = [
- "glam",
+ "glam 0.30.10",
  "num-traits",
 ]
 
@@ -6390,7 +6399,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7410,7 +7419,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -8015,7 +8024,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58e90a5ea9b04f55486398ee46d53401b475fa4ffcd62433ae6b2f6af1d6d482"
 dependencies = [
  "arrow",
- "glam",
+ "glam 0.30.10",
  "half",
  "parking_lot",
  "smallvec",
@@ -8536,7 +8545,7 @@ dependencies = [
  "bytemuck",
  "document-features",
  "emath",
- "glam",
+ "glam 0.30.10",
  "half",
  "indexmap",
  "infer",
@@ -9127,7 +9136,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9737,7 +9746,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10019,7 +10028,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10038,7 +10047,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11820,7 +11829,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
