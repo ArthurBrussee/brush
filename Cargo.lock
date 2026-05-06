@@ -1071,6 +1071,7 @@ dependencies = [
  "burn-ir",
  "burn-wgpu",
  "getrandom 0.4.2",
+ "half",
  "tokio",
  "wasm-bindgen-test",
 ]

@@ -13,6 +13,7 @@ burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
 burn-wgpu.workspace = true
+half = "2"
 
 [dev-dependencies]
 brush-kernel = { path = "../brush-kernel" }

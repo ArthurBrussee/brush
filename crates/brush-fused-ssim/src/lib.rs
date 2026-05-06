@@ -1,12 +1,10 @@
-//! Fused SSIM forward + backward in cubecl.
+//! Fused L1 + SSIM image loss in cubecl.
 //!
-//! Inspired by <https://github.com/rahul-goel/fused-ssim>. Two separable
-//! 11×11 Gaussian blurs plus the full SSIM formula in one shared-memory
-//! pass.
-//!
-//! Layout: input is `[C, H, W]` contiguous (one batch). Each workgroup is
-//! 16×16 threads handling one 16×16 output tile of one channel. The
-//! workgroup grid is `(tiles_x, tiles_y, C)`.
+//! Forward computes `l1_w * |img1 - img2| + ssim_w * ssim(img1, img2)` per
+//! pixel. Backward recomputes the SSIM partials inline from img1/img2,
+//! multiplies by the upstream gradient, then applies the second gaussian
+//! blur to produce `dL/d(img1)`. No per-pixel partial-derivative tensors
+//! survive across the autograd tape.
 
 use brush_render::MainBackendBase;
 use burn::{
@@ -37,9 +35,9 @@ mod kernels {
     use burn_cubecl::cubecl::frontend::CompilationArg;
     use burn_cubecl::cubecl::frontend::CubeIndexMutExpand;
     use burn_cubecl::cubecl::prelude::*;
+    use half::f16;
 
-    // 11-tap Gaussian, sigma = 1.5. Bit-equivalent at f32 to the Brush
-    // Ssim convolutional reference (and the fused-ssim CUDA reference).
+    // 11-tap Gaussian, sigma = 1.5.
     const GAUSS: [f32; 11] = [
         0.001_028_380_1,
         0.007_598_758,
@@ -59,45 +57,44 @@ mod kernels {
     const HALO: u32 = 5;
     const SHARED_X: u32 = BLOCK_X + 2 * HALO; // 26
     const SHARED_Y: u32 = BLOCK_Y + 2 * HALO; // 26
-    const CONV_Y: u32 = SHARED_Y;
+    // Backward needs partials at every tile + halo pixel; each partial is
+    // itself a blur of img1/img2, so the bwd widens the loaded image tile
+    // by an extra halo to feed that inner blur.
+    const EXT_X: u32 = BLOCK_X + 4 * HALO; // 36
+    const EXT_Y: u32 = BLOCK_Y + 4 * HALO; // 36
 
     const C1: f32 = 0.01 * 0.01;
     const C2: f32 = 0.03 * 0.03;
 
-    /// Read `img[c, y, x]` with zero-padding for out-of-bounds.
-    /// Bounds-checked positions encoded as u32 with sentinel `u32::MAX` for OOB.
+    /// Read `img[c, y, x]` returning zero for out-of-bounds.
     #[cube]
     fn read_pix<F: Float>(img: &Tensor<F>, c: u32, y: u32, x: u32, oob: bool, h: u32, w: u32) -> F {
         if oob {
             F::cast_from(0.0_f32)
         } else {
-            let idx = (c * h * w + y * w + x) as usize;
-            img[idx]
+            img[(c * h * w + y * w + x) as usize]
         }
     }
 
-    /// Compute `(clamped y, clamped x, oob_flag)` for a tile-relative position.
-    /// `local_*` are in `0..SHARED_*` (26). Subtracting HALO=5 from
-    /// `tile_y0+local_y` can underflow at the image's top-left edge. We
-    /// detect that and saturate the address to 0 so the OOB sentinel is
-    /// safe to index even for the load that won't actually use the value.
+    /// Map a tile-local position offset by `halo` to global image coords.
+    /// Returns clamped (gy, gx) and an OOB flag the caller passes to `read_pix`.
     #[cube]
     fn coords(
         tile_y0: u32,
         tile_x0: u32,
         local_y: u32,
         local_x: u32,
+        #[comptime] halo: u32,
         h: u32,
         w: u32,
     ) -> (u32, u32, bool) {
         let total_y = tile_y0 + local_y;
         let total_x = tile_x0 + local_x;
-        let oob_under = total_y < HALO || total_x < HALO;
+        let oob_under = total_y < halo || total_x < halo;
         let zero = u32::cast_from(0u32);
-        let gy = select(oob_under, zero, total_y - HALO);
-        let gx = select(oob_under, zero, total_x - HALO);
-        let oob = oob_under || gy >= h || gx >= w;
-        (gy, gx, oob)
+        let gy = select(oob_under, zero, total_y - halo);
+        let gx = select(oob_under, zero, total_x - halo);
+        (gy, gx, oob_under || gy >= h || gx >= w)
     }
 
     #[cube]
@@ -105,20 +102,18 @@ mod kernels {
         F::new(comptime![GAUSS[i as usize]])
     }
 
+    /// Forward: produce the L1 + SSIM loss map. Two separable 11-tap blurs
+    /// over img1/img2/img1²/img2²/img1·img2, then SSIM + L1 finalize.
     #[allow(clippy::assign_op_pattern)]
     #[cube(launch_unchecked)]
     pub fn fused_ssim_forward_kernel<F: Float>(
         img1: &Tensor<F>,
         img2: &Tensor<F>,
         loss_map: &mut Tensor<F>,
-        dm_dmu1: &mut Tensor<F>,
-        dm_dsigma1_sq: &mut Tensor<F>,
-        dm_dsigma12: &mut Tensor<F>,
         h: u32,
         w: u32,
         l1_weight: f32,
         ssim_weight: f32,
-        #[comptime] train: bool,
     ) {
         let c = CUBE_POS_Z;
         let tile_y0 = CUBE_POS_Y * BLOCK_Y;
@@ -127,9 +122,8 @@ mod kernels {
         let pix_x = tile_x0 + UNIT_POS_X;
 
         let mut s_tile = SharedMemory::<F>::new((SHARED_Y * SHARED_X * 2) as usize);
-        let mut x_conv = SharedMemory::<F>::new((CONV_Y * BLOCK_X * 5) as usize);
+        let mut x_conv = SharedMemory::<F>::new((SHARED_Y * BLOCK_X * 5) as usize);
 
-        // ---- 1) Load tile + halo ----
         let thread_rank = UNIT_POS_Y * BLOCK_X + UNIT_POS_X;
         let threads = BLOCK_X * BLOCK_Y;
         let tile_size = SHARED_Y * SHARED_X;
@@ -139,65 +133,60 @@ mod kernels {
             if tid < tile_size {
                 let local_y = tid / SHARED_X;
                 let local_x = tid % SHARED_X;
-                let (gy, gx, oob) = coords(tile_y0, tile_x0, local_y, local_x, h, w);
-                let xv = read_pix::<F>(img1, c, gy, gx, oob, h, w);
-                let yv = read_pix::<F>(img2, c, gy, gx, oob, h, w);
-                s_tile[((local_y * SHARED_X + local_x) * 2u32) as usize] = xv;
-                s_tile[((local_y * SHARED_X + local_x) * 2u32 + 1u32) as usize] = yv;
+                let (gy, gx, oob) = coords(tile_y0, tile_x0, local_y, local_x, HALO, h, w);
+                let base = ((local_y * SHARED_X + local_x) * 2u32) as usize;
+                s_tile[base] = read_pix::<F>(img1, c, gy, gx, oob, h, w);
+                s_tile[base + 1] = read_pix::<F>(img2, c, gy, gx, oob, h, w);
             }
         }
         sync_cube();
 
-        // ---- 2) Horizontal 11x1 ----
-        {
-            let lx = UNIT_POS_X + HALO;
-            #[unroll]
-            for pass in 0u32..2u32 {
-                let ly = UNIT_POS_Y + pass * BLOCK_Y;
-                if ly < CONV_Y {
-                    let mut sum_x = F::cast_from(0.0_f32);
-                    let mut sum_x2 = F::cast_from(0.0_f32);
-                    let mut sum_y = F::cast_from(0.0_f32);
-                    let mut sum_y2 = F::cast_from(0.0_f32);
-                    let mut sum_xy = F::cast_from(0.0_f32);
-
-                    #[unroll]
-                    for d in 1u32..6u32 {
-                        let w_l = gw::<F>(comptime![5u32 - d]);
-                        let il = (ly * SHARED_X + (lx - d)) as usize;
-                        let ir = (ly * SHARED_X + (lx + d)) as usize;
-                        let xl = s_tile[il * 2];
-                        let yl = s_tile[il * 2 + 1];
-                        let xr = s_tile[ir * 2];
-                        let yr = s_tile[ir * 2 + 1];
-                        sum_x += (xl + xr) * w_l;
-                        sum_x2 += (xl * xl + xr * xr) * w_l;
-                        sum_y += (yl + yr) * w_l;
-                        sum_y2 += (yl * yl + yr * yr) * w_l;
-                        sum_xy += (xl * yl + xr * yr) * w_l;
-                    }
-                    let ic = (ly * SHARED_X + lx) as usize;
-                    let xc = s_tile[ic * 2];
-                    let yc = s_tile[ic * 2 + 1];
-                    let wc = gw::<F>(5u32);
-                    sum_x += xc * wc;
-                    sum_x2 += xc * xc * wc;
-                    sum_y += yc * wc;
-                    sum_y2 += yc * yc * wc;
-                    sum_xy += xc * yc * wc;
-
-                    let base = ((ly * BLOCK_X + UNIT_POS_X) * 5) as usize;
-                    x_conv[base] = sum_x;
-                    x_conv[base + 1] = sum_x2;
-                    x_conv[base + 2] = sum_y;
-                    x_conv[base + 3] = sum_y2;
-                    x_conv[base + 4] = sum_xy;
+        // Horizontal 11-tap blur over s_tile -> 5 sums per pixel in x_conv.
+        let lx = UNIT_POS_X + HALO;
+        #[unroll]
+        for pass in 0u32..2u32 {
+            let ly = UNIT_POS_Y + pass * BLOCK_Y;
+            if ly < SHARED_Y {
+                let mut sum_x = F::cast_from(0.0_f32);
+                let mut sum_x2 = F::cast_from(0.0_f32);
+                let mut sum_y = F::cast_from(0.0_f32);
+                let mut sum_y2 = F::cast_from(0.0_f32);
+                let mut sum_xy = F::cast_from(0.0_f32);
+                #[unroll]
+                for d in 1u32..6u32 {
+                    let w_d = gw::<F>(comptime![5u32 - d]);
+                    let il = (ly * SHARED_X + (lx - d)) as usize;
+                    let ir = (ly * SHARED_X + (lx + d)) as usize;
+                    let xl = s_tile[il * 2];
+                    let yl = s_tile[il * 2 + 1];
+                    let xr = s_tile[ir * 2];
+                    let yr = s_tile[ir * 2 + 1];
+                    sum_x += (xl + xr) * w_d;
+                    sum_x2 += (xl * xl + xr * xr) * w_d;
+                    sum_y += (yl + yr) * w_d;
+                    sum_y2 += (yl * yl + yr * yr) * w_d;
+                    sum_xy += (xl * yl + xr * yr) * w_d;
                 }
+                let ic = (ly * SHARED_X + lx) as usize;
+                let xc = s_tile[ic * 2];
+                let yc = s_tile[ic * 2 + 1];
+                let wc = gw::<F>(5u32);
+                sum_x += xc * wc;
+                sum_x2 += xc * xc * wc;
+                sum_y += yc * wc;
+                sum_y2 += yc * yc * wc;
+                sum_xy += xc * yc * wc;
+                let base = ((ly * BLOCK_X + UNIT_POS_X) * 5) as usize;
+                x_conv[base] = sum_x;
+                x_conv[base + 1] = sum_x2;
+                x_conv[base + 2] = sum_y;
+                x_conv[base + 3] = sum_y2;
+                x_conv[base + 4] = sum_xy;
             }
         }
         sync_cube();
 
-        // ---- 3) Vertical 1x11 + final SSIM ----
+        // Vertical 11-tap blur, then derive SSIM and emit L1 + SSIM loss.
         let ly = UNIT_POS_Y + HALO;
         let lx = UNIT_POS_X;
         let mut out0 = F::cast_from(0.0_f32);
@@ -205,7 +194,6 @@ mod kernels {
         let mut out2 = F::cast_from(0.0_f32);
         let mut out3 = F::cast_from(0.0_f32);
         let mut out4 = F::cast_from(0.0_f32);
-
         #[unroll]
         for d in 1u32..6u32 {
             let w_d = gw::<F>(comptime![5u32 - d]);
@@ -226,76 +214,48 @@ mod kernels {
         out4 += x_conv[bc + 4] * wc;
 
         if pix_x < w && pix_y < h {
+            let zero = F::cast_from(0.0_f32);
+            let two = F::cast_from(2.0_f32);
             let mu1 = out0;
             let mu2 = out2;
             let mu1_sq = mu1 * mu1;
             let mu2_sq = mu2 * mu2;
-            let sigma1_sq = F::max(F::cast_from(0.0_f32), out1 - mu1_sq);
-            let sigma2_sq = F::max(F::cast_from(0.0_f32), out3 - mu2_sq);
+            let sigma1_sq = F::max(zero, out1 - mu1_sq);
+            let sigma2_sq = F::max(zero, out3 - mu2_sq);
             let sigma12 = out4 - mu1 * mu2;
-
-            let c1_f = F::new(C1);
-            let c2_f = F::new(C2);
-            let a = mu1_sq + mu2_sq + c1_f;
-            let b = sigma1_sq + sigma2_sq + c2_f;
-            let c_top = F::cast_from(2.0_f32) * mu1 * mu2 + c1_f;
-            let d_top = F::cast_from(2.0_f32) * sigma12 + c2_f;
+            let a = mu1_sq + mu2_sq + F::new(C1);
+            let b = sigma1_sq + sigma2_sq + F::new(C2);
+            let c_top = two * mu1 * mu2 + F::new(C1);
+            let d_top = two * sigma12 + F::new(C2);
             let raw = (c_top * d_top) / (a * b);
-            let val = F::min(F::cast_from(1.0_f32), F::max(F::cast_from(-1.0_f32), raw));
+            let val = clamp(raw, F::cast_from(-1.0_f32), F::cast_from(1.0_f32));
 
-            let global_idx = (c * h * w + pix_y * w + pix_x) as usize;
-
-            // Center-pixel L1. mu1, mu2 are blurred — for L1 we want raw
-            // pixel values, which already live in `s_tile` with the halo.
+            // Center-pixel L1 reads raw img values (not blurred mu1, mu2)
+            // straight out of s_tile.
             let center = ((UNIT_POS_Y + HALO) * SHARED_X + (UNIT_POS_X + HALO)) as usize;
-            let p1_center = s_tile[center * 2];
-            let p2_center = s_tile[center * 2 + 1];
-            let l1 = F::abs(p1_center - p2_center);
+            let l1 = F::abs(s_tile[center * 2] - s_tile[center * 2 + 1]);
 
-            let l1_w = F::cast_from(l1_weight);
-            let ssim_w = F::cast_from(ssim_weight);
-            loss_map[global_idx] = l1_w * l1 + ssim_w * val;
-
-            if train {
-                let clamped = raw < F::cast_from(-1.0_f32) || raw > F::cast_from(1.0_f32);
-                let zero = F::cast_from(0.0_f32);
-                let two = F::cast_from(2.0_f32);
-                let inv_ab = F::cast_from(1.0_f32) / (a * b);
-                let cd_div_aa_bb = (c_top * d_top) * inv_ab;
-                let dmu1_raw = (mu2 * two * d_top) * inv_ab
-                    - (mu2 * two * c_top) * inv_ab
-                    - cd_div_aa_bb * (two * mu1 / a)
-                    + cd_div_aa_bb * (two * mu1 / b);
-                let dmu1_v = if clamped { zero } else { dmu1_raw };
-                let dsigma1_v = if clamped {
-                    zero
-                } else {
-                    F::cast_from(-1.0_f32) * c_top * d_top * inv_ab / b
-                };
-                let dsigma12_v = if clamped { zero } else { two * c_top * inv_ab };
-
-                dm_dmu1[global_idx] = dmu1_v;
-                dm_dsigma1_sq[global_idx] = dsigma1_v;
-                dm_dsigma12[global_idx] = dsigma12_v;
-            }
+            let idx = (c * h * w + pix_y * w + pix_x) as usize;
+            loss_map[idx] = F::cast_from(l1_weight) * l1 + F::cast_from(ssim_weight) * val;
         }
     }
 
-    /// Backward kernel for the combined L1 + SSIM loss. Takes upstream
-    /// gradient `dl_dmap = dL/d(loss_map)` and reproduces the chain
-    /// through both terms: SSIM via the saved partials and the gaussian
-    /// convolution, L1 via `sign(img1 - img2) * dL/d(loss_map)` at the
-    /// same pixel. Both contributions are scaled by their respective
-    /// weights and summed before write.
+    /// Backward: recompute SSIM partials inline, no saved-for-backward tensors.
+    /// Phases:
+    ///   1. Load img1/img2 with halo of 2*HALO into `s_imgs`.
+    ///   2. Horizontal blur into `s_horiz`.
+    ///   3. Vertical blur to recover (mu1, mu2, sigmas), derive SSIM partials,
+    ///      multiply by upstream chain, store in `s_chain_partials`.
+    ///   4. Second blur (horizontal then vertical) over `s_chain_partials`,
+    ///      add the L1 sign term, write `dl_dimg1`.
+    /// `s_imgs` and `s_horiz` use f16 storage to keep workgroup memory
+    /// under ~28 KiB. All math runs in f32 registers.
     #[allow(clippy::assign_op_pattern)]
     #[cube(launch_unchecked)]
     pub fn fused_ssim_backward_kernel<F: Float>(
         img1: &Tensor<F>,
         img2: &Tensor<F>,
         dl_dmap: &Tensor<F>,
-        dm_dmu1: &Tensor<F>,
-        dm_dsigma1_sq: &Tensor<F>,
-        dm_dsigma12: &Tensor<F>,
         dl_dimg1: &mut Tensor<F>,
         h: u32,
         w: u32,
@@ -308,276 +268,335 @@ mod kernels {
         let pix_y = tile_y0 + UNIT_POS_Y;
         let pix_x = tile_x0 + UNIT_POS_X;
 
-        let mut s_data = SharedMemory::<F>::new((SHARED_Y * SHARED_X * 3) as usize);
-        let mut s_scratch = SharedMemory::<F>::new((CONV_Y * BLOCK_X * 3) as usize);
+        let mut s_imgs = SharedMemory::<f16>::new((EXT_Y * EXT_X * 2) as usize);
+        let mut s_horiz = SharedMemory::<f16>::new((EXT_Y * SHARED_X * 5) as usize);
+        let mut s_chain_partials = SharedMemory::<F>::new((SHARED_Y * SHARED_X * 3) as usize);
+        let mut s_bwd_horiz = SharedMemory::<F>::new((SHARED_Y * BLOCK_X * 3) as usize);
 
-        // ---- 1) Load + fuse multiplication by chain ----
         let thread_rank = UNIT_POS_Y * BLOCK_X + UNIT_POS_X;
         let threads = BLOCK_X * BLOCK_Y;
-        let tile_size = SHARED_Y * SHARED_X;
+
+        // Load img1/img2 with halo of 2*HALO.
+        let ext_size = EXT_Y * EXT_X;
+        #[unroll]
+        for s in 0u32..6u32 {
+            let tid = s * threads + thread_rank;
+            if tid < ext_size {
+                let local_y = tid / EXT_X;
+                let local_x = tid % EXT_X;
+                let (gy, gx, oob) = coords(tile_y0, tile_x0, local_y, local_x, 2u32 * HALO, h, w);
+                let base = ((local_y * EXT_X + local_x) * 2u32) as usize;
+                s_imgs[base] = f16::cast_from(read_pix::<F>(img1, c, gy, gx, oob, h, w));
+                s_imgs[base + 1] = f16::cast_from(read_pix::<F>(img2, c, gy, gx, oob, h, w));
+            }
+        }
+        sync_cube();
+
+        // Horizontal blur over the extended tile. s_horiz[row, col] is
+        // centered at s_imgs col (col + HALO), so col in 0..SHARED_X covers
+        // the horizontal extent the next vertical conv needs.
+        let horiz_size = EXT_Y * SHARED_X;
+        #[unroll]
+        for s in 0u32..4u32 {
+            let tid = s * threads + thread_rank;
+            if tid < horiz_size {
+                let row_y = tid / SHARED_X;
+                let col_x = tid % SHARED_X;
+                let center = col_x + HALO;
+                let mut sum_x = F::cast_from(0.0_f32);
+                let mut sum_x2 = F::cast_from(0.0_f32);
+                let mut sum_y = F::cast_from(0.0_f32);
+                let mut sum_y2 = F::cast_from(0.0_f32);
+                let mut sum_xy = F::cast_from(0.0_f32);
+                #[unroll]
+                for d in 1u32..6u32 {
+                    let w_d = gw::<F>(comptime![5u32 - d]);
+                    let il = ((row_y * EXT_X + (center - d)) * 2u32) as usize;
+                    let ir = ((row_y * EXT_X + (center + d)) * 2u32) as usize;
+                    let xl = F::cast_from(s_imgs[il]);
+                    let yl = F::cast_from(s_imgs[il + 1]);
+                    let xr = F::cast_from(s_imgs[ir]);
+                    let yr = F::cast_from(s_imgs[ir + 1]);
+                    sum_x += (xl + xr) * w_d;
+                    sum_x2 += (xl * xl + xr * xr) * w_d;
+                    sum_y += (yl + yr) * w_d;
+                    sum_y2 += (yl * yl + yr * yr) * w_d;
+                    sum_xy += (xl * yl + xr * yr) * w_d;
+                }
+                let ic = ((row_y * EXT_X + center) * 2u32) as usize;
+                let xc = F::cast_from(s_imgs[ic]);
+                let yc = F::cast_from(s_imgs[ic + 1]);
+                let wc = gw::<F>(5u32);
+                sum_x += xc * wc;
+                sum_x2 += xc * xc * wc;
+                sum_y += yc * wc;
+                sum_y2 += yc * yc * wc;
+                sum_xy += xc * yc * wc;
+                let base = ((row_y * SHARED_X + col_x) * 5u32) as usize;
+                s_horiz[base] = f16::cast_from(sum_x);
+                s_horiz[base + 1] = f16::cast_from(sum_x2);
+                s_horiz[base + 2] = f16::cast_from(sum_y);
+                s_horiz[base + 3] = f16::cast_from(sum_y2);
+                s_horiz[base + 4] = f16::cast_from(sum_xy);
+            }
+        }
+        sync_cube();
+
+        // Vertical blur, derive SSIM partials, multiply by chain.
+        let partial_size = SHARED_Y * SHARED_X;
         #[unroll]
         for s in 0u32..3u32 {
             let tid = s * threads + thread_rank;
-            if tid < tile_size {
-                let local_y = tid / SHARED_X;
-                let local_x = tid % SHARED_X;
-                let (gy, gx, oob) = coords(tile_y0, tile_x0, local_y, local_x, h, w);
-                let chain = read_pix::<F>(dl_dmap, c, gy, gx, oob, h, w);
-                let v0 = read_pix::<F>(dm_dmu1, c, gy, gx, oob, h, w) * chain;
-                let v1 = read_pix::<F>(dm_dsigma1_sq, c, gy, gx, oob, h, w) * chain;
-                let v2 = read_pix::<F>(dm_dsigma12, c, gy, gx, oob, h, w) * chain;
-                let base = ((local_y * SHARED_X + local_x) * 3) as usize;
-                s_data[base] = v0;
-                s_data[base + 1] = v1;
-                s_data[base + 2] = v2;
-            }
-        }
-        sync_cube();
+            if tid < partial_size {
+                let part_y = tid / SHARED_X;
+                let part_x = tid % SHARED_X;
+                let center = part_y + HALO;
 
-        // ---- 2) Horizontal pass ----
-        {
-            let lx = UNIT_POS_X + HALO;
-            #[unroll]
-            for pass in 0u32..2u32 {
-                let ly = UNIT_POS_Y + pass * BLOCK_Y;
-                if ly < CONV_Y {
-                    let mut a0 = F::cast_from(0.0_f32);
-                    let mut a1 = F::cast_from(0.0_f32);
-                    let mut a2 = F::cast_from(0.0_f32);
-                    #[unroll]
-                    for d in 1u32..6u32 {
-                        let w_d = gw::<F>(comptime![5u32 - d]);
-                        let il = ((ly * SHARED_X + (lx - d)) * 3) as usize;
-                        let ir = ((ly * SHARED_X + (lx + d)) * 3) as usize;
-                        a0 += (s_data[il] + s_data[ir]) * w_d;
-                        a1 += (s_data[il + 1] + s_data[ir + 1]) * w_d;
-                        a2 += (s_data[il + 2] + s_data[ir + 2]) * w_d;
-                    }
-                    let ic = ((ly * SHARED_X + lx) * 3) as usize;
-                    let wc = gw::<F>(5u32);
-                    a0 = a0 + s_data[ic] * wc;
-                    a1 = a1 + s_data[ic + 1] * wc;
-                    a2 = a2 + s_data[ic + 2] * wc;
-
-                    let base = ((ly * BLOCK_X + UNIT_POS_X) * 3) as usize;
-                    s_scratch[base] = a0;
-                    s_scratch[base + 1] = a1;
-                    s_scratch[base + 2] = a2;
+                let mut out0 = F::cast_from(0.0_f32);
+                let mut out1 = F::cast_from(0.0_f32);
+                let mut out2 = F::cast_from(0.0_f32);
+                let mut out3 = F::cast_from(0.0_f32);
+                let mut out4 = F::cast_from(0.0_f32);
+                #[unroll]
+                for d in 1u32..6u32 {
+                    let w_d = gw::<F>(comptime![5u32 - d]);
+                    let bt = (((center - d) * SHARED_X + part_x) * 5u32) as usize;
+                    let bb = (((center + d) * SHARED_X + part_x) * 5u32) as usize;
+                    out0 += (F::cast_from(s_horiz[bt]) + F::cast_from(s_horiz[bb])) * w_d;
+                    out1 += (F::cast_from(s_horiz[bt + 1]) + F::cast_from(s_horiz[bb + 1])) * w_d;
+                    out2 += (F::cast_from(s_horiz[bt + 2]) + F::cast_from(s_horiz[bb + 2])) * w_d;
+                    out3 += (F::cast_from(s_horiz[bt + 3]) + F::cast_from(s_horiz[bb + 3])) * w_d;
+                    out4 += (F::cast_from(s_horiz[bt + 4]) + F::cast_from(s_horiz[bb + 4])) * w_d;
                 }
+                let bc = ((center * SHARED_X + part_x) * 5u32) as usize;
+                let wc = gw::<F>(5u32);
+                out0 += F::cast_from(s_horiz[bc]) * wc;
+                out1 += F::cast_from(s_horiz[bc + 1]) * wc;
+                out2 += F::cast_from(s_horiz[bc + 2]) * wc;
+                out3 += F::cast_from(s_horiz[bc + 3]) * wc;
+                out4 += F::cast_from(s_horiz[bc + 4]) * wc;
+
+                let zero = F::cast_from(0.0_f32);
+                let two = F::cast_from(2.0_f32);
+                let mu1 = out0;
+                let mu2 = out2;
+                let mu1_sq = mu1 * mu1;
+                let mu2_sq = mu2 * mu2;
+                let sigma1_sq = F::max(zero, out1 - mu1_sq);
+                let sigma2_sq = F::max(zero, out3 - mu2_sq);
+                let sigma12 = out4 - mu1 * mu2;
+                let a = mu1_sq + mu2_sq + F::new(C1);
+                let b = sigma1_sq + sigma2_sq + F::new(C2);
+                let c_top = two * mu1 * mu2 + F::new(C1);
+                let d_top = two * sigma12 + F::new(C2);
+                let inv_ab = F::cast_from(1.0_f32) / (a * b);
+                let cd = c_top * d_top * inv_ab;
+                let raw = cd;
+                let clamped = raw < F::cast_from(-1.0_f32) || raw > F::cast_from(1.0_f32);
+
+                // d/dmu1 SSIM. Factored from the explicit form to expose the
+                // (d_top - c_top) and (1/a - 1/b) cancellations.
+                let dmu1 = if clamped {
+                    zero
+                } else {
+                    two * mu2 * inv_ab * (d_top - c_top)
+                        - two * mu1 * cd * (F::cast_from(1.0_f32) / a - F::cast_from(1.0_f32) / b)
+                };
+                let dsigma1 = if clamped { zero } else { -cd / b };
+                let dsigma12 = if clamped { zero } else { two * c_top * inv_ab };
+
+                let (gy, gx, oob) = coords(tile_y0, tile_x0, part_y, part_x, HALO, h, w);
+                let chain = read_pix::<F>(dl_dmap, c, gy, gx, oob, h, w);
+
+                let base = ((part_y * SHARED_X + part_x) * 3u32) as usize;
+                s_chain_partials[base] = dmu1 * chain;
+                s_chain_partials[base + 1] = dsigma1 * chain;
+                s_chain_partials[base + 2] = dsigma12 * chain;
             }
         }
         sync_cube();
 
-        // ---- 3) Vertical pass + finalize ----
+        // Second horizontal blur over chain * partials.
+        let lx_b = UNIT_POS_X + HALO;
+        #[unroll]
+        for pass in 0u32..2u32 {
+            let ly_b = UNIT_POS_Y + pass * BLOCK_Y;
+            if ly_b < SHARED_Y {
+                let mut a0 = F::cast_from(0.0_f32);
+                let mut a1 = F::cast_from(0.0_f32);
+                let mut a2 = F::cast_from(0.0_f32);
+                #[unroll]
+                for d in 1u32..6u32 {
+                    let w_d = gw::<F>(comptime![5u32 - d]);
+                    let il = ((ly_b * SHARED_X + (lx_b - d)) * 3u32) as usize;
+                    let ir = ((ly_b * SHARED_X + (lx_b + d)) * 3u32) as usize;
+                    a0 += (s_chain_partials[il] + s_chain_partials[ir]) * w_d;
+                    a1 += (s_chain_partials[il + 1] + s_chain_partials[ir + 1]) * w_d;
+                    a2 += (s_chain_partials[il + 2] + s_chain_partials[ir + 2]) * w_d;
+                }
+                let ic = ((ly_b * SHARED_X + lx_b) * 3u32) as usize;
+                let wc = gw::<F>(5u32);
+                a0 += s_chain_partials[ic] * wc;
+                a1 += s_chain_partials[ic + 1] * wc;
+                a2 += s_chain_partials[ic + 2] * wc;
+                let base = ((ly_b * BLOCK_X + UNIT_POS_X) * 3u32) as usize;
+                s_bwd_horiz[base] = a0;
+                s_bwd_horiz[base + 1] = a1;
+                s_bwd_horiz[base + 2] = a2;
+            }
+        }
+        sync_cube();
+
+        // Second vertical blur + L1 sign + write.
         if pix_x < w && pix_y < h {
             let ly = UNIT_POS_Y + HALO;
             let lx = UNIT_POS_X;
             let mut s0 = F::cast_from(0.0_f32);
             let mut s1 = F::cast_from(0.0_f32);
             let mut s2 = F::cast_from(0.0_f32);
-
             #[unroll]
             for d in 1u32..6u32 {
                 let w_d = gw::<F>(comptime![5u32 - d]);
-                let bt = (((ly - d) * BLOCK_X + lx) * 3) as usize;
-                let bb = (((ly + d) * BLOCK_X + lx) * 3) as usize;
-                s0 += (s_scratch[bt] + s_scratch[bb]) * w_d;
-                s1 += (s_scratch[bt + 1] + s_scratch[bb + 1]) * w_d;
-                s2 += (s_scratch[bt + 2] + s_scratch[bb + 2]) * w_d;
+                let bt = (((ly - d) * BLOCK_X + lx) * 3u32) as usize;
+                let bb = (((ly + d) * BLOCK_X + lx) * 3u32) as usize;
+                s0 += (s_bwd_horiz[bt] + s_bwd_horiz[bb]) * w_d;
+                s1 += (s_bwd_horiz[bt + 1] + s_bwd_horiz[bb + 1]) * w_d;
+                s2 += (s_bwd_horiz[bt + 2] + s_bwd_horiz[bb + 2]) * w_d;
             }
-            let bc = ((ly * BLOCK_X + lx) * 3) as usize;
+            let bc = ((ly * BLOCK_X + lx) * 3u32) as usize;
             let wc = gw::<F>(5u32);
-            s0 += s_scratch[bc] * wc;
-            s1 += s_scratch[bc + 1] * wc;
-            s2 += s_scratch[bc + 2] * wc;
+            s0 += s_bwd_horiz[bc] * wc;
+            s1 += s_bwd_horiz[bc + 1] * wc;
+            s2 += s_bwd_horiz[bc + 2] * wc;
 
             let idx = (c * h * w + pix_y * w + pix_x) as usize;
             let p1 = img1[idx];
             let p2 = img2[idx];
-            // SSIM gradient via the existing chain rule.
             let ssim_grad = s0 + (F::cast_from(2.0_f32) * p1) * s1 + p2 * s2;
-            // L1 gradient: sign(p1 - p2) * dL/d(loss_map) at this pixel.
-            // sign(0) = 0 so exactly-equal pixels don't pull either way.
             let diff = p1 - p2;
             let zero = F::cast_from(0.0_f32);
-            let one = F::cast_from(1.0_f32);
             let l1_sign = if diff > zero {
-                one
+                F::cast_from(1.0_f32)
             } else if diff < zero {
                 F::cast_from(-1.0_f32)
             } else {
                 zero
             };
-            let chain_center = dl_dmap[idx];
-            let l1_w = F::cast_from(l1_weight);
-            let ssim_w = F::cast_from(ssim_weight);
-            dl_dimg1[idx] = ssim_w * ssim_grad + l1_w * l1_sign * chain_center;
+            dl_dimg1[idx] = F::cast_from(ssim_weight) * ssim_grad
+                + F::cast_from(l1_weight) * l1_sign * dl_dmap[idx];
         }
     }
 }
 
-/// Output of the fused SSIM forward
-#[derive(Debug, Clone)]
-pub struct FusedSsimForward<B: Backend> {
-    pub map: FloatTensor<B>,
-    pub dm_dmu1: FloatTensor<B>,
-    pub dm_dsigma1_sq: FloatTensor<B>,
-    pub dm_dsigma12: FloatTensor<B>,
-}
-
-/// Backend-level operations needed by the autodiff wrapper.
+/// Backend hooks for the fused SSIM kernels.
 pub trait FusedSsimOps<B: Backend> {
-    /// Forward. Inputs are `[C, H, W]`. Outputs `loss_map = l1_weight *
-    /// |img1 - img2| + ssim_weight * ssim(img1, img2)` in the same shape.
-    /// `train` controls whether the saved-for-backward tensors are filled.
     fn fused_ssim_forward(
         img1: FloatTensor<B>,
         img2: FloatTensor<B>,
         l1_weight: f32,
         ssim_weight: f32,
-        train: bool,
-    ) -> FusedSsimForward<B>;
+    ) -> FloatTensor<B>;
 
-    /// Backward. Returns `dL/d(img1)` for the same weighted loss the
-    /// forward built.
-    #[allow(clippy::too_many_arguments)]
     fn fused_ssim_backward(
         img1: FloatTensor<B>,
         img2: FloatTensor<B>,
         dl_dmap: FloatTensor<B>,
-        dm_dmu1: FloatTensor<B>,
-        dm_dsigma1_sq: FloatTensor<B>,
-        dm_dsigma12: FloatTensor<B>,
         l1_weight: f32,
         ssim_weight: f32,
     ) -> FloatTensor<B>;
 }
 
 fn alloc_zeros<R: CubeRuntime>(template: &CubeTensor<R>) -> CubeTensor<R> {
-    let dims = template.shape().as_slice().to_vec();
     burn_cubecl::ops::numeric::zeros_client::<R>(
         template.client.clone(),
         template.device.clone(),
-        Shape::from(dims),
+        Shape::from(template.shape().as_slice().to_vec()),
         template.dtype,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+fn cube_count(c: u32, h: u32, w: u32) -> burn_cubecl::cubecl::prelude::CubeCount {
+    use burn_cubecl::cubecl::prelude::CubeCount;
+    CubeCount::Static(
+        w.div_ceil(kernels::BLOCK_X),
+        h.div_ceil(kernels::BLOCK_Y),
+        c,
+    )
+}
+
 fn launch_forward<R: CubeRuntime>(
     img1: CubeTensor<R>,
     img2: CubeTensor<R>,
     l1_weight: f32,
     ssim_weight: f32,
-    train: bool,
-) -> (CubeTensor<R>, CubeTensor<R>, CubeTensor<R>, CubeTensor<R>) {
-    use burn_cubecl::cubecl;
-    use cubecl::prelude::{CubeCount, CubeDim};
+) -> CubeTensor<R> {
+    use burn_cubecl::cubecl::prelude::CubeDim;
 
     let img1 = into_contiguous(img1);
     let img2 = into_contiguous(img2);
-
     let dims = img1.shape().as_slice().to_vec();
     assert_eq!(dims.len(), 3, "fused_ssim expects [C, H, W] inputs");
-    let (c_dim, h, w) = (dims[0], dims[1], dims[2]);
-
+    let (c, h, w) = (dims[0] as u32, dims[1] as u32, dims[2] as u32);
     let map = alloc_zeros(&img1);
-    let dm_dmu1 = alloc_zeros(&img1);
-    let dm_dsigma1_sq = alloc_zeros(&img1);
-    let dm_dsigma12 = alloc_zeros(&img1);
-
-    let cube_dim = CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y);
-    let cube_count = CubeCount::Static(
-        (w as u32).div_ceil(kernels::BLOCK_X),
-        (h as u32).div_ceil(kernels::BLOCK_Y),
-        c_dim as u32,
-    );
-
     let client = img1.client.clone();
-    // SAFETY: Kernel bounds-checks every read with `coords` + `read_pix` and
-    // gates writes on `pix_x < w && pix_y < h`. All shared-memory indices
-    // are computed from `UNIT_POS_*` (< BLOCK_*) and `pass`/`d` constants
-    // bounded above by the buffer dimensions.
+    // SAFETY: every read goes through `coords` + `read_pix` (zero-padded for
+    // OOB) and writes are gated on `pix_x < w && pix_y < h`.
     unsafe {
         kernels::fused_ssim_forward_kernel::launch_unchecked::<f32, R>(
             &client,
-            cube_count,
-            cube_dim,
+            cube_count(c, h, w),
+            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
             img1.into_tensor_arg(),
             img2.into_tensor_arg(),
             map.clone().into_tensor_arg(),
-            dm_dmu1.clone().into_tensor_arg(),
-            dm_dsigma1_sq.clone().into_tensor_arg(),
-            dm_dsigma12.clone().into_tensor_arg(),
-            h as u32,
-            w as u32,
+            h,
+            w,
             l1_weight,
             ssim_weight,
-            train,
         );
     }
-
-    (map, dm_dmu1, dm_dsigma1_sq, dm_dsigma12)
+    map
 }
 
-#[allow(clippy::too_many_arguments)]
 fn launch_backward<R: CubeRuntime>(
     img1: CubeTensor<R>,
     img2: CubeTensor<R>,
     dl_dmap: CubeTensor<R>,
-    dm_dmu1: CubeTensor<R>,
-    dm_dsigma1_sq: CubeTensor<R>,
-    dm_dsigma12: CubeTensor<R>,
     l1_weight: f32,
     ssim_weight: f32,
 ) -> CubeTensor<R> {
-    use burn_cubecl::cubecl;
-    use cubecl::prelude::{CubeCount, CubeDim};
+    use burn_cubecl::cubecl::prelude::CubeDim;
 
     let img1 = into_contiguous(img1);
     let img2 = into_contiguous(img2);
     let dl_dmap = into_contiguous(dl_dmap);
-    let dm_dmu1 = into_contiguous(dm_dmu1);
-    let dm_dsigma1_sq = into_contiguous(dm_dsigma1_sq);
-    let dm_dsigma12 = into_contiguous(dm_dsigma12);
-
     let dims = img1.shape().as_slice().to_vec();
-    let (c_dim, h, w) = (dims[0], dims[1], dims[2]);
-    let dl_dimg1 = alloc_zeros(&img1);
-
-    let cube_dim = CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y);
-    let cube_count = CubeCount::Static(
-        (w as u32).div_ceil(kernels::BLOCK_X),
-        (h as u32).div_ceil(kernels::BLOCK_Y),
-        c_dim as u32,
+    assert_eq!(
+        dims.len(),
+        3,
+        "fused_ssim_backward expects [C, H, W] inputs"
     );
-
+    let (c, h, w) = (dims[0] as u32, dims[1] as u32, dims[2] as u32);
+    let dl_dimg1 = alloc_zeros(&img1);
     let client = img1.client.clone();
-    // SAFETY: same boundary guarantees as the forward - `coords`/`read_pix`
-    // for halo loads and `pix_x < w && pix_y < h` for the per-pixel write.
+    // SAFETY: same boundary guarantees as the forward.
     unsafe {
         kernels::fused_ssim_backward_kernel::launch_unchecked::<f32, R>(
             &client,
-            cube_count,
-            cube_dim,
+            cube_count(c, h, w),
+            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
             img1.into_tensor_arg(),
             img2.into_tensor_arg(),
             dl_dmap.into_tensor_arg(),
-            dm_dmu1.into_tensor_arg(),
-            dm_dsigma1_sq.into_tensor_arg(),
-            dm_dsigma12.into_tensor_arg(),
             dl_dimg1.clone().into_tensor_arg(),
-            h as u32,
-            w as u32,
+            h,
+            w,
             l1_weight,
             ssim_weight,
         );
     }
-
     dl_dimg1
 }
-
-// ---- MainBackendBase impl ----
 
 impl FusedSsimOps<Self> for MainBackendBase {
     fn fused_ssim_forward(
@@ -585,42 +604,20 @@ impl FusedSsimOps<Self> for MainBackendBase {
         img2: FloatTensor<Self>,
         l1_weight: f32,
         ssim_weight: f32,
-        train: bool,
-    ) -> FusedSsimForward<Self> {
-        let (map, dm_dmu1, dm_dsigma1_sq, dm_dsigma12) =
-            launch_forward(img1, img2, l1_weight, ssim_weight, train);
-        FusedSsimForward {
-            map,
-            dm_dmu1,
-            dm_dsigma1_sq,
-            dm_dsigma12,
-        }
+    ) -> FloatTensor<Self> {
+        launch_forward(img1, img2, l1_weight, ssim_weight)
     }
 
     fn fused_ssim_backward(
         img1: FloatTensor<Self>,
         img2: FloatTensor<Self>,
         dl_dmap: FloatTensor<Self>,
-        dm_dmu1: FloatTensor<Self>,
-        dm_dsigma1_sq: FloatTensor<Self>,
-        dm_dsigma12: FloatTensor<Self>,
         l1_weight: f32,
         ssim_weight: f32,
     ) -> FloatTensor<Self> {
-        launch_backward(
-            img1,
-            img2,
-            dl_dmap,
-            dm_dmu1,
-            dm_dsigma1_sq,
-            dm_dsigma12,
-            l1_weight,
-            ssim_weight,
-        )
+        launch_backward(img1, img2, dl_dmap, l1_weight, ssim_weight)
     }
 }
-
-// ---- Fusion<MainBackendBase> impl: dispatch via CustomOpIr ----
 
 impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
     fn fused_ssim_forward(
@@ -628,14 +625,12 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
         img2: FloatTensor<Self>,
         l1_weight: f32,
         ssim_weight: f32,
-        train: bool,
-    ) -> FusedSsimForward<Self> {
+    ) -> FloatTensor<Self> {
         #[derive(Debug)]
         struct CustomOp {
             desc: CustomOpIr,
             l1_weight: f32,
             ssim_weight: f32,
-            train: bool,
         }
         impl Operation<FusionCubeRuntime<WgpuRuntime>> for CustomOp {
             fn execute(
@@ -644,64 +639,42 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
             ) {
                 let (inputs, outputs) = self.desc.as_fixed();
                 let [img1, img2] = inputs;
-                let [map, dm_dmu1, dm_dsigma1_sq, dm_dsigma12] = outputs;
+                let [map] = outputs;
                 let out = <MainBackendBase as FusedSsimOps<MainBackendBase>>::fused_ssim_forward(
                     h.get_float_tensor::<MainBackendBase>(img1),
                     h.get_float_tensor::<MainBackendBase>(img2),
                     self.l1_weight,
                     self.ssim_weight,
-                    self.train,
                 );
-                h.register_float_tensor::<MainBackendBase>(&map.id, out.map);
-                h.register_float_tensor::<MainBackendBase>(&dm_dmu1.id, out.dm_dmu1);
-                h.register_float_tensor::<MainBackendBase>(&dm_dsigma1_sq.id, out.dm_dsigma1_sq);
-                h.register_float_tensor::<MainBackendBase>(&dm_dsigma12.id, out.dm_dsigma12);
+                h.register_float_tensor::<MainBackendBase>(&map.id, out);
             }
         }
 
         let shape = img1.shape();
         let client = img1.client.clone();
-
-        let mk_out = || TensorIr::uninit(client.create_empty_handle(), shape.clone(), DType::F32);
-        let map_out = mk_out();
-        let dm_dmu1_out = mk_out();
-        let dm_dsigma1_sq_out = mk_out();
-        let dm_dsigma12_out = mk_out();
-
+        let map_out = TensorIr::uninit(client.create_empty_handle(), shape, DType::F32);
         let inputs = [img1, img2];
         let stream = OperationStreams::with_inputs(&inputs);
         let desc = CustomOpIr::new(
             "fused_ssim_forward",
             &inputs.map(|t| t.into_ir()),
-            &[map_out, dm_dmu1_out, dm_dsigma1_sq_out, dm_dsigma12_out],
+            &[map_out],
         );
         let op = CustomOp {
             desc: desc.clone(),
             l1_weight,
             ssim_weight,
-            train,
         };
-
-        let outputs = client
+        let [map] = client
             .register(stream, OperationIr::Custom(desc), op)
             .outputs();
-        let [map, dm_dmu1, dm_dsigma1_sq, dm_dsigma12] = outputs;
-
-        FusedSsimForward {
-            map,
-            dm_dmu1,
-            dm_dsigma1_sq,
-            dm_dsigma12,
-        }
+        map
     }
 
     fn fused_ssim_backward(
         img1: FloatTensor<Self>,
         img2: FloatTensor<Self>,
         dl_dmap: FloatTensor<Self>,
-        dm_dmu1: FloatTensor<Self>,
-        dm_dsigma1_sq: FloatTensor<Self>,
-        dm_dsigma12: FloatTensor<Self>,
         l1_weight: f32,
         ssim_weight: f32,
     ) -> FloatTensor<Self> {
@@ -717,15 +690,12 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime>>>,
             ) {
                 let (inputs, outputs) = self.desc.as_fixed();
-                let [img1, img2, dl_dmap, dm_dmu1, dm_dsigma1_sq, dm_dsigma12] = inputs;
+                let [img1, img2, dl_dmap] = inputs;
                 let [dl_dimg1] = outputs;
                 let out = <MainBackendBase as FusedSsimOps<MainBackendBase>>::fused_ssim_backward(
                     h.get_float_tensor::<MainBackendBase>(img1),
                     h.get_float_tensor::<MainBackendBase>(img2),
                     h.get_float_tensor::<MainBackendBase>(dl_dmap),
-                    h.get_float_tensor::<MainBackendBase>(dm_dmu1),
-                    h.get_float_tensor::<MainBackendBase>(dm_dsigma1_sq),
-                    h.get_float_tensor::<MainBackendBase>(dm_dsigma12),
                     self.l1_weight,
                     self.ssim_weight,
                 );
@@ -735,10 +705,8 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
 
         let shape = img1.shape();
         let client = img1.client.clone();
-
         let dl_dimg1_out = TensorIr::uninit(client.create_empty_handle(), shape, DType::F32);
-
-        let inputs = [img1, img2, dl_dmap, dm_dmu1, dm_dsigma1_sq, dm_dsigma12];
+        let inputs = [img1, img2, dl_dmap];
         let stream = OperationStreams::with_inputs(&inputs);
         let desc = CustomOpIr::new(
             "fused_ssim_backward",
@@ -750,16 +718,12 @@ impl FusedSsimOps<Self> for Fusion<MainBackendBase> {
             l1_weight,
             ssim_weight,
         };
-
-        let outputs = client
+        let [dl_dimg1] = client
             .register(stream, OperationIr::Custom(desc), op)
             .outputs();
-        let [dl_dimg1] = outputs;
         dl_dimg1
     }
 }
-
-// ---- Autodiff wrapper ----
 
 #[derive(Debug)]
 struct FusedSsimBackward;
@@ -768,9 +732,6 @@ struct FusedSsimBackward;
 struct FusedSsimState<B: Backend> {
     img1: FloatTensor<B>,
     img2: FloatTensor<B>,
-    dm_dmu1: FloatTensor<B>,
-    dm_dsigma1_sq: FloatTensor<B>,
-    dm_dsigma12: FloatTensor<B>,
     l1_weight: f32,
     ssim_weight: f32,
 }
@@ -786,20 +747,14 @@ impl<B: Backend + FusedSsimOps<B>> Backward<B, 1> for FusedSsimBackward {
     ) {
         let state = ops.state;
         let dl_dmap = grads.consume::<B>(&ops.node);
-
         let [img1_parent] = ops.parents;
-
         let dl_dimg1 = B::fused_ssim_backward(
             state.img1,
             state.img2,
             dl_dmap,
-            state.dm_dmu1,
-            state.dm_dsigma1_sq,
-            state.dm_dsigma12,
             state.l1_weight,
             state.ssim_weight,
         );
-
         if let Some(node) = img1_parent {
             grads.register::<B>(node.id, dl_dimg1);
         }
@@ -809,9 +764,9 @@ impl<B: Backend + FusedSsimOps<B>> Backward<B, 1> for FusedSsimBackward {
 /// Combined L1 + SSIM image loss in a single fused kernel.
 ///
 /// Returns a `[H, W, C]` per-pixel map of `l1_weight * |img1 - img2| +
-/// ssim_weight * ssim(img1, img2)`. The caller reduces with `.mean()` to
-/// get the scalar loss; backward routes the upstream gradient through
-/// both terms in one shader pass.
+/// ssim_weight * ssim(img1, img2)`. Reduce with `.mean()` for the scalar
+/// loss; backward routes the upstream gradient through both terms,
+/// recomputing SSIM partials inline rather than reading saved tensors.
 pub fn fused_image_loss<B, C>(
     img1: Tensor<Autodiff<B, C>, 3>,
     img2: Tensor<Autodiff<B, C>, 3>,
@@ -824,47 +779,32 @@ where
 {
     // Permute [H, W, C] -> [C, H, W] (metadata-only; into_contiguous in the
     // launcher does the actual data movement).
-    let img1_chw = img1.permute([2, 0, 1]);
-    let img2_chw = img2.permute([2, 0, 1]);
-
-    let img1_inner = img1_chw.into_primitive().tensor();
-    let img2_inner = img2_chw.into_primitive().tensor();
+    let img1_inner = img1.permute([2, 0, 1]).into_primitive().tensor();
+    let img2_inner = img2.permute([2, 0, 1]).into_primitive().tensor();
 
     let prep = FusedSsimBackward
         .prepare::<C>([img1_inner.node.clone()])
         .compute_bound()
         .stateful();
 
-    let train = matches!(prep, OpsKind::Tracked(_));
     let img1_p = img1_inner.primitive;
     let img2_p = img2_inner.primitive;
-    let out = B::fused_ssim_forward(
-        img1_p.clone(),
-        img2_p.clone(),
-        l1_weight,
-        ssim_weight,
-        train,
-    );
+    let map = B::fused_ssim_forward(img1_p.clone(), img2_p.clone(), l1_weight, ssim_weight);
 
     let map_p = match prep {
-        OpsKind::Tracked(prep) => {
-            let state = FusedSsimState {
+        OpsKind::Tracked(prep) => prep.finish(
+            FusedSsimState {
                 img1: img1_p,
                 img2: img2_p,
-                dm_dmu1: out.dm_dmu1,
-                dm_dsigma1_sq: out.dm_dsigma1_sq,
-                dm_dsigma12: out.dm_dsigma12,
                 l1_weight,
                 ssim_weight,
-            };
-            prep.finish(state, out.map)
-        }
-        OpsKind::UnTracked(prep) => prep.finish(out.map),
+            },
+            map,
+        ),
+        OpsKind::UnTracked(prep) => prep.finish(map),
     };
 
-    let map: Tensor<Autodiff<B, C>, 3> = Tensor::from_primitive(TensorPrimitive::Float(map_p));
-    // Permute back to [H, W, C].
-    map.permute([1, 2, 0])
+    Tensor::<Autodiff<B, C>, 3>::from_primitive(TensorPrimitive::Float(map_p)).permute([1, 2, 0])
 }
 
 pub fn fused_ssim<B, C>(
@@ -879,21 +819,12 @@ where
 }
 
 /// Forward-only fused SSIM for non-differentiable backends, used by eval.
-///
-/// Same kernel as [`fused_ssim`] but skips storing the saved-for-backward
-/// partial-derivative tensors.
 pub fn fused_ssim_eval<B>(img1: Tensor<B, 3>, img2: Tensor<B, 3>) -> Tensor<B, 3>
 where
     B: Backend + FusedSsimOps<B>,
 {
-    let img1_chw = img1.permute([2, 0, 1]);
-    let img2_chw = img2.permute([2, 0, 1]);
-
-    let img1_p = img1_chw.into_primitive().tensor();
-    let img2_p = img2_chw.into_primitive().tensor();
-    // Pure SSIM map for eval: l1_weight = 0, ssim_weight = 1.
-    let out = B::fused_ssim_forward(img1_p, img2_p, 0.0, 1.0, false);
-
-    let map: Tensor<B, 3> = Tensor::from_primitive(TensorPrimitive::Float(out.map));
-    map.permute([1, 2, 0])
+    let img1_p = img1.permute([2, 0, 1]).into_primitive().tensor();
+    let img2_p = img2.permute([2, 0, 1]).into_primitive().tensor();
+    let map = B::fused_ssim_forward(img1_p, img2_p, 0.0, 1.0);
+    Tensor::<B, 3>::from_primitive(TensorPrimitive::Float(map)).permute([1, 2, 0])
 }
