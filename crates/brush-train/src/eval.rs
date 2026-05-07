@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
-use brush_loss::{ImageLossConfig, LossOps, image_loss_eval, upload_packed_gt};
+use brush_loss::{ImageLossConfig, LossOps, image_loss_eval};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, RenderAux, SplatOps, TextureMode, render_splats};
@@ -31,7 +31,7 @@ pub async fn eval_stats<B: Backend + SplatOps<B> + LossOps<B>>(
 
     let (gt_packed_data, _has_alpha) =
         sample_to_packed_data(view_to_sample_image(gt_img.clone(), alpha_mode));
-    let gt_packed: Tensor<B, 2, Int> = upload_packed_gt(gt_packed_data, device);
+    let gt_packed: Tensor<B, 2, Int> = Tensor::new(B::int_from_data(gt_packed_data, device));
 
     // Render on reference black background.
     let (img, render_aux) =
@@ -44,7 +44,7 @@ pub async fn eval_stats<B: Backend + SplatOps<B> + LossOps<B>>(
     let cfg = |l1, ssim| ImageLossConfig {
         l1_weight: l1,
         ssim_weight: ssim,
-        composite_bg: None,
+        background: Vec3::ZERO,
         mask: false,
     };
     // MSE = mean(L1^2) since |a - b|^2 == (a - b)^2.

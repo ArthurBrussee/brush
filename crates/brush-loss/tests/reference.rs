@@ -1,17 +1,17 @@
 //! Smoke + invariant tests for the loss kernels.
 //!
 //! GT lives as `[H, W]` u32 packing `[r g b a]` u8. We feed deterministic u8
-//! data through `image_loss`/`alpha_match_loss` and check structural
-//! properties (`SSIM(x, x) ≈ 1`, output range, backward produces finite
-//! gradients). Bit-exact reference matching is covered by the integration
-//! training tests in `brush-bench-test`.
+//! data through `image_loss` and check structural properties (`SSIM(x, x) ≈ 1`,
+//! output range, backward produces finite gradients). Bit-exact reference
+//! matching is covered by the integration training tests in `brush-bench-test`.
 
-use brush_loss::{ImageLossConfig, alpha_match_loss, image_loss, upload_packed_gt};
+use brush_loss::{ImageLossConfig, image_loss};
 use brush_render::MainBackend;
 use burn::{
     backend::Autodiff,
-    tensor::{Int, Tensor, TensorData},
+    tensor::{Int, Tensor, TensorData, ops::IntTensorOps},
 };
+use glam::Vec3;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[cfg(target_family = "wasm")]
@@ -55,14 +55,17 @@ fn gt_packed_from_bytes(
     w: usize,
     device: &burn::backend::wgpu::WgpuDevice,
 ) -> Tensor<MainBackend, 2, Int> {
-    upload_packed_gt(TensorData::new(pack_rgba(bytes), [h, w]), device)
+    Tensor::new(MainBackend::int_from_data(
+        TensorData::new(pack_rgba(bytes), [h, w]),
+        device,
+    ))
 }
 
 fn ssim_only_cfg() -> ImageLossConfig {
     ImageLossConfig {
         l1_weight: 0.0,
         ssim_weight: 1.0,
-        composite_bg: None,
+        background: Vec3::ZERO,
         mask: false,
     }
 }
@@ -128,7 +131,7 @@ async fn image_loss_backward_runs() {
         ImageLossConfig {
             l1_weight: 0.8,
             ssim_weight: -0.2,
-            composite_bg: None,
+            background: Vec3::ZERO,
             mask: false,
         },
     );
@@ -136,18 +139,27 @@ async fn image_loss_backward_runs() {
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
-async fn alpha_match_backward_runs() {
+async fn alpha_match_via_4ch_pred() {
+    // Feeding 4-channel `pred` makes the kernel emit `|pred.a - gt.a|`
+    // into the alpha channel of the loss map.
     let device = brush_kernel::test_helpers::test_device().await;
     let (h, w) = (16, 24);
     let bytes = make_pattern(h, w, 17, 5);
-    let pred_alpha: Vec<f32> = bytes
-        .chunks_exact(4)
-        .map(|p| p[3] as f32 / 255.0 + 0.05)
-        .collect();
-    let pred = Tensor::<DiffBack, 1>::from_floats(pred_alpha.as_slice(), &device)
-        .reshape([h, w, 1])
+    let rgba: Vec<f32> = bytes.iter().map(|b| *b as f32 / 255.0).collect();
+    let pred = Tensor::<DiffBack, 1>::from_floats(rgba.as_slice(), &device)
+        .reshape([h, w, 4])
         .require_grad();
     let gt = gt_packed_from_bytes(&bytes, h, w, &device);
 
-    let _grads = alpha_match_loss(pred, gt).mean().backward();
+    let map = image_loss(
+        pred,
+        gt,
+        ImageLossConfig {
+            l1_weight: 1.0,
+            ssim_weight: 0.0,
+            background: Vec3::ZERO,
+            mask: false,
+        },
+    );
+    let _grads = map.mean().backward();
 }

@@ -9,7 +9,6 @@
 //! - [`image_loss`]: per-pixel `l1_w * |pred - gt_eff| + ssim_w * ssim(pred, gt_eff)`,
 //!   with optional background-compositing of GT (`gt_eff = gt + (1 - gt.a) * bg`)
 //!   and optional mask multiplication (`out = out * gt.a`) folded into the kernel.
-//! - [`alpha_match_loss`]: per-pixel `|pred_alpha - gt.a|`.
 //! - [`image_loss_eval`]: forward-only loss map for non-differentiable backends.
 //!
 //! Backward recomputes SSIM partials inline so no per-pixel state survives
@@ -50,20 +49,23 @@ mod kernels {
     use burn_cubecl::cubecl::prelude::*;
     use half::f16;
 
-    // 11-tap Gaussian, sigma = 1.5.
-    const GAUSS: [f32; 11] = [
-        0.001_028_380_1,
-        0.007_598_758,
-        0.036_000_773,
-        0.109_360_69,
-        0.213_005_53,
-        0.266_011_72,
-        0.213_005_53,
-        0.109_360_69,
-        0.036_000_773,
-        0.007_598_758,
-        0.001_028_380_1,
-    ];
+    /// 11-tap Gaussian weights at sigma = 1.5, normalised to sum to 1.
+    /// Called from `comptime!` so it runs once per kernel build, baking each
+    /// weight as an f32 literal into the generated kernel.
+    fn gauss_taps() -> [f32; 11] {
+        let sigma = 1.5_f32;
+        let mut w = [0.0_f32; 11];
+        let mut sum = 0.0;
+        for (i, w) in w.iter_mut().enumerate() {
+            let x = i as f32 - 5.0;
+            *w = (-x * x / (2.0 * sigma * sigma)).exp();
+            sum += *w;
+        }
+        for w in &mut w {
+            *w /= sum;
+        }
+        w
+    }
 
     pub const BLOCK_X: u32 = 16;
     pub const BLOCK_Y: u32 = 16;
@@ -146,14 +148,17 @@ mod kernels {
 
     #[cube]
     fn gw<F: Float>(#[comptime] i: u32) -> F {
-        F::new(comptime![GAUSS[i as usize]])
+        F::new(comptime![gauss_taps()[i as usize]])
     }
 
-    /// Forward: produce the L1 + SSIM loss map.
+    /// Forward: produce the L1 + SSIM loss map. When dispatched with `C = 4`,
+    /// the workgroup at `c == 3` produces `|pred.a - gt.a|` into the alpha
+    /// channel of the loss map — folding the previously-separate alpha-match
+    /// kernel into the same launch.
     ///
-    /// Comptime flags:
-    /// - `composite`: replace `gt_c` with `gt_c + (1 - gt.a) * bg_c` before comparing.
-    /// - `mask`: multiply the loss-map output by `gt.a` per pixel.
+    /// Comptime flag `mask` multiplies the loss-map output by `gt.a` per pixel.
+    /// GT bg-compositing (`gt + (1 - gt.a) * bg`) always runs; for opaque
+    /// pixels (synthesised `a = 255`) or zero bg it's a no-op.
     #[allow(clippy::assign_op_pattern)]
     #[cube(launch_unchecked)]
     pub fn image_loss_forward_kernel<F: Float>(
@@ -167,7 +172,6 @@ mod kernels {
         bg_r: f32,
         bg_g: f32,
         bg_b: f32,
-        #[comptime] composite: bool,
         #[comptime] mask: bool,
     ) {
         let c = CUBE_POS_Z;
@@ -175,6 +179,20 @@ mod kernels {
         let tile_x0 = CUBE_POS_X * BLOCK_X;
         let pix_y = tile_y0 + UNIT_POS_Y;
         let pix_x = tile_x0 + UNIT_POS_X;
+
+        // Alpha-match channel: simple per-pixel `|pred - gt.a|`, no blur.
+        if c == 3u32 {
+            if pix_x < w && pix_y < h {
+                let idx = (3u32 * h * w + pix_y * w + pix_x) as usize;
+                let (_, gt_a) = read_gt::<F>(gt_packed, 0u32, pix_y, pix_x, false, w);
+                let mut v = F::abs(pred[idx] - gt_a);
+                if mask {
+                    v = v * gt_a;
+                }
+                loss_map[idx] = v;
+            }
+            terminate!();
+        }
 
         // Tile + halo of (pred, gt_eff_c, gt_a) interleaved as 3 floats.
         // We carry gt.a alongside the colour so the centre pixel has its
@@ -201,13 +219,11 @@ mod kernels {
                 let local_x = tid % SHARED_X;
                 let (gy, gx, oob) = coords(tile_y0, tile_x0, local_y, local_x, HALO, h, w);
                 let pv = read_pred::<F>(pred, c, gy, gx, oob, h, w);
-                let (mut gt_c, gt_a) = read_gt::<F>(gt_packed, c, gy, gx, oob, w);
-                if composite {
-                    gt_c = gt_c + (F::cast_from(1.0_f32) - gt_a) * bg_c;
-                }
+                let (gt_c, gt_a) = read_gt::<F>(gt_packed, c, gy, gx, oob, w);
+                let gt_eff = gt_c + (F::cast_from(1.0_f32) - gt_a) * bg_c;
                 let base = ((local_y * SHARED_X + local_x) * 3u32) as usize;
                 s_tile[base] = pv;
-                s_tile[base + 1] = gt_c;
+                s_tile[base + 1] = gt_eff;
                 s_tile[base + 2] = gt_a;
             }
         }
@@ -329,7 +345,6 @@ mod kernels {
         bg_r: f32,
         bg_g: f32,
         bg_b: f32,
-        #[comptime] composite: bool,
         #[comptime] mask: bool,
     ) {
         let c = CUBE_POS_Z;
@@ -337,6 +352,29 @@ mod kernels {
         let tile_x0 = CUBE_POS_X * BLOCK_X;
         let pix_y = tile_y0 + UNIT_POS_Y;
         let pix_x = tile_x0 + UNIT_POS_X;
+
+        // Alpha-match channel: simple sign-of-diff. No SSIM machinery.
+        if c == 3u32 {
+            if pix_x < w && pix_y < h {
+                let idx = (3u32 * h * w + pix_y * w + pix_x) as usize;
+                let (_, gt_a) = read_gt::<F>(gt_packed, 0u32, pix_y, pix_x, false, w);
+                let diff = pred[idx] - gt_a;
+                let zero = F::cast_from(0.0_f32);
+                let sign = if diff > zero {
+                    F::cast_from(1.0_f32)
+                } else if diff < zero {
+                    F::cast_from(-1.0_f32)
+                } else {
+                    zero
+                };
+                let mut chain = dl_dmap[idx];
+                if mask {
+                    chain = chain * gt_a;
+                }
+                dl_dpred[idx] = sign * chain;
+            }
+            terminate!();
+        }
 
         // f16 for the wide-halo image storage; chain*partials and the second
         // horizontal-blur scratch stay in f32. ~28 KiB total — fits Apple's
@@ -367,13 +405,11 @@ mod kernels {
                 let local_x = tid % EXT_X;
                 let (gy, gx, oob) = coords(tile_y0, tile_x0, local_y, local_x, 2u32 * HALO, h, w);
                 let pv = read_pred::<F>(pred, c, gy, gx, oob, h, w);
-                let (mut gt_c, gt_a) = read_gt::<F>(gt_packed, c, gy, gx, oob, w);
-                if composite {
-                    gt_c = gt_c + (F::cast_from(1.0_f32) - gt_a) * bg_c;
-                }
+                let (gt_c, gt_a) = read_gt::<F>(gt_packed, c, gy, gx, oob, w);
+                let gt_eff = gt_c + (F::cast_from(1.0_f32) - gt_a) * bg_c;
                 let base = ((local_y * EXT_X + local_x) * 2u32) as usize;
                 s_imgs[base] = f16::cast_from(pv);
-                s_imgs[base + 1] = f16::cast_from(gt_c);
+                s_imgs[base + 1] = f16::cast_from(gt_eff);
             }
         }
         sync_cube();
@@ -557,12 +593,10 @@ mod kernels {
 
             let pix_idx = (c * h * w + pix_y * w + pix_x) as usize;
             let p1 = pred[pix_idx];
-            let (mut gt_c, gt_a) = read_gt::<F>(gt_packed, c, pix_y, pix_x, false, w);
-            if composite {
-                gt_c = gt_c + (F::cast_from(1.0_f32) - gt_a) * bg_c;
-            }
-            let ssim_grad = s0 + (F::cast_from(2.0_f32) * p1) * s1 + gt_c * s2;
-            let diff = p1 - gt_c;
+            let (gt_c, gt_a) = read_gt::<F>(gt_packed, c, pix_y, pix_x, false, w);
+            let gt_eff = gt_c + (F::cast_from(1.0_f32) - gt_a) * bg_c;
+            let ssim_grad = s0 + (F::cast_from(2.0_f32) * p1) * s1 + gt_eff * s2;
+            let diff = p1 - gt_eff;
             let zero = F::cast_from(0.0_f32);
             let l1_sign = if diff > zero {
                 F::cast_from(1.0_f32)
@@ -580,58 +614,9 @@ mod kernels {
         }
     }
 
-    /// Per-pixel `|pred - gt.a|`. One thread per pixel. Loss map is `[H, W]`.
-    #[cube(launch_unchecked)]
-    pub fn alpha_match_forward_kernel<F: Float>(
-        pred: &Tensor<F>,
-        gt_packed: &Tensor<u32>,
-        loss_map: &mut Tensor<F>,
-        h: u32,
-        w: u32,
-    ) {
-        let pix_y = CUBE_POS_Y * BLOCK_Y + UNIT_POS_Y;
-        let pix_x = CUBE_POS_X * BLOCK_X + UNIT_POS_X;
-        if pix_x >= w || pix_y >= h {
-            terminate!();
-        }
-        let pix_idx = (pix_y * w + pix_x) as usize;
-        let pv = pred[pix_idx];
-        let (_unused, gt_a) = read_gt::<F>(gt_packed, 0u32, pix_y, pix_x, false, w);
-        loss_map[pix_idx] = F::abs(pv - gt_a);
-    }
-
-    /// dL/dpred for `alpha_match_forward_kernel`.
-    #[cube(launch_unchecked)]
-    pub fn alpha_match_backward_kernel<F: Float>(
-        pred: &Tensor<F>,
-        gt_packed: &Tensor<u32>,
-        dl_dmap: &Tensor<F>,
-        dl_dpred: &mut Tensor<F>,
-        h: u32,
-        w: u32,
-    ) {
-        let pix_y = CUBE_POS_Y * BLOCK_Y + UNIT_POS_Y;
-        let pix_x = CUBE_POS_X * BLOCK_X + UNIT_POS_X;
-        if pix_x >= w || pix_y >= h {
-            terminate!();
-        }
-        let pix_idx = (pix_y * w + pix_x) as usize;
-        let pv = pred[pix_idx];
-        let (_unused, gt_a) = read_gt::<F>(gt_packed, 0u32, pix_y, pix_x, false, w);
-        let diff = pv - gt_a;
-        let zero = F::cast_from(0.0_f32);
-        let sign = if diff > zero {
-            F::cast_from(1.0_f32)
-        } else if diff < zero {
-            F::cast_from(-1.0_f32)
-        } else {
-            zero
-        };
-        dl_dpred[pix_idx] = sign * dl_dmap[pix_idx];
-    }
-
-    /// Decode `gt_packed` to `[H, W, 3]` f32 RGB, optionally bg-composited.
-    /// Used by the LPIPS path which needs an f32 RGB tensor as input to VGG.
+    /// Decode `gt_packed` to `[H, W, 3]` f32 RGB, with bg-compositing always
+    /// applied. For opaque pixels (`gt.a == 1`) or zero `bg` the math is a
+    /// no-op. Used by the LPIPS path which needs an f32 RGB tensor for VGG.
     #[cube(launch_unchecked)]
     pub fn unpack_gt_rgb_kernel<F: Float>(
         gt_packed: &Tensor<u32>,
@@ -641,7 +626,6 @@ mod kernels {
         bg_r: f32,
         bg_g: f32,
         bg_b: f32,
-        #[comptime] composite: bool,
     ) {
         let pix_y = CUBE_POS_Y * BLOCK_Y + UNIT_POS_Y;
         let pix_x = CUBE_POS_X * BLOCK_X + UNIT_POS_X;
@@ -649,35 +633,34 @@ mod kernels {
             terminate!();
         }
         let val = gt_packed[(pix_y * w + pix_x) as usize];
-        let mut r = F::cast_from(f32::cast_from(val & 0xffu32) * INV_255);
-        let mut g = F::cast_from(f32::cast_from((val >> 8u32) & 0xffu32) * INV_255);
-        let mut b = F::cast_from(f32::cast_from((val >> 16u32) & 0xffu32) * INV_255);
-        if composite {
-            let inv_a =
-                F::cast_from(1.0_f32) - F::cast_from(f32::cast_from(val >> 24u32) * INV_255);
-            r += inv_a * F::cast_from(bg_r);
-            g += inv_a * F::cast_from(bg_g);
-            b += inv_a * F::cast_from(bg_b);
-        }
+        let r = f32::cast_from(val & 0xffu32) * INV_255;
+        let g = f32::cast_from((val >> 8u32) & 0xffu32) * INV_255;
+        let b = f32::cast_from((val >> 16u32) & 0xffu32) * INV_255;
+        let inv_a = 1.0_f32 - f32::cast_from(val >> 24u32) * INV_255;
         let base = ((pix_y * w + pix_x) * 3u32) as usize;
-        out[base] = r;
-        out[base + 1] = g;
-        out[base + 2] = b;
+        out[base] = F::cast_from(r + inv_a * bg_r);
+        out[base + 1] = F::cast_from(g + inv_a * bg_g);
+        out[base + 2] = F::cast_from(b + inv_a * bg_b);
     }
 }
 
-/// Image-loss configuration.
+/// Image-loss configuration. The kernel always applies the bg-composite
+/// math (`gt + (1 - gt.a) * background`); for opaque pixels (synthesised
+/// `a = 255`) or `background == 0` it's a no-op. Pass `Vec3::ZERO` when
+/// you don't want compositing.
 #[derive(Debug, Clone, Copy)]
 pub struct ImageLossConfig {
     pub l1_weight: f32,
     pub ssim_weight: f32,
-    /// If `Some`, fold `gt_eff = gt + (1 - gt.a) * bg` inside the kernel.
-    pub composite_bg: Option<Vec3>,
+    pub background: Vec3,
     /// If true, multiply each loss-map pixel by `gt.a`.
     pub mask: bool,
 }
 
-/// Backend hooks for the loss kernels.
+/// Backend hooks for the loss kernels. When `pred` has 4 channels, the
+/// `c == 3` workgroup of `image_loss_*` runs the alpha-match path
+/// (`|pred.a - gt.a|`) instead of SSIM + L1 — folding the previously-separate
+/// alpha-match kernel into the same launch.
 pub trait LossOps<B: Backend> {
     fn image_loss_forward(
         pred: FloatTensor<B>,
@@ -692,15 +675,7 @@ pub trait LossOps<B: Backend> {
         cfg: ImageLossConfig,
     ) -> FloatTensor<B>;
 
-    fn alpha_match_forward(pred: FloatTensor<B>, gt_packed: IntTensor<B>) -> FloatTensor<B>;
-
-    fn alpha_match_backward(
-        pred: FloatTensor<B>,
-        gt_packed: IntTensor<B>,
-        dl_dmap: FloatTensor<B>,
-    ) -> FloatTensor<B>;
-
-    fn unpack_gt_rgb(gt_packed: IntTensor<B>, composite_bg: Option<Vec3>) -> FloatTensor<B>;
+    fn unpack_gt_rgb(gt_packed: IntTensor<B>, background: Vec3) -> FloatTensor<B>;
 }
 
 fn alloc_zeros<R: CubeRuntime>(template: &CubeTensor<R>) -> CubeTensor<R> {
@@ -801,8 +776,7 @@ fn launch_image_forward<R: CubeRuntime>(
         "gt_packed width must match pred width"
     );
 
-    let bg = cfg.composite_bg.unwrap_or(Vec3::ZERO);
-    let composite = cfg.composite_bg.is_some();
+    let bg = cfg.background;
     let map = alloc_zeros(&pred);
     let client = pred.client.clone();
     // SAFETY: every read goes through bounds-checked helpers and writes are
@@ -822,7 +796,6 @@ fn launch_image_forward<R: CubeRuntime>(
             bg.x,
             bg.y,
             bg.z,
-            composite,
             cfg.mask,
         );
     }
@@ -844,8 +817,7 @@ fn launch_image_backward<R: CubeRuntime>(
     assert_eq!(dims.len(), 3, "image_loss_backward expects [C, H, W] pred");
     let (c, h, w) = (dims[0] as u32, dims[1] as u32, dims[2] as u32);
 
-    let bg = cfg.composite_bg.unwrap_or(Vec3::ZERO);
-    let composite = cfg.composite_bg.is_some();
+    let bg = cfg.background;
     let dl_dpred = alloc_zeros(&pred);
     let client = pred.client.clone();
     // SAFETY: same boundary guarantees as the forward.
@@ -865,69 +837,7 @@ fn launch_image_backward<R: CubeRuntime>(
             bg.x,
             bg.y,
             bg.z,
-            composite,
             cfg.mask,
-        );
-    }
-    dl_dpred
-}
-
-fn launch_alpha_forward<R: CubeRuntime>(
-    pred: CubeTensor<R>,
-    gt_packed: CubeTensor<R>,
-) -> CubeTensor<R> {
-    use burn_cubecl::cubecl::prelude::CubeDim;
-
-    let pred = into_contiguous(pred);
-    let gt_packed = into_contiguous(gt_packed);
-    let dims = pred.shape().as_slice().to_vec();
-    assert_eq!(dims.len(), 2, "alpha_match expects [H, W] pred");
-    let (h, w) = (dims[0] as u32, dims[1] as u32);
-    let map = alloc_zeros(&pred);
-    let client = pred.client.clone();
-    // SAFETY: kernel is bounds-checked and one-thread-per-pixel.
-    unsafe {
-        kernels::alpha_match_forward_kernel::launch_unchecked::<f32, R>(
-            &client,
-            cube_count_3d(1, h, w),
-            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
-            pred.into_tensor_arg(),
-            gt_packed.into_tensor_arg(),
-            map.clone().into_tensor_arg(),
-            h,
-            w,
-        );
-    }
-    map
-}
-
-fn launch_alpha_backward<R: CubeRuntime>(
-    pred: CubeTensor<R>,
-    gt_packed: CubeTensor<R>,
-    dl_dmap: CubeTensor<R>,
-) -> CubeTensor<R> {
-    use burn_cubecl::cubecl::prelude::CubeDim;
-
-    let pred = into_contiguous(pred);
-    let gt_packed = into_contiguous(gt_packed);
-    let dl_dmap = into_contiguous(dl_dmap);
-    let dims = pred.shape().as_slice().to_vec();
-    assert_eq!(dims.len(), 2, "alpha_match_backward expects [H, W] pred");
-    let (h, w) = (dims[0] as u32, dims[1] as u32);
-    let dl_dpred = alloc_zeros(&pred);
-    let client = pred.client.clone();
-    // SAFETY: same as forward.
-    unsafe {
-        kernels::alpha_match_backward_kernel::launch_unchecked::<f32, R>(
-            &client,
-            cube_count_3d(1, h, w),
-            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
-            pred.into_tensor_arg(),
-            gt_packed.into_tensor_arg(),
-            dl_dmap.into_tensor_arg(),
-            dl_dpred.clone().into_tensor_arg(),
-            h,
-            w,
         );
     }
     dl_dpred
@@ -935,7 +845,7 @@ fn launch_alpha_backward<R: CubeRuntime>(
 
 fn launch_unpack_gt_rgb<R: CubeRuntime>(
     gt_packed: CubeTensor<R>,
-    composite_bg: Option<Vec3>,
+    background: Vec3,
 ) -> CubeTensor<R> {
     use burn::tensor::{DType, Shape};
     use burn_cubecl::cubecl::prelude::{CubeCount, CubeDim};
@@ -944,9 +854,6 @@ fn launch_unpack_gt_rgb<R: CubeRuntime>(
     let dims = gt_packed.shape().as_slice().to_vec();
     assert_eq!(dims.len(), 2, "unpack_gt_rgb expects [H, W] gt_packed");
     let (h, w) = (dims[0] as u32, dims[1] as u32);
-
-    let bg = composite_bg.unwrap_or(Vec3::ZERO);
-    let composite = composite_bg.is_some();
 
     let client = gt_packed.client.clone();
     let out = burn_cubecl::ops::numeric::zeros_client::<R>(
@@ -970,10 +877,9 @@ fn launch_unpack_gt_rgb<R: CubeRuntime>(
             out.clone().into_tensor_arg(),
             h,
             w,
-            bg.x,
-            bg.y,
-            bg.z,
-            composite,
+            background.x,
+            background.y,
+            background.z,
         );
     }
     out
@@ -997,23 +903,8 @@ impl LossOps<Self> for MainBackendBase {
         launch_image_backward(pred, gt_packed, dl_dmap, cfg)
     }
 
-    fn alpha_match_forward(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-    ) -> FloatTensor<Self> {
-        launch_alpha_forward(pred, gt_packed)
-    }
-
-    fn alpha_match_backward(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        dl_dmap: FloatTensor<Self>,
-    ) -> FloatTensor<Self> {
-        launch_alpha_backward(pred, gt_packed, dl_dmap)
-    }
-
-    fn unpack_gt_rgb(gt_packed: IntTensor<Self>, composite_bg: Option<Vec3>) -> FloatTensor<Self> {
-        launch_unpack_gt_rgb(gt_packed, composite_bg)
+    fn unpack_gt_rgb(gt_packed: IntTensor<Self>, background: Vec3) -> FloatTensor<Self> {
+        launch_unpack_gt_rgb(gt_packed, background)
     }
 }
 
@@ -1066,51 +957,7 @@ impl LossOps<Self> for Fusion<MainBackendBase> {
         )
     }
 
-    fn alpha_match_forward(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-    ) -> FloatTensor<Self> {
-        let shape = pred.shape();
-        dispatch_custom(
-            "alpha_match_forward",
-            [pred, gt_packed],
-            shape,
-            DType::F32,
-            move |desc, h| {
-                let ([pred, gt_packed], [map]) = desc.as_fixed();
-                let out = MainBackendBase::alpha_match_forward(
-                    h.get_float_tensor::<MainBackendBase>(pred),
-                    h.get_int_tensor::<MainBackendBase>(gt_packed),
-                );
-                h.register_float_tensor::<MainBackendBase>(&map.id, out);
-            },
-        )
-    }
-
-    fn alpha_match_backward(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        dl_dmap: FloatTensor<Self>,
-    ) -> FloatTensor<Self> {
-        let shape = pred.shape();
-        dispatch_custom(
-            "alpha_match_backward",
-            [pred, gt_packed, dl_dmap],
-            shape,
-            DType::F32,
-            move |desc, h| {
-                let ([pred, gt_packed, dl_dmap], [dl_dpred]) = desc.as_fixed();
-                let out = MainBackendBase::alpha_match_backward(
-                    h.get_float_tensor::<MainBackendBase>(pred),
-                    h.get_int_tensor::<MainBackendBase>(gt_packed),
-                    h.get_float_tensor::<MainBackendBase>(dl_dmap),
-                );
-                h.register_float_tensor::<MainBackendBase>(&dl_dpred.id, out);
-            },
-        )
-    }
-
-    fn unpack_gt_rgb(gt_packed: IntTensor<Self>, composite_bg: Option<Vec3>) -> FloatTensor<Self> {
+    fn unpack_gt_rgb(gt_packed: IntTensor<Self>, background: Vec3) -> FloatTensor<Self> {
         let [gh, gw] = gt_packed.shape().dims();
         dispatch_custom(
             "unpack_gt_rgb",
@@ -1121,7 +968,7 @@ impl LossOps<Self> for Fusion<MainBackendBase> {
                 let ([gt_packed], [out]) = desc.as_fixed();
                 let res = MainBackendBase::unpack_gt_rgb(
                     h.get_int_tensor::<MainBackendBase>(gt_packed),
-                    composite_bg,
+                    background,
                 );
                 h.register_float_tensor::<MainBackendBase>(&out.id, res);
             },
@@ -1158,50 +1005,10 @@ impl<B: Backend + LossOps<B>> Backward<B, 1> for ImageLossBackward {
     }
 }
 
-#[derive(Debug)]
-struct AlphaMatchBackward;
-
-#[derive(Debug, Clone)]
-struct AlphaMatchState<B: Backend> {
-    pred: FloatTensor<B>,
-    gt_packed: IntTensor<B>,
-}
-
-impl<B: Backend + LossOps<B>> Backward<B, 1> for AlphaMatchBackward {
-    type State = AlphaMatchState<B>;
-
-    fn backward(
-        self,
-        ops: Ops<Self::State, 1>,
-        grads: &mut Gradients,
-        _checkpointer: &mut Checkpointer,
-    ) {
-        let state = ops.state;
-        let dl_dmap = grads.consume::<B>(&ops.node);
-        let [pred_parent] = ops.parents;
-        let dl_dpred = B::alpha_match_backward(state.pred, state.gt_packed, dl_dmap);
-        if let Some(node) = pred_parent {
-            grads.register::<B>(node.id, dl_dpred);
-        }
-    }
-}
-
-/// Upload `[H, W]` u32-packed GT data to a Burn `Tensor<B, 2, Int>`,
-/// preserving u32 dtype. `Tensor::from_data` for the `Int` kind tries to
-/// cast incoming values to the backend's signed `IntElem` (`i32`) and
-/// panics for alpha bytes ≥ 128 (top bit set). Going through
-/// `B::int_from_data` directly skips that cast.
-pub fn upload_packed_gt<B: Backend>(
-    data: burn::tensor::TensorData,
-    device: &burn::tensor::Device<B>,
-) -> Tensor<B, 2, Int> {
-    Tensor::new(<B as burn::tensor::ops::IntTensorOps<B>>::int_from_data(
-        data, device,
-    ))
-}
-
 /// L1 + SSIM image loss with optional bg-compositing and masking, all folded
-/// into a single fused kernel.
+/// into a single fused kernel. Pass `pred` with 4 channels (RGBA) to also
+/// emit `|pred.a - gt.a|` into the alpha channel of the loss map; pass 3
+/// (RGB) to skip the alpha-match work entirely.
 pub fn image_loss<B, C>(
     pred: Tensor<Autodiff<B, C>, 3>,
     gt_packed: Tensor<B, 2, Int>,
@@ -1236,39 +1043,6 @@ where
     Tensor::<Autodiff<B, C>, 3>::from_primitive(TensorPrimitive::Float(map_p)).permute([1, 2, 0])
 }
 
-/// Per-pixel `|pred - gt.a|` against the alpha byte of `gt_packed`.
-pub fn alpha_match_loss<B, C>(
-    pred: Tensor<Autodiff<B, C>, 3>,
-    gt_packed: Tensor<B, 2, Int>,
-) -> Tensor<Autodiff<B, C>, 3>
-where
-    B: Backend + LossOps<B>,
-    C: CheckpointStrategy,
-{
-    let pred_2d = pred.squeeze::<2>().into_primitive().tensor();
-    let gt_p = gt_packed.into_primitive();
-
-    let prep = AlphaMatchBackward
-        .prepare::<C>([pred_2d.node.clone()])
-        .compute_bound()
-        .stateful();
-
-    let pred_p = pred_2d.primitive;
-    let map = B::alpha_match_forward(pred_p.clone(), gt_p.clone());
-
-    let map_p = match prep {
-        OpsKind::Tracked(prep) => prep.finish(
-            AlphaMatchState {
-                pred: pred_p,
-                gt_packed: gt_p,
-            },
-            map,
-        ),
-        OpsKind::UnTracked(prep) => prep.finish(map),
-    };
-    Tensor::<Autodiff<B, C>, 2>::from_primitive(TensorPrimitive::Float(map_p)).unsqueeze_dim(2)
-}
-
 /// Forward-only loss map for non-differentiable backends. Same kernel as
 /// the training forward; eval picks `cfg` to compute SSIM, L1, or whatever
 /// combination it needs (e.g. MSE = `l1_eval(...).powi(2).mean()`).
@@ -1286,16 +1060,15 @@ where
     Tensor::<B, 3>::from_primitive(TensorPrimitive::Float(map)).permute([1, 2, 0])
 }
 
-/// Decode `gt_packed` back to a `[H, W, 3]` f32 RGB tensor, optionally with
-/// background-compositing applied. Materialising f32 GT defeats the whole
-/// point of the packed format, so this is reserved for the LPIPS path which
-/// feeds f32 RGB into a VGG forward and has no kernel-fused alternative
-/// today.
-pub fn unpack_gt_rgb<B>(gt_packed: Tensor<B, 2, Int>, composite_bg: Option<Vec3>) -> Tensor<B, 3>
+/// Decode `gt_packed` back to a `[H, W, 3]` f32 RGB tensor with the given
+/// background composited in (`gt + (1 - gt.a) * background`). Materialising
+/// f32 GT defeats the whole point of the packed format, so this is reserved
+/// for the LPIPS path which feeds f32 RGB into a VGG forward and has no
+/// kernel-fused alternative today.
+pub fn unpack_gt_rgb<B>(gt_packed: Tensor<B, 2, Int>, background: Vec3) -> Tensor<B, 3>
 where
     B: Backend + LossOps<B>,
 {
-    let gt_p = gt_packed.into_primitive();
-    let out = B::unpack_gt_rgb(gt_p, composite_bg);
+    let out = B::unpack_gt_rgb(gt_packed.into_primitive(), background);
     Tensor::<B, 3>::from_primitive(TensorPrimitive::Float(out))
 }

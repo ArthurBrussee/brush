@@ -1,11 +1,11 @@
 use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
-use brush_loss::{ImageLossConfig, image_loss, upload_packed_gt};
+use brush_loss::{ImageLossConfig, image_loss};
 use brush_render::{MainBackend, gaussian_splats::Splats};
 use brush_render_bwd::render_splats;
 use burn::{
     backend::Autodiff,
     prelude::Module,
-    tensor::{Int, Tensor, TensorData, TensorPrimitive, s},
+    tensor::{Int, Tensor, TensorData, TensorPrimitive, ops::IntTensorOps, s},
 };
 use burn_cubecl::cubecl::wgpu::WgpuDevice;
 use glam::Vec3;
@@ -113,11 +113,12 @@ pub async fn compute_pup_scores(
             Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
         let pred_rgb = pred_image.slice(s![.., .., 0..3]);
 
-        let gt_packed: Tensor<MainBackend, 2, Int> = upload_packed_gt(gt_data, device);
+        let gt_packed: Tensor<MainBackend, 2, Int> =
+            Tensor::new(MainBackend::int_from_data(gt_data, device));
         let l1_cfg = ImageLossConfig {
             l1_weight: 1.0,
             ssim_weight: 0.0,
-            composite_bg: None,
+            background: Vec3::ZERO,
             mask: false,
         };
         let loss = image_loss(pred_rgb, gt_packed, l1_cfg).mean();

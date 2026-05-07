@@ -9,7 +9,7 @@ use crate::{
 };
 
 use brush_dataset::scene::SceneBatch;
-use brush_loss::{ImageLossConfig, alpha_match_loss, image_loss, unpack_gt_rgb, upload_packed_gt};
+use brush_loss::{ImageLossConfig, image_loss, unpack_gt_rgb};
 use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
@@ -27,7 +27,7 @@ use burn::{
     prelude::Backend,
     tensor::{
         Bool, Distribution, IndexingUpdateOp, Int, Tensor, TensorData, TensorPrimitive,
-        activation::sigmoid, backend::AutodiffBackend, s,
+        activation::sigmoid, backend::AutodiffBackend, ops::IntTensorOps, s,
     },
 };
 
@@ -123,8 +123,11 @@ impl SplatTrainer {
         let has_alpha = batch.has_alpha;
         // GT lives on the GPU as packed `[H, W]` u32 (RGBA u8). All mixing
         // (bg compositing, alpha matching, mask) is folded into the loss
-        // kernels; no f32 GT image is ever materialised here.
-        let gt_packed: Tensor<MainBackend, 2, Int> = upload_packed_gt(batch.img_packed, &device);
+        // kernels; no f32 GT image is ever materialised here. Going through
+        // `int_from_data` directly avoids `Tensor::from_data` casting u32 →
+        // i32 and panicking for alpha bytes ≥ 128.
+        let gt_packed: Tensor<MainBackend, 2, Int> =
+            Tensor::new(MainBackend::int_from_data(batch.img_packed, &device));
         let img_size = glam::uvec2(img_w as u32, img_h as u32);
         let base = &self.config.background_color;
         let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
@@ -147,56 +150,54 @@ impl SplatTrainer {
             let max_radius: Tensor<Autodiff<MainBackend>, 1> =
                 Tensor::from_primitive(TensorPrimitive::Float(diff_out.max_radius));
 
-            // RGB loss is `(1 - w) * L1 + (-w) * SSIM` per pixel, fused with
-            // optional bg-compositing and alpha-mask in the kernel. The
-            // composite/mask flags don't need a `has_alpha` guard: when GT
-            // has no real alpha the dataloader synthesises `a = 255`, so
-            // `gt + (1 - 1) * bg = gt` and `loss * 1 = loss` are no-ops.
+            // RGB loss is `(1 - w) * L1 + (-w) * SSIM` per pixel. Bg
+            // compositing always runs in the kernel; for synthesised opaque
+            // alpha or zero bg it's a no-op. Mask multiplies the loss-map
+            // by `gt.a`; for synthesised opaque alpha that's a no-op too.
+            // Alpha matching needs a real alpha source (synthesised
+            // a = 1 would pull predicted alpha to fully opaque); we feed
+            // `pred` with 4 channels and the kernel's `c == 3` workgroup
+            // emits `|pred.a - gt.a|` into the alpha channel.
             let masked_alpha = batch.alpha_mode == AlphaMode::Masked;
             let (l1_w, ssim_w) = if self.ssim_enabled {
                 (1.0 - self.config.ssim_weight, -self.config.ssim_weight)
             } else {
                 (1.0, 0.0)
             };
-            let composite_bg = (background != glam::Vec3::ZERO).then_some(background);
+            let do_alpha_match = has_alpha && !masked_alpha && self.config.match_alpha_weight > 0.0;
             let cfg = ImageLossConfig {
                 l1_weight: l1_w,
                 ssim_weight: ssim_w,
-                composite_bg,
+                background,
                 mask: masked_alpha,
             };
-            let rgb_loss = image_loss(
-                pred_image.clone().slice(s![.., .., 0..3]),
-                gt_packed.clone(),
-                cfg,
-            );
+            let pred_for_loss = if do_alpha_match {
+                pred_image.clone()
+            } else {
+                pred_image.clone().slice(s![.., .., 0..3])
+            };
+            let loss_map = image_loss(pred_for_loss, gt_packed.clone(), cfg);
 
-            let mut loss = rgb_loss.mean();
-
-            // Alpha matching needs a real alpha source — synthesised alpha
-            // would pull predicted alpha toward 1.0 for opaque RGB datasets.
-            // Skip it under masked mode where the RGB mask weight already
-            // handles the "this pixel matters" signal.
-            if has_alpha && !masked_alpha && self.config.match_alpha_weight > 0.0 {
-                let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);
-                let alpha_loss = alpha_match_loss(pred_alpha, gt_packed.clone());
-                loss = loss + alpha_loss.mean() * self.config.match_alpha_weight;
-            }
+            let mut loss = if do_alpha_match {
+                let rgb = loss_map.clone().slice(s![.., .., 0..3]).mean();
+                let alpha = loss_map.slice(s![.., .., 3..4]).mean();
+                rgb + alpha * self.config.match_alpha_weight
+            } else {
+                loss_map.mean()
+            };
 
             // LPIPS still needs an f32 RGB tensor for VGG. Materialising it
-            // here costs ~99 MB at 4K, only when LPIPS is enabled. Folding
-            // LPIPS into the packed path is future work.
+            // here costs ~99 MB at 4K, only when LPIPS is enabled.
             #[cfg(not(target_family = "wasm"))]
-            let loss = if let Some(lpips) = &self.lpips {
-                let gt_rgb = unpack_gt_rgb::<MainBackend>(gt_packed.clone(), composite_bg);
+            if let Some(lpips) = &self.lpips {
+                let gt_rgb = unpack_gt_rgb::<MainBackend>(gt_packed.clone(), background);
                 let gt_rgb_diff: Tensor<DiffBackend, 3> = Tensor::from_inner(gt_rgb);
-                loss + lpips.lpips(
-                    pred_image.clone().slice(s![.., .., 0..3]).unsqueeze_dim(0),
-                    gt_rgb_diff.unsqueeze_dim(0),
-                ) * self.config.lpips_loss_weight
-            } else {
-                loss
-            };
+                loss = loss
+                    + lpips.lpips(
+                        pred_image.clone().slice(s![.., .., 0..3]).unsqueeze_dim(0),
+                        gt_rgb_diff.unsqueeze_dim(0),
+                    ) * self.config.lpips_loss_weight;
+            }
 
             let mut grads = splats.bwd_validate(loss.clone()).await;
 
