@@ -1,10 +1,11 @@
-use brush_dataset::scene::{sample_to_tensor_data, view_to_sample_image};
+use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
+use brush_loss::{ImageLossConfig, image_loss, upload_packed_gt};
 use brush_render::{MainBackend, gaussian_splats::Splats};
 use brush_render_bwd::render_splats;
 use burn::{
     backend::Autodiff,
     prelude::Module,
-    tensor::{Tensor, TensorData, TensorPrimitive, s},
+    tensor::{Int, Tensor, TensorData, TensorPrimitive, s},
 };
 use burn_cubecl::cubecl::wgpu::WgpuDevice;
 use glam::Vec3;
@@ -100,7 +101,7 @@ pub async fn compute_pup_scores(
             .expect("Failed to load image for PUP scoring");
         let sample = view_to_sample_image(image, view.image.alpha_mode());
         let img_size = glam::uvec2(sample.width(), sample.height());
-        let gt_data = sample_to_tensor_data(sample);
+        let (gt_data, _has_alpha) = sample_to_packed_data(sample);
 
         let mut splats: Splats<DiffBackend> = splats.clone().train();
         splats.transforms = splats
@@ -108,14 +109,18 @@ pub async fn compute_pup_scores(
             .map(|t: Tensor<DiffBackend, 2>| t.require_grad());
 
         let diff_out = render_splats(splats.clone(), &view.camera, img_size, Vec3::ZERO).await;
-        let pred_image = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+        let pred_image: Tensor<DiffBackend, 3> =
+            Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+        let pred_rgb = pred_image.slice(s![.., .., 0..3]);
 
-        let gt_tensor: Tensor<DiffBackend, 3> = Tensor::from_data(gt_data, device);
-        let channels = pred_image.dims()[2].min(gt_tensor.dims()[2]);
-        let pred_rgb = pred_image.slice(s![.., .., 0..channels]);
-        let gt_rgb = gt_tensor.slice(s![.., .., 0..channels]);
-
-        let loss = (pred_rgb - gt_rgb).abs().mean();
+        let gt_packed: Tensor<MainBackend, 2, Int> = upload_packed_gt(gt_data, device);
+        let l1_cfg = ImageLossConfig {
+            l1_weight: 1.0,
+            ssim_weight: 0.0,
+            composite_bg: None,
+            mask: false,
+        };
+        let loss = image_loss(pred_rgb, gt_packed, l1_cfg).mean();
         let mut grads = loss.backward();
 
         let transforms_grad = splats

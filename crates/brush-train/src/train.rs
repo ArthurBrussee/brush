@@ -9,7 +9,7 @@ use crate::{
 };
 
 use brush_dataset::scene::SceneBatch;
-use brush_fused_ssim::fused_image_loss;
+use brush_loss::{ImageLossConfig, alpha_match_loss, image_loss, unpack_gt_rgb, upload_packed_gt};
 use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
@@ -26,7 +26,7 @@ use burn::{
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
     prelude::Backend,
     tensor::{
-        Bool, Distribution, IndexingUpdateOp, Tensor, TensorData, TensorPrimitive,
+        Bool, Distribution, IndexingUpdateOp, Int, Tensor, TensorData, TensorPrimitive,
         activation::sigmoid, backend::AutodiffBackend, s,
     },
 };
@@ -48,8 +48,6 @@ pub struct SplatTrainer {
     sched_scale: ExponentialLrScheduler,
     refine_record: Option<RefineRecord<MainBackend>>,
     optim: Option<OptimizerType>,
-    /// `true` when SSIM loss is enabled — `Ssim` no longer needs construction
-    /// because the fused [`brush_fused_ssim::fused_ssim`] kernel is stateless.
     ssim_enabled: bool,
     bounds: BoundingBox,
     step_count: u32,
@@ -118,29 +116,19 @@ impl SplatTrainer {
         }
         self.step_count += 1;
 
-        let [img_h, img_w, _] = batch.img_tensor.shape.dims();
+        let [img_h, img_w] = batch.img_size();
         let camera = batch.camera.clone();
 
         let device = splats.device();
-        let has_alpha = batch.has_alpha();
-        let gt_tensor = Tensor::from_data(batch.img_tensor, &device);
+        let has_alpha = batch.has_alpha;
+        // GT lives on the GPU as packed `[H, W]` u32 (RGBA u8). All mixing
+        // (bg compositing, alpha matching, mask) is folded into the loss
+        // kernels; no f32 GT image is ever materialised here.
+        let gt_packed: Tensor<MainBackend, 2, Int> = upload_packed_gt(batch.img_packed, &device);
         let img_size = glam::uvec2(img_w as u32, img_h as u32);
         let base = &self.config.background_color;
         let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
         let background = sample_background_color(base_bg, self.config.background_noise_strength);
-        // For images with alpha, composite GT on the same background.
-        let gt_rgb = if has_alpha && background != glam::Vec3::ZERO {
-            let gt_rgb = gt_tensor.clone().slice(s![.., .., 0..3]);
-            let gt_alpha = gt_tensor.clone().slice(s![.., .., 3..4]);
-            let bg_3d: Tensor<DiffBackend, 3> = Tensor::<DiffBackend, 1>::from_floats(
-                [background.x, background.y, background.z].as_slice(),
-                &device,
-            )
-            .reshape([1, 1, 3]);
-            gt_rgb + (1.0 - gt_alpha) * bg_3d
-        } else {
-            gt_tensor.clone()
-        };
 
         let median_scale = self.bounds.median_size();
 
@@ -159,44 +147,52 @@ impl SplatTrainer {
             let max_radius: Tensor<Autodiff<MainBackend>, 1> =
                 Tensor::from_primitive(TensorPrimitive::Float(diff_out.max_radius));
 
-            // Brush's RGB loss is `(1 - w) * L1 - w * SSIM` per pixel. The
-            // fused L1+SSIM kernel computes that combined error in a single
-            // pass.
-            let masked_alpha = has_alpha && batch.alpha_mode == AlphaMode::Masked;
-
+            // RGB loss is `(1 - w) * L1 + (-w) * SSIM` per pixel, fused with
+            // optional bg-compositing and alpha-mask in the kernel. The
+            // composite/mask flags don't need a `has_alpha` guard: when GT
+            // has no real alpha the dataloader synthesises `a = 255`, so
+            // `gt + (1 - 1) * bg = gt` and `loss * 1 = loss` are no-ops.
+            let masked_alpha = batch.alpha_mode == AlphaMode::Masked;
             let (l1_w, ssim_w) = if self.ssim_enabled {
                 (1.0 - self.config.ssim_weight, -self.config.ssim_weight)
             } else {
                 (1.0, 0.0)
             };
-
-            let rgb_loss = fused_image_loss(
+            let composite_bg = (background != glam::Vec3::ZERO).then_some(background);
+            let cfg = ImageLossConfig {
+                l1_weight: l1_w,
+                ssim_weight: ssim_w,
+                composite_bg,
+                mask: masked_alpha,
+            };
+            let rgb_loss = image_loss(
                 pred_image.clone().slice(s![.., .., 0..3]),
-                gt_rgb.clone(),
-                l1_w,
-                ssim_w,
+                gt_packed.clone(),
+                cfg,
             );
 
-            let loss = if masked_alpha {
-                let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
-                (rgb_loss * alpha_input).mean()
-            } else {
-                let mut loss = rgb_loss.mean();
-                if has_alpha {
-                    let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
-                    let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);
-                    loss = loss
-                        + (alpha_input - pred_alpha).abs().mean() * self.config.match_alpha_weight;
-                }
-                loss
-            };
+            let mut loss = rgb_loss.mean();
 
-            // TODO: Support masked lpips.
+            // Alpha matching needs a real alpha source — synthesised alpha
+            // would pull predicted alpha toward 1.0 for opaque RGB datasets.
+            // Skip it under masked mode where the RGB mask weight already
+            // handles the "this pixel matters" signal.
+            if has_alpha && !masked_alpha && self.config.match_alpha_weight > 0.0 {
+                let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);
+                let alpha_loss = alpha_match_loss(pred_alpha, gt_packed.clone());
+                loss = loss + alpha_loss.mean() * self.config.match_alpha_weight;
+            }
+
+            // LPIPS still needs an f32 RGB tensor for VGG. Materialising it
+            // here costs ~99 MB at 4K, only when LPIPS is enabled. Folding
+            // LPIPS into the packed path is future work.
             #[cfg(not(target_family = "wasm"))]
             let loss = if let Some(lpips) = &self.lpips {
+                let gt_rgb = unpack_gt_rgb::<MainBackend>(gt_packed.clone(), composite_bg);
+                let gt_rgb_diff: Tensor<DiffBackend, 3> = Tensor::from_inner(gt_rgb);
                 loss + lpips.lpips(
                     pred_image.clone().slice(s![.., .., 0..3]).unsqueeze_dim(0),
-                    gt_rgb.unsqueeze_dim(0),
+                    gt_rgb_diff.unsqueeze_dim(0),
                 ) * self.config.lpips_loss_weight
             } else {
                 loss

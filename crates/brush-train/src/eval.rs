@@ -2,16 +2,15 @@
 use std::path::Path;
 
 use anyhow::Result;
-use brush_dataset::scene::{sample_to_tensor_data, view_to_sample_image};
+use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
+use brush_loss::{ImageLossConfig, LossOps, image_loss_eval, ssim_eval, upload_packed_gt};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, RenderAux, SplatOps, TextureMode, render_splats};
 use burn::prelude::Backend;
-use burn::tensor::{Tensor, s};
+use burn::tensor::{Int, Tensor, s};
 use glam::Vec3;
 use image::DynamicImage;
-
-use brush_fused_ssim::{FusedSsimOps, fused_ssim_eval};
 
 pub struct EvalSample<B: Backend> {
     pub gt_img: DynamicImage,
@@ -21,21 +20,20 @@ pub struct EvalSample<B: Backend> {
     pub render_aux: RenderAux<B>,
 }
 
-pub async fn eval_stats<B: Backend + SplatOps<B> + FusedSsimOps<B>>(
+pub async fn eval_stats<B: Backend + SplatOps<B> + LossOps<B>>(
     splats: Splats<B>,
     gt_cam: &Camera,
     gt_img: DynamicImage,
     alpha_mode: AlphaMode,
     device: &B::Device,
 ) -> Result<EvalSample<B>> {
-    // Compare MSE in RGB only.
     let res = glam::uvec2(gt_img.width(), gt_img.height());
 
-    let gt_tensor = sample_to_tensor_data(view_to_sample_image(gt_img.clone(), alpha_mode));
-    let gt_tensor = Tensor::from_data(gt_tensor, device);
-    let gt_rgb = gt_tensor.slice(s![.., .., 0..3]);
+    let (gt_packed_data, _has_alpha) =
+        sample_to_packed_data(view_to_sample_image(gt_img.clone(), alpha_mode));
+    let gt_packed: Tensor<B, 2, Int> = upload_packed_gt(gt_packed_data, device);
 
-    // Render on reference black background - async readback
+    // Render on reference black background.
     let (img, render_aux) =
         render_splats(splats, gt_cam, res, Vec3::ZERO, None, TextureMode::Float).await;
     let render_rgb = img.slice(s![.., .., 0..3]);
@@ -43,10 +41,18 @@ pub async fn eval_stats<B: Backend + SplatOps<B> + FusedSsimOps<B>>(
     // Simulate an 8-bit roundtrip for fair comparison.
     let render_rgb = (render_rgb * 255.0).round() / 255.0;
 
-    let mse = (render_rgb.clone() - gt_rgb.clone()).powi_scalar(2).mean();
-
+    // MSE = mean(L1^2) since |a - b|^2 == (a - b)^2.
+    let l1_cfg = ImageLossConfig {
+        l1_weight: 1.0,
+        ssim_weight: 0.0,
+        composite_bg: None,
+        mask: false,
+    };
+    let mse = image_loss_eval(render_rgb.clone(), gt_packed.clone(), l1_cfg)
+        .powi_scalar(2)
+        .mean();
     let psnr = mse.recip().log() * 10.0 / std::f32::consts::LN_10;
-    let ssim = fused_ssim_eval(render_rgb.clone(), gt_rgb).mean();
+    let ssim = ssim_eval(render_rgb.clone(), gt_packed).mean();
 
     Ok(EvalSample {
         gt_img,

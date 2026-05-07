@@ -7,7 +7,7 @@ use tokio::sync::{RwLock, mpsc};
 use tokio_wasm::task;
 use tokio_with_wasm::alias as tokio_wasm;
 
-use crate::scene::{Scene, SceneBatch, sample_to_tensor_data, view_to_sample_image};
+use crate::scene::{Scene, SceneBatch, sample_to_packed_data, view_to_sample_image};
 
 pub struct SceneLoader {
     receiver: Receiver<SceneBatch>,
@@ -106,11 +106,12 @@ impl SceneLoader {
                         sample
                     };
 
-                    let img_tensor = sample_to_tensor_data(sample.as_ref().clone());
+                    let (img_packed, has_alpha) = sample_to_packed_data(sample.as_ref().clone());
 
                     if send_batch
                         .send(SceneBatch {
-                            img_tensor,
+                            img_packed,
+                            has_alpha,
                             alpha_mode: view.image.alpha_mode(),
                             camera: view.camera.clone(),
                         })

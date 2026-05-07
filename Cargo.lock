@@ -976,8 +976,8 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "brush-dataset",
- "brush-fused-ssim",
  "brush-kernel",
+ "brush-loss",
  "brush-prefix-sum",
  "brush-render",
  "brush-render-bwd",
@@ -1042,6 +1042,7 @@ dependencies = [
  "brush-serde",
  "brush-vfs",
  "burn",
+ "bytemuck",
  "clap",
  "colmap-reader",
  "getrandom 0.4.2",
@@ -1056,23 +1057,6 @@ dependencies = [
  "tokio",
  "tokio_with_wasm",
  "tracing",
- "wasm-bindgen-test",
-]
-
-[[package]]
-name = "brush-fused-ssim"
-version = "0.3.0"
-dependencies = [
- "brush-kernel",
- "brush-render",
- "burn",
- "burn-cubecl",
- "burn-fusion",
- "burn-ir",
- "burn-wgpu",
- "getrandom 0.4.2",
- "half",
- "tokio",
  "wasm-bindgen-test",
 ]
 
@@ -1112,6 +1096,24 @@ dependencies = [
  "console_error_panic_hook",
  "log",
  "wasm-logger",
+]
+
+[[package]]
+name = "brush-loss"
+version = "0.3.0"
+dependencies = [
+ "brush-kernel",
+ "brush-render",
+ "burn",
+ "burn-cubecl",
+ "burn-fusion",
+ "burn-ir",
+ "burn-wgpu",
+ "getrandom 0.4.2",
+ "glam",
+ "half",
+ "tokio",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -1278,8 +1280,8 @@ dependencies = [
  "anyhow",
  "ball-tree",
  "brush-dataset",
- "brush-fused-ssim",
  "brush-kernel",
+ "brush-loss",
  "brush-render",
  "brush-render-bwd",
  "brush-serde",

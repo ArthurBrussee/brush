@@ -231,31 +231,45 @@ pub fn view_to_sample_image(image: DynamicImage, alpha_mode: AlphaMode) -> Dynam
     }
 }
 
-pub fn sample_to_tensor_data(sample: DynamicImage) -> TensorData {
-    let _span = tracing::trace_span!("sample_to_tensor").entered();
-
+/// Convert a sample into the GPU-side packed representation: `[H, W]` u32,
+/// each entry packing `[r8 g8 b8 a8]`. Images without alpha get `a = 255`
+/// (fully opaque) so the kernel always sees a valid alpha byte. Returns
+/// `(packed, has_alpha)` so the trainer knows whether to apply
+/// alpha-dependent loss terms.
+pub fn sample_to_packed_data(sample: DynamicImage) -> (TensorData, bool) {
+    let _span = tracing::trace_span!("sample_to_packed").entered();
     let (w, h) = (sample.width(), sample.height());
-    tracing::trace_span!("Img to vec").in_scope(|| {
-        if sample.color().has_alpha() {
-            TensorData::new(
-                sample.into_rgba32f().into_vec(),
-                [h as usize, w as usize, 4],
-            )
-        } else {
-            TensorData::new(sample.into_rgb32f().into_vec(), [h as usize, w as usize, 3])
+    let has_alpha = sample.color().has_alpha();
+    let bytes = if has_alpha {
+        sample.into_rgba8().into_vec()
+    } else {
+        let rgb = sample.into_rgb8().into_vec();
+        let mut bytes = Vec::with_capacity((w * h * 4) as usize);
+        for px in rgb.chunks_exact(3) {
+            bytes.extend_from_slice(px);
+            bytes.push(255);
         }
-    })
+        bytes
+    };
+    // Reinterpret the `[r g b a r g b a ...]` byte stream as `[u32]` little-endian.
+    // The kernel reads the same way (`val & 0xff` is `r`, `>> 24` is `a`).
+    let packed: Vec<u32> = bytemuck::pod_collect_to_vec(&bytes);
+    (TensorData::new(packed, [h as usize, w as usize]), has_alpha)
 }
 
 #[derive(Clone, Debug)]
 pub struct SceneBatch {
-    pub img_tensor: TensorData,
+    /// `[H, W]` u32, each entry packs `[r g b a]` u8.
+    pub img_packed: TensorData,
+    /// True when the source image had an alpha channel that the trainer
+    /// should consume (mask weight, alpha-matching loss, bg compositing).
+    pub has_alpha: bool,
     pub alpha_mode: AlphaMode,
     pub camera: Camera,
 }
 
 impl SceneBatch {
-    pub fn has_alpha(&self) -> bool {
-        self.img_tensor.shape[2] == 4
+    pub fn img_size(&self) -> [usize; 2] {
+        [self.img_packed.shape[0], self.img_packed.shape[1]]
     }
 }

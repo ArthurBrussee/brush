@@ -1,5 +1,5 @@
 [package]
-name = "brush-fused-ssim"
+name = "brush-loss"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -13,6 +13,7 @@ burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
 burn-wgpu.workspace = true
+glam.workspace = true
 half = "2"
 
 [dev-dependencies]

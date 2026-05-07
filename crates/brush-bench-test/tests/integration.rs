@@ -94,30 +94,26 @@ fn generate_test_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend
 fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
     let mut rng = rand::rngs::StdRng::seed_from_u64(TEST_SEED);
     let (width, height) = resolution;
-    let pixel_count = (width * height * 3) as usize;
+    let pixel_count = (width * height) as usize;
 
-    let img_data: Vec<f32> = (0..pixel_count)
+    let mut byte = |v: f32| -> u32 {
+        let v = (v + (rng.random::<f32>() - 0.5) * 0.05).clamp(0.0, 1.0);
+        (v * 255.0).round() as u32
+    };
+    let img_packed_data: Vec<u32> = (0..pixel_count)
         .map(|i| {
-            let pixel_idx = i / 3;
-            let x = (pixel_idx as u32) % width;
-            let y = (pixel_idx as u32) / width;
-            let channel = i % 3;
-
+            let x = (i as u32) % width;
+            let y = (i as u32) / width;
             let nx = x as f32 / width as f32;
             let ny = y as f32 / height as f32;
-
-            let base = match channel {
-                0 => nx * 0.5 + 0.25,
-                1 => ny * 0.5 + 0.25,
-                2 => (nx + ny) * 0.25 + 0.5,
-                _ => unreachable!(),
-            };
-
-            base + (rng.random::<f32>() - 0.5) * 0.05
+            let r = byte(nx * 0.5 + 0.25);
+            let g = byte(ny * 0.5 + 0.25);
+            let b = byte((nx + ny) * 0.25 + 0.5);
+            r | g << 8 | b << 16 | 255 << 24
         })
         .collect();
 
-    let img_tensor = TensorData::new(img_data, [height as usize, width as usize, 3]);
+    let img_packed = TensorData::new(img_packed_data, [height as usize, width as usize]);
     let camera = Camera::new(
         Vec3::new(0.0, 0.0, 3.0),
         Quat::IDENTITY,
@@ -127,7 +123,8 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
     );
 
     SceneBatch {
-        img_tensor,
+        img_packed,
+        has_alpha: false,
         alpha_mode: AlphaMode::Transparent,
         camera,
     }
