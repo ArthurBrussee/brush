@@ -10,7 +10,7 @@
 //!   with optional background-compositing of GT (`gt_eff = gt + (1 - gt.a) * bg`)
 //!   and optional mask multiplication (`out = out * gt.a`) folded into the kernel.
 //! - [`alpha_match_loss`]: per-pixel `|pred_alpha - gt.a|`.
-//! - [`ssim_eval`]: forward-only SSIM map for non-differentiable backends.
+//! - [`image_loss_eval`]: forward-only loss map for non-differentiable backends.
 //!
 //! Backward recomputes SSIM partials inline so no per-pixel state survives
 //! across the autograd tape.
@@ -149,18 +149,6 @@ mod kernels {
         F::new(comptime![GAUSS[i as usize]])
     }
 
-    /// Pick the bg channel matching `c` (0..2 for RGB).
-    #[cube]
-    fn bg_for_channel<F: Float>(c: u32, bg_r: f32, bg_g: f32, bg_b: f32) -> F {
-        if c == 0u32 {
-            F::cast_from(bg_r)
-        } else if c == 1u32 {
-            F::cast_from(bg_g)
-        } else {
-            F::cast_from(bg_b)
-        }
-    }
-
     /// Forward: produce the L1 + SSIM loss map.
     ///
     /// Comptime flags:
@@ -194,7 +182,13 @@ mod kernels {
         let mut s_tile = SharedMemory::<F>::new((SHARED_Y * SHARED_X * 3) as usize);
         let mut x_conv = SharedMemory::<F>::new((SHARED_Y * BLOCK_X * 5) as usize);
 
-        let bg_c = bg_for_channel::<F>(c, bg_r, bg_g, bg_b);
+        let bg_c = if c == 0u32 {
+            F::cast_from(bg_r)
+        } else if c == 1u32 {
+            F::cast_from(bg_g)
+        } else {
+            F::cast_from(bg_b)
+        };
 
         let thread_rank = UNIT_POS_Y * BLOCK_X + UNIT_POS_X;
         let threads = BLOCK_X * BLOCK_Y;
@@ -352,7 +346,13 @@ mod kernels {
         let mut s_chain_partials = SharedMemory::<F>::new((SHARED_Y * SHARED_X * 3) as usize);
         let mut s_bwd_horiz = SharedMemory::<F>::new((SHARED_Y * BLOCK_X * 3) as usize);
 
-        let bg_c = bg_for_channel::<F>(c, bg_r, bg_g, bg_b);
+        let bg_c = if c == 0u32 {
+            F::cast_from(bg_r)
+        } else if c == 1u32 {
+            F::cast_from(bg_g)
+        } else {
+            F::cast_from(bg_b)
+        };
 
         let thread_rank = UNIT_POS_Y * BLOCK_X + UNIT_POS_X;
         let threads = BLOCK_X * BLOCK_Y;
@@ -1284,23 +1284,6 @@ where
     let gt_p = gt_packed.into_primitive();
     let map = B::image_loss_forward(pred_chw, gt_p, cfg);
     Tensor::<B, 3>::from_primitive(TensorPrimitive::Float(map)).permute([1, 2, 0])
-}
-
-/// Convenience: SSIM-only eval map.
-pub fn ssim_eval<B>(pred: Tensor<B, 3>, gt_packed: Tensor<B, 2, Int>) -> Tensor<B, 3>
-where
-    B: Backend + LossOps<B>,
-{
-    image_loss_eval(
-        pred,
-        gt_packed,
-        ImageLossConfig {
-            l1_weight: 0.0,
-            ssim_weight: 1.0,
-            composite_bg: None,
-            mask: false,
-        },
-    )
 }
 
 /// Decode `gt_packed` back to a `[H, W, 3]` f32 RGB tensor, optionally with

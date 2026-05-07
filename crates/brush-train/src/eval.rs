@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
-use brush_loss::{ImageLossConfig, LossOps, image_loss_eval, ssim_eval, upload_packed_gt};
+use brush_loss::{ImageLossConfig, LossOps, image_loss_eval, upload_packed_gt};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, RenderAux, SplatOps, TextureMode, render_splats};
@@ -41,18 +41,18 @@ pub async fn eval_stats<B: Backend + SplatOps<B> + LossOps<B>>(
     // Simulate an 8-bit roundtrip for fair comparison.
     let render_rgb = (render_rgb * 255.0).round() / 255.0;
 
-    // MSE = mean(L1^2) since |a - b|^2 == (a - b)^2.
-    let l1_cfg = ImageLossConfig {
-        l1_weight: 1.0,
-        ssim_weight: 0.0,
+    let cfg = |l1, ssim| ImageLossConfig {
+        l1_weight: l1,
+        ssim_weight: ssim,
         composite_bg: None,
         mask: false,
     };
-    let mse = image_loss_eval(render_rgb.clone(), gt_packed.clone(), l1_cfg)
+    // MSE = mean(L1^2) since |a - b|^2 == (a - b)^2.
+    let mse = image_loss_eval(render_rgb.clone(), gt_packed.clone(), cfg(1.0, 0.0))
         .powi_scalar(2)
         .mean();
     let psnr = mse.recip().log() * 10.0 / std::f32::consts::LN_10;
-    let ssim = ssim_eval(render_rgb.clone(), gt_packed).mean();
+    let ssim = image_loss_eval(render_rgb.clone(), gt_packed, cfg(0.0, 1.0)).mean();
 
     Ok(EvalSample {
         gt_img,
