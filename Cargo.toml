@@ -36,7 +36,7 @@ license = "Apache-2.0"
 repository = "https://github.com/ArthurBrussee/brush"
 
 [workspace.dependencies]
-glam = { version = "0.30", features = ["serde"] }
+glam = { version = "0.32", features = ["serde"] }
 bytemuck = "1.20"
 image = { version = "0.25", default-features = false, features = [
     'png',
