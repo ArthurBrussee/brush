@@ -118,7 +118,7 @@ pub async fn compute_pup_scores(
         let l1_cfg = ImageLossConfig {
             l1_weight: 1.0,
             ssim_weight: 0.0,
-            background: Vec3::ZERO,
+            composite_bg: None,
             mask: false,
         };
         let loss = image_loss(pred_rgb, gt_packed, l1_cfg).mean();

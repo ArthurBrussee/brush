@@ -165,10 +165,14 @@ impl SplatTrainer {
                 (1.0, 0.0)
             };
             let do_alpha_match = has_alpha && !masked_alpha && self.config.match_alpha_weight > 0.0;
+            // Only composite when there's a real alpha channel and a non-zero
+            // bg to mix in; the kernel skips the per-pixel `(1-a)*bg` math
+            // entirely when this is None.
+            let composite_bg = (has_alpha && background != glam::Vec3::ZERO).then_some(background);
             let cfg = ImageLossConfig {
                 l1_weight: l1_w,
                 ssim_weight: ssim_w,
-                background,
+                composite_bg,
                 mask: masked_alpha,
             };
             let pred_for_loss = if do_alpha_match {
@@ -190,7 +194,7 @@ impl SplatTrainer {
             // here costs ~99 MB at 4K, only when LPIPS is enabled.
             #[cfg(not(target_family = "wasm"))]
             if let Some(lpips) = &self.lpips {
-                let gt_rgb = unpack_gt_rgb::<MainBackend>(gt_packed.clone(), background);
+                let gt_rgb = unpack_gt_rgb::<MainBackend>(gt_packed.clone(), composite_bg);
                 let gt_rgb_diff: Tensor<DiffBackend, 3> = Tensor::from_inner(gt_rgb);
                 loss = loss
                     + lpips.lpips(

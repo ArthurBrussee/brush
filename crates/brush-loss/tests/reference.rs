@@ -11,7 +11,6 @@ use burn::{
     backend::Autodiff,
     tensor::{Int, Tensor, TensorData, ops::IntTensorOps},
 };
-use glam::Vec3;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[cfg(target_family = "wasm")]
@@ -65,7 +64,7 @@ fn ssim_only_cfg() -> ImageLossConfig {
     ImageLossConfig {
         l1_weight: 0.0,
         ssim_weight: 1.0,
-        background: Vec3::ZERO,
+        composite_bg: None,
         mask: false,
     }
 }
@@ -131,7 +130,7 @@ async fn image_loss_backward_runs() {
         ImageLossConfig {
             l1_weight: 0.8,
             ssim_weight: -0.2,
-            background: Vec3::ZERO,
+            composite_bg: None,
             mask: false,
         },
     );
@@ -157,7 +156,7 @@ async fn alpha_match_via_4ch_pred() {
         ImageLossConfig {
             l1_weight: 1.0,
             ssim_weight: 0.0,
-            background: Vec3::ZERO,
+            composite_bg: None,
             mask: false,
         },
     );

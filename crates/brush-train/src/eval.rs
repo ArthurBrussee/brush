@@ -44,7 +44,7 @@ pub async fn eval_stats<B: Backend + SplatOps<B> + LossOps<B>>(
     let cfg = |l1, ssim| ImageLossConfig {
         l1_weight: l1,
         ssim_weight: ssim,
-        background: Vec3::ZERO,
+        composite_bg: None,
         mask: false,
     };
     // MSE = mean(L1^2) since |a - b|^2 == (a - b)^2.
