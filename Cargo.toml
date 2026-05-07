@@ -8,7 +8,7 @@ members = [
 
     "crates/brush-bench-test",
     "crates/brush-dataset",
-    "crates/brush-fused-ssim",
+    "crates/brush-loss",
     "crates/brush-kernel",
     "crates/brush-prefix-sum",
     "crates/brush-process",

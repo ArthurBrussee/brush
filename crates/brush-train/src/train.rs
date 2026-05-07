@@ -9,7 +9,7 @@ use crate::{
 };
 
 use brush_dataset::scene::SceneBatch;
-use brush_fused_ssim::fused_image_loss;
+use brush_loss::{ImageLossConfig, image_loss, unpack_gt_rgb};
 use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
 use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
@@ -26,8 +26,8 @@ use burn::{
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
     prelude::Backend,
     tensor::{
-        Bool, Distribution, IndexingUpdateOp, Tensor, TensorData, TensorPrimitive,
-        activation::sigmoid, backend::AutodiffBackend, s,
+        Bool, Distribution, IndexingUpdateOp, Int, Tensor, TensorData, TensorPrimitive,
+        activation::sigmoid, backend::AutodiffBackend, ops::IntTensorOps, s,
     },
 };
 
@@ -48,8 +48,6 @@ pub struct SplatTrainer {
     sched_scale: ExponentialLrScheduler,
     refine_record: Option<RefineRecord<MainBackend>>,
     optim: Option<OptimizerType>,
-    /// `true` when SSIM loss is enabled — `Ssim` no longer needs construction
-    /// because the fused [`brush_fused_ssim::fused_ssim`] kernel is stateless.
     ssim_enabled: bool,
     bounds: BoundingBox,
     step_count: u32,
@@ -109,7 +107,7 @@ impl SplatTrainer {
         &mut self,
         batch: SceneBatch,
         splats: Splats<DiffBackend>,
-    ) -> (Splats<DiffBackend>, TrainStepStats<MainBackend>) {
+    ) -> (Splats<DiffBackend>, TrainStepStats) {
         let mut splats = splats;
 
         // Track max SH degree from the first splats we see.
@@ -118,98 +116,111 @@ impl SplatTrainer {
         }
         self.step_count += 1;
 
-        let [img_h, img_w, _] = batch.img_tensor.shape.dims();
+        let [img_h, img_w] = batch.img_size();
         let camera = batch.camera.clone();
 
-        // Upload tensor early.
         let device = splats.device();
-        let has_alpha = batch.has_alpha();
-        let gt_tensor = Tensor::from_data(batch.img_tensor, &device);
-
-        // Forward pass - render splats asynchronously.
-        // Clone splats to avoid holding references across the await.
+        let has_alpha = batch.has_alpha;
+        // GT lives on the GPU as packed `[H, W]` u32 (RGBA u8). All mixing
+        // (bg compositing, alpha matching, mask) is folded into the loss
+        // kernels; no f32 GT image is ever materialised here. Going through
+        // `int_from_data` directly avoids `Tensor::from_data` casting u32 →
+        // i32 and panicking for alpha bytes ≥ 128.
+        let gt_packed: Tensor<MainBackend, 2, Int> =
+            Tensor::new(MainBackend::int_from_data(batch.img_packed, &device));
         let img_size = glam::uvec2(img_w as u32, img_h as u32);
-
         let base = &self.config.background_color;
         let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
         let background = sample_background_color(base_bg, self.config.background_noise_strength);
 
-        let render_input = splats.clone();
-        let diff_out = render_splats(render_input, &camera, img_size, background)
-            .instrument(trace_span!("Forward"))
-            .await;
-
-        let pred_image = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-        let render_aux = diff_out.render_aux;
-        let refine_weight_holder = diff_out.refine_weight_holder;
-
         let median_scale = self.bounds.median_size();
-        let num_visible = render_aux.get_num_visible();
 
-        let pred_rgb = pred_image.clone().slice(s![.., .., 0..3]);
+        let (mut grads, visible, num_visible) = {
+            let render_input = splats.clone();
+            let diff_out = render_splats(render_input, &camera, img_size, background)
+                .instrument(trace_span!("Forward"))
+                .await;
 
-        // For images with alpha, composite GT on the same background.
-        let gt_rgb = if has_alpha && background != glam::Vec3::ZERO {
-            let gt_rgb = gt_tensor.clone().slice(s![.., .., 0..3]);
-            let gt_alpha = gt_tensor.clone().slice(s![.., .., 3..4]);
-            let bg_3d: Tensor<DiffBackend, 3> = Tensor::<DiffBackend, 1>::from_floats(
-                [background.x, background.y, background.z].as_slice(),
-                &device,
-            )
-            .reshape([1, 1, 3]);
-            gt_rgb + (1.0 - gt_alpha) * bg_3d
-        } else {
-            gt_tensor.clone().slice(s![.., .., 0..3])
-        };
+            let pred_image = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
 
-        let visible: Tensor<Autodiff<MainBackend>, 1> =
-            Tensor::from_primitive(TensorPrimitive::Float(render_aux.visible));
-        let max_radius: Tensor<Autodiff<MainBackend>, 1> =
-            Tensor::from_primitive(TensorPrimitive::Float(render_aux.max_radius));
+            let refine_weight_holder = diff_out.refine_weight_holder;
 
-        let loss = trace_span!("Calculate losses").in_scope(|| {
-            // Brush's RGB loss is `(1 - w) * L1 - w * SSIM` per pixel. The
-            // fused L1+SSIM kernel computes that combined error in a single
-            // pass (one shared-mem load of pred and gt) instead of the
-            // previous `(pred - gt).abs() + fused_ssim(...)` chain that
-            // materialised two intermediate `[H, W, 3]` tensors.
-            let masked_alpha = has_alpha && batch.alpha_mode == AlphaMode::Masked;
+            let visible: Tensor<Autodiff<MainBackend>, 1> =
+                Tensor::from_primitive(TensorPrimitive::Float(diff_out.visible));
+            let max_radius: Tensor<Autodiff<MainBackend>, 1> =
+                Tensor::from_primitive(TensorPrimitive::Float(diff_out.max_radius));
 
+            // RGB loss is `(1 - w) * L1 + (-w) * SSIM` per pixel. Bg
+            // compositing always runs in the kernel; for synthesised opaque
+            // alpha or zero bg it's a no-op. Mask multiplies the loss-map
+            // by `gt.a`; for synthesised opaque alpha that's a no-op too.
+            // Alpha matching needs a real alpha source (synthesised
+            // a = 1 would pull predicted alpha to fully opaque); we feed
+            // `pred` with 4 channels and the kernel's `c == 3` workgroup
+            // emits `|pred.a - gt.a|` into the alpha channel.
+            let masked_alpha = batch.alpha_mode == AlphaMode::Masked;
             let (l1_w, ssim_w) = if self.ssim_enabled {
                 (1.0 - self.config.ssim_weight, -self.config.ssim_weight)
             } else {
                 (1.0, 0.0)
             };
-
-            let loss = if masked_alpha {
-                let total_err = fused_image_loss(pred_rgb.clone(), gt_rgb.clone(), l1_w, ssim_w);
-                let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
-                (total_err * alpha_input).mean()
+            let do_alpha_match = has_alpha && !masked_alpha && self.config.match_alpha_weight > 0.0;
+            // Only composite when there's a real alpha channel and a non-zero
+            // bg to mix in; the kernel skips the per-pixel `(1-a)*bg` math
+            // entirely when this is None.
+            let composite_bg = (has_alpha && background != glam::Vec3::ZERO).then_some(background);
+            let cfg = ImageLossConfig {
+                l1_weight: l1_w,
+                ssim_weight: ssim_w,
+                composite_bg,
+                mask: masked_alpha,
+            };
+            let pred_for_loss = if do_alpha_match {
+                pred_image.clone()
             } else {
-                let mut loss =
-                    fused_image_loss(pred_rgb.clone(), gt_rgb.clone(), l1_w, ssim_w).mean();
-                if has_alpha {
-                    let alpha_input = gt_tensor.clone().slice(s![.., .., 3..4]);
-                    let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);
-                    loss = loss
-                        + (alpha_input - pred_alpha).abs().mean() * self.config.match_alpha_weight;
-                }
-                loss
+                pred_image.clone().slice(s![.., .., 0..3])
+            };
+            let loss_map = image_loss(pred_for_loss, gt_packed.clone(), cfg);
+
+            let mut loss = if do_alpha_match {
+                let rgb = loss_map.clone().slice(s![.., .., 0..3]).mean();
+                let alpha = loss_map.slice(s![.., .., 3..4]).mean();
+                rgb + alpha * self.config.match_alpha_weight
+            } else {
+                loss_map.mean()
             };
 
-            // TODO: Support masked lpips.
+            // LPIPS still needs an f32 RGB tensor for VGG. Materialising it
+            // here costs ~99 MB at 4K, only when LPIPS is enabled.
             #[cfg(not(target_family = "wasm"))]
-            let loss = if let Some(lpips) = &self.lpips {
-                loss + lpips.lpips(pred_rgb.unsqueeze_dim(0), gt_rgb.unsqueeze_dim(0))
-                    * self.config.lpips_loss_weight
-            } else {
-                loss
-            };
+            if let Some(lpips) = &self.lpips {
+                let gt_rgb = unpack_gt_rgb::<MainBackend>(gt_packed.clone(), composite_bg);
+                let gt_rgb_diff: Tensor<DiffBackend, 3> = Tensor::from_inner(gt_rgb);
+                loss = loss
+                    + lpips.lpips(
+                        pred_image.clone().slice(s![.., .., 0..3]).unsqueeze_dim(0),
+                        gt_rgb_diff.unsqueeze_dim(0),
+                    ) * self.config.lpips_loss_weight;
+            }
 
-            loss
-        });
+            let mut grads = splats.bwd_validate(loss.clone()).await;
 
-        let mut grads = splats.bwd_validate(loss.clone()).await;
+            trace_span!("Housekeeping").in_scope(|| {
+                // Get the xy gradient norm from the dummy tensor.
+                let refine_weight = refine_weight_holder
+                    .grad_remove(&mut grads)
+                    .expect("XY gradients need to be calculated.");
+                let device = splats.device();
+                let num_splats = splats.num_splats();
+                let record = self
+                    .refine_record
+                    .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
+
+                record.gather_stats(refine_weight, visible.clone().inner(), max_radius.inner());
+            });
+
+            (grads, visible, diff_out.num_visible)
+        };
 
         let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
             self.sched_mean.step() * median_scale as f64,
@@ -298,21 +309,6 @@ impl SplatTrainer {
             splats
         });
 
-        trace_span!("Housekeeping").in_scope(|| {
-            // Get the xy gradient norm from the dummy tensor.
-            let refine_weight = refine_weight_holder
-                .grad_remove(&mut grads)
-                .expect("XY gradients need to be calculated.");
-            let device = splats.device();
-            let num_splats = splats.num_splats();
-            let record = self
-                .refine_record
-                .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
-
-            record.gather_stats(refine_weight, visible.clone().inner(), max_radius.inner());
-        });
-
-        let device = splats.device();
         // Add random noise. Only do this in the growth phase, otherwise
         // let the splats settle in without noise, not much point in exploring regions anymore.
         let inv_opac: Tensor<_, 1> = 1.0 - splats.opacities();
@@ -321,18 +317,17 @@ impl SplatTrainer {
         let samples = Tensor::random(
             [splats.num_splats() as usize, 3],
             Distribution::Normal(0.0, 1.0),
-            &device,
+            &splats.device(),
         );
 
-        // Only allow noised gaussians to travel at most the entire extent of the current bounds.
-        let max_noise = median_scale;
-        // Could scale by train time, but, the mean_lr already heavily decays.
+        // Could scale by train time, but, the mean_lr already decays over time.
         let noise_weight_means = noise_weight * (lr_mean as f32 * self.config.mean_noise_weight);
 
         // Add noise to the means portion (cols 0..3), and optionally scales
         // (cols 7..10) and rotations (cols 3..7).
         splats.transforms = splats.transforms.map(|t| {
-            let noise_m = (samples * noise_weight_means).clamp(-max_noise, max_noise);
+            // Only allow noised gaussians to travel at most the entire extent of the current bounds.
+            let noise_m = (samples * noise_weight_means).clamp(-median_scale, median_scale);
             let inner = t.inner();
             // slice + slice_assign with a clone of inner avoids holding two
             // refs across slice_assign — `inner` is consumed by slice_assign
@@ -343,9 +338,7 @@ impl SplatTrainer {
         });
 
         let stats = TrainStepStats {
-            pred_image: pred_image.inner(),
             num_visible,
-            loss: loss.inner(),
             lr_mean,
             lr_rotation,
             lr_scale,

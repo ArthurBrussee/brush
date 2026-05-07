@@ -105,34 +105,31 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
     let mut rng = rand::rngs::StdRng::seed_from_u64(SEED + camera_pos.x as u64);
 
     let (width, height) = resolution;
-    let pixel_count = (width * height * 3) as usize;
+    let pixel_count = (width * height) as usize;
 
-    let img_data: Vec<f32> = (0..pixel_count)
+    let img_packed_data: Vec<u32> = (0..pixel_count)
         .map(|i| {
-            let pixel_idx = i / 3;
-            let x = (pixel_idx as u32) % width;
-            let y = (pixel_idx as u32) / width;
-            let channel = i % 3;
-            // Create some structure in the image
+            let x = (i as u32) % width;
+            let y = (i as u32) / width;
             let nx = x as f32 / width as f32;
             let ny = y as f32 / height as f32;
-
-            let base = match channel {
-                0 => nx * 0.6 + 0.2,
-                1 => ny * 0.6 + 0.2,
-                2 => (nx + ny) * 0.3 + 0.4,
-                _ => unreachable!(),
+            let mut mk_byte = |v: f32| -> u32 {
+                let v = (v + (rng.random::<f32>() - 0.5) * 0.1).clamp(0.0, 1.0);
+                (v * 255.0).round() as u32
             };
-            // Add some noise
-            base + (rng.random::<f32>() - 0.5) * 0.1
+            let r = mk_byte(nx * 0.6 + 0.2);
+            let g = mk_byte(ny * 0.6 + 0.2);
+            let b = mk_byte((nx + ny) * 0.3 + 0.4);
+            r | g << 8 | b << 16 | 255 << 24
         })
         .collect();
 
-    let img_tensor = TensorData::new(img_data, [height as usize, width as usize, 3]);
+    let img_packed = TensorData::new(img_packed_data, [height as usize, width as usize]);
     let camera = Camera::new(camera_pos, Quat::IDENTITY, 50.0, 50.0, glam::vec2(0.5, 0.5));
 
     SceneBatch {
-        img_tensor,
+        img_packed,
+        has_alpha: false,
         alpha_mode: AlphaMode::Transparent,
         camera,
     }

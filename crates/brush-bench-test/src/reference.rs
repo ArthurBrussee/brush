@@ -162,8 +162,7 @@ async fn test_reference() -> Result<()> {
 
         #[cfg(not(target_family = "wasm"))]
         if let Some(rec) = rec.as_ref() {
-            use brush_rerun::burn_to_rerun::{BurnToImage, BurnToRerun};
-            let render_aux = &diff_out.render_aux;
+            use brush_rerun::burn_to_rerun::BurnToImage;
             rec.set_time_sequence("test case", i as i64);
             rec.log("img/render", &out.clone().into_rerun_image_blocking())?;
             rec.log("img/ref", &img_ref.clone().into_rerun_image_blocking())?;
@@ -171,12 +170,7 @@ async fn test_reference() -> Result<()> {
                 "img/dif",
                 &(img_ref.clone() - out.clone()).into_rerun_image_blocking(),
             )?;
-            rec.log(
-                "images/tile_depth",
-                &render_aux.calc_tile_depth().into_rerun_blocking(),
-            )?;
         }
-        let _ = (i, &diff_out.render_aux); // suppress unused warnings when rerun is off
 
         // Tolerance reflects f16 precision in the color pipeline: ProjectedSplat stores
         // colors as f16, giving ~1e-3 relative precision that accumulates through blending.

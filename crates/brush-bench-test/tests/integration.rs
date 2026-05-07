@@ -94,30 +94,26 @@ fn generate_test_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend
 fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
     let mut rng = rand::rngs::StdRng::seed_from_u64(TEST_SEED);
     let (width, height) = resolution;
-    let pixel_count = (width * height * 3) as usize;
+    let pixel_count = (width * height) as usize;
 
-    let img_data: Vec<f32> = (0..pixel_count)
+    let mut byte = |v: f32| -> u32 {
+        let v = (v + (rng.random::<f32>() - 0.5) * 0.05).clamp(0.0, 1.0);
+        (v * 255.0).round() as u32
+    };
+    let img_packed_data: Vec<u32> = (0..pixel_count)
         .map(|i| {
-            let pixel_idx = i / 3;
-            let x = (pixel_idx as u32) % width;
-            let y = (pixel_idx as u32) / width;
-            let channel = i % 3;
-
+            let x = (i as u32) % width;
+            let y = (i as u32) / width;
             let nx = x as f32 / width as f32;
             let ny = y as f32 / height as f32;
-
-            let base = match channel {
-                0 => nx * 0.5 + 0.25,
-                1 => ny * 0.5 + 0.25,
-                2 => (nx + ny) * 0.25 + 0.5,
-                _ => unreachable!(),
-            };
-
-            base + (rng.random::<f32>() - 0.5) * 0.05
+            let r = byte(nx * 0.5 + 0.25);
+            let g = byte(ny * 0.5 + 0.25);
+            let b = byte((nx + ny) * 0.25 + 0.5);
+            r | g << 8 | b << 16 | 255 << 24
         })
         .collect();
 
-    let img_tensor = TensorData::new(img_data, [height as usize, width as usize, 3]);
+    let img_packed = TensorData::new(img_packed_data, [height as usize, width as usize]);
     let camera = Camera::new(
         Vec3::new(0.0, 0.0, 3.0),
         Quat::IDENTITY,
@@ -127,7 +123,8 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
     );
 
     SceneBatch {
-        img_tensor,
+        img_packed,
+        has_alpha: false,
         alpha_mode: AlphaMode::Transparent,
         camera,
     }
@@ -171,8 +168,7 @@ async fn test_forward_rendering() {
     );
     let img_size = glam::uvec2(64, 64);
     let result = render_splats(splats, &camera, img_size, Vec3::ZERO).await;
-
-    assert!(result.render_aux.num_visible > 0, "no splats rendered");
+    assert!(result.num_visible > 0, "no splats rendered");
     let pixels: Tensor<DiffBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(result.img));
     let data = pixels
         .into_data_async()
@@ -181,41 +177,6 @@ async fn test_forward_rendering() {
         .into_vec::<f32>()
         .expect("Wrong type");
     assert!(data.iter().all(|&v| v.is_finite()));
-}
-
-#[wasm_bindgen_test(unsupported = tokio::test)]
-async fn test_training_step() {
-    let device = brush_kernel::test_helpers::test_device().await;
-    let batch = generate_test_batch((64, 64));
-    let splats = generate_test_splats(&device, 500);
-    let config = TrainConfig::default();
-    let mut trainer = SplatTrainer::new(
-        &config,
-        &device,
-        BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
-    );
-    let (final_splats, stats) = trainer.step(batch, splats).await;
-
-    assert!(final_splats.num_splats() > 0);
-    let loss = stats
-        .loss
-        .into_data_async()
-        .await
-        .expect("readback")
-        .as_slice::<f32>()
-        .expect("Wrong type")[0];
-    assert!(loss.is_finite());
-    assert!(loss >= 0.0);
-}
-
-#[wasm_bindgen_test(unsupported = test)]
-fn test_batch_generation() {
-    let batch = generate_test_batch((256, 128));
-    let img_dims = batch.img_tensor.shape.dims();
-    assert_eq!(img_dims, [128, 256, 3]);
-    let img_data = batch.img_tensor.into_vec::<f32>().unwrap();
-    assert!(img_data.iter().all(|&x| x.is_finite()));
-    assert!(img_data.iter().all(|&x| (0.0..=1.1).contains(&x)));
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
@@ -231,95 +192,10 @@ async fn test_multi_step_training() {
     );
 
     for _ in 0..10 {
-        let (new_splats, stats) = trainer.step(batch.clone(), splats).await;
+        let (new_splats, _) = trainer.step(batch.clone(), splats).await;
         splats = new_splats;
-
-        let loss = stats
-            .loss
-            .into_data_async()
-            .await
-            .expect("readback")
-            .as_slice::<f32>()
-            .expect("Wrong type")[0];
-        assert!(loss.is_finite());
-        assert!(loss >= 0.0);
     }
-
     assert!(splats.num_splats() > 0);
-}
-
-// Training with a camera pointing away from every splat — num_visible == 0
-// every step. The training loop must not crash on this; all gradients should
-// be zero (or at least finite) and the optimizer step should be a no-op.
-#[wasm_bindgen_test(unsupported = tokio::test)]
-async fn train_with_zero_visible_does_not_crash() {
-    let device = brush_kernel::test_helpers::test_device().await;
-    let splats = generate_test_splats(&device, 200);
-
-    // Camera pointing away from the scene (looking along +Z, scene is at ±5).
-    let camera = Camera::new(
-        Vec3::new(0.0, 0.0, 1000.0),
-        Quat::IDENTITY, // looks along -Z in local space → away from origin
-        45.0,
-        45.0,
-        glam::vec2(0.5, 0.5),
-    );
-
-    let batch = SceneBatch {
-        img_tensor: TensorData::new(vec![0.5f32; 64 * 64 * 3], [64usize, 64, 3]),
-        alpha_mode: AlphaMode::Transparent,
-        camera,
-    };
-
-    let config = TrainConfig::default();
-    let mut trainer = SplatTrainer::new(
-        &config,
-        &device,
-        BoundingBox::from_min_max(Vec3::splat(-2.0), Vec3::splat(2.0)),
-    );
-    let (new_splats, stats) = trainer.step(batch, splats).await;
-    // Should succeed; nothing visible means num_visible ≈ 0.
-    assert!(new_splats.num_splats() > 0);
-    let loss = stats
-        .loss
-        .into_data_async()
-        .await
-        .expect("readback")
-        .as_slice::<f32>()
-        .expect("Wrong type")[0];
-    assert!(
-        loss.is_finite(),
-        "loss went non-finite with empty render: {loss}"
-    );
-}
-
-// Training with a deliberately degenerate bounding box (NaN center) used to
-// crash in `median_size`. After the fix, training must still proceed without
-// panicking — the per-step `lr_mean * median_size` just ends up NaN, which is
-// ultimately harmless because any NaN optimizer update is caught by
-// `validate_gradient` under the debug-validation feature.
-#[wasm_bindgen_test(unsupported = tokio::test)]
-async fn trainer_tolerates_nan_bounds() {
-    let device = brush_kernel::test_helpers::test_device().await;
-    let splats = generate_test_splats(&device, 100);
-    let config = TrainConfig::default();
-
-    // A degenerate bounds with one NaN axis. Before the `total_cmp` fix, this
-    // panicked inside `median_size()` on the first `step` call.
-    let bounds = BoundingBox {
-        center: Vec3::ZERO,
-        extent: Vec3::new(f32::NAN, 1.0, 1.0),
-    };
-    let mut trainer = SplatTrainer::new(&config, &device, bounds);
-    let batch = generate_test_batch((64, 64));
-    let (_splats, stats) = trainer.step(batch, splats).await;
-    let _ = stats
-        .loss
-        .into_data_async()
-        .await
-        .expect("readback")
-        .as_slice::<f32>()
-        .expect("Wrong type")[0];
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]

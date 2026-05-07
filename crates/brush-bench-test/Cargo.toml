@@ -12,7 +12,7 @@ brush-render-bwd.path = "../brush-render-bwd"
 brush-sort.path = "../brush-sort"
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
-brush-fused-ssim.path = "../brush-fused-ssim"
+brush-loss.path = "../brush-loss"
 brush-serde.path = "../brush-serde"
 
 anyhow.workspace = true
