@@ -4,6 +4,7 @@ use image::DynamicImage;
 use rand::{SeedableRng, seq::SliceRandom};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{RwLock, mpsc};
+use tokio_wasm::task;
 use tokio_with_wasm::alias as tokio_wasm;
 
 use crate::scene::{Scene, SceneBatch, sample_to_tensor_data, view_to_sample_image};
@@ -76,7 +77,7 @@ impl SceneLoader {
             let load_cache = load_cache.clone();
             let send_batch = send_batch.clone();
 
-            tokio_wasm::task::spawn(async move {
+            task::spawn(async move {
                 let mut shuf_indices = vec![];
 
                 loop {
@@ -98,6 +99,7 @@ impl SceneLoader {
                             .load()
                             .await
                             .expect("Scene loader encountered an error while loading an image");
+
                         // Don't premultiply the image if it's a mask - treat as fully opaque.
                         let sample = Arc::new(view_to_sample_image(image, view.image.alpha_mode()));
                         load_cache.write().await.insert(index, sample.clone());
@@ -118,7 +120,7 @@ impl SceneLoader {
                         break;
                     }
 
-                    tokio_wasm::task::yield_now().await;
+                    task::yield_now().await;
                 }
             });
         }

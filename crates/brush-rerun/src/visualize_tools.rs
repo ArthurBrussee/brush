@@ -218,11 +218,7 @@ mod visualize_tools_impl {
         }
 
         #[allow(unused_variables)]
-        pub async fn log_train_stats<B: Backend>(
-            &self,
-            iter: u32,
-            stats: TrainStepStats<B>,
-        ) -> Result<()> {
+        pub fn log_train_stats(&self, iter: u32, stats: &TrainStepStats) -> Result<()> {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
                 self.rec
@@ -239,18 +235,7 @@ mod visualize_tools_impl {
                     "splats/splats_visible",
                     &rerun::Scalars::new(vec![stats.num_visible as f64]),
                 )?;
-
-                let [img_h, img_w, _] = stats.pred_image.dims();
-                let pred_rgb = stats.pred_image.clone().slice(s![.., .., 0..3]);
-
-                self.rec.log(
-                    "losses/main",
-                    &rerun::Scalars::new(vec![
-                        stats.loss.clone().into_scalar_async().await?.elem::<f64>(),
-                    ]),
-                )?;
             }
-
             Ok(())
         }
 

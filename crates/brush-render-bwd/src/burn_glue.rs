@@ -1,5 +1,5 @@
 use brush_render::{
-    MainBackendBase, RenderAux, SplatOps,
+    MainBackendBase, SplatOps,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
     sh::sh_coeffs_for_degree,
@@ -81,7 +81,7 @@ pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
 #[derive(Debug, Clone)]
 struct GaussianBackwardState<B: Backend> {
     transforms: FloatTensor<B>,
-    raw_opac: FloatTensor<B>,
+    raw_opacity: FloatTensor<B>,
 
     projected_splats: FloatTensor<B>,
     project_uniforms: ProjectUniforms,
@@ -137,7 +137,7 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
 
         let splat_grads = B::project_bwd(
             state.transforms,
-            state.raw_opac,
+            state.raw_opacity,
             state.global_from_compact_gid,
             state.project_uniforms,
             state.render_mode,
@@ -165,7 +165,9 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
 
 pub struct SplatOutputDiff<B: Backend> {
     pub img: FloatTensor<B>,
-    pub render_aux: RenderAux<B>,
+    pub num_visible: u32,
+    pub visible: FloatTensor<B>,
+    pub max_radius: FloatTensor<B>,
     pub refine_weight_holder: Tensor<B, 1>,
 }
 
@@ -173,8 +175,6 @@ pub struct SplatOutputDiff<B: Backend> {
 ///
 /// This is the main entry point for differentiable rendering, wrapping
 /// the forward pass with autodiff support.
-///
-/// Takes ownership of the splats. Clone before calling if you need to reuse them.
 pub async fn render_splats<B, C>(
     splats: Splats<Autodiff<B, C>>,
     camera: &Camera,
@@ -241,24 +241,15 @@ where
 
     output.clone().validate().await;
 
-    let wrapped_render_aux = RenderAux::<Autodiff<B, C>> {
-        num_visible: output.aux.num_visible,
-        num_intersections: output.aux.num_intersections,
-        visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(output.aux.visible.clone()),
-        max_radius: <Autodiff<B, C> as AutodiffBackend>::from_inner(output.aux.max_radius.clone()),
-        tile_offsets: output.aux.tile_offsets.clone(),
-        img_size: output.aux.img_size,
-    };
-
     match prep_nodes {
         OpsKind::Tracked(prep) => {
             let state = GaussianBackwardState {
                 transforms,
-                raw_opac: raw_opacity,
+                raw_opacity,
                 out_img: output.out_img.clone(),
                 projected_splats: output.projected_splats,
                 project_uniforms: output.project_uniforms,
-                tile_offsets: output.aux.tile_offsets,
+                tile_offsets: output.aux.tile_offsets.clone(),
                 compact_gid_from_isect: output.compact_gid_from_isect,
                 render_mode,
                 global_from_compact_gid: output.global_from_compact_gid,
@@ -266,17 +257,25 @@ where
                 img_size,
             };
 
-            let out_img = prep.finish(state, output.out_img);
-
             SplatOutputDiff {
-                img: out_img,
-                render_aux: wrapped_render_aux,
+                img: prep.finish(state, output.out_img),
+                num_visible: output.aux.num_visible,
+                visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(
+                    output.aux.visible.clone(),
+                ),
+                max_radius: <Autodiff<B, C> as AutodiffBackend>::from_inner(
+                    output.aux.max_radius.clone(),
+                ),
                 refine_weight_holder,
             }
         }
         OpsKind::UnTracked(prep) => SplatOutputDiff {
             img: prep.finish(output.out_img),
-            render_aux: wrapped_render_aux,
+            num_visible: output.aux.num_visible,
+            visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(output.aux.visible.clone()),
+            max_radius: <Autodiff<B, C> as AutodiffBackend>::from_inner(
+                output.aux.max_radius.clone(),
+            ),
             refine_weight_holder,
         },
     }

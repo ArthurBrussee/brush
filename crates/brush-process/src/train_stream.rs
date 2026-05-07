@@ -406,10 +406,7 @@ pub(crate) async fn train_stream(
             }
 
             if iter.is_multiple_of(rerun_config.rerun_log_train_stats_every) || is_last_step {
-                visualize
-                    .log_train_stats(iter, stats.clone())
-                    .await
-                    .unwrap();
+                visualize.log_train_stats(iter, &stats).unwrap();
             }
 
             visualize.log_memory(iter, &WgpuRuntime::client(device).memory_usage()?)?;

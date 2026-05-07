@@ -200,11 +200,6 @@ pub struct RenderAux<B: Backend> {
 }
 
 impl<B: Backend> RenderAux<B> {
-    /// Get `num_visible` count.
-    pub fn get_num_visible(&self) -> u32 {
-        self.num_visible
-    }
-
     /// Calculate tile depth map for visualization.
     pub fn calc_tile_depth(&self) -> Tensor<B, 2, Int> {
         use crate::shaders::helpers::TILE_WIDTH;

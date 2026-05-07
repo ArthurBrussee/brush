@@ -111,7 +111,7 @@ impl LoadImage {
         if scale < 1.0 {
             let new_w = (img.width() as f32 * scale).max(1.0) as u32;
             let new_h = (img.height() as f32 * scale).max(1.0) as u32;
-            Ok(img.resize_exact(new_w, new_h, image::imageops::FilterType::Triangle))
+            Ok(img.resize_exact(new_w, new_h, image::imageops::FilterType::Lanczos3))
         } else {
             Ok(img)
         }
@@ -212,7 +212,6 @@ impl Scene {
 pub fn view_to_sample_image(image: DynamicImage, alpha_mode: AlphaMode) -> DynamicImage {
     if image.color().has_alpha() && alpha_mode == AlphaMode::Transparent {
         let mut rgba_bytes = image.to_rgba8();
-
         // Assume image has un-multiplied alpha and convert it to pre-multiplied.
         // Perform multiplication in byte space before converting to float.
         for pixel in rgba_bytes.chunks_exact_mut(4) {
