@@ -8,9 +8,11 @@
 // sort the full u32 range — Burn's i32-typed constructor would panic on any
 // value with the high bit set.
 
+#![cfg_attr(target_family = "wasm", allow(unused_imports, dead_code))]
+
 use std::sync::Arc;
 
-use brush_kernel::CubeTensor;
+use brush_cube::CubeTensor;
 use brush_sort::radix_argsort;
 use burn::backend::wgpu::WgpuDevice;
 use burn::tensor::{DType, Shape};
@@ -18,9 +20,13 @@ use burn_cubecl::cubecl::Runtime;
 use burn_cubecl::cubecl::future::block_on;
 use burn_wgpu::WgpuRuntime;
 
+#[cfg(not(target_family = "wasm"))]
 fn main() {
     divan::main();
 }
+
+#[cfg(target_family = "wasm")]
+fn main() {}
 
 // Sizes spanning the interesting range:
 // - 1M  : "normal" frame, well below any cliff
@@ -34,7 +40,7 @@ const SIZES: [usize; 4] = [1_000_000, 10_000_000, 30_000_000, 70_000_000];
 const TILE_ID_RANGE: u32 = 1024;
 
 fn device() -> WgpuDevice {
-    block_on(brush_kernel::test_helpers::test_device())
+    block_on(brush_cube::test_helpers::test_device())
 }
 
 #[derive(Copy, Clone)]
@@ -93,6 +99,7 @@ fn run_sort(device: &WgpuDevice, inputs: &(Vec<u32>, Vec<u32>), bits: u32) {
     let _ = block_on(client.read_async(vec![sorted_keys.handle, sorted_values.handle]));
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[divan::bench_group(max_time = 4)]
 mod sort_bench {
     use crate::{KeyKind, SIZES, device, make_inputs, run_sort};

@@ -169,20 +169,19 @@ impl DataSource {
             opts.set_mode(RequestMode::Cors);
 
             let request = Request::new_with_str_and_init(&url, &opts).map_err(|e| {
-                DataSourceError::FetchError(format!("Failed to create request: {:?}", e))
+                DataSourceError::FetchError(format!("Failed to create request: {e:?}"))
             })?;
 
-            let window = web_sys::window().ok_or_else(|| {
-                DataSourceError::FetchError("No window object available".to_string())
-            })?;
+            let window = web_sys::window()
+                .ok_or_else(|| DataSourceError::FetchError("No window object available".into()))?;
 
             let resp_value =
                 wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request))
                     .await
-                    .map_err(|e| DataSourceError::FetchError(format!("Fetch failed: {:?}", e)))?;
+                    .map_err(|e| DataSourceError::FetchError(format!("Fetch failed: {e:?}")))?;
 
             let resp: Response = resp_value.dyn_into().map_err(|e| {
-                DataSourceError::FetchError(format!("Failed to cast to Response: {:?}", e))
+                DataSourceError::FetchError(format!("Failed to cast to Response: {e:?}"))
             })?;
 
             if !resp.ok() {
@@ -214,7 +213,7 @@ impl DataSource {
 
             let body = resp
                 .body()
-                .ok_or_else(|| DataSourceError::FetchError("Response has no body".to_string()))?;
+                .ok_or_else(|| DataSourceError::FetchError("Response has no body".into()))?;
 
             let readable_stream = ReadableStream::from_raw(body);
             let async_read = readable_stream.into_async_read().compat();

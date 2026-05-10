@@ -237,7 +237,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_sh_degree_exports() {
-        let _device = brush_kernel::test_helpers::test_device().await;
+        let _device = brush_cube::test_helpers::test_device().await;
         for degree in 0..=2 {
             let splats = create_test_splats(degree);
             assert_eq!(splats.sh_degree(), degree);
@@ -259,7 +259,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_ply_field_count_matches_sh_degree() {
-        let _device = brush_kernel::test_helpers::test_device().await;
+        let _device = brush_cube::test_helpers::test_device().await;
         let test_cases = [(0, 0), (1, 9), (2, 24)];
 
         for (degree, expected_rest_fields) in test_cases {
@@ -285,7 +285,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_roundtrip_sh_coefficient_ordering() {
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
 
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);
@@ -310,7 +310,7 @@ mod tests {
     async fn test_export_roundtrip_multiple_splats() {
         use crate::test_utils::create_test_splats_with_count;
 
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         let num_splats = 100;
 
         for degree in [0, 1, 2, 3] {

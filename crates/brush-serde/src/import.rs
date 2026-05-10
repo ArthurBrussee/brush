@@ -569,7 +569,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_import_basic_functionality() {
-        let _device = brush_kernel::test_helpers::test_device().await;
+        let _device = brush_cube::test_helpers::test_device().await;
         let original_splats = create_test_splats(1);
         let ply_bytes = splat_to_ply(original_splats.clone()).await.unwrap();
 
@@ -587,7 +587,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_import_different_sh_degrees() {
-        let _device = brush_kernel::test_helpers::test_device().await;
+        let _device = brush_cube::test_helpers::test_device().await;
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);
             let ply_bytes = splat_to_ply(original_splats).await.unwrap();
@@ -604,7 +604,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_import_with_subsample() {
-        let _device = brush_kernel::test_helpers::test_device().await;
+        let _device = brush_cube::test_helpers::test_device().await;
         // Create 4 test splats
         let original_splats = create_test_splats_with_count(0, 4);
         assert_eq!(original_splats.num_splats(), 4);

@@ -189,7 +189,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_structural_properties() {
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         let image1 = image::load_from_memory(APPLE_PNG).expect("Failed to load apple.png");
         let image2 = image::load_from_memory(PEAR_PNG).expect("Failed to load pear.png");
         let apple = image_to_tensor::<Wgpu>(&device, &image1);
@@ -208,7 +208,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_matches_pytorch_reference() {
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         let image1 = image::load_from_memory(APPLE_PNG).expect("Failed to load apple.png");
         let image2 = image::load_from_memory(PEAR_PNG).expect("Failed to load pear.png");
         let apple = image_to_tensor::<Wgpu>(&device, &image1);

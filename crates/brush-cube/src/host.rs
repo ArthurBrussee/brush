@@ -1,7 +1,3 @@
-pub mod test_helpers;
-
-use brush_wgsl::wgsl_kernel;
-
 use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::tensor::{DType, Scalar, Shape};
 
@@ -13,12 +9,8 @@ pub use burn_cubecl::{CubeRuntime, tensor::CubeTensor};
 
 use bytemuck::NoUninit;
 
-// Re-export bytemuck for use by brush-wgsl generated code
+// Re-export bytemuck for use by generated code
 pub use bytemuck;
-
-// Internal kernel for creating dispatch buffers
-#[wgsl_kernel(source = "src/shaders/wg.wgsl")]
-struct Wg;
 
 /// Calculate workgroup count for a 1D dispatch, tiling into 2D if needed.
 /// Use this for kernels processing a 1D array of elements that may exceed 65535 workgroups.

@@ -85,7 +85,7 @@ async fn test_reference() -> Result<()> {
             .try_init();
     }
 
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
 
     let crab_img = image::load_from_memory(CRAB_PNG)?;
 

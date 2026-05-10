@@ -318,19 +318,19 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_fwd_render() {
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         run_forward_render(&device, 500_000, (1920, 1080), ITERS_PER_SYNC).await;
     }
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_bwd_render() {
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         run_backward_render(&device, 500_000, (1920, 1080), ITERS_PER_SYNC).await;
     }
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_training() {
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         run_training_steps(&device, 500_000, (1920, 1080), ITERS_PER_SYNC).await;
     }
 }

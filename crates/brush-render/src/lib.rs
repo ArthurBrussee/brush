@@ -16,6 +16,8 @@ pub use crate::render_aux::{RenderAux, RenderOutput};
 mod burn_glue;
 #[doc(hidden)]
 pub mod dim_check;
+#[doc(hidden)]
+pub mod kernels;
 pub mod render_aux;
 pub mod shaders;
 

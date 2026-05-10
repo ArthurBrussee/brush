@@ -7,11 +7,10 @@ license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
+brush-cube.path = "../brush-cube"
 brush-prefix-sum.path = "../brush-prefix-sum"
 assert_approx_eq.workspace = true
-brush-kernel.path = "../brush-kernel"
 brush-sort.path = "../brush-sort"
-brush-wgsl.path = "../brush-wgsl"
 
 burn.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }

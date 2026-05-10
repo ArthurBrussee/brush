@@ -1,38 +1,32 @@
-use brush_kernel::calc_cube_count_1d;
-use brush_kernel::create_tensor;
-use brush_wgsl::wgsl_kernel;
+mod kernels;
+
+use brush_cube::calc_cube_count_1d;
+use brush_cube::create_tensor;
 use burn::tensor::TensorMetadata;
-use burn_cubecl::cubecl::server::KernelArguments;
+use burn_cubecl::cubecl::CubeDim;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
 
-// Kernel definitions using proc macro
-#[wgsl_kernel(source = "src/shaders/prefix_sum_scan.wgsl")]
-pub struct PrefixSumScan;
-
-#[wgsl_kernel(source = "src/shaders/prefix_sum_scan_sums.wgsl")]
-pub struct PrefixSumScanSums;
-
-#[wgsl_kernel(source = "src/shaders/prefix_sum_add_scanned_sums.wgsl")]
-pub struct PrefixSumAddScannedSums;
+use kernels::THREADS_PER_GROUP;
 
 pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     assert!(input.is_contiguous(), "Please ensure input is contiguous");
 
-    let threads_per_group = PrefixSumScan::THREADS_PER_GROUP as usize;
+    let threads_per_group = THREADS_PER_GROUP as usize;
     let num = input.shape()[0];
-    let client = &input.client;
+    let client = input.client.clone();
     let outputs = create_tensor(input.shape().dims::<1>(), &input.device, input.dtype);
+
+    let cube_dim = CubeDim::new_1d(THREADS_PER_GROUP);
 
     // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
-        client.launch_unchecked(
-            PrefixSumScan::task(),
-            calc_cube_count_1d(num as u32, PrefixSumScan::WORKGROUP_SIZE[0]),
-            KernelArguments::new().with_buffers(vec![
-                input.handle.binding(),
-                outputs.handle.clone().binding(),
-            ]),
+        kernels::prefix_sum_scan_kernel::launch_unchecked::<WgpuRuntime>(
+            &client,
+            calc_cube_count_1d(num as u32, THREADS_PER_GROUP),
+            cube_dim,
+            input.into_tensor_arg(),
+            outputs.clone().into_tensor_arg(),
         );
     }
 
@@ -45,35 +39,30 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     let mut work_sz = num;
     while work_sz > threads_per_group {
         work_sz = work_sz.div_ceil(threads_per_group);
-        group_buffer.push(create_tensor([work_sz], &input.device, input.dtype));
+        group_buffer.push(create_tensor([work_sz], &outputs.device, outputs.dtype));
         work_size.push(work_sz);
     }
 
     // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
-        client.launch_unchecked(
-            PrefixSumScanSums::task(),
-            calc_cube_count_1d(work_size[0] as u32, PrefixSumScanSums::WORKGROUP_SIZE[0]),
-            KernelArguments::new().with_buffers(vec![
-                outputs.handle.clone().binding(),
-                group_buffer[0].handle.clone().binding(),
-            ]),
+        kernels::prefix_sum_scan_sums_kernel::launch_unchecked::<WgpuRuntime>(
+            &client,
+            calc_cube_count_1d(work_size[0] as u32, THREADS_PER_GROUP),
+            cube_dim,
+            outputs.clone().into_tensor_arg(),
+            group_buffer[0].clone().into_tensor_arg(),
         );
     }
 
     for l in 0..(group_buffer.len() - 1) {
         // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
         unsafe {
-            client.launch_unchecked(
-                PrefixSumScanSums::task(),
-                calc_cube_count_1d(
-                    work_size[l + 1] as u32,
-                    PrefixSumScanSums::WORKGROUP_SIZE[0],
-                ),
-                KernelArguments::new().with_buffers(vec![
-                    group_buffer[l].handle.clone().binding(),
-                    group_buffer[l + 1].handle.clone().binding(),
-                ]),
+            kernels::prefix_sum_scan_sums_kernel::launch_unchecked::<WgpuRuntime>(
+                &client,
+                calc_cube_count_1d(work_size[l + 1] as u32, THREADS_PER_GROUP),
+                cube_dim,
+                group_buffer[l].clone().into_tensor_arg(),
+                group_buffer[l + 1].clone().into_tensor_arg(),
             );
         }
     }
@@ -83,29 +72,24 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
 
         // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
         unsafe {
-            client.launch_unchecked(
-                PrefixSumAddScannedSums::task(),
-                calc_cube_count_1d(work_sz as u32, PrefixSumAddScannedSums::WORKGROUP_SIZE[0]),
-                KernelArguments::new().with_buffers(vec![
-                    group_buffer[l].handle.clone().binding(),
-                    group_buffer[l - 1].handle.clone().binding(),
-                ]),
+            kernels::prefix_sum_add_scanned_sums_kernel::launch_unchecked::<WgpuRuntime>(
+                &client,
+                calc_cube_count_1d(work_sz as u32, THREADS_PER_GROUP),
+                cube_dim,
+                group_buffer[l].clone().into_tensor_arg(),
+                group_buffer[l - 1].clone().into_tensor_arg(),
             );
         }
     }
 
     // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
-        client.launch_unchecked(
-            PrefixSumAddScannedSums::task(),
-            calc_cube_count_1d(
-                (work_size[0] * threads_per_group) as u32,
-                PrefixSumAddScannedSums::WORKGROUP_SIZE[0],
-            ),
-            KernelArguments::new().with_buffers(vec![
-                group_buffer[0].handle.clone().binding(),
-                outputs.handle.clone().binding(),
-            ]),
+        kernels::prefix_sum_add_scanned_sums_kernel::launch_unchecked::<WgpuRuntime>(
+            &client,
+            calc_cube_count_1d((work_size[0] * threads_per_group) as u32, THREADS_PER_GROUP),
+            cube_dim,
+            group_buffer[0].clone().into_tensor_arg(),
+            outputs.clone().into_tensor_arg(),
         );
     }
 
@@ -126,7 +110,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_sum_tiny() {
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         let keys = Tensor::<Backend, 1, Int>::from_data([1, 1, 1, 1], &device).into_primitive();
         let summed = prefix_sum(keys);
         let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
@@ -145,7 +129,7 @@ mod tests {
         for i in 0..ITERS {
             data.push(90 + i as i32);
         }
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
         let summed = prefix_sum(keys);
         let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
@@ -181,7 +165,7 @@ mod tests {
             data.push(30965);
         }
 
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
         let summed = prefix_sum(keys);
         let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
@@ -215,7 +199,7 @@ mod tests {
         // Use small values to avoid overflow in prefix sum
         let data: Vec<i32> = (0..NUM_ELEMENTS).map(|i| (i % 100) as i32).collect();
 
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
         let summed = prefix_sum(keys);
         let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)

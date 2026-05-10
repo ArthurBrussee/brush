@@ -33,7 +33,7 @@ burn = { workspace = true, features = ["autodiff"] }
 burn-cubecl.workspace = true
 
 [dev-dependencies]
-brush-kernel = { path = "../brush-kernel" }
+brush-cube = { path = "../brush-cube" }
 tokio = { workspace = true, features = ["macros", "rt"] }
 wasm-bindgen-test = "0.3"
 
