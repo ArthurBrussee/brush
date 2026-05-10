@@ -18,10 +18,10 @@ pub struct DatasetLoadResult {
 
 #[derive(Error, Debug)]
 pub enum FormatError {
-    #[error("IO error while loading dataset.")]
+    #[error("I/O error while loading dataset: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Error decoding JSON file.")]
+    #[error("Error decoding JSON: {0}")]
     Json(#[from] serde_json::Error),
 
     #[error("Error decoding camera parameters: {0}")]
@@ -39,13 +39,13 @@ pub enum FormatError {
 
 #[derive(Debug, Error)]
 pub enum DatasetError {
-    #[error("Failed to load format.")]
+    #[error(transparent)]
     FormatError(#[from] FormatError),
 
-    #[error("Failed to load initial point cloud.")]
+    #[error("Failed to load initial point cloud: {0}")]
     InitialPointCloudError(#[from] DeserializeError),
 
-    #[error("Format not recognized: Only colmap and nerfstudio json are supported.")]
+    #[error("Format not recognized: only colmap and nerfstudio json are supported")]
     FormatNotSupported,
 }
 
