@@ -2823,6 +2823,7 @@ dependencies = [
 [[package]]
 name = "cubecl"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "cubecl-core",
  "cubecl-cpu",
@@ -2838,6 +2839,7 @@ dependencies = [
 [[package]]
 name = "cubecl-common"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "backtrace",
  "bytemuck",
@@ -2878,6 +2880,7 @@ dependencies = [
 [[package]]
 name = "cubecl-core"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "bitflags 2.11.1",
  "bytemuck",
@@ -2904,6 +2907,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cpp"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2919,6 +2923,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cpu"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2939,6 +2944,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cuda"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2956,6 +2962,7 @@ dependencies = [
 [[package]]
 name = "cubecl-hip"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2984,6 +2991,7 @@ dependencies = [
 [[package]]
 name = "cubecl-ir"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "cubecl-common",
  "cubecl-macros-internal",
@@ -3004,6 +3012,7 @@ dependencies = [
 [[package]]
 name = "cubecl-macros"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "cubecl-common",
  "darling 0.23.0",
@@ -3019,6 +3028,7 @@ dependencies = [
 [[package]]
 name = "cubecl-macros-internal"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -3029,6 +3039,7 @@ dependencies = [
 [[package]]
 name = "cubecl-opt"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "cubecl-common",
  "cubecl-core",
@@ -3045,6 +3056,7 @@ dependencies = [
 [[package]]
 name = "cubecl-runtime"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "ahash",
  "async-channel",
@@ -3074,6 +3086,7 @@ dependencies = [
 [[package]]
 name = "cubecl-std"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "cubecl-common",
  "cubecl-core",
@@ -3089,6 +3102,7 @@ dependencies = [
 [[package]]
 name = "cubecl-wgpu"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "async-channel",
  "bytemuck",
@@ -3113,6 +3127,7 @@ dependencies = [
 [[package]]
 name = "cubecl-zspace"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
 dependencies = [
  "derive-new",
  "serde",
@@ -12681,3 +12696,4 @@ dependencies = [
 [[patch.unused]]
 name = "cubecl-spirv"
 version = "0.10.0-pre.3"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
