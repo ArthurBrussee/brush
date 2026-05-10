@@ -164,47 +164,97 @@ impl Camera {
     }
 }
 
-fn parse<T: std::str::FromStr>(s: &str) -> io::Result<T> {
-    s.parse()
-        .map_err(|_e| io::Error::new(io::ErrorKind::InvalidData, "Parse error"))
+fn parse<T: std::str::FromStr>(s: &str) -> io::Result<T>
+where
+    T::Err: std::fmt::Display,
+{
+    s.parse().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("could not parse {s:?}: {e}"),
+        )
+    })
+}
+
+/// Parse a float, tolerating MSVC-style NaN spellings like `-nan(ind)` /
+/// `nan(snan)` that some COLMAP exporters on Windows emit.
+fn parse_float(s: &str) -> io::Result<f64> {
+    if let Ok(v) = s.parse::<f64>() {
+        return Ok(v);
+    }
+    let lower = s.to_ascii_lowercase();
+    let body = lower.strip_prefix('-').unwrap_or(&lower);
+    if body.starts_with("nan") {
+        return Ok(f64::NAN);
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("could not parse float {s:?}"),
+    ))
 }
 
 async fn read_cameras_text<R: AsyncBufRead + Unpin>(mut reader: R) -> io::Result<Vec<Camera>> {
     let mut cameras = Vec::new();
     let mut line = String::new();
+    let mut line_no = 0usize;
 
     while reader.read_line(&mut line).await? > 0 {
+        line_no += 1;
         if line.starts_with('#') {
             line.clear();
             continue;
         }
 
         let parts: Vec<&str> = line.split_ascii_whitespace().collect();
+        if parts.is_empty() {
+            line.clear();
+            continue;
+        }
         if parts.len() < 4 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Invalid camera data",
+                format!(
+                    "cameras.txt line {line_no}: expected at least 4 fields (id, model, width, height), got {}",
+                    parts.len()
+                ),
             ));
         }
 
-        let id = parse(parts[0])?;
-        let model = CameraModel::from_name(parts[1])
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid camera model"))?;
+        let ctx =
+            |e: io::Error| io::Error::new(e.kind(), format!("cameras.txt line {line_no}: {e}"));
 
-        let width = parse(parts[2])?;
-        let height = parse(parts[3])?;
+        let id: i32 = parse(parts[0]).map_err(ctx)?;
+        let model = CameraModel::from_name(parts[1]).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "cameras.txt line {line_no}: unknown camera model {:?}",
+                    parts[1]
+                ),
+            )
+        })?;
+
+        let width = parse(parts[2]).map_err(ctx)?;
+        let height = parse(parts[3]).map_err(ctx)?;
         let params: Vec<f64> = parts[4..]
             .iter()
-            .map(|&s| parse(s))
-            .collect::<Result<_, _>>()?;
+            .map(|&s| parse_float(s))
+            .collect::<Result<_, _>>()
+            .map_err(|e: io::Error| {
+                io::Error::new(
+                    e.kind(),
+                    format!("cameras.txt line {line_no} (camera id {id}): {e}"),
+                )
+            })?;
 
         if params.len() != model.num_params() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "Invalid number of camera parameters (was given {}, but expected {})",
+                    "cameras.txt line {line_no} (camera id {id}): got {} params, expected {} for model {:?}",
                     params.len(),
-                    model.num_params()
+                    model.num_params(),
+                    parts[1],
                 ),
             ));
         }
