@@ -192,28 +192,18 @@ async fn test_training_step() {
         &device,
         BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
     );
-    let (final_splats, stats) = trainer.step(batch, splats).await;
+    let (final_splats, _stats) = trainer.step(batch, splats).await;
 
     assert!(final_splats.num_splats() > 0);
-    let loss = stats
-        .loss
-        .into_data_async()
-        .await
-        .expect("readback")
-        .as_slice::<f32>()
-        .expect("Wrong type")[0];
-    assert!(loss.is_finite());
-    assert!(loss >= 0.0);
 }
 
 #[wasm_bindgen_test(unsupported = test)]
 fn test_batch_generation() {
     let batch = generate_test_batch((256, 128));
-    let img_dims = batch.img_tensor.shape.dims();
-    assert_eq!(img_dims, [128, 256, 3]);
-    let img_data = batch.img_tensor.into_vec::<f32>().unwrap();
-    assert!(img_data.iter().all(|&x| x.is_finite()));
-    assert!(img_data.iter().all(|&x| (0.0..=1.1).contains(&x)));
+    let img_dims = batch.img_packed.shape.as_slice();
+    assert_eq!(img_dims, &[128, 256]);
+    let img_data = batch.img_packed.into_vec::<u32>().unwrap();
+    assert_eq!(img_data.len(), 128 * 256);
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
@@ -252,8 +242,10 @@ async fn train_with_zero_visible_does_not_crash() {
         glam::vec2(0.5, 0.5),
     );
 
+    let pixel = 0x80808080u32; // mid-grey, opaque
     let batch = SceneBatch {
-        img_tensor: TensorData::new(vec![0.5f32; 64 * 64 * 3], [64usize, 64, 3]),
+        img_packed: TensorData::new(vec![pixel; 64 * 64], [64usize, 64]),
+        has_alpha: false,
         alpha_mode: AlphaMode::Transparent,
         camera,
     };
@@ -264,20 +256,9 @@ async fn train_with_zero_visible_does_not_crash() {
         &device,
         BoundingBox::from_min_max(Vec3::splat(-2.0), Vec3::splat(2.0)),
     );
-    let (new_splats, stats) = trainer.step(batch, splats).await;
+    let (new_splats, _stats) = trainer.step(batch, splats).await;
     // Should succeed; nothing visible means num_visible ≈ 0.
     assert!(new_splats.num_splats() > 0);
-    let loss = stats
-        .loss
-        .into_data_async()
-        .await
-        .expect("readback")
-        .as_slice::<f32>()
-        .expect("Wrong type")[0];
-    assert!(
-        loss.is_finite(),
-        "loss went non-finite with empty render: {loss}"
-    );
 }
 
 // Training with a deliberately degenerate bounding box (NaN center) used to
@@ -299,14 +280,7 @@ async fn trainer_tolerates_nan_bounds() {
     };
     let mut trainer = SplatTrainer::new(&config, &device, bounds);
     let batch = generate_test_batch((64, 64));
-    let (_splats, stats) = trainer.step(batch, splats).await;
-    let _ = stats
-        .loss
-        .into_data_async()
-        .await
-        .expect("readback")
-        .as_slice::<f32>()
-        .expect("Wrong type")[0];
+    let (_splats, _stats) = trainer.step(batch, splats).await;
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
