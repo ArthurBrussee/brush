@@ -2,6 +2,8 @@
 //!
 //! These tests verify that the benchmark data generation and core operations work correctly.
 
+#![allow(clippy::missing_assert_message)]
+
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
     AlphaMode, MainBackend,
@@ -132,7 +134,7 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_splat_generation() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let splats = generate_test_splats(&device, 1000);
 
     assert_eq!(splats.num_splats(), 1000);
@@ -155,7 +157,7 @@ async fn test_splat_generation() {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_forward_rendering() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let splats = generate_test_splats(&device, 1000);
     assert_eq!(splats.num_splats(), 1000);
 
@@ -180,8 +182,33 @@ async fn test_forward_rendering() {
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
+async fn test_training_step() {
+    let device = brush_cube::test_helpers::test_device().await;
+    let batch = generate_test_batch((64, 64));
+    let splats = generate_test_splats(&device, 500);
+    let config = TrainConfig::default();
+    let mut trainer = SplatTrainer::new(
+        &config,
+        &device,
+        BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+    );
+    let (final_splats, _stats) = trainer.step(batch, splats).await;
+
+    assert!(final_splats.num_splats() > 0);
+}
+
+#[wasm_bindgen_test(unsupported = test)]
+fn test_batch_generation() {
+    let batch = generate_test_batch((256, 128));
+    let img_dims = batch.img_packed.shape.as_slice();
+    assert_eq!(img_dims, &[128, 256]);
+    let img_data = batch.img_packed.into_vec::<u32>().unwrap();
+    assert_eq!(img_data.len(), 128 * 256);
+}
+
+#[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_multi_step_training() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let batch = generate_test_batch((64, 64));
     let config = TrainConfig::default();
     let mut splats = generate_test_splats(&device, 100);
@@ -198,9 +225,67 @@ async fn test_multi_step_training() {
     assert!(splats.num_splats() > 0);
 }
 
+// Training with a camera pointing away from every splat — num_visible == 0
+// every step. The training loop must not crash on this; all gradients should
+// be zero (or at least finite) and the optimizer step should be a no-op.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn train_with_zero_visible_does_not_crash() {
+    let device = brush_cube::test_helpers::test_device().await;
+    let splats = generate_test_splats(&device, 200);
+
+    // Camera pointing away from the scene (looking along +Z, scene is at ±5).
+    let camera = Camera::new(
+        Vec3::new(0.0, 0.0, 1000.0),
+        Quat::IDENTITY, // looks along -Z in local space → away from origin
+        45.0,
+        45.0,
+        glam::vec2(0.5, 0.5),
+    );
+
+    let pixel = 0x80808080u32; // mid-grey, opaque
+    let batch = SceneBatch {
+        img_packed: TensorData::new(vec![pixel; 64 * 64], [64usize, 64]),
+        has_alpha: false,
+        alpha_mode: AlphaMode::Transparent,
+        camera,
+    };
+
+    let config = TrainConfig::default();
+    let mut trainer = SplatTrainer::new(
+        &config,
+        &device,
+        BoundingBox::from_min_max(Vec3::splat(-2.0), Vec3::splat(2.0)),
+    );
+    let (new_splats, _stats) = trainer.step(batch, splats).await;
+    // Should succeed; nothing visible means num_visible ≈ 0.
+    assert!(new_splats.num_splats() > 0);
+}
+
+// Training with a deliberately degenerate bounding box (NaN center) used to
+// crash in `median_size`. After the fix, training must still proceed without
+// panicking — the per-step `lr_mean * median_size` just ends up NaN, which is
+// ultimately harmless because any NaN optimizer update is caught by
+// `validate_gradient` under the debug-validation feature.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn trainer_tolerates_nan_bounds() {
+    let device = brush_cube::test_helpers::test_device().await;
+    let splats = generate_test_splats(&device, 100);
+    let config = TrainConfig::default();
+
+    // A degenerate bounds with one NaN axis. Before the `total_cmp` fix, this
+    // panicked inside `median_size()` on the first `step` call.
+    let bounds = BoundingBox {
+        center: Vec3::ZERO,
+        extent: Vec3::new(f32::NAN, 1.0, 1.0),
+    };
+    let mut trainer = SplatTrainer::new(&config, &device, bounds);
+    let batch = generate_test_batch((64, 64));
+    let (_splats, _stats) = trainer.step(batch, splats).await;
+}
+
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_gradient_validation() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let splats = generate_test_splats(&device, 100);
 
     // Create a simple loss by rendering and taking the mean

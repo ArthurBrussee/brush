@@ -71,7 +71,7 @@ fn ssim_only_cfg() -> ImageLossConfig {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn ssim_identical_inputs_is_one() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let (h, w) = (40, 56);
     let bytes = make_pattern(h, w, 11, 13);
     let pred = pred_from_bytes(&bytes, h, w, &device);
@@ -94,7 +94,7 @@ async fn ssim_identical_inputs_is_one() {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn ssim_in_clamp_range() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let (h, w) = (40, 56);
     let bytes_a = make_pattern(h, w, 7, 19);
     let bytes_b = make_pattern(h, w, 13, 7);
@@ -117,7 +117,7 @@ async fn ssim_in_clamp_range() {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn image_loss_backward_runs() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let (h, w) = (32, 48);
     let bytes_a = make_pattern(h, w, 5, 1);
     let bytes_b = make_pattern(h, w, 7, 11);
@@ -141,7 +141,7 @@ async fn image_loss_backward_runs() {
 async fn alpha_match_via_4ch_pred() {
     // Feeding 4-channel `pred` makes the kernel emit `|pred.a - gt.a|`
     // into the alpha channel of the loss map.
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let (h, w) = (16, 24);
     let bytes = make_pattern(h, w, 17, 5);
     let rgba: Vec<f32> = bytes.iter().map(|b| *b as f32 / 255.0).collect();

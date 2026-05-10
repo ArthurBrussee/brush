@@ -17,7 +17,7 @@ glam.workspace = true
 half = "2"
 
 [dev-dependencies]
-brush-kernel = { path = "../brush-kernel" }
+brush-cube = { path = "../brush-cube" }
 tokio = { workspace = true, features = ["macros", "rt"] }
 wasm-bindgen-test = "0.3"
 

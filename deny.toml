@@ -85,7 +85,10 @@ skip = [
 
     { name = "console" },
     { name = "jni-sys" },
-    { name = "codespan-reporting" },
+    { name = "hmac" },
+    { name = "digest" },
+    { name = "crypto-common" },
+    { name = "block-buffer" },
 
     { name = "wasm-streams" },
 ]

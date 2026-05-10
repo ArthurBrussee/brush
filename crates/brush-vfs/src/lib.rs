@@ -241,11 +241,8 @@ impl BrushVfs {
         dir_handle: rrfd::wasm::DirectoryHandle,
     ) -> Result<Self, VfsConstructError> {
         // List all files in the directory
-        let paths = dir_handle.list_files().await.map_err(|_| {
-            VfsConstructError::IoError(io::Error::new(
-                io::ErrorKind::Other,
-                "Failed to list directory contents",
-            ))
+        let paths = dir_handle.list_files().await.map_err(|_e| {
+            VfsConstructError::IoError(io::Error::other("Failed to list directory contents"))
         })?;
 
         Ok(Self {
@@ -324,7 +321,7 @@ impl BrushVfs {
                 use tokio_util::io::StreamReader;
                 use wasm_bindgen::JsCast;
 
-                let file = dir_handle.get_file(path).await.map_err(|_| {
+                let file = dir_handle.get_file(path).await.map_err(|_e| {
                     Error::new(
                         io::ErrorKind::NotFound,
                         format!("File not found: {}", path.display()),
@@ -335,10 +332,10 @@ impl BrushVfs {
                     .into_stream()
                     .map(|result| {
                         result
-                            .map_err(|e| Error::new(io::ErrorKind::Other, format!("{e:?}")))
+                            .map_err(|e| Error::other(format!("{e:?}")))
                             .and_then(|chunk| {
                                 let array =
-                                    chunk.dyn_into::<js_sys::Uint8Array>().map_err(|_| {
+                                    chunk.dyn_into::<js_sys::Uint8Array>().map_err(|_e| {
                                         Error::new(io::ErrorKind::InvalidData, "Invalid chunk")
                                     })?;
                                 let mut data = vec![0u8; array.length() as usize];

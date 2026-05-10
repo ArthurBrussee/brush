@@ -7,9 +7,9 @@ members = [
     "apps/brush-js",
 
     "crates/brush-bench-test",
+    "crates/brush-cube",
     "crates/brush-dataset",
     "crates/brush-loss",
-    "crates/brush-kernel",
     "crates/brush-prefix-sum",
     "crates/brush-process",
     "crates/brush-render",
@@ -20,7 +20,6 @@ members = [
     "crates/brush-sort",
     "crates/brush-train",
     "crates/brush-vfs",
-    "crates/brush-wgsl",
     "crates/colmap-reader",
     "crates/lpips",
     "crates/lpips-convert",
@@ -86,8 +85,6 @@ wasm-streams = "0.5"
 
 rayon = "1.11"
 
-naga_oil = { version = "0.22", default-features = false }
-
 # Backends are chosen per platform.
 wgpu = { version = "29", default-features = false, features = ["naga-ir"] }
 
@@ -97,9 +94,11 @@ burn = { git = "https://github.com/tracel-ai/burn", features = [
     'wgpu',
 ] }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
+half = "2"
 burn-ir = { git = "https://github.com/tracel-ai/burn" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
+    "metal",
 ] }
 burn-fusion = { git = "https://github.com/tracel-ai/burn" }
 burn-store = { git = "https://github.com/tracel-ai/burn", features = [
@@ -322,5 +321,25 @@ wgpu-core = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-intero
 wgpu-hal = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
 wgpu-types = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
 naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
-# To iterate locally on the wgpu fork, swap the lines above for:
-#   wgpu = { path = "../wgpu/wgpu" } (and same for wgpu-core / wgpu-hal / wgpu-types / naga)
+
+# CubeCL fork carrying the workgroupUniformLoad primitive — needed for
+# the backward rasterizer's subgroup ops on WebGPU. PR pending upstream.
+[patch."https://github.com/tracel-ai/cubecl"]
+cubecl = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-core = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-cpp = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-cpu = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-cuda = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-hip = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-ir = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-macros = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-macros-internal = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-opt = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-runtime = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-wgpu = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+cubecl-zspace = { git = "https://github.com/ArthurBrussee/cubecl", branch = "feat/workgroup-uniform-load" }
+
+# To iterate locally on a checkout, swap each `git = "..."` for
+# `path = "../cubecl/crates/<name>"`.

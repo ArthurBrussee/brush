@@ -1,38 +1,31 @@
-use brush_wgsl::wgsl_kernel;
+//! Host-side mirrors of structs/constants the kernels share with the
+//! host. The `CubeCL` kernels take scalars individually via
+//! `*Launch::new(...)`; these structs travel across the burn backward
+//! boundary as a single argument.
 
-// Define kernels using proc macro
+pub const SH_C0: f32 = 0.282_094_8;
 
-#[wgsl_kernel(source = "src/shaders/project_forward.wgsl")]
-pub struct ProjectSplats {
-    mip_splatting: bool,
-}
-
-#[wgsl_kernel(source = "src/shaders/project_visible.wgsl")]
-pub struct ProjectVisible {
-    mip_splatting: bool,
-}
-
-#[wgsl_kernel(source = "src/shaders/map_gaussian_to_intersects.wgsl")]
-pub struct MapGaussiansToIntersect;
-
-#[wgsl_kernel(source = "src/shaders/rasterize.wgsl")]
-pub struct Rasterize {
-    pub bwd_info: bool,
-}
-
-// Re-export helper types and constants from the kernel modules that use them
 pub mod helpers {
-    // Types used by multiple shaders - available from project_visible
-    pub use super::project_visible::PackedVec3;
-    pub use super::project_visible::ProjectUniforms;
-    pub use super::project_visible::ProjectedSplat;
-    pub use super::rasterize::RasterizeUniforms;
+    pub const TILE_WIDTH: u32 = 16;
+    pub const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 
-    // Constants are now associated with the kernel structs
-    pub const COV_BLUR: f32 = super::ProjectVisible::COV_BLUR;
-    pub const TILE_SIZE: u32 = super::Rasterize::TILE_SIZE;
-    pub const TILE_WIDTH: u32 = super::Rasterize::TILE_WIDTH;
+    #[derive(Debug, Clone, Copy)]
+    pub struct ProjectUniforms {
+        pub viewmat: [[f32; 4]; 4],
+        pub focal: [f32; 2],
+        pub img_size: [u32; 2],
+        pub tile_bounds: [u32; 2],
+        pub pixel_center: [f32; 2],
+        pub camera_position: [f32; 4],
+        pub sh_degree: u32,
+        pub total_splats: u32,
+        pub num_visible: u32,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct RasterizeUniforms {
+        pub tile_bounds: [u32; 2],
+        pub img_size: [u32; 2],
+        pub background: [f32; 4],
+    }
 }
-
-// Re-export module-specific constants
-pub const SH_C0: f32 = ProjectVisible::SH_C0;

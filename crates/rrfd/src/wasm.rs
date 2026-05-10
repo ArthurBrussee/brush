@@ -10,7 +10,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 
 use wasm_streams::ReadableStream as WasmReadableStream;
-use web_sys::{Blob, Event, HtmlAnchorElement, HtmlInputElement, ReadableStream};
+use web_sys::{Blob, Event, HtmlAnchorElement, HtmlInputElement};
 
 use crate::PickFileError;
 
@@ -45,7 +45,7 @@ impl DirectoryHandle {
             let promise = current_dir.get_directory_handle(dir_name);
             let result = wasm_bindgen_futures::JsFuture::from(promise)
                 .await
-                .map_err(|_| PickFileError::NoFileSelected)?;
+                .map_err(|_e| PickFileError::NoFileSelected)?;
             current_dir = result.unchecked_into();
         }
 
@@ -61,13 +61,13 @@ impl DirectoryHandle {
         let file_handle: web_sys::FileSystemFileHandle =
             wasm_bindgen_futures::JsFuture::from(promise)
                 .await
-                .map_err(|_| PickFileError::NoFileSelected)?
+                .map_err(|_e| PickFileError::NoFileSelected)?
                 .unchecked_into();
 
         let promise = file_handle.get_file();
         let file: web_sys::File = wasm_bindgen_futures::JsFuture::from(promise)
             .await
-            .map_err(|_| PickFileError::NoFileSelected)?
+            .map_err(|_e| PickFileError::NoFileSelected)?
             .unchecked_into();
 
         Ok(file)
@@ -90,31 +90,31 @@ impl DirectoryHandle {
         Box::pin(async move {
             // Get async iterator from entries()
             let entries = js_sys::Reflect::get(dir, &"entries".into())
-                .map_err(|_| PickFileError::NoDirectorySelected)?
+                .map_err(|_e| PickFileError::NoDirectorySelected)?
                 .dyn_into::<js_sys::Function>()
-                .map_err(|_| PickFileError::NoDirectorySelected)?
+                .map_err(|_e| PickFileError::NoDirectorySelected)?
                 .call0(dir)
-                .map_err(|_| PickFileError::NoDirectorySelected)?;
+                .map_err(|_e| PickFileError::NoDirectorySelected)?;
 
             loop {
                 // Call next() on the async iterator
                 let next_fn = js_sys::Reflect::get(&entries, &"next".into())
-                    .map_err(|_| PickFileError::NoDirectorySelected)?
+                    .map_err(|_e| PickFileError::NoDirectorySelected)?
                     .dyn_into::<js_sys::Function>()
-                    .map_err(|_| PickFileError::NoDirectorySelected)?;
+                    .map_err(|_e| PickFileError::NoDirectorySelected)?;
 
                 let promise = next_fn
                     .call0(&entries)
-                    .map_err(|_| PickFileError::NoDirectorySelected)?
+                    .map_err(|_e| PickFileError::NoDirectorySelected)?
                     .dyn_into::<js_sys::Promise>()
-                    .map_err(|_| PickFileError::NoDirectorySelected)?;
+                    .map_err(|_e| PickFileError::NoDirectorySelected)?;
 
                 let result = wasm_bindgen_futures::JsFuture::from(promise)
                     .await
-                    .map_err(|_| PickFileError::NoDirectorySelected)?;
+                    .map_err(|_e| PickFileError::NoDirectorySelected)?;
 
                 let done = js_sys::Reflect::get(&result, &"done".into())
-                    .map_err(|_| PickFileError::NoDirectorySelected)?
+                    .map_err(|_e| PickFileError::NoDirectorySelected)?
                     .as_bool()
                     .unwrap_or(true);
 
@@ -123,7 +123,7 @@ impl DirectoryHandle {
                 }
 
                 let value = js_sys::Reflect::get(&result, &"value".into())
-                    .map_err(|_| PickFileError::NoDirectorySelected)?;
+                    .map_err(|_e| PickFileError::NoDirectorySelected)?;
 
                 let array: js_sys::Array = value.unchecked_into();
                 let name: String = array
@@ -134,7 +134,7 @@ impl DirectoryHandle {
 
                 // Get kind as string property
                 let kind = js_sys::Reflect::get(&handle, &"kind".into())
-                    .map_err(|_| PickFileError::NoDirectorySelected)?
+                    .map_err(|_e| PickFileError::NoDirectorySelected)?
                     .as_string()
                     .ok_or(PickFileError::NoDirectorySelected)?;
 
@@ -152,26 +152,26 @@ impl DirectoryHandle {
     }
 }
 
-/// Pick a directory using the File System Access API (showDirectoryPicker).
-/// Returns a DirectoryHandle that can be used to read files on demand.
+/// Pick a directory using the File System Access API (`showDirectoryPicker`).
+/// Returns a [`DirectoryHandle`] that can be used to read files on demand.
 pub async fn pick_directory_handle() -> Result<DirectoryHandle, PickFileError> {
     let window = web_sys::window().ok_or(PickFileError::NoDirectorySelected)?;
 
     // Call showDirectoryPicker()
     let promise = js_sys::Reflect::get(&window, &"showDirectoryPicker".into())
-        .map_err(|_| PickFileError::NoDirectorySelected)?
+        .map_err(|_e| PickFileError::NoDirectorySelected)?
         .dyn_into::<js_sys::Function>()
-        .map_err(|_| PickFileError::NoDirectorySelected)?
+        .map_err(|_e| PickFileError::NoDirectorySelected)?
         .call0(&window)
-        .map_err(|_| PickFileError::NoDirectorySelected)?
+        .map_err(|_e| PickFileError::NoDirectorySelected)?
         .dyn_into::<js_sys::Promise>()
-        .map_err(|_| PickFileError::NoDirectorySelected)?;
+        .map_err(|_e| PickFileError::NoDirectorySelected)?;
 
     let handle = wasm_bindgen_futures::JsFuture::from(promise)
         .await
-        .map_err(|_| PickFileError::NoDirectorySelected)?
+        .map_err(|_e| PickFileError::NoDirectorySelected)?
         .dyn_into::<web_sys::FileSystemDirectoryHandle>()
-        .map_err(|_| PickFileError::NoDirectorySelected)?;
+        .map_err(|_e| PickFileError::NoDirectorySelected)?;
 
     Ok(DirectoryHandle { handle })
 }
@@ -184,17 +184,17 @@ pub async fn save_file(default_name: &str, data: &[u8]) -> Result<(), PickFileEr
     let blob_parts = js_sys::Array::new();
     blob_parts.push(&array);
 
-    let blob =
-        Blob::new_with_u8_array_sequence(&blob_parts).map_err(|_| PickFileError::NoFileSelected)?;
+    let blob = Blob::new_with_u8_array_sequence(&blob_parts)
+        .map_err(|_e| PickFileError::NoFileSelected)?;
 
     let url = web_sys::Url::create_object_url_with_blob(&blob)
-        .map_err(|_| PickFileError::NoFileSelected)?;
+        .map_err(|_e| PickFileError::NoFileSelected)?;
 
     let anchor = document
         .create_element("a")
-        .map_err(|_| PickFileError::NoFileSelected)?
+        .map_err(|_e| PickFileError::NoFileSelected)?
         .dyn_into::<HtmlAnchorElement>()
-        .map_err(|_| PickFileError::NoFileSelected)?;
+        .map_err(|_e| PickFileError::NoFileSelected)?;
 
     anchor.set_href(&url);
     anchor.set_download(default_name);
@@ -202,7 +202,7 @@ pub async fn save_file(default_name: &str, data: &[u8]) -> Result<(), PickFileEr
     // Append to body, click, then remove - some browsers ignore clicks on detached elements.
     let body = document.body().ok_or(PickFileError::NoFileSelected)?;
     body.append_child(&anchor)
-        .map_err(|_| PickFileError::NoFileSelected)?;
+        .map_err(|_e| PickFileError::NoFileSelected)?;
     anchor.click();
     let _ = body.remove_child(&anchor);
 
@@ -216,9 +216,9 @@ pub async fn pick_file() -> Result<crate::PickedFile<impl AsyncRead + Unpin>, Pi
 
     let input = document
         .create_element("input")
-        .map_err(|_| PickFileError::NoFileSelected)?
+        .map_err(|_e| PickFileError::NoFileSelected)?
         .dyn_into::<HtmlInputElement>()
-        .map_err(|_| PickFileError::NoFileSelected)?;
+        .map_err(|_e| PickFileError::NoFileSelected)?;
 
     input.set_type("file");
 
@@ -241,18 +241,18 @@ pub async fn pick_file() -> Result<crate::PickedFile<impl AsyncRead + Unpin>, Pi
 
     let files = receiver
         .await
-        .map_err(|_| PickFileError::NoFileSelected)?
+        .map_err(|_e| PickFileError::NoFileSelected)?
         .ok_or(PickFileError::NoFileSelected)?;
 
     let file = files.get(0).ok_or(PickFileError::NoFileSelected)?;
     let name = file.name();
 
-    let readable_stream: ReadableStream = file.stream();
+    let readable_stream = file.stream();
     let wasm_stream = WasmReadableStream::from_raw(readable_stream);
 
     let byte_stream = wasm_stream.into_stream().map(|result| {
         result
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Stream error: {:?}", e)))
+            .map_err(|e| io::Error::other(format!("Stream error: {e:?}")))
             .and_then(|chunk| {
                 if let Ok(uint8_array) = chunk.dyn_into::<Uint8Array>() {
                     let mut data = vec![0; uint8_array.length() as usize];

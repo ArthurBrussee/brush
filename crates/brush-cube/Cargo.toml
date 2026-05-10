@@ -1,12 +1,11 @@
 [package]
-name = "brush-kernel"
+name = "brush-cube"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
 license.workspace = true
 
 [dependencies]
-brush-wgsl.path = "../brush-wgsl"
 burn.workspace = true
 burn-cubecl.workspace = true
 burn-wgpu.workspace = true

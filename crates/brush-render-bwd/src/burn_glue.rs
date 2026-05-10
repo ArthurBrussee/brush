@@ -330,7 +330,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             }
         }
 
-        // projected_splats is [num_visible, proj_size], so shape[0] gives num_visible.
+        // projected_splats is [num_visible, PROJECTED_LANES], so shape[0] gives num_visible.
         let num_visible_val = projected_splats.shape()[0] as u32;
 
         let client = v_output.client.clone();

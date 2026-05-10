@@ -35,8 +35,7 @@ brush-rerun = { path = "../brush-rerun" }
 rerun = { workspace = true }
 
 [dev-dependencies]
-brush-kernel = { path = "../brush-kernel" }
-brush-wgsl = { path = "../brush-wgsl" }
+brush-cube = { path = "../brush-cube" }
 wasm-bindgen-test = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]

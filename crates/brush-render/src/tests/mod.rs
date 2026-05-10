@@ -24,7 +24,7 @@ async fn renders_at_all() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(32, 32);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let num_points = 8;
     let means = Tensor::<MainBackend, 2>::zeros([num_points, 3], &device);
     let log_scales = Tensor::<MainBackend, 2>::ones([num_points, 3], &device) * 2.0;
@@ -79,7 +79,7 @@ async fn renders_many_splats() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(64, 64);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
 
     // Create random gaussians spread in front of the camera
     let means = Tensor::<MainBackend, 2>::random(
@@ -304,7 +304,7 @@ async fn render_is_deterministic_on_large_splats() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(256, 256);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
 
     let scene = rng_scene(20_000, 2.0, (0.5, 3.0), (-1.0, 2.0), 0xA11CE);
 
@@ -330,7 +330,7 @@ async fn hidden_splats_do_not_perturb_render() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(256, 256);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
 
     let visible = rng_scene(5_000, 1.5, (0.0, 2.5), (0.0, 3.0), 0xBEEF);
 
@@ -374,7 +374,7 @@ async fn culled_prefix_does_not_perturb_render() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(256, 256);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
 
     let visible = rng_scene(4_000, 1.5, (0.0, 2.5), (0.0, 3.0), 0xC0FFEE);
 
@@ -407,7 +407,7 @@ async fn mega_stress_fullscreen_splats() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(512, 512);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
 
     // Force every splat to be huge: exp(3.5) ≈ 33 world units, at distance 5
     // with our focal this projects to a footprint larger than the image. Every
@@ -466,7 +466,7 @@ async fn renders_large_rotated_splats() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(256, 256);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
 
     // Big anisotropic splats stacked at origin — every splat covers the
     // whole image. If PF and MG disagree on tile count for even one splat,
@@ -535,7 +535,7 @@ async fn renders_many_large_splats_stress() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(128, 128);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
 
     let num_splats = 200_000;
     let means = Tensor::<MainBackend, 2>::random(
@@ -618,7 +618,7 @@ async fn render_panics_loudly_on_nan_positions() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(32, 32);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let n = 16;
 
     let mut means_vec = vec![0.0f32; n * 3];
@@ -657,7 +657,7 @@ async fn zero_splats_renders_background() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(32, 32);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
 
     let splats = Splats::from_tensor_data(
         Tensor::<MainBackend, 2>::zeros([0, 3], &device),
@@ -706,7 +706,7 @@ async fn zero_quaternion_splats_dont_poison_render() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(64, 64);
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
 
     // Half valid splats, half with zero-length quaternion. The zero-quat ones
     // should be culled cleanly and the output should match rendering just the

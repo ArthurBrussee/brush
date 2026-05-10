@@ -261,7 +261,7 @@ fn assert_basic_counts(
 /// Every (slot, poison) combination, one bad slot per scene.
 #[tokio::test]
 async fn fuzz_single_bad_slot_combinations() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let img_size = glam::uvec2(48, 48);
     for slot in 0..14 {
         for &poison in POISON_VALUES {
@@ -298,7 +298,7 @@ async fn fuzz_single_bad_slot_combinations() {
 /// Randomized stress: scene, camera, image size, poison rate, mode.
 #[tokio::test]
 async fn fuzz_random_scenes() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     for seed in 0..100u64 {
         let mut rng = Sm64::new(seed.wrapping_mul(0xA5A5_CAFE));
         let n = rng.usize_in(1, 256);
@@ -324,7 +324,7 @@ type BadGeomCase = fn(&mut Sm64, usize) -> Scene;
 /// PF must cull them all (`num_visible == 0`).
 #[tokio::test]
 async fn fuzz_bad_geometry_is_fully_culled() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let img_size = glam::uvec2(64, 64);
     let n = 16;
     let cam = std_cam();
@@ -444,7 +444,7 @@ async fn fuzz_bad_geometry_is_fully_culled() {
 /// training state and the pipeline should render it.
 #[tokio::test]
 async fn fuzz_valid_but_extreme_stays_visible() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let cam = std_cam();
     let img_size = glam::uvec2(64, 64);
     let n = 4;
@@ -486,7 +486,7 @@ async fn fuzz_valid_but_extreme_stays_visible() {
 /// `rasterize_backwards`).
 #[tokio::test]
 async fn fuzz_bwd_random_scenes_gradients_are_finite() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     for seed in 0..100u64 {
         let mut rng = Sm64::new(0xBDBD_BDBD ^ seed.wrapping_mul(0xA5A5_CAFE));
         let n = rng.usize_in(4, 256);
@@ -515,7 +515,7 @@ async fn fuzz_bwd_random_scenes_gradients_are_finite() {
 /// f16 cast, which keeps the rasterize backward chain finite.
 #[tokio::test]
 async fn fuzz_bwd_extreme_inputs_stay_finite() {
-    let device = brush_kernel::test_helpers::test_device().await;
+    let device = brush_cube::test_helpers::test_device().await;
     let cam = std_cam();
     let img_size = glam::uvec2(64, 64);
     let n = 8;

@@ -64,7 +64,7 @@ mod tests {
         let vec = glam::vec3(0.5, 0.7, 0.1);
         let result_ref = quat * vec;
 
-        let device = brush_kernel::test_helpers::test_device().await;
+        let device = brush_cube::test_helpers::test_device().await;
         let quaternions = Tensor::<Wgpu, 1>::from_floats([quat.w, quat.x, quat.y, quat.z], &device)
             .reshape([1, 4]);
         let vecs = Tensor::<Wgpu, 1>::from_floats([vec.x, vec.y, vec.z], &device).reshape([1, 3]);

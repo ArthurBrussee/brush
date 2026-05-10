@@ -1,4 +1,5 @@
 #![recursion_limit = "256"]
+#![cfg(not(target_family = "wasm"))]
 
 use brush_process::DataSource;
 use brush_process::config::TrainStreamConfig;
