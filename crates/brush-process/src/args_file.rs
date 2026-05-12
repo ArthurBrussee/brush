@@ -85,8 +85,21 @@ pub fn config_to_args(config: &TrainStreamConfig) -> Vec<String> {
                 Value::Number(n) => {
                     args.push(format!("{arg_name} {n}"));
                 }
+                Value::Array(items) => {
+                    // Multi-value clap args (e.g. `num_args = 3`) need each element
+                    // as its own whitespace-separated token, since downstream parsing
+                    // splits on whitespace.
+                    let joined = items
+                        .iter()
+                        .map(|v| match v {
+                            Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    args.push(format!("{arg_name} {joined}"));
+                }
                 _ => {
-                    // For other types, use the JSON representation
                     args.push(format!("{arg_name} {value}"));
                 }
             }
@@ -147,6 +160,14 @@ mod tests {
         );
         assert!(args_str.contains("--sh-degree 2"), "Missing sh-degree");
         assert!(args_str.contains("--max-frames 10"), "Missing max-frames");
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_config_to_args_vec_round_trip() {
+        let mut config = TrainStreamConfig::default();
+        config.train_config.background_color = vec![1.0, 0.5, 0.25];
+        let merged = merge_configs(&config, &TrainStreamConfig::default());
+        assert_eq!(merged.train_config.background_color, vec![1.0, 0.5, 0.25]);
     }
 
     #[wasm_bindgen_test(unsupported = test)]
