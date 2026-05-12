@@ -40,6 +40,7 @@ use burn_fusion::{
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use glam::Vec3;
+use half::f16;
 
 mod kernels {
     use burn_cubecl::cubecl;
@@ -47,7 +48,6 @@ mod kernels {
     use burn_cubecl::cubecl::frontend::CompilationArg;
     use burn_cubecl::cubecl::frontend::CubeIndexMutExpand;
     use burn_cubecl::cubecl::prelude::*;
-    use half::f16;
 
     /// 11-tap Gaussian weights at sigma = 1.5, normalised to sum to 1.
     /// Called from `comptime!` so it runs once per kernel build, baking each
@@ -69,14 +69,14 @@ mod kernels {
 
     pub const BLOCK_X: u32 = 16;
     pub const BLOCK_Y: u32 = 16;
-    const HALO: u32 = 5;
+    pub const HALO: u32 = 5;
     const SHARED_X: u32 = BLOCK_X + 2 * HALO; // 26
     const SHARED_Y: u32 = BLOCK_Y + 2 * HALO; // 26
-    // Backward needs partials at every tile + halo pixel; each partial is
-    // itself a blur of pred/gt, so the bwd widens the loaded image tile by
-    // an extra halo to feed that inner blur.
-    const EXT_X: u32 = BLOCK_X + 4 * HALO; // 36
-    const EXT_Y: u32 = BLOCK_Y + 4 * HALO; // 36
+    // Backward widens the tile by an extra halo inside the parameterized
+    // kernel; these smaller dimensions keep the f32 fallback under common
+    // workgroup-storage limits.
+    pub const BACKWARD_F32_BLOCK_X: u32 = 8;
+    pub const BACKWARD_F32_BLOCK_Y: u32 = 8;
 
     const C1: f32 = 0.01 * 0.01;
     const C2: f32 = 0.03 * 0.03;
@@ -344,7 +344,7 @@ mod kernels {
     /// Backward: recompute SSIM partials inline, scatter `dL/dpred` per pixel.
     #[allow(clippy::assign_op_pattern)]
     #[cube(launch_unchecked)]
-    pub fn image_loss_backward_kernel<F: Float>(
+    pub fn image_loss_backward_kernel<F: Float, S: Float>(
         pred: &Tensor<F>,
         gt_packed: &Tensor<u32>,
         dl_dmap: &Tensor<F>,
@@ -358,10 +358,20 @@ mod kernels {
         bg_b: f32,
         #[comptime] composite: bool,
         #[comptime] mask: bool,
+        #[comptime] block_x: u32,
+        #[comptime] block_y: u32,
+        #[comptime] ext_load_iters: u32,
+        #[comptime] horiz_load_iters: u32,
+        #[comptime] partial_load_iters: u32,
+        #[comptime] shared_y_passes: u32,
     ) {
+        let shared_x = comptime![block_x + 2u32 * HALO];
+        let shared_y = comptime![block_y + 2u32 * HALO];
+        let ext_x = comptime![block_x + 4u32 * HALO];
+        let ext_y = comptime![block_y + 4u32 * HALO];
         let c = CUBE_POS_Z;
-        let tile_y0 = CUBE_POS_Y * BLOCK_Y;
-        let tile_x0 = CUBE_POS_X * BLOCK_X;
+        let tile_y0 = CUBE_POS_Y * block_y;
+        let tile_x0 = CUBE_POS_X * block_x;
         let pix_y = tile_y0 + UNIT_POS_Y;
         let pix_x = tile_x0 + UNIT_POS_X;
 
@@ -388,13 +398,15 @@ mod kernels {
             terminate!();
         }
 
-        // f16 for the wide-halo image storage; chain*partials and the second
-        // horizontal-blur scratch stay in f32. ~28 KiB total — fits Apple's
-        // 32 KiB threadgroup budget.
-        let mut s_imgs = SharedMemory::<f16>::new((EXT_Y * EXT_X * 2) as usize);
-        let mut s_horiz = SharedMemory::<f16>::new((EXT_Y * SHARED_X * 5) as usize);
-        let mut s_chain_partials = SharedMemory::<F>::new((SHARED_Y * SHARED_X * 3) as usize);
-        let mut s_bwd_horiz = SharedMemory::<F>::new((SHARED_Y * BLOCK_X * 3) as usize);
+        // The default path uses f16 for the wide-halo image storage so the
+        // kernel fits Apple's 32 KiB threadgroup budget. Devices without
+        // shader-f16 use S=f32 with a smaller workgroup selected at launch.
+        let mut s_imgs = SharedMemory::<S>::new(comptime![(ext_y * ext_x * 2u32) as usize]);
+        let mut s_horiz = SharedMemory::<S>::new(comptime![(ext_y * shared_x * 5u32) as usize]);
+        let mut s_chain_partials =
+            SharedMemory::<F>::new(comptime![(shared_y * shared_x * 3u32) as usize]);
+        let mut s_bwd_horiz =
+            SharedMemory::<F>::new(comptime![(shared_y * block_x * 3u32) as usize]);
 
         let bg_c = if composite {
             if c == 0u32 {
@@ -408,17 +420,17 @@ mod kernels {
             F::cast_from(0.0_f32)
         };
 
-        let thread_rank = UNIT_POS_Y * BLOCK_X + UNIT_POS_X;
-        let threads = BLOCK_X * BLOCK_Y;
+        let thread_rank = UNIT_POS_Y * block_x + UNIT_POS_X;
+        let threads = block_x * block_y;
 
         // Load pred and effective-gt with halo of 2*HALO into s_imgs.
-        let ext_size = EXT_Y * EXT_X;
+        let ext_size = ext_y * ext_x;
         #[unroll]
-        for s in 0u32..6u32 {
+        for s in 0u32..ext_load_iters {
             let tid = s * threads + thread_rank;
             if tid < ext_size {
-                let local_y = tid / EXT_X;
-                let local_x = tid % EXT_X;
+                let local_y = tid / ext_x;
+                let local_x = tid % ext_x;
                 let (gy, gx, oob) = coords(tile_y0, tile_x0, local_y, local_x, 2u32 * HALO, h, w);
                 let pv = read_pred::<F>(pred, c, gy, gx, oob, h, w);
                 let (gt_c, gt_a) = read_gt::<F>(gt_packed, c, gy, gx, oob, w);
@@ -427,21 +439,21 @@ mod kernels {
                 } else {
                     gt_c
                 };
-                let base = ((local_y * EXT_X + local_x) * 2u32) as usize;
-                s_imgs[base] = f16::cast_from(pv);
-                s_imgs[base + 1] = f16::cast_from(gt_eff);
+                let base = ((local_y * ext_x + local_x) * 2u32) as usize;
+                s_imgs[base] = S::cast_from(pv);
+                s_imgs[base + 1] = S::cast_from(gt_eff);
             }
         }
         sync_cube();
 
         // Horizontal blur over the extended tile.
-        let horiz_size = EXT_Y * SHARED_X;
+        let horiz_size = ext_y * shared_x;
         #[unroll]
-        for s in 0u32..4u32 {
+        for s in 0u32..horiz_load_iters {
             let tid = s * threads + thread_rank;
             if tid < horiz_size {
-                let row_y = tid / SHARED_X;
-                let col_x = tid % SHARED_X;
+                let row_y = tid / shared_x;
+                let col_x = tid % shared_x;
                 let center = col_x + HALO;
                 let mut sum_x = F::cast_from(0.0_f32);
                 let mut sum_x2 = F::cast_from(0.0_f32);
@@ -451,8 +463,8 @@ mod kernels {
                 #[unroll]
                 for d in 1u32..6u32 {
                     let w_d = gw::<F>(comptime![5u32 - d]);
-                    let il = ((row_y * EXT_X + (center - d)) * 2u32) as usize;
-                    let ir = ((row_y * EXT_X + (center + d)) * 2u32) as usize;
+                    let il = ((row_y * ext_x + (center - d)) * 2u32) as usize;
+                    let ir = ((row_y * ext_x + (center + d)) * 2u32) as usize;
                     let xl = F::cast_from(s_imgs[il]);
                     let yl = F::cast_from(s_imgs[il + 1]);
                     let xr = F::cast_from(s_imgs[ir]);
@@ -463,7 +475,7 @@ mod kernels {
                     sum_y2 += (yl * yl + yr * yr) * w_d;
                     sum_xy += (xl * yl + xr * yr) * w_d;
                 }
-                let ic = ((row_y * EXT_X + center) * 2u32) as usize;
+                let ic = ((row_y * ext_x + center) * 2u32) as usize;
                 let xc = F::cast_from(s_imgs[ic]);
                 let yc = F::cast_from(s_imgs[ic + 1]);
                 let wc = gw::<F>(5u32);
@@ -472,24 +484,24 @@ mod kernels {
                 sum_y += yc * wc;
                 sum_y2 += yc * yc * wc;
                 sum_xy += xc * yc * wc;
-                let base = ((row_y * SHARED_X + col_x) * 5u32) as usize;
-                s_horiz[base] = f16::cast_from(sum_x);
-                s_horiz[base + 1] = f16::cast_from(sum_x2);
-                s_horiz[base + 2] = f16::cast_from(sum_y);
-                s_horiz[base + 3] = f16::cast_from(sum_y2);
-                s_horiz[base + 4] = f16::cast_from(sum_xy);
+                let base = ((row_y * shared_x + col_x) * 5u32) as usize;
+                s_horiz[base] = S::cast_from(sum_x);
+                s_horiz[base + 1] = S::cast_from(sum_x2);
+                s_horiz[base + 2] = S::cast_from(sum_y);
+                s_horiz[base + 3] = S::cast_from(sum_y2);
+                s_horiz[base + 4] = S::cast_from(sum_xy);
             }
         }
         sync_cube();
 
         // Vertical blur, derive SSIM partials, multiply by chain * (mask if any).
-        let partial_size = SHARED_Y * SHARED_X;
+        let partial_size = shared_y * shared_x;
         #[unroll]
-        for s in 0u32..3u32 {
+        for s in 0u32..partial_load_iters {
             let tid = s * threads + thread_rank;
             if tid < partial_size {
-                let part_y = tid / SHARED_X;
-                let part_x = tid % SHARED_X;
+                let part_y = tid / shared_x;
+                let part_x = tid % shared_x;
                 let center = part_y + HALO;
 
                 let mut out0 = F::cast_from(0.0_f32);
@@ -500,15 +512,15 @@ mod kernels {
                 #[unroll]
                 for d in 1u32..6u32 {
                     let w_d = gw::<F>(comptime![5u32 - d]);
-                    let bt = (((center - d) * SHARED_X + part_x) * 5u32) as usize;
-                    let bb = (((center + d) * SHARED_X + part_x) * 5u32) as usize;
+                    let bt = (((center - d) * shared_x + part_x) * 5u32) as usize;
+                    let bb = (((center + d) * shared_x + part_x) * 5u32) as usize;
                     out0 += (F::cast_from(s_horiz[bt]) + F::cast_from(s_horiz[bb])) * w_d;
                     out1 += (F::cast_from(s_horiz[bt + 1]) + F::cast_from(s_horiz[bb + 1])) * w_d;
                     out2 += (F::cast_from(s_horiz[bt + 2]) + F::cast_from(s_horiz[bb + 2])) * w_d;
                     out3 += (F::cast_from(s_horiz[bt + 3]) + F::cast_from(s_horiz[bb + 3])) * w_d;
                     out4 += (F::cast_from(s_horiz[bt + 4]) + F::cast_from(s_horiz[bb + 4])) * w_d;
                 }
-                let bc = ((center * SHARED_X + part_x) * 5u32) as usize;
+                let bc = ((center * shared_x + part_x) * 5u32) as usize;
                 let wc = gw::<F>(5u32);
                 out0 += F::cast_from(s_horiz[bc]) * wc;
                 out1 += F::cast_from(s_horiz[bc + 1]) * wc;
@@ -550,7 +562,7 @@ mod kernels {
                     chain = chain * gt_a;
                 }
 
-                let base = ((part_y * SHARED_X + part_x) * 3u32) as usize;
+                let base = ((part_y * shared_x + part_x) * 3u32) as usize;
                 s_chain_partials[base] = dmu1 * chain;
                 s_chain_partials[base + 1] = dsigma1 * chain;
                 s_chain_partials[base + 2] = dsigma12 * chain;
@@ -561,27 +573,27 @@ mod kernels {
         // Second horizontal blur over chain * partials.
         let lx_b = UNIT_POS_X + HALO;
         #[unroll]
-        for pass in 0u32..2u32 {
-            let ly_b = UNIT_POS_Y + pass * BLOCK_Y;
-            if ly_b < SHARED_Y {
+        for pass in 0u32..shared_y_passes {
+            let ly_b = UNIT_POS_Y + pass * block_y;
+            if ly_b < shared_y {
                 let mut a0 = F::cast_from(0.0_f32);
                 let mut a1 = F::cast_from(0.0_f32);
                 let mut a2 = F::cast_from(0.0_f32);
                 #[unroll]
                 for d in 1u32..6u32 {
                     let w_d = gw::<F>(comptime![5u32 - d]);
-                    let il = ((ly_b * SHARED_X + (lx_b - d)) * 3u32) as usize;
-                    let ir = ((ly_b * SHARED_X + (lx_b + d)) * 3u32) as usize;
+                    let il = ((ly_b * shared_x + (lx_b - d)) * 3u32) as usize;
+                    let ir = ((ly_b * shared_x + (lx_b + d)) * 3u32) as usize;
                     a0 += (s_chain_partials[il] + s_chain_partials[ir]) * w_d;
                     a1 += (s_chain_partials[il + 1] + s_chain_partials[ir + 1]) * w_d;
                     a2 += (s_chain_partials[il + 2] + s_chain_partials[ir + 2]) * w_d;
                 }
-                let ic = ((ly_b * SHARED_X + lx_b) * 3u32) as usize;
+                let ic = ((ly_b * shared_x + lx_b) * 3u32) as usize;
                 let wc = gw::<F>(5u32);
                 a0 += s_chain_partials[ic] * wc;
                 a1 += s_chain_partials[ic + 1] * wc;
                 a2 += s_chain_partials[ic + 2] * wc;
-                let base = ((ly_b * BLOCK_X + UNIT_POS_X) * 3u32) as usize;
+                let base = ((ly_b * block_x + UNIT_POS_X) * 3u32) as usize;
                 s_bwd_horiz[base] = a0;
                 s_bwd_horiz[base + 1] = a1;
                 s_bwd_horiz[base + 2] = a2;
@@ -599,13 +611,13 @@ mod kernels {
             #[unroll]
             for d in 1u32..6u32 {
                 let w_d = gw::<F>(comptime![5u32 - d]);
-                let bt = (((ly - d) * BLOCK_X + lx) * 3u32) as usize;
-                let bb = (((ly + d) * BLOCK_X + lx) * 3u32) as usize;
+                let bt = (((ly - d) * block_x + lx) * 3u32) as usize;
+                let bb = (((ly + d) * block_x + lx) * 3u32) as usize;
                 s0 += (s_bwd_horiz[bt] + s_bwd_horiz[bb]) * w_d;
                 s1 += (s_bwd_horiz[bt + 1] + s_bwd_horiz[bb + 1]) * w_d;
                 s2 += (s_bwd_horiz[bt + 2] + s_bwd_horiz[bb + 2]) * w_d;
             }
-            let bc = ((ly * BLOCK_X + lx) * 3u32) as usize;
+            let bc = ((ly * block_x + lx) * 3u32) as usize;
             let wc = gw::<F>(5u32);
             s0 += s_bwd_horiz[bc] * wc;
             s1 += s_bwd_horiz[bc + 1] * wc;
@@ -777,11 +789,31 @@ where
 }
 
 fn cube_count_3d(c: u32, h: u32, w: u32) -> burn_cubecl::cubecl::prelude::CubeCount {
+    cube_count_3d_for(c, h, w, kernels::BLOCK_X, kernels::BLOCK_Y)
+}
+
+fn cube_count_3d_for(
+    c: u32,
+    h: u32,
+    w: u32,
+    block_x: u32,
+    block_y: u32,
+) -> burn_cubecl::cubecl::prelude::CubeCount {
     use burn_cubecl::cubecl::prelude::CubeCount;
-    CubeCount::Static(
-        w.div_ceil(kernels::BLOCK_X),
-        h.div_ceil(kernels::BLOCK_Y),
-        c,
+    CubeCount::Static(w.div_ceil(block_x), h.div_ceil(block_y), c)
+}
+
+const fn backward_launch_params(block_x: u32, block_y: u32) -> (u32, u32, u32, u32) {
+    let shared_x = block_x + 2 * kernels::HALO;
+    let shared_y = block_y + 2 * kernels::HALO;
+    let ext_x = block_x + 4 * kernels::HALO;
+    let ext_y = block_y + 4 * kernels::HALO;
+    let threads = block_x * block_y;
+    (
+        (ext_y * ext_x).div_ceil(threads),
+        (ext_y * shared_x).div_ceil(threads),
+        (shared_y * shared_x).div_ceil(threads),
+        shared_y.div_ceil(block_y),
     )
 }
 
@@ -842,6 +874,7 @@ fn launch_image_backward<R: CubeRuntime>(
     dl_dmap: CubeTensor<R>,
     cfg: ImageLossConfig,
 ) -> CubeTensor<R> {
+    use burn_cubecl::cubecl::ir::{ElemType, FloatKind};
     use burn_cubecl::cubecl::prelude::CubeDim;
 
     let pred = into_contiguous(pred);
@@ -855,26 +888,70 @@ fn launch_image_backward<R: CubeRuntime>(
     let bg = cfg.composite_bg.unwrap_or(Vec3::ZERO);
     let dl_dpred = alloc_zeros(&pred);
     let client = pred.client.clone();
+    let supports_f16 = client
+        .properties()
+        .supports_type(ElemType::Float(FloatKind::F16));
+    let (block_x, block_y) = if supports_f16 {
+        (kernels::BLOCK_X, kernels::BLOCK_Y)
+    } else {
+        (kernels::BACKWARD_F32_BLOCK_X, kernels::BACKWARD_F32_BLOCK_Y)
+    };
+    let (ext_load_iters, horiz_load_iters, partial_load_iters, shared_y_passes) =
+        backward_launch_params(block_x, block_y);
+
     // SAFETY: same boundary guarantees as the forward.
     unsafe {
-        kernels::image_loss_backward_kernel::launch_unchecked::<f32, R>(
-            &client,
-            cube_count_3d(c, h, w),
-            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
-            pred.into_tensor_arg(),
-            gt_packed.into_tensor_arg(),
-            dl_dmap.into_tensor_arg(),
-            dl_dpred.clone().into_tensor_arg(),
-            h,
-            w,
-            cfg.l1_weight,
-            cfg.ssim_weight,
-            bg.x,
-            bg.y,
-            bg.z,
-            composite,
-            cfg.mask,
-        );
+        if supports_f16 {
+            kernels::image_loss_backward_kernel::launch_unchecked::<f32, f16, R>(
+                &client,
+                cube_count_3d_for(c, h, w, block_x, block_y),
+                CubeDim::new_2d(block_x, block_y),
+                pred.into_tensor_arg(),
+                gt_packed.into_tensor_arg(),
+                dl_dmap.into_tensor_arg(),
+                dl_dpred.clone().into_tensor_arg(),
+                h,
+                w,
+                cfg.l1_weight,
+                cfg.ssim_weight,
+                bg.x,
+                bg.y,
+                bg.z,
+                composite,
+                cfg.mask,
+                block_x,
+                block_y,
+                ext_load_iters,
+                horiz_load_iters,
+                partial_load_iters,
+                shared_y_passes,
+            );
+        } else {
+            kernels::image_loss_backward_kernel::launch_unchecked::<f32, f32, R>(
+                &client,
+                cube_count_3d_for(c, h, w, block_x, block_y),
+                CubeDim::new_2d(block_x, block_y),
+                pred.into_tensor_arg(),
+                gt_packed.into_tensor_arg(),
+                dl_dmap.into_tensor_arg(),
+                dl_dpred.clone().into_tensor_arg(),
+                h,
+                w,
+                cfg.l1_weight,
+                cfg.ssim_weight,
+                bg.x,
+                bg.y,
+                bg.z,
+                composite,
+                cfg.mask,
+                block_x,
+                block_y,
+                ext_load_iters,
+                horiz_load_iters,
+                partial_load_iters,
+                shared_y_passes,
+            );
+        }
     }
     dl_dpred
 }
