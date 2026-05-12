@@ -50,14 +50,8 @@ fn burn_options() -> RuntimeOptions {
     }
 }
 
-#[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-type BrushGraphicsApi = burn_wgpu::graphics::Dx12;
-
-#[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
-type BrushGraphicsApi = burn_wgpu::graphics::AutoGraphicsApi;
-
 pub async fn burn_init_setup() -> WgpuDevice {
-    burn_wgpu::init_setup_async::<BrushGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
+    burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
         .await;
     connect_device(WgpuDevice::DefaultDevice);
     WgpuDevice::DefaultDevice
@@ -237,25 +231,5 @@ pub fn create_process<
     RunningProcess {
         stream: Box::pin(stream),
         splat_view: splat_state_cl,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn selects_dx12_for_native_windows_arm64() {
-        #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-        assert_eq!(
-            BrushGraphicsApi::backend(),
-            burn_wgpu::graphics::Dx12::backend()
-        );
-
-        #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
-        assert_eq!(
-            BrushGraphicsApi::backend(),
-            burn_wgpu::graphics::AutoGraphicsApi::backend()
-        );
     }
 }

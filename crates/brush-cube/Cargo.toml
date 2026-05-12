@@ -16,8 +16,5 @@ log.workspace = true
 console_error_panic_hook = "0.1"
 wasm-logger = "0.2"
 
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-tokio = { workspace = true, features = ["sync"] }
-
 [lints]
 workspace = true

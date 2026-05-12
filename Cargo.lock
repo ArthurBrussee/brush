@@ -1064,7 +1064,6 @@ dependencies = [
  "bytemuck",
  "console_error_panic_hook",
  "log",
- "tokio",
  "wasm-logger",
 ]
 
