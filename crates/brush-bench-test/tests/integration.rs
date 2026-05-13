@@ -306,47 +306,54 @@ async fn test_gradient_validation() {
     splats.bwd_validate(rendered.mean()).await;
 }
 
-// Concurrent trainer + N viewers, every task pinned to its own
+// Concurrent trainers + many viewers, every task pinned to its own
 // `brush_async::Actor` thread. This is the pattern brush production
 // uses (trainer / viewer / dataloader each have their own Actor) and
 // the workload that used to surface the burn-fusion cross-thread
-// handle-race crash before the Slot + Actor refactor.
+// handle-race crash before the Slot + Actor refactor. Multiple
+// trainers + many viewers ramps the per-stream cross-thread tensor
+// sharing way up, which is exactly what surfaces the remaining
+// upstream cross-stream issue (NaN values in `projected_splats`).
 //
-// Not `#[ignore]` on purpose: this test is stable in isolation but
-// flakes occasionally when other tests share `WgpuDevice::DefaultDevice`
-// on the same machine — that's a *separate* upstream cross-stream
-// issue (NaN values in `projected_splats`) we haven't fixed yet. We
-// want CI to surface that visibly so it's not forgotten.
+// Not `#[ignore]` on purpose: surfaces remaining flakiness in CI so
+// we don't forget it.
 #[cfg(not(target_family = "wasm"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn stress_concurrent_train_and_view() {
     use brush_async::Actor;
     use brush_render::TextureMode;
     use brush_render::gaussian_splats::render_splats as render_splats_fwd;
-    use std::sync::Arc;
     use tokio::sync::watch;
 
     let device = brush_cube::test_helpers::test_device().await;
     let img_size = glam::uvec2(64, 64);
-    let viewer_count = 4;
-    let train_steps = 50;
-    let viewer_iters_per_task = 75;
+    let trainer_count = 3;
+    let viewer_count = 12;
+    let train_steps = 40;
+    let viewer_iters_per_task = 60;
 
-    let initial = generate_test_splats(&device, 500);
-    // Trainer publishes snapshots via watch; viewers subscribe and
-    // clone latest.
-    let (tx, rx) = watch::channel::<Splats<MainBackend>>(initial.valid());
+    // Each trainer owns its own splats and publishes snapshots via
+    // its own watch channel. Viewers round-robin across the trainers
+    // so every consumer sees a different writer's stream.
+    let mut trainer_actors = Vec::with_capacity(trainer_count);
+    let mut trainer_dones = Vec::with_capacity(trainer_count);
+    let mut trainer_rxs: Vec<watch::Receiver<Splats<MainBackend>>> =
+        Vec::with_capacity(trainer_count);
 
-    let trainer_actor = Actor::new("test-trainer");
-    let trainer_done = {
-        let device = device.clone();
+    for t in 0..trainer_count {
+        let initial = generate_test_splats(&device, 500);
+        let (tx, rx) = watch::channel::<Splats<MainBackend>>(initial.valid());
+        trainer_rxs.push(rx);
+
+        let actor = Actor::new(&format!("test-trainer-{t}"));
+        let device_c = device.clone();
         let mut splats = initial;
-        trainer_actor.run(move || async move {
+        let done = actor.run(move || async move {
             let batch = generate_test_batch((64, 64));
             let config = TrainConfig::default();
             let mut trainer = SplatTrainer::new(
                 &config,
-                &device,
+                &device_c,
                 BoundingBox::from_min_max(Vec3::splat(-2.0), Vec3::splat(2.0)),
             );
             for _ in 0..train_steps {
@@ -354,45 +361,49 @@ async fn stress_concurrent_train_and_view() {
                 splats = new_splats;
                 let _ = tx.send(splats.valid());
             }
-        })
-    };
+        });
+        trainer_actors.push(actor);
+        trainer_dones.push(done);
+    }
 
-    let viewers: Vec<Actor> = (0..viewer_count)
-        .map(|i| Actor::new(&format!("test-viewer-{i}")))
-        .collect();
-    let viewer_dones: Vec<_> = viewers
-        .iter()
-        .enumerate()
-        .map(|(view_id, actor)| {
-            let mut rx = rx.clone();
-            actor.run(move || async move {
-                let camera = Camera::new(
-                    Vec3::new(0.0, 0.0, -5.0 - view_id as f32 * 0.5),
-                    Quat::IDENTITY,
-                    45.0,
-                    45.0,
-                    glam::vec2(0.5, 0.5),
-                );
-                for _ in 0..viewer_iters_per_task {
-                    let snap: Splats<MainBackend> = rx.borrow_and_update().clone();
-                    let _ = render_splats_fwd(
-                        snap,
-                        &camera,
-                        img_size,
-                        Vec3::ZERO,
-                        None,
-                        TextureMode::Float,
-                    )
-                    .await;
-                }
-            })
-        })
-        .collect();
+    let mut viewer_actors = Vec::with_capacity(viewer_count);
+    let mut viewer_dones = Vec::with_capacity(viewer_count);
+    for v in 0..viewer_count {
+        let actor = Actor::new(&format!("test-viewer-{v}"));
+        let mut rx = trainer_rxs[v % trainer_count].clone();
+        let view_id = v;
+        let done = actor.run(move || async move {
+            let camera = Camera::new(
+                Vec3::new(0.0, 0.0, -5.0 - view_id as f32 * 0.5),
+                Quat::IDENTITY,
+                45.0,
+                45.0,
+                glam::vec2(0.5, 0.5),
+            );
+            for _ in 0..viewer_iters_per_task {
+                let snap: Splats<MainBackend> = rx.borrow_and_update().clone();
+                let _ = render_splats_fwd(
+                    snap,
+                    &camera,
+                    img_size,
+                    Vec3::ZERO,
+                    None,
+                    TextureMode::Float,
+                )
+                .await;
+            }
+        });
+        viewer_actors.push(actor);
+        viewer_dones.push(done);
+    }
 
-    trainer_done.await;
+    for d in trainer_dones {
+        d.await;
+    }
     for d in viewer_dones {
         d.await;
     }
-    // Suppress unused warning — actors must outlive their tasks.
-    let _ = Arc::new(viewers);
+    // Keep actors alive until all tasks have joined.
+    drop(trainer_actors);
+    drop(viewer_actors);
 }
