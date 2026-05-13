@@ -15,25 +15,6 @@
 //! to that single context. Futures spawned on an `Actor` therefore do
 //! NOT need to be `Send`, and `StreamId::current()` is invariant for
 //! their entire lifetime.
-//!
-//! ## Usage
-//!
-//! ```no_run
-//! # use brush_async::Actor;
-//! # async fn doc() {
-//! let renderer = Actor::new("renderer");
-//! // Closure is Send + 'static (must cross threads to reach the
-//! // actor). The future it produces does NOT need to be Send. The
-//! // returned `JoinHandle` resolves to the closure's output; drop it
-//! // to fire-and-forget.
-//! let pixels: Vec<u8> = renderer
-//!     .run(|| async move {
-//!         // ... work that needs !Send types ...
-//!         vec![0u8; 4]
-//!     })
-//!     .await;
-//! # }
-//! ```
 
 #[cfg(not(target_family = "wasm"))]
 mod native;

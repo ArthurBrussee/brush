@@ -1,7 +1,6 @@
 //! Native [`Actor`] backed by a dedicated `std::thread` running a
 //! `tokio` current-thread runtime with a `LocalSet`. Futures spawned
-//! on the actor live entirely on that one thread and are not required
-//! to be `Send`.
+//! on the actor live entirely on that one thread.
 
 use std::future::Future;
 use std::pin::Pin;

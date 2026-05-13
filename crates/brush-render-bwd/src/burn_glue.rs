@@ -1,5 +1,6 @@
 use brush_render::{
     MainBackendBase, SplatOps,
+    burn_glue::FUSION_LOCK,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
     sh::sh_coeffs_for_degree,
@@ -185,6 +186,8 @@ where
     B: Backend + SplatBwdOps<B>,
     C: CheckpointStrategy,
 {
+    let _lock = FUSION_LOCK.lock().await;
+
     splats.clone().validate_values().await;
 
     let device = Tensor::<Autodiff<B, C>, 2>::from_primitive(TensorPrimitive::Float(

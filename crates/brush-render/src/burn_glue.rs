@@ -62,8 +62,6 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         background: Vec3,
         bwd_info: bool,
     ) -> RenderOutput<Self> {
-        let _lock = FUSION_LOCK.lock().await;
-
         let client = transforms.client.clone();
 
         // Resolve fusion inputs to MainBackendBase tensors. This

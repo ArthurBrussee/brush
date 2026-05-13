@@ -54,10 +54,6 @@ impl Cli {
 
 /// Run the CLI: pin the trainer stream to a dedicated [`Actor`] thread,
 /// drive the indicatif UI on the main task.
-///
-/// Splitting these means the trainer's `StreamId::current()` is
-/// invariant for the whole train state machine while the UI loop
-/// stays responsive on the main thread.
 pub async fn run_cli_ui(
     mut process: RunningProcess,
     #[allow(unused)] train_stream_config: TrainStreamConfig,

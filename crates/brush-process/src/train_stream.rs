@@ -145,10 +145,7 @@ pub(crate) async fn train_stream(
 
     // The trainer owns its working `splats` locally and publishes a
     // clone to the `Slot` after every modification (train
-    // step, refine, LOD decimation). Consumers (UI viewer, export,
-    // eval, rerun) read clones from the channel and render outside
-    // any lock — no transform-in-place round-trip through a shared
-    // slot.
+    // step, refine, LOD decimation).
     let mut splats: Splats<MainBackend> = init_splats.clone();
     slot.set(0, splats.clone());
     emitter

@@ -2,11 +2,6 @@ use tokio::sync::watch;
 
 /// Read-only frame-indexed view of splat snapshots published by a
 /// single producer (the train / load stream) into a [`SlotSender`].
-///
-/// Backed by `tokio::sync::watch::Receiver<Vec<T>>`, so cloning a
-/// `Slot` is cheap and every consumer sees the same shared state.
-/// Reads (`get` / `latest` / `len`) clone snapshots out without
-/// blocking the producer.
 #[derive(Clone)]
 pub struct Slot<T> {
     rx: watch::Receiver<Vec<T>>,

@@ -10,6 +10,7 @@ use tracing::trace_span;
 
 use crate::{
     RenderAux, SplatOps,
+    burn_glue::FUSION_LOCK,
     camera::Camera,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
@@ -265,6 +266,8 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
     splat_scale: Option<f32>,
     texture_mode: TextureMode,
 ) -> (Tensor<B, 3>, RenderAux<B>) {
+    let _lock = FUSION_LOCK.lock().await;
+
     splats.clone().validate_values().await;
 
     let sh_coeffs = splats.sh_coeffs.into_value();

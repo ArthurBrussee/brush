@@ -90,14 +90,6 @@ pub async fn wait_for_device() -> &'static WgpuDevice {
 
 /// Create a running process from a datasource and args.
 ///
-/// Returns a [`RunningProcess`] whose `stream` is a real async stream
-/// driven by the consumer's `.next().await` — no background producer.
-/// Pin polling to one OS thread (e.g. wrap the consumer loop in a
-/// `brush_async::Actor`) to keep all tensor ops on a single
-/// `StreamId`; otherwise tokio's work-stealing scheduler may move
-/// state across threads at every await and split the trainer's
-/// dispatches across cubecl streams.
-///
 /// The `config_fn` callback receives the initial config (loaded from
 /// args.txt if present, otherwise defaults) and returns the final
 /// config to use. This allows the caller to modify or override
