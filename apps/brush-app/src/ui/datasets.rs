@@ -8,9 +8,7 @@ use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::AlphaMode;
 use egui::{Color32, Rect, Slider, TextureOptions, pos2};
 
-use brush_async::Actor;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use brush_async::{Actor, JoinHandle};
 use tokio::sync::watch::Sender;
 
 use crate::ui::{
@@ -43,13 +41,11 @@ pub struct DatasetPanel {
     cur_dataset: Dataset,
     selected_view: Option<SelectedView>,
     sender: Option<Sender<Option<TexHandle>>>,
-    // Owns the image-preview decode loop. Replaced on every new
-    // selection so the previous Actor (and its in-flight decode) is
-    // dropped before the new one starts.
-    loader: Option<Actor>,
-    // Set by the decode task on completion; cleared on each new
-    // selection. Drives the spinner.
-    loading_done: Arc<AtomicBool>,
+    // Long-lived worker for image-preview decodes.
+    loader_actor: Actor,
+    // Tracks the latest decode so we can `abort()` it when the user
+    // picks a different view, and ask `is_finished()` for the spinner.
+    loading_task: Option<JoinHandle<()>>,
     current_view_index: Cell<Option<usize>>,
     loading_start: Option<web_time::Instant>,
 }
@@ -61,8 +57,8 @@ impl Default for DatasetPanel {
         Self {
             view_type: ViewType::Train,
             cur_dataset: Dataset::empty(),
-            loader: None,
-            loading_done: Arc::new(AtomicBool::new(true)),
+            loader_actor: Actor::new("dataset-preview"),
+            loading_task: None,
             sender: Some(sender),
             selected_view: Some(SelectedView { view: None, tex }),
             current_view_index: Cell::new(None),
@@ -79,84 +75,78 @@ impl DatasetPanel {
 
         let view_send = view.clone();
 
-        // Drop the previous Actor — its in-flight decode is cancelled.
-        self.loader = None;
-        self.loading_done = Arc::new(AtomicBool::new(false));
+        // Cancel the previous preview decode if it's still running.
+        if let Some(task) = self.loading_task.take() {
+            task.abort();
+        }
+
         self.loading_start = Some(web_time::Instant::now());
-
         let ctx = ctx.clone();
-        let done = self.loading_done.clone();
-        let actor = Actor::new("dataset-preview");
-        actor
-            .run(move || async move {
-                let image = view_send
-                    .image
-                    .load()
-                    .await
-                    .expect("Failed to load dataset image");
 
-                if sender.is_closed() {
-                    done.store(true, Ordering::SeqCst);
-                    return;
-                }
+        self.loading_task = Some(self.loader_actor.run(move || async move {
+            let image = view_send
+                .image
+                .load()
+                .await
+                .expect("Failed to load dataset image");
 
-                // Yield in case we're cancelled.
-                brush_async::yield_now().await;
+            if sender.is_closed() {
+                return;
+            }
 
-                let has_alpha = image.color().has_alpha();
-                let img_size = [image.width() as usize, image.height() as usize];
+            // Yield in case we're cancelled.
+            brush_async::yield_now().await;
 
-                // Create blurred background: downscale 32x then blur
-                let bg_width = (image.width() / 32).max(1);
-                let bg_height = (image.height() / 32).max(1);
-                let blurred = image
-                    .resize(bg_width, bg_height, image::imageops::FilterType::Triangle)
-                    .blur(6.0);
-                let blurred_size = [blurred.width() as usize, blurred.height() as usize];
-                let blurred_img =
-                    egui::ColorImage::from_rgb(blurred_size, &blurred.into_rgb8().into_vec());
+            let has_alpha = image.color().has_alpha();
+            let img_size = [image.width() as usize, image.height() as usize];
 
-                // Yield in case we're cancelled.
-                brush_async::yield_now().await;
+            // Create blurred background: downscale 32x then blur
+            let bg_width = (image.width() / 32).max(1);
+            let bg_height = (image.height() / 32).max(1);
+            let blurred = image
+                .resize(bg_width, bg_height, image::imageops::FilterType::Triangle)
+                .blur(6.0);
+            let blurred_size = [blurred.width() as usize, blurred.height() as usize];
+            let blurred_img =
+                egui::ColorImage::from_rgb(blurred_size, &blurred.into_rgb8().into_vec());
 
-                let color_img = if has_alpha {
-                    let data = image.into_rgba8().into_vec();
-                    egui::ColorImage::from_rgba_unmultiplied(img_size, &data)
-                } else {
-                    egui::ColorImage::from_rgb(img_size, &image.into_rgb8().into_vec())
-                };
+            // Yield in case we're cancelled.
+            brush_async::yield_now().await;
 
-                let image_name = view_send.image.img_name();
-                let egui_handle =
-                    ctx.load_texture(image_name, color_img, TextureOptions::default());
-                let blurred_handle = ctx.load_texture(
-                    format!("{}_blurred", view_send.image.img_name()),
-                    blurred_img,
-                    TextureOptions::default(),
-                );
+            let color_img = if has_alpha {
+                let data = image.into_rgba8().into_vec();
+                egui::ColorImage::from_rgba_unmultiplied(img_size, &data)
+            } else {
+                egui::ColorImage::from_rgb(img_size, &image.into_rgb8().into_vec())
+            };
 
-                // Yield in case we're cancelled.
-                brush_async::yield_now().await;
+            let image_name = view_send.image.img_name();
+            let egui_handle = ctx.load_texture(image_name, color_img, TextureOptions::default());
+            let blurred_handle = ctx.load_texture(
+                format!("{}_blurred", view_send.image.img_name()),
+                blurred_img,
+                TextureOptions::default(),
+            );
 
-                // If channel is gone, that's fine.
-                let _ = sender.send(Some(TexHandle {
-                    handle: egui_handle,
-                    has_alpha,
-                    blurred_bg: Some(blurred_handle),
-                }));
-                done.store(true, Ordering::SeqCst);
-                // Show updated texture asap.
-                ctx.request_repaint();
-            })
-            .detach();
-        self.loader = Some(actor);
+            // Yield in case we're cancelled.
+            brush_async::yield_now().await;
+
+            // If channel is gone, that's fine.
+            let _ = sender.send(Some(TexHandle {
+                handle: egui_handle,
+                has_alpha,
+                blurred_bg: Some(blurred_handle),
+            }));
+            // Show updated texture asap.
+            ctx.request_repaint();
+        }));
         if let Some(selected_view) = &mut self.selected_view {
             selected_view.view = Some(view.clone());
         }
     }
 
     pub fn is_selected_view_loading(&self) -> bool {
-        !self.loading_done.load(Ordering::SeqCst)
+        self.loading_task.as_ref().is_some_and(|t| !t.is_finished())
     }
 
     fn focus_picked(&self, process: &UiProcess) {

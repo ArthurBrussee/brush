@@ -7,6 +7,8 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
 use tokio::sync::oneshot;
@@ -26,8 +28,8 @@ impl Actor {
     }
 
     /// Run a closure that produces a (possibly !Send) future. Returns
-    /// a [`JoinHandle`] for the result. Drop the handle to
-    /// fire-and-forget.
+    /// a [`JoinHandle`] for the result. Drop the handle (or
+    /// `.detach()`) to fire-and-forget.
     pub fn run<F, Fut, R>(&self, f: F) -> JoinHandle<R>
     where
         F: FnOnce() -> Fut + 'static,
@@ -35,27 +37,51 @@ impl Actor {
         R: 'static,
     {
         let (tx, rx) = oneshot::channel::<R>();
+        let state = Arc::new(HandleState::default());
+        let state_task = state.clone();
         spawn_local(async move {
             let r = f().await;
+            state_task.finished.store(true, Ordering::SeqCst);
             let _ = tx.send(r);
         });
-        JoinHandle { rx }
+        JoinHandle { rx, state }
     }
+}
+
+#[derive(Default)]
+struct HandleState {
+    /// Set by `abort()`. Cooperative: tasks that care should check it
+    /// at await points (wasm-bindgen-futures has no real cancellation).
+    aborted: AtomicBool,
+    /// Set by the spawned task when it returns.
+    finished: AtomicBool,
 }
 
 /// Awaitable handle to the result of [`Actor::run`].
 ///
-/// Backed by a `oneshot`. Drop to fire-and-forget; awaiting panics if
-/// the task panicked or was dropped before completing.
+/// `await` resolves to the task's return value, or panics if the task
+/// panicked. `abort()` on wasm is cooperative: the task continues
+/// running but tasks that check the flag can early-exit.
 pub struct JoinHandle<R> {
     rx: oneshot::Receiver<R>,
+    state: Arc<HandleState>,
 }
 
 impl<R> JoinHandle<R> {
-    /// Drop the handle without awaiting. The underlying task keeps
-    /// running until it completes. Cleaner than `let _ =
+    /// Drop the handle without awaiting. Cleaner than `let _ =
     /// actor.run(...)` (which clippy flags).
     pub fn detach(self) {}
+
+    /// Mark the task as aborted. Cooperative on wasm — the task keeps
+    /// running unless it checks the flag at a yield point.
+    pub fn abort(&self) {
+        self.state.aborted.store(true, Ordering::SeqCst);
+    }
+
+    /// `true` once the task has finished.
+    pub fn is_finished(&self) -> bool {
+        self.state.finished.load(Ordering::SeqCst)
+    }
 }
 
 impl<R> Future for JoinHandle<R> {
@@ -63,7 +89,7 @@ impl<R> Future for JoinHandle<R> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<R> {
         match Pin::new(&mut self.rx).poll(cx) {
             Poll::Ready(Ok(r)) => Poll::Ready(r),
-            Poll::Ready(Err(_)) => panic!("brush-async: actor task panicked or actor dropped"),
+            Poll::Ready(Err(_)) => panic!("brush-async: actor task panicked"),
             Poll::Pending => Poll::Pending,
         }
     }
