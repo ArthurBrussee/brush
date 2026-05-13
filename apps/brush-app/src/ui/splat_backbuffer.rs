@@ -1,4 +1,5 @@
-use brush_process::slot::Slot;
+use brush_async::Actor;
+use brush_process::splat_channel::SplatChannel;
 use brush_render::{
     MainBackend, MainBackendBase, TextureMode, camera::Camera, gaussian_splats::Splats,
     render_splats,
@@ -7,13 +8,12 @@ use burn::tensor::Tensor;
 use egui::Rect;
 use glam::{UVec2, Vec3};
 use tokio::sync::mpsc;
-use tokio_with_wasm::alias::task;
 
 use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 
 #[derive(Clone)]
 struct RenderRequest {
-    slot: Slot<Splats<MainBackend>>,
+    splats: SplatChannel<Splats<MainBackend>>,
     ctx: egui::Context,
     state: LastRenderState,
 }
@@ -32,6 +32,9 @@ pub struct SplatBackbuffer {
     img_rec: mpsc::Receiver<Tensor<MainBackend, 3>>,
     last_image: Option<Tensor<MainBackend, 3>>,
     last_state: Option<LastRenderState>,
+    // Owns the render worker. Dropping closes the channel, which makes
+    // the worker exit and the actor's thread shut down.
+    _actor: Actor,
 }
 
 impl SplatBackbuffer {
@@ -50,12 +53,14 @@ impl SplatBackbuffer {
                 state.target_format,
             ));
 
-        task::spawn(render_worker(req_rec, img_send));
+        let actor = Actor::new("viewer");
+        actor.spawn(move || render_worker(req_rec, img_send));
         Self {
             req_send,
             img_rec,
             last_image: None,
             last_state: None,
+            _actor: actor,
         }
     }
 
@@ -64,7 +69,7 @@ impl SplatBackbuffer {
         &mut self,
         rect: Rect,
         ui: &egui::Ui,
-        slot: &Slot<Splats<MainBackend>>,
+        splats: &SplatChannel<Splats<MainBackend>>,
         camera: &Camera,
         frame: usize,
         background: Vec3,
@@ -93,7 +98,7 @@ impl SplatBackbuffer {
             self.last_state = Some(current_state.clone());
             // Send request to worker (ignore send errors if channel closed)
             let _ = self.req_send.send(RenderRequest {
-                slot: slot.clone(),
+                splats: splats.clone(),
                 ctx: ui.ctx().clone(),
                 state: current_state,
             });
@@ -317,25 +322,21 @@ async fn render_worker(
             request = newer;
         }
 
-        let image = request
-            .slot
-            .act(request.state.frame, async |splats| {
-                let (image, _) = render_splats(
-                    splats.clone(),
-                    &request.state.camera,
-                    request.state.img_size,
-                    request.state.background,
-                    request.state.splat_scale,
-                    TextureMode::Packed,
-                )
-                .await;
-                (splats, image)
-            })
-            .await;
-
-        if let Some(image) = image {
-            let _ = img_sender.send(image).await;
-        }
+        // Clone a snapshot out of the channel; render outside any
+        // lock. If the channel is empty (no splats yet), skip.
+        let Some(splats) = request.splats.get(request.state.frame) else {
+            continue;
+        };
+        let (image, _) = render_splats(
+            splats,
+            &request.state.camera,
+            request.state.img_size,
+            request.state.background,
+            request.state.splat_scale,
+            TextureMode::Packed,
+        )
+        .await;
+        let _ = img_sender.send(image).await;
 
         // Trigger egui repaint so the new texture gets picked up.
         request.ctx.request_repaint();

@@ -17,7 +17,7 @@ serde-ply.workspace = true
 tokio-stream.workspace = true
 async-fn-stream.workspace = true
 web-time.workspace = true
-tokio_with_wasm.workspace = true
+brush-async.path = "../brush-async"
 thiserror.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]

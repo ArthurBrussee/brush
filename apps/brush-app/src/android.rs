@@ -1,4 +1,3 @@
-use brush_process::cubecl_startup;
 use std::os::raw::c_void;
 use std::sync::Arc;
 
@@ -15,8 +14,6 @@ pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _: *mut c_void) -> jni::sys::
 #[unsafe(no_mangle)]
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
     let wgpu_options = crate::ui::create_egui_options();
-
-    cubecl_startup();
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()

@@ -1,5 +1,5 @@
 use brush_process::DataSource;
-use brush_process::{create_process, cubecl_startup};
+use brush_process::create_process;
 use glam::{EulerRot, Quat, Vec3};
 use wasm_bindgen::prelude::*;
 
@@ -81,8 +81,6 @@ impl EmbeddedApp {
             Box::new(crate::ui::log_panel::ConsoleLogger),
             log::LevelFilter::Info,
         );
-
-        cubecl_startup();
 
         Self {
             runner: eframe::WebRunner::new(),

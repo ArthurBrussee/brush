@@ -52,7 +52,7 @@ glam.workspace = true
 rand.workspace = true
 egui_tiles.workspace = true
 wgpu.workspace = true
-tokio_with_wasm = { workspace = true, features = ["rt"] }
+brush-async.path = "../../crates/brush-async"
 web-time.workspace = true
 humantime.workspace = true
 wasm-bindgen.workspace = true

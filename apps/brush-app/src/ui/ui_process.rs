@@ -1,5 +1,6 @@
 use anyhow::Result;
-use brush_process::{RunningProcess, message::ProcessMessage, slot::Slot};
+use brush_async::{Actor, task};
+use brush_process::{RunningProcess, message::ProcessMessage, splat_channel::SplatChannel};
 use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
@@ -7,7 +8,6 @@ use glam::{Affine3A, Quat, Vec3};
 use std::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
-use tokio_with_wasm::alias::task;
 
 use crate::ui::{UiMode, app::CameraSettings, camera_controls::CameraController};
 
@@ -19,7 +19,14 @@ enum ControlMessage {
 struct ProcessHandle {
     messages: mpsc::UnboundedReceiver<anyhow::Result<ProcessMessage>>,
     control: mpsc::UnboundedSender<ControlMessage>,
-    splat_view: Slot<Splats<MainBackend>>,
+    splat_view: SplatChannel<Splats<MainBackend>>,
+    // Owns the actor thread that polls `process.stream`. Pinning the
+    // poll to one OS thread keeps `cubecl`'s `StreamId::current()`
+    // invariant for the whole trainer state machine (tokio's
+    // work-stealing scheduler would otherwise move the future across
+    // workers between awaits). Dropping the handle drops the actor,
+    // which cancels training.
+    _actor: Actor,
 }
 
 /// A thread-safe wrapper around the UI process.
@@ -66,11 +73,11 @@ impl UiProcess {
         self.write().background_style = style;
     }
 
-    pub(crate) fn current_splats(&self) -> Slot<Splats<MainBackend>> {
+    pub(crate) fn current_splats(&self) -> SplatChannel<Splats<MainBackend>> {
         self.read()
             .process_handle
             .as_ref()
-            .map_or(Slot::default(), |s| s.splat_view.clone())
+            .map_or(SplatChannel::default(), |s| s.splat_view.clone())
     }
 
     pub fn is_loading(&self) -> bool {
@@ -199,7 +206,8 @@ impl UiProcess {
 
         let egui_ctx = self.read().ui_ctx.clone();
 
-        task::spawn(async move {
+        let actor = Actor::new("ui-process");
+        actor.spawn(move || async move {
             while let Some(msg) = process.stream.next().await {
                 // Stop the process if no one is listening anymore.
                 if sender.send(msg).is_err() {
@@ -231,6 +239,7 @@ impl UiProcess {
             messages: receiver,
             control: train_sender,
             splat_view: process.splat_view,
+            _actor: actor,
         });
     }
 

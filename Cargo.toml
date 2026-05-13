@@ -6,6 +6,7 @@ members = [
     "apps/brush-cli",
     "apps/brush-js",
 
+    "crates/brush-async",
     "crates/brush-bench-test",
     "crates/brush-cube",
     "crates/brush-dataset",
@@ -58,7 +59,6 @@ tracing-subscriber = "0.3.19"
 winapi = { version = "0.3", features = ["wincon"] }
 
 tokio = { version = "1.42.0", default-features = false }
-tokio_with_wasm = "0.9"
 tokio-stream = "0.1"
 tokio-util = { version = "0.7.13", features = ["io"] }
 

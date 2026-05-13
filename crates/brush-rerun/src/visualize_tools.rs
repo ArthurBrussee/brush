@@ -337,11 +337,7 @@ mod visualize_tools_impl {
         }
 
         #[allow(unused_variables)]
-        pub async fn log_train_stats<B: Backend>(
-            &self,
-            _iter: u32,
-            _stats: TrainStepStats<B>,
-        ) -> Result<()> {
+        pub fn log_train_stats(&self, _iter: u32, _stats: &TrainStepStats) -> Result<()> {
             Ok(())
         }
 

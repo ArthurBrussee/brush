@@ -4,7 +4,6 @@ use std::time::Duration;
 use async_fn_stream::{TryStreamEmitter, try_fn_stream};
 use brush_render::gaussian_splats::{SplatRenderMode, Splats, inverse_sigmoid};
 use brush_render::sh::rgb_to_sh;
-use brush_vfs::SendNotWasm;
 use glam::{Vec3, Vec4Swizzles};
 use serde::Deserialize;
 use serde::de::{DeserializeSeed, Error};
@@ -12,7 +11,6 @@ use serde_ply::{DeserializeError, PlyChunkedReader, RowVisitor};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio_stream::{Stream, StreamExt};
-use tokio_with_wasm::alias as tokio_wasm;
 
 use crate::ply_gaussian::{PlyGaussian, QuantSh, QuantSplat};
 
@@ -128,7 +126,7 @@ async fn read_chunk<T: AsyncRead + Unpin>(
             break;
         }
         total_read += bytes_read;
-        tokio_wasm::task::yield_now().await;
+        brush_async::task::yield_now().await;
     }
     if total_read == 0 {
         Err(std::io::Error::new(
@@ -140,7 +138,7 @@ async fn read_chunk<T: AsyncRead + Unpin>(
     }
 }
 
-pub async fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
+pub async fn load_splat_from_ply<T: AsyncRead + Unpin>(
     reader: T,
     subsample_points: Option<u32>,
 ) -> Result<SplatMessage, DeserializeError> {
@@ -153,7 +151,7 @@ pub async fn load_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
     splat
 }
 
-pub fn stream_splat_from_ply<T: AsyncRead + SendNotWasm + Unpin>(
+pub fn stream_splat_from_ply<T: AsyncRead + Unpin>(
     mut reader: T,
     subsample_points: Option<u32>,
     streaming: bool,

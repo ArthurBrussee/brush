@@ -8,9 +8,8 @@ use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::AlphaMode;
 use egui::{Color32, Rect, Slider, TextureOptions, pos2};
 
+use brush_async::task;
 use tokio::sync::watch::Sender;
-use tokio_wasm::task;
-use tokio_with_wasm::alias as tokio_wasm;
 
 use crate::ui::{
     UiMode, draw_checkerboard,

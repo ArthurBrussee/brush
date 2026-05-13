@@ -24,7 +24,7 @@ tracing.workspace = true
 log.workspace = true
 rand.workspace = true
 
-tokio_with_wasm.workspace = true
+brush-async.path = "../brush-async"
 clap.workspace = true
 itertools = "0.14"
 

@@ -18,7 +18,6 @@ use brush_render::{
 use brush_serde::{ParseMetadata, SplatData, SplatMessage};
 use brush_vfs::BrushVfs;
 use itertools::Itertools;
-use tokio_with_wasm::alias as tokio_wasm;
 
 fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
     // Colmap only specifies an image name, not a full path. We brute force
@@ -64,7 +63,7 @@ async fn load_dataset_inner(
     let vfs_init = vfs.clone();
 
     // Spawn three tasks
-    let dataset = tokio_wasm::spawn(async move {
+    let dataset = brush_async::spawn(async move {
         let mut cam_file = vfs.reader_at_path(&cam_path).await?;
         let cam_model_data = colmap_reader::read_cameras(&mut cam_file, is_binary).await?;
         let cam_model_data = cam_model_data
@@ -152,7 +151,7 @@ async fn load_dataset_inner(
 
     let load_args = load_args.clone();
 
-    let init = tokio_wasm::spawn(async move {
+    let init = brush_async::spawn(async move {
         let points_path = { vfs_init.files_ending_in("points3d.txt").next() }
             .or_else(|| vfs_init.files_ending_in("points3d.bin").next())?;
         let is_binary = matches!(

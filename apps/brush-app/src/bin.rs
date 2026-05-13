@@ -9,12 +9,10 @@ mod ui;
 #[allow(clippy::unnecessary_wraps)]
 fn main() -> Result<(), anyhow::Error> {
     use brush_cli::Cli;
-    use brush_process::{create_process, cubecl_startup};
+    use brush_process::create_process;
     use clap::Parser;
 
     let args = Cli::parse().validate()?;
-
-    cubecl_startup();
 
     #[cfg(target_family = "windows")]
     {
@@ -94,11 +92,19 @@ fn main() -> Result<(), anyhow::Error> {
                 )?;
             } else {
                 brush_process::burn_init_setup().await;
-                brush_cli::run_cli_ui(
-                    init_process.expect("Must provide a source"),
-                    args.train_stream,
-                )
-                .await?;
+                // Pin the entire CLI loop (which polls
+                // `process.stream`) to a single OS thread. The
+                // trainer's state machine lives inside that stream;
+                // tokio's work-stealing scheduler would otherwise
+                // move it across worker threads at every `.await`,
+                // splitting its dispatches across cubecl streams.
+                let process = init_process.expect("Must provide a source");
+                let train_stream = args.train_stream;
+                let actor = brush_async::Actor::new("cli");
+                let result = actor
+                    .run(move || async move { brush_cli::run_cli_ui(process, train_stream).await })
+                    .await;
+                result?;
             }
 
             anyhow::Result::<(), anyhow::Error>::Ok(())
