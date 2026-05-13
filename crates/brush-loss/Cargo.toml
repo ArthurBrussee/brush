@@ -14,12 +14,17 @@ burn-fusion.workspace = true
 burn-ir.workspace = true
 burn-wgpu.workspace = true
 glam.workspace = true
-half = "2"
 
 [dev-dependencies]
 brush-cube = { path = "../brush-cube" }
+divan = "0.1.17"
 tokio = { workspace = true, features = ["macros", "rt"] }
 wasm-bindgen-test = "0.3"
+
+[[bench]]
+name = "loss_bench"
+harness = false
+path = "benches/loss_bench.rs"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }

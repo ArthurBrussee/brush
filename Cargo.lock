@@ -1128,9 +1128,9 @@ dependencies = [
  "burn-fusion",
  "burn-ir",
  "burn-wgpu",
+ "divan",
  "getrandom 0.4.2",
  "glam",
- "half",
  "tokio",
  "wasm-bindgen-test",
 ]
