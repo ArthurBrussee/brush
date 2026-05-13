@@ -47,7 +47,6 @@ mod kernels {
     use burn_cubecl::cubecl::frontend::CompilationArg;
     use burn_cubecl::cubecl::frontend::CubeIndexMutExpand;
     use burn_cubecl::cubecl::prelude::*;
-    use half::f16;
 
     /// 11-tap Gaussian weights at sigma = 1.5, normalised to sum to 1.
     /// Called from `comptime!` so it runs once per kernel build, baking each
@@ -72,9 +71,8 @@ mod kernels {
     const HALO: u32 = 5;
     const SHARED_X: u32 = BLOCK_X + 2 * HALO; // 26
     const SHARED_Y: u32 = BLOCK_Y + 2 * HALO; // 26
-    // Backward needs partials at every tile + halo pixel; each partial is
-    // itself a blur of pred/gt, so the bwd widens the loaded image tile by
-    // an extra halo to feed that inner blur.
+    // Backward's inner blur is itself a blur, so the loaded tile widens by an
+    // extra halo to feed it.
     const EXT_X: u32 = BLOCK_X + 4 * HALO; // 36
     const EXT_Y: u32 = BLOCK_Y + 4 * HALO; // 36
 
@@ -342,6 +340,10 @@ mod kernels {
     }
 
     /// Backward: recompute SSIM partials inline, scatter `dL/dpred` per pixel.
+    ///
+    /// Each `sync_cube` boundary frees a scratch role, so the four logical
+    /// arrays alias into two physical buffers. Total ~28 KiB at 16x16 f32,
+    /// inside Apple's 32 KiB threadgroup budget without needing shader-f16.
     #[allow(clippy::assign_op_pattern)]
     #[cube(launch_unchecked)]
     pub fn image_loss_backward_kernel<F: Float>(
@@ -388,13 +390,10 @@ mod kernels {
             terminate!();
         }
 
-        // f16 for the wide-halo image storage; chain*partials and the second
-        // horizontal-blur scratch stay in f32. ~28 KiB total — fits Apple's
-        // 32 KiB threadgroup budget.
-        let mut s_imgs = SharedMemory::<f16>::new((EXT_Y * EXT_X * 2) as usize);
-        let mut s_horiz = SharedMemory::<f16>::new((EXT_Y * SHARED_X * 5) as usize);
-        let mut s_chain_partials = SharedMemory::<F>::new((SHARED_Y * SHARED_X * 3) as usize);
-        let mut s_bwd_horiz = SharedMemory::<F>::new((SHARED_Y * BLOCK_X * 3) as usize);
+        // buf_a holds the image tile, then chain*partials after the v-blur.
+        // buf_b holds the 1st h-blur sums, then the 2nd h-blur sums.
+        let mut buf_a = SharedMemory::<F>::new((EXT_Y * EXT_X * 2) as usize);
+        let mut buf_b = SharedMemory::<F>::new((EXT_Y * SHARED_X * 5) as usize);
 
         let bg_c = if composite {
             if c == 0u32 {
@@ -411,7 +410,7 @@ mod kernels {
         let thread_rank = UNIT_POS_Y * BLOCK_X + UNIT_POS_X;
         let threads = BLOCK_X * BLOCK_Y;
 
-        // Load pred and effective-gt with halo of 2*HALO into s_imgs.
+        // Load pred and effective-gt with halo of 2*HALO into buf_a.
         let ext_size = EXT_Y * EXT_X;
         #[unroll]
         for s in 0u32..6u32 {
@@ -428,8 +427,8 @@ mod kernels {
                     gt_c
                 };
                 let base = ((local_y * EXT_X + local_x) * 2u32) as usize;
-                s_imgs[base] = f16::cast_from(pv);
-                s_imgs[base + 1] = f16::cast_from(gt_eff);
+                buf_a[base] = pv;
+                buf_a[base + 1] = gt_eff;
             }
         }
         sync_cube();
@@ -453,10 +452,10 @@ mod kernels {
                     let w_d = gw::<F>(comptime![5u32 - d]);
                     let il = ((row_y * EXT_X + (center - d)) * 2u32) as usize;
                     let ir = ((row_y * EXT_X + (center + d)) * 2u32) as usize;
-                    let xl = F::cast_from(s_imgs[il]);
-                    let yl = F::cast_from(s_imgs[il + 1]);
-                    let xr = F::cast_from(s_imgs[ir]);
-                    let yr = F::cast_from(s_imgs[ir + 1]);
+                    let xl = buf_a[il];
+                    let yl = buf_a[il + 1];
+                    let xr = buf_a[ir];
+                    let yr = buf_a[ir + 1];
                     sum_x += (xl + xr) * w_d;
                     sum_x2 += (xl * xl + xr * xr) * w_d;
                     sum_y += (yl + yr) * w_d;
@@ -464,8 +463,8 @@ mod kernels {
                     sum_xy += (xl * yl + xr * yr) * w_d;
                 }
                 let ic = ((row_y * EXT_X + center) * 2u32) as usize;
-                let xc = F::cast_from(s_imgs[ic]);
-                let yc = F::cast_from(s_imgs[ic + 1]);
+                let xc = buf_a[ic];
+                let yc = buf_a[ic + 1];
                 let wc = gw::<F>(5u32);
                 sum_x += xc * wc;
                 sum_x2 += xc * xc * wc;
@@ -473,16 +472,17 @@ mod kernels {
                 sum_y2 += yc * yc * wc;
                 sum_xy += xc * yc * wc;
                 let base = ((row_y * SHARED_X + col_x) * 5u32) as usize;
-                s_horiz[base] = f16::cast_from(sum_x);
-                s_horiz[base + 1] = f16::cast_from(sum_x2);
-                s_horiz[base + 2] = f16::cast_from(sum_y);
-                s_horiz[base + 3] = f16::cast_from(sum_y2);
-                s_horiz[base + 4] = f16::cast_from(sum_xy);
+                buf_b[base] = sum_x;
+                buf_b[base + 1] = sum_x2;
+                buf_b[base + 2] = sum_y;
+                buf_b[base + 3] = sum_y2;
+                buf_b[base + 4] = sum_xy;
             }
         }
         sync_cube();
 
         // Vertical blur, derive SSIM partials, multiply by chain * (mask if any).
+        // Reuses buf_a (image tile is dead) for chain*partials.
         let partial_size = SHARED_Y * SHARED_X;
         #[unroll]
         for s in 0u32..3u32 {
@@ -502,19 +502,19 @@ mod kernels {
                     let w_d = gw::<F>(comptime![5u32 - d]);
                     let bt = (((center - d) * SHARED_X + part_x) * 5u32) as usize;
                     let bb = (((center + d) * SHARED_X + part_x) * 5u32) as usize;
-                    out0 += (F::cast_from(s_horiz[bt]) + F::cast_from(s_horiz[bb])) * w_d;
-                    out1 += (F::cast_from(s_horiz[bt + 1]) + F::cast_from(s_horiz[bb + 1])) * w_d;
-                    out2 += (F::cast_from(s_horiz[bt + 2]) + F::cast_from(s_horiz[bb + 2])) * w_d;
-                    out3 += (F::cast_from(s_horiz[bt + 3]) + F::cast_from(s_horiz[bb + 3])) * w_d;
-                    out4 += (F::cast_from(s_horiz[bt + 4]) + F::cast_from(s_horiz[bb + 4])) * w_d;
+                    out0 += (buf_b[bt] + buf_b[bb]) * w_d;
+                    out1 += (buf_b[bt + 1] + buf_b[bb + 1]) * w_d;
+                    out2 += (buf_b[bt + 2] + buf_b[bb + 2]) * w_d;
+                    out3 += (buf_b[bt + 3] + buf_b[bb + 3]) * w_d;
+                    out4 += (buf_b[bt + 4] + buf_b[bb + 4]) * w_d;
                 }
                 let bc = ((center * SHARED_X + part_x) * 5u32) as usize;
                 let wc = gw::<F>(5u32);
-                out0 += F::cast_from(s_horiz[bc]) * wc;
-                out1 += F::cast_from(s_horiz[bc + 1]) * wc;
-                out2 += F::cast_from(s_horiz[bc + 2]) * wc;
-                out3 += F::cast_from(s_horiz[bc + 3]) * wc;
-                out4 += F::cast_from(s_horiz[bc + 4]) * wc;
+                out0 += buf_b[bc] * wc;
+                out1 += buf_b[bc + 1] * wc;
+                out2 += buf_b[bc + 2] * wc;
+                out3 += buf_b[bc + 3] * wc;
+                out4 += buf_b[bc + 4] * wc;
 
                 let zero = F::cast_from(0.0_f32);
                 let two = F::cast_from(2.0_f32);
@@ -551,14 +551,15 @@ mod kernels {
                 }
 
                 let base = ((part_y * SHARED_X + part_x) * 3u32) as usize;
-                s_chain_partials[base] = dmu1 * chain;
-                s_chain_partials[base + 1] = dsigma1 * chain;
-                s_chain_partials[base + 2] = dsigma12 * chain;
+                buf_a[base] = dmu1 * chain;
+                buf_a[base + 1] = dsigma1 * chain;
+                buf_a[base + 2] = dsigma12 * chain;
             }
         }
         sync_cube();
 
         // Second horizontal blur over chain * partials.
+        // Reuses buf_b (1st-blur sums are dead) for the inner-blur output.
         let lx_b = UNIT_POS_X + HALO;
         #[unroll]
         for pass in 0u32..2u32 {
@@ -572,19 +573,19 @@ mod kernels {
                     let w_d = gw::<F>(comptime![5u32 - d]);
                     let il = ((ly_b * SHARED_X + (lx_b - d)) * 3u32) as usize;
                     let ir = ((ly_b * SHARED_X + (lx_b + d)) * 3u32) as usize;
-                    a0 += (s_chain_partials[il] + s_chain_partials[ir]) * w_d;
-                    a1 += (s_chain_partials[il + 1] + s_chain_partials[ir + 1]) * w_d;
-                    a2 += (s_chain_partials[il + 2] + s_chain_partials[ir + 2]) * w_d;
+                    a0 += (buf_a[il] + buf_a[ir]) * w_d;
+                    a1 += (buf_a[il + 1] + buf_a[ir + 1]) * w_d;
+                    a2 += (buf_a[il + 2] + buf_a[ir + 2]) * w_d;
                 }
                 let ic = ((ly_b * SHARED_X + lx_b) * 3u32) as usize;
                 let wc = gw::<F>(5u32);
-                a0 += s_chain_partials[ic] * wc;
-                a1 += s_chain_partials[ic + 1] * wc;
-                a2 += s_chain_partials[ic + 2] * wc;
+                a0 += buf_a[ic] * wc;
+                a1 += buf_a[ic + 1] * wc;
+                a2 += buf_a[ic + 2] * wc;
                 let base = ((ly_b * BLOCK_X + UNIT_POS_X) * 3u32) as usize;
-                s_bwd_horiz[base] = a0;
-                s_bwd_horiz[base + 1] = a1;
-                s_bwd_horiz[base + 2] = a2;
+                buf_b[base] = a0;
+                buf_b[base + 1] = a1;
+                buf_b[base + 2] = a2;
             }
         }
         sync_cube();
@@ -601,15 +602,15 @@ mod kernels {
                 let w_d = gw::<F>(comptime![5u32 - d]);
                 let bt = (((ly - d) * BLOCK_X + lx) * 3u32) as usize;
                 let bb = (((ly + d) * BLOCK_X + lx) * 3u32) as usize;
-                s0 += (s_bwd_horiz[bt] + s_bwd_horiz[bb]) * w_d;
-                s1 += (s_bwd_horiz[bt + 1] + s_bwd_horiz[bb + 1]) * w_d;
-                s2 += (s_bwd_horiz[bt + 2] + s_bwd_horiz[bb + 2]) * w_d;
+                s0 += (buf_b[bt] + buf_b[bb]) * w_d;
+                s1 += (buf_b[bt + 1] + buf_b[bb + 1]) * w_d;
+                s2 += (buf_b[bt + 2] + buf_b[bb + 2]) * w_d;
             }
             let bc = ((ly * BLOCK_X + lx) * 3u32) as usize;
             let wc = gw::<F>(5u32);
-            s0 += s_bwd_horiz[bc] * wc;
-            s1 += s_bwd_horiz[bc + 1] * wc;
-            s2 += s_bwd_horiz[bc + 2] * wc;
+            s0 += buf_b[bc] * wc;
+            s1 += buf_b[bc + 1] * wc;
+            s2 += buf_b[bc + 2] * wc;
 
             let pix_idx = (c * h * w + pix_y * w + pix_x) as usize;
             let p1 = pred[pix_idx];
@@ -855,6 +856,7 @@ fn launch_image_backward<R: CubeRuntime>(
     let bg = cfg.composite_bg.unwrap_or(Vec3::ZERO);
     let dl_dpred = alloc_zeros(&pred);
     let client = pred.client.clone();
+
     // SAFETY: same boundary guarantees as the forward.
     unsafe {
         kernels::image_loss_backward_kernel::launch_unchecked::<f32, R>(
