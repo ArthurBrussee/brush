@@ -91,20 +91,12 @@ fn main() -> Result<(), anyhow::Error> {
                     Box::new(move |cc| Ok(Box::new(App::new(cc, init_process)))),
                 )?;
             } else {
+                // CLI path: just one consumer driving the trainer stream
+                // — no viewer, no competing GPU work — so no Actor
+                // pinning needed.
                 brush_process::burn_init_setup().await;
-                // Pin the entire CLI loop (which polls
-                // `process.stream`) to a single OS thread. The
-                // trainer's state machine lives inside that stream;
-                // tokio's work-stealing scheduler would otherwise
-                // move it across worker threads at every `.await`,
-                // splitting its dispatches across cubecl streams.
                 let process = init_process.expect("Must provide a source");
-                let train_stream = args.train_stream;
-                let actor = brush_async::Actor::new("cli");
-                let result = actor
-                    .run(move || async move { brush_cli::run_cli_ui(process, train_stream).await })
-                    .await;
-                result?;
+                brush_cli::run_cli_ui(process, args.train_stream).await?;
             }
 
             anyhow::Result::<(), anyhow::Error>::Ok(())
