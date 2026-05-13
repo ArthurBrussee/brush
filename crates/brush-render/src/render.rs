@@ -73,34 +73,6 @@ pub fn build_project_uniforms_launch(
     )
 }
 
-/// Pack camera+image uniforms into the shared host-side struct. The
-/// `num_visible` slot is filled later (after the count readback) before
-/// the second-stage `project_visible` launch.
-pub fn build_project_uniforms(
-    camera: &Camera,
-    img_size: glam::UVec2,
-    total_splats: u32,
-    sh_degree: u32,
-) -> shaders::helpers::ProjectUniforms {
-    let viewmat = glam::Mat4::from(camera.world_to_local()).to_cols_array_2d();
-    let focal: [f32; 2] = camera.focal(img_size).into();
-    let pixel_center: [f32; 2] = camera.center(img_size).into();
-    let img_size_arr: [u32; 2] = img_size.into();
-    let tile_bounds_arr: [u32; 2] = calc_tile_bounds(img_size).into();
-    let camera_position = [camera.position.x, camera.position.y, camera.position.z, 0.0];
-    shaders::helpers::ProjectUniforms {
-        viewmat,
-        camera_position,
-        focal,
-        pixel_center,
-        img_size: img_size_arr,
-        tile_bounds: tile_bounds_arr,
-        sh_degree,
-        total_splats,
-        num_visible: 0,
-    }
-}
-
 impl SplatOps<Self> for MainBackendBase {
     #[allow(clippy::too_many_arguments)]
     async fn render(
@@ -130,8 +102,18 @@ impl SplatOps<Self> for MainBackendBase {
         let total_splats = transforms.shape()[0] as u32;
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
-        let mut project_uniforms =
-            build_project_uniforms(camera, img_size, total_splats, sh_degree);
+
+        let mut project_uniforms = shaders::helpers::ProjectUniforms {
+            viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
+            camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
+            focal: camera.focal(img_size).into(),
+            pixel_center: camera.center(img_size).into(),
+            img_size: img_size.into(),
+            tile_bounds: calc_tile_bounds(img_size).into(),
+            sh_degree,
+            total_splats,
+            num_visible: 0,
+        };
 
         let device = transforms.device.clone();
         let client = transforms.client.clone();
