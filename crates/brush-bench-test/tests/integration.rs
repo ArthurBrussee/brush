@@ -2,7 +2,7 @@
 //!
 //! These tests verify that the benchmark data generation and core operations work correctly.
 
-#![allow(clippy::missing_assert_message, clippy::print_stderr)]
+#![allow(clippy::missing_assert_message)]
 
 use brush_dataset::scene::SceneBatch;
 use brush_render::{

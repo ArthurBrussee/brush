@@ -22,8 +22,8 @@ use crate::{
 /// per-stream worker threads (the `DSU-N` threads in stack traces).
 /// Each worker owns its own `HandleContainer` and processes ops
 /// serially. When a `FusionTensor` is shared across threads (e.g. a
-/// `Splats` clone published via a `tokio::sync::watch::Sender<Splats>`
-/// and rendered on a different thread than the trainer),
+/// `Splats` clone published via `Slot` / `tokio::sync::watch` and
+/// rendered on a different thread than the trainer),
 /// `FusionTensor::Drop` from the *reading* thread enqueues a `Drop`
 /// op onto the *origin* stream's worker. The cross-stream
 /// coordination has a window where the `Drop` can be processed before
@@ -33,25 +33,20 @@ use crate::{
 /// the silent variant: a freed page reread as stale memory, surfacing
 /// as NaNs in `projected_splats`.
 ///
-/// brush-side workaround: callers (trainer iteration, viewer render,
-/// export, etc.) hold this lock for their *entire* iteration — from
-/// before the splats clone, through the render / step, until after
-/// the iteration's locals (including the snapshot) have dropped. That
-/// way no two threads are ever simultaneously touching fusion state,
-/// and `FusionTensor::Drop` doesn't fire concurrently with another
-/// thread's pending ops on the same tensor.
-///
-/// `parking_lot::Mutex` (with the `send_guard` feature) so the guard
-/// is `Send` and can ride across `.await` on a `Send` future, since
-/// the brush trainer stream's body holds the lock across its
-/// awaits.
+/// brush-side workaround: every public render entry point
+/// (`gaussian_splats::render_splats` for the fwd-only path,
+/// `brush_render_bwd::render_splats` for the diff path) acquires this
+/// lock for the duration of the render. That serializes the
+/// fusion-touching reads against each other and against the eventual
+/// `FusionTensor::Drop`s scheduled by the readback's epilogue, which
+/// is enough to keep the cross-thread race quiet at the rates brush
+/// actually does — one trainer + N concurrent viewer renders.
 ///
 /// **Remove when upstream burn fixes cross-thread handle drops.**
 pub static FUSION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 impl SplatOps<Self> for Fusion<MainBackendBase> {
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::await_holding_lock)]
     async fn render(
         camera: &Camera,
         img_size: glam::UVec2,

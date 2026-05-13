@@ -309,7 +309,6 @@ impl CallbackTrait for SplatBackbufferPainter {
 }
 
 /// Async render worker that processes render requests.
-#[allow(clippy::await_holding_lock)]
 async fn render_worker(
     mut receiver: mpsc::UnboundedReceiver<RenderRequest>,
     img_sender: mpsc::Sender<Tensor<MainBackend, 3>>,
@@ -323,21 +322,18 @@ async fn render_worker(
             request = newer;
         }
 
-        let image = {
-            let Some(splats) = request.splats.get(request.state.frame) else {
-                continue;
-            };
-            let (image, _) = render_splats(
-                splats,
-                &request.state.camera,
-                request.state.img_size,
-                request.state.background,
-                request.state.splat_scale,
-                TextureMode::Packed,
-            )
-            .await;
-            image
+        let Some(splats) = request.splats.get(request.state.frame) else {
+            continue;
         };
+        let (image, _) = render_splats(
+            splats,
+            &request.state.camera,
+            request.state.img_size,
+            request.state.background,
+            request.state.splat_scale,
+            TextureMode::Packed,
+        )
+        .await;
         let _ = img_sender.send(image).await;
 
         // Trigger egui repaint so the new texture gets picked up.

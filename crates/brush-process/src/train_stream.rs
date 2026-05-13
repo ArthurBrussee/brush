@@ -36,7 +36,7 @@ use std::path::Path;
 use tracing::{Instrument, trace_span};
 use web_time::{Duration, Instant};
 
-#[allow(clippy::large_stack_frames, clippy::await_holding_lock)]
+#[allow(clippy::large_stack_frames)]
 pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
     train_stream_config: TrainStreamConfig,
@@ -240,12 +240,9 @@ pub(crate) async fn train_stream(
             let target_count = (before as f32 * lod_keep_pct as f32 / 100.0).max(1.0) as u32;
 
             log::info!("LOD {current_lod}/{lod_levels}: Computing sensitivity scores...");
-            #[allow(clippy::await_holding_lock)]
-            {
-                let scores = compute_pup_scores(splats.clone(), &dataset.train, device).await;
-                splats = decimate_to_count(splats, &scores, target_count).await;
-                slot.set(0, splats.clone());
-            }
+            let scores = compute_pup_scores(splats.clone(), &dataset.train, device).await;
+            splats = decimate_to_count(splats, &scores, target_count).await;
+            slot.set(0, splats.clone());
 
             let after = splats.num_splats();
             log::info!("LOD {current_lod}/{lod_levels}: {before} -> {after} splats");
@@ -277,16 +274,13 @@ pub(crate) async fn train_stream(
             .instrument(trace_span!("Wait for next data batch"))
             .await;
 
-        let stats = {
-            let mut diff_splats = splats.train();
-            diff_splats.transforms = diff_splats.transforms.map(|m| m.require_grad());
-            diff_splats.raw_opacities = diff_splats.raw_opacities.map(|m| m.require_grad());
-            diff_splats.sh_coeffs = diff_splats.sh_coeffs.map(|m| m.require_grad());
-            let (new_diff_splats, stats) = trainer.step(batch, diff_splats).await;
-            splats = new_diff_splats.valid();
-            slot.set(0, splats.clone());
-            stats
-        };
+        let mut diff_splats = splats.train();
+        diff_splats.transforms = diff_splats.transforms.map(|m| m.require_grad());
+        diff_splats.raw_opacities = diff_splats.raw_opacities.map(|m| m.require_grad());
+        diff_splats.sh_coeffs = diff_splats.sh_coeffs.map(|m| m.require_grad());
+        let (new_diff_splats, stats) = trainer.step(batch, diff_splats).await;
+        splats = new_diff_splats.valid();
+        slot.set(0, splats.clone());
 
         // Phase-local iteration for refine gating
         let phase_iter = if current_lod == 0 {
@@ -334,19 +328,17 @@ pub(crate) async fn train_stream(
                 .eval_save_to_disk
                 .then(|| export_path.clone());
 
-            let eval = {
-                run_eval(
-                    device,
-                    emitter,
-                    &visualize,
-                    splats.clone(),
-                    iter,
-                    eval_scene,
-                    save_path,
-                )
-                .await
-                .with_context(|| format!("Failed evaluation at iteration {iter}"))
-            };
+            let eval = run_eval(
+                device,
+                emitter,
+                &visualize,
+                splats.clone(),
+                iter,
+                eval_scene,
+                save_path,
+            )
+            .await
+            .with_context(|| format!("Failed evaluation at iteration {iter}"));
 
             if let Err(error) = eval {
                 emitter.emit(ProcessMessage::Warning { error }).await;
@@ -370,11 +362,10 @@ pub(crate) async fn train_stream(
                         .replace(".ply", &format!("_lod{current_lod}.ply"));
                     (lod_name, lod_refine_steps, lod_refine_steps)
                 };
-                let res = {
+                let res =
                     export_checkpoint(splats.clone(), &export_path, &name, exp_iter, exp_total)
                         .await
-                        .with_context(|| format!("Export at iteration {iter} failed"))
-                };
+                        .with_context(|| format!("Export at iteration {iter} failed"));
 
                 if let Err(error) = res {
                     emitter.emit(ProcessMessage::Warning { error }).await;

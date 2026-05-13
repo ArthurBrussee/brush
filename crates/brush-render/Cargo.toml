@@ -25,9 +25,8 @@ serde.workspace = true
 tracing.workspace = true
 log.workspace = true
 futures-lite = "2"
-parking_lot = { version = "0.12", features = ["send_guard"] }
 
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 
 [features]
 debug-validation = []
