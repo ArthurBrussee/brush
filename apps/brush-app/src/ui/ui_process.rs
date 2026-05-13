@@ -1,4 +1,5 @@
 use anyhow::Result;
+use brush_async::Actor;
 use brush_process::{RunningProcess, message::ProcessMessage, slot::Slot};
 use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
 use burn_wgpu::WgpuDevice;
@@ -7,7 +8,6 @@ use glam::{Affine3A, Quat, Vec3};
 use std::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
-use tokio_with_wasm::alias::task;
 
 use crate::ui::{UiMode, app::CameraSettings, camera_controls::CameraController};
 
@@ -20,6 +20,13 @@ struct ProcessHandle {
     messages: mpsc::UnboundedReceiver<anyhow::Result<ProcessMessage>>,
     control: mpsc::UnboundedSender<ControlMessage>,
     splat_view: Slot<Splats<MainBackend>>,
+    // Owns the actor thread that polls `process.stream`. Pinning the
+    // poll to one OS thread keeps `cubecl`'s `StreamId::current()`
+    // invariant for the whole trainer state machine (tokio's
+    // work-stealing scheduler would otherwise move the future across
+    // workers between awaits). Dropping the handle drops the actor,
+    // which cancels training.
+    _actor: Actor,
 }
 
 /// A thread-safe wrapper around the UI process.
@@ -199,38 +206,42 @@ impl UiProcess {
 
         let egui_ctx = self.read().ui_ctx.clone();
 
-        task::spawn(async move {
-            while let Some(msg) = process.stream.next().await {
-                // Stop the process if no one is listening anymore.
-                if sender.send(msg).is_err() {
-                    break;
+        let actor = Actor::new("ui-process");
+        actor
+            .run(move || async move {
+                while let Some(msg) = process.stream.next().await {
+                    // Stop the process if no one is listening anymore.
+                    if sender.send(msg).is_err() {
+                        break;
+                    }
+
+                    // Check if training is paused. Don't care about other messages as pausing loading
+                    // doesn't make much sense.
+                    if matches!(train_receiver.try_recv(), Ok(ControlMessage::Paused(true))) {
+                        // Pause if needed.
+                        while !matches!(
+                            train_receiver.recv().await,
+                            Some(ControlMessage::Paused(false))
+                        ) {}
+                    }
+
+                    // Mark egui as needing a repaint.
+                    egui_ctx.request_repaint();
+
+                    // Give back control to the runtime.
+                    // This only really matters in the browser:
+                    // on native, receiving also yields. In the browser that doesn't yield
+                    // back control fully though whereas yield_now() does.
+                    brush_async::yield_now().await;
                 }
-
-                // Check if training is paused. Don't care about other messages as pausing loading
-                // doesn't make much sense.
-                if matches!(train_receiver.try_recv(), Ok(ControlMessage::Paused(true))) {
-                    // Pause if needed.
-                    while !matches!(
-                        train_receiver.recv().await,
-                        Some(ControlMessage::Paused(false))
-                    ) {}
-                }
-
-                // Mark egui as needing a repaint.
-                egui_ctx.request_repaint();
-
-                // Give back control to the runtime.
-                // This only really matters in the browser:
-                // on native, receiving also yields. In the browser that doesn't yield
-                // back control fully though whereas yield_now() does.
-                task::yield_now().await;
-            }
-        });
+            })
+            .detach();
 
         self.write().process_handle = Some(ProcessHandle {
             messages: receiver,
             control: train_sender,
             splat_view: process.splat_view,
+            _actor: actor,
         });
     }
 

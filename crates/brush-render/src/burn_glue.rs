@@ -16,6 +16,35 @@ use crate::{
     render_aux::RenderOutput,
 };
 
+/// **Workaround for an upstream `burn-fusion` cross-thread race.**
+///
+/// `burn-fusion`'s `Client` dispatches custom ops to a small pool of
+/// per-stream worker threads (the `DSU-N` threads in stack traces).
+/// Each worker owns its own `HandleContainer` and processes ops
+/// serially. When a `FusionTensor` is shared across threads (e.g. a
+/// `Splats` clone published via `Slot` / `tokio::sync::watch` and
+/// rendered on a different thread than the trainer),
+/// `FusionTensor::Drop` from the *reading* thread enqueues a `Drop`
+/// op onto the *origin* stream's worker. The cross-stream
+/// coordination has a window where the `Drop` can be processed before
+/// a pending op on another stream that still needs the handle —
+/// hence `Should have handle for tensor TensorId { value: N }` panics
+/// from `burn-ir/src/handle.rs::HandleContainer::get_handle`, and
+/// the silent variant: a freed page reread as stale memory, surfacing
+/// as NaNs in `projected_splats`.
+///
+/// brush-side workaround: every public render entry point
+/// (`gaussian_splats::render_splats` for the fwd-only path,
+/// `brush_render_bwd::render_splats` for the diff path) acquires this
+/// lock for the duration of the render. That serializes the
+/// fusion-touching reads against each other and against the eventual
+/// `FusionTensor::Drop`s scheduled by the readback's epilogue, which
+/// is enough to keep the cross-thread race quiet at the rates brush
+/// actually does — one trainer + N concurrent viewer renders.
+///
+/// **Remove when upstream burn fixes cross-thread handle drops.**
+pub static FUSION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 impl SplatOps<Self> for Fusion<MainBackendBase> {
     #[allow(clippy::too_many_arguments)]
     async fn render(
@@ -30,8 +59,8 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
     ) -> RenderOutput<Self> {
         let client = transforms.client.clone();
 
-        // Resolve fusion inputs to MainBackendBase tensors.
-        // This drains any pending fusion operations.
+        // Resolve fusion inputs to MainBackendBase tensors. This
+        // drains any pending fusion operations into a concrete buffer.
         let base_transforms = client
             .clone()
             .resolve_tensor_float::<MainBackendBase>(transforms);
@@ -42,7 +71,8 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             .clone()
             .resolve_tensor_float::<MainBackendBase>(raw_opacities);
 
-        // Run the full pipeline on MainBackendBase (with async readback).
+        // Run the full pipeline on MainBackendBase (with its own
+        // internal readback for num_visible / num_intersections).
         let out = MainBackendBase::render(
             camera,
             img_size,
@@ -55,7 +85,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         )
         .await;
 
-        // Bind pre-computed outputs to the fusion stream.
+        // Bind precomputed outputs back into the fusion stream.
         #[derive(Debug)]
         struct BindOp {
             desc: CustomOpIr,

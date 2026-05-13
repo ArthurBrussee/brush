@@ -19,7 +19,6 @@ burn.workspace = true
 wgpu.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
-tokio_with_wasm = { workspace = true, features = ["rt"] }
 serde.workspace = true
 log.workspace = true
 

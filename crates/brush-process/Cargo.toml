@@ -10,6 +10,7 @@ license.workspace = true
 debug-validation = ["brush-train/debug-validation"]
 
 [dependencies]
+brush-cube.path = "../brush-cube"
 brush-render.path = "../brush-render"
 brush-vfs.path = "../brush-vfs"
 brush-serde.path = "../brush-serde"
@@ -36,7 +37,7 @@ wgpu.workspace = true
 
 tokio = { workspace = true, features = ["io-util", "rt"] }
 tokio-stream.workspace = true
-tokio_with_wasm.workspace = true
+brush-async.path = "../brush-async"
 
 brush-train = { path = "../brush-train" }
 brush-dataset = { path = "../brush-dataset"}

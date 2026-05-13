@@ -1,70 +1,76 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::watch;
 
-/// Async slot for sharing data between the process and UI.
+/// Read-only frame-indexed view of splat snapshots published by a
+/// single producer (the train / load stream) into a [`SlotSender`].
 #[derive(Clone)]
-pub struct Slot<T>(Arc<Mutex<Vec<T>>>);
+pub struct Slot<T> {
+    rx: watch::Receiver<Vec<T>>,
+}
 
-impl<T: Clone> Slot<T> {
-    /// Take ownership of value at index, apply async function, put result back.
-    pub async fn act<F, R>(&self, index: usize, f: F) -> Option<R>
-    where
-        F: AsyncFnOnce(T) -> (T, R),
-    {
-        let mut guard = self.0.lock().await;
-        let len = guard.len();
-        if index >= len {
-            return None;
-        }
-        guard.swap(index, len - 1);
-        let value = guard.pop().unwrap();
-        let (new_value, result) = f(value).await;
-
-        guard.push(new_value);
-        let new_len = guard.len();
-        guard.swap(index, new_len - 1);
-        Some(result)
+impl<T: Clone + Send + Sync + 'static> Slot<T> {
+    /// An empty, never-updated `Slot`. Useful as a placeholder before
+    /// a process has been wired up.
+    pub fn empty() -> Self {
+        // Drop the sender immediately — the receiver still works for
+        // reads but observes the initial empty Vec forever.
+        let (_, rx) = watch::channel(Vec::new());
+        Self { rx }
     }
 
-    pub async fn map<F, R>(&self, index: usize, f: F) -> Option<R>
-    where
-        F: FnOnce(&T) -> R,
-    {
-        self.act(index, async move |value| {
-            let ret = f(&value);
-            (value, ret)
-        })
-        .await
+    pub fn get(&self, index: usize) -> Option<T> {
+        self.rx.borrow().get(index).cloned()
     }
 
-    pub async fn clone_main(&self) -> Option<T> {
-        self.0.lock().await.last().cloned()
+    pub fn latest(&self) -> Option<T> {
+        self.rx.borrow().last().cloned()
     }
 
-    /// Replace all contents with a single value.
-    pub async fn set(&self, value: T) {
-        let mut guard = self.0.lock().await;
-        guard.clear();
-        guard.push(value);
+    pub fn len(&self) -> usize {
+        self.rx.borrow().len()
     }
 
-    /// Set value at index, or push if index == len. Panics if index > len.
-    pub async fn set_at(&self, index: usize, value: T) {
-        let mut guard = self.0.lock().await;
-        if index == guard.len() {
-            guard.push(value);
-        } else {
-            guard[index] = value;
-        }
-    }
-
-    pub async fn clear(&self) {
-        self.0.lock().await.clear();
+    pub fn is_empty(&self) -> bool {
+        self.rx.borrow().is_empty()
     }
 }
 
-impl<T> Default for Slot<T> {
+impl<T: Clone + Send + Sync + 'static> Default for Slot<T> {
     fn default() -> Self {
-        Self(Arc::new(Mutex::new(Vec::new())))
+        Self::empty()
     }
+}
+
+/// Write side of a [`Slot`]. Single producer; consumers hold cloneable
+/// [`Slot`] receivers.
+pub struct SlotSender<T> {
+    tx: watch::Sender<Vec<T>>,
+}
+
+impl<T: Send + Sync + 'static> SlotSender<T> {
+    /// Replace value at `index`. If `index == len()` the value is
+    /// appended. Panics if `index > len()`.
+    pub fn set(&self, index: usize, value: T) {
+        self.tx.send_modify(|vec| match index.cmp(&vec.len()) {
+            std::cmp::Ordering::Less => vec[index] = value,
+            std::cmp::Ordering::Equal => vec.push(value),
+            std::cmp::Ordering::Greater => {
+                panic!(
+                    "SlotSender::set index {index} past end (len = {})",
+                    vec.len()
+                )
+            }
+        });
+    }
+
+    pub fn clear(&self) {
+        self.tx.send_modify(|vec| vec.clear());
+    }
+}
+
+/// Build a fresh `(SlotSender, Slot)` pair backed by a single
+/// `watch::channel`. The sender goes to the producer; the receiver
+/// (and any clones) goes to consumers.
+pub fn channel<T: Send + Sync + 'static>() -> (SlotSender<T>, Slot<T>) {
+    let (tx, rx) = watch::channel(Vec::new());
+    (SlotSender { tx }, Slot { rx })
 }

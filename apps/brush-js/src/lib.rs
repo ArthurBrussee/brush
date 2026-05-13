@@ -4,9 +4,7 @@
 
 use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_process::slot::Slot;
-use brush_process::{
-    DataSource, ProcessStream, burn_init_device, burn_init_setup, create_process, cubecl_startup,
-};
+use brush_process::{DataSource, ProcessStream, burn_init_device, burn_init_setup, create_process};
 use brush_render::MainBackend;
 use brush_render::gaussian_splats::Splats;
 use serde::Serialize;
@@ -238,7 +236,6 @@ impl BrushApp {
         LOGGER_INIT.call_once(|| {
             wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
         });
-        cubecl_startup();
         Self
     }
 
@@ -360,11 +357,8 @@ impl Training {
     /// Snapshot the current splats. Returns `null` if no splats have been
     /// produced yet.
     #[wasm_bindgen(js_name = currentSplats)]
-    pub async fn current_splats(&self) -> Option<BrushSplats> {
-        self.splat_view
-            .clone_main()
-            .await
-            .map(|inner| BrushSplats { inner })
+    pub fn current_splats(&self) -> Option<BrushSplats> {
+        self.splat_view.latest().map(|inner| BrushSplats { inner })
     }
 }
 

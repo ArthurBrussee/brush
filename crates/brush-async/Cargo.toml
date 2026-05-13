@@ -1,0 +1,22 @@
+[package]
+name = "brush-async"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+log.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
+futures = "0.3"
+
+[lints]
+workspace = true

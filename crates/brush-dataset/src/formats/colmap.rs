@@ -18,7 +18,6 @@ use brush_render::{
 use brush_serde::{ParseMetadata, SplatData, SplatMessage};
 use brush_vfs::BrushVfs;
 use itertools::Itertools;
-use tokio_with_wasm::alias as tokio_wasm;
 
 fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
     // Colmap only specifies an image name, not a full path. We brute force
@@ -63,8 +62,11 @@ async fn load_dataset_inner(
 
     let vfs_init = vfs.clone();
 
-    // Spawn three tasks
-    let dataset = tokio_wasm::spawn(async move {
+    // One actor for both halves of the colmap load — the camera/image
+    // parse and the points3d parse run concurrently on the same thread
+    // (no cross-stream GPU concerns; this is pure CPU/I/O).
+    let actor = brush_async::Actor::new("colmap-loader");
+    let dataset = actor.run(move || async move {
         let mut cam_file = vfs.reader_at_path(&cam_path).await?;
         let cam_model_data = colmap_reader::read_cameras(&mut cam_file, is_binary).await?;
         let cam_model_data = cam_model_data
@@ -152,7 +154,7 @@ async fn load_dataset_inner(
 
     let load_args = load_args.clone();
 
-    let init = tokio_wasm::spawn(async move {
+    let init = actor.run(move || async move {
         let points_path = { vfs_init.files_ending_in("points3d.txt").next() }
             .or_else(|| vfs_init.files_ending_in("points3d.bin").next())?;
         let is_binary = matches!(
@@ -213,10 +215,9 @@ async fn load_dataset_inner(
         })
     });
 
-    // Wait for all tasks and get results
+    // Wait for both halves.
     let (dataset, init) = tokio::join!(dataset, init);
-    let ((dataset, warnings), init_splat) =
-        (dataset.expect("Join failed")?, init.expect("Join failed"));
+    let ((dataset, warnings), init_splat) = (dataset?, init);
 
     Ok(DatasetLoadResult {
         init_splat,

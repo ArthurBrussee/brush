@@ -1,11 +1,11 @@
 use crate::{
+    Emitter,
     config::TrainStreamConfig,
     message::{ProcessMessage, TrainMessage},
-    slot::Slot,
+    slot::SlotSender,
     wait_for_device,
 };
 use anyhow::Context;
-use async_fn_stream::TryStreamEmitter;
 use brush_dataset::{load_dataset, scene::Scene, scene_loader::SceneLoader};
 use brush_render::{
     MainBackend,
@@ -33,7 +33,6 @@ use std::{path::PathBuf, sync::Arc};
 #[allow(unused)]
 use std::path::Path;
 
-use tokio_with_wasm::alias as tokio_wasm;
 use tracing::{Instrument, trace_span};
 use web_time::{Duration, Instant};
 
@@ -41,8 +40,8 @@ use web_time::{Duration, Instant};
 pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
     train_stream_config: TrainStreamConfig,
-    emitter: TryStreamEmitter<ProcessMessage, anyhow::Error>,
-    splat_slot: Slot<Splats<MainBackend>>,
+    emitter: &Emitter,
+    slot: SlotSender<Splats<MainBackend>>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
@@ -144,7 +143,11 @@ pub(crate) async fn train_stream(
     // If the metadata has an up axis prefer that, otherwise estimate the up direction.
     let up_axis = up_axis.or(Some(estimated_up));
 
-    splat_slot.set(init_splats.clone()).await;
+    // The trainer owns its working `splats` locally and publishes a
+    // clone to the `Slot` after every modification (train
+    // step, refine, LOD decimation).
+    let mut splats: Splats<MainBackend> = init_splats.clone();
+    slot.set(0, splats.clone());
     emitter
         .emit(ProcessMessage::SplatsUpdated {
             up_axis,
@@ -217,15 +220,10 @@ pub(crate) async fn train_stream(
                         .replace(".ply", &format!("_lod{current_lod}.ply"));
                     (lod_name, lod_refine_steps, lod_refine_steps)
                 };
-                let res = export_checkpoint(
-                    splat_slot.clone_main().await.unwrap(),
-                    &export_path,
-                    &name,
-                    exp_iter,
-                    exp_total,
-                )
-                .await
-                .with_context(|| "Export at LOD boundary failed");
+                let res =
+                    export_checkpoint(splats.clone(), &export_path, &name, exp_iter, exp_total)
+                        .await
+                        .with_context(|| "Export at LOD boundary failed");
 
                 if let Err(error) = res {
                     emitter.emit(ProcessMessage::Warning { error }).await;
@@ -238,19 +236,15 @@ pub(crate) async fn train_stream(
 
             log::info!("LOD {current_lod}/{lod_levels}: Decimating (keep {lod_keep_pct}%)");
 
-            let before = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
+            let before = splats.num_splats();
             let target_count = (before as f32 * lod_keep_pct as f32 / 100.0).max(1.0) as u32;
 
             log::info!("LOD {current_lod}/{lod_levels}: Computing sensitivity scores...");
-            splat_slot
-                .act(0, |s: Splats<MainBackend>| async {
-                    let scores = compute_pup_scores(s.clone(), &dataset.train, device).await;
-                    (decimate_to_count(s, &scores, target_count).await, ())
-                })
-                .await
-                .unwrap();
+            let scores = compute_pup_scores(splats.clone(), &dataset.train, device).await;
+            splats = decimate_to_count(splats, &scores, target_count).await;
+            slot.set(0, splats.clone());
 
-            let after = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
+            let after = splats.num_splats();
             log::info!("LOD {current_lod}/{lod_levels}: {before} -> {after} splats");
 
             let client = WgpuRuntime::client(device);
@@ -264,8 +258,7 @@ pub(crate) async fn train_stream(
                 SceneLoader::new(&dataset.train, 42)
             };
 
-            let bounds =
-                get_splat_bounds(splat_slot.clone_main().await.unwrap(), BOUND_PERCENTILE).await;
+            let bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
             trainer = SplatTrainer::new(&train_stream_config.train_config, device, bounds);
 
             log::info!(
@@ -281,18 +274,13 @@ pub(crate) async fn train_stream(
             .instrument(trace_span!("Wait for next data batch"))
             .await;
 
-        let stats = splat_slot
-            .act(0, |splats: Splats<MainBackend>| async {
-                let mut splats = splats.train();
-                splats.transforms = splats.transforms.map(|m| m.require_grad());
-                splats.raw_opacities = splats.raw_opacities.map(|m| m.require_grad());
-                splats.sh_coeffs = splats.sh_coeffs.map(|m| m.require_grad());
-
-                let (new_splats, stats) = trainer.step(batch, splats).await;
-                (new_splats.valid(), stats)
-            })
-            .await
-            .unwrap();
+        let mut diff_splats = splats.train();
+        diff_splats.transforms = diff_splats.transforms.map(|m| m.require_grad());
+        diff_splats.raw_opacities = diff_splats.raw_opacities.map(|m| m.require_grad());
+        diff_splats.sh_coeffs = diff_splats.sh_coeffs.map(|m| m.require_grad());
+        let (new_diff_splats, stats) = trainer.step(batch, diff_splats).await;
+        splats = new_diff_splats.valid();
+        slot.set(0, splats.clone());
 
         // Phase-local iteration for refine gating
         let phase_iter = if current_lod == 0 {
@@ -311,16 +299,15 @@ pub(crate) async fn train_stream(
             && phase_iter.is_multiple_of(train_stream_config.train_config.refine_every)
             && phase_progress <= 0.95
         {
-            splat_slot
-                .act(0, async |splats| trainer.refine(iter, splats).await)
-                .await
-                .unwrap()
+            let (new_splats, refine_stats) = trainer.refine(iter, splats).await;
+            splats = new_splats;
+            slot.set(0, splats.clone());
+            refine_stats
         } else {
-            let new_total: u32 = splat_slot.map(0, |s| s.num_splats()).await.unwrap();
             RefineStats {
                 num_added: 0,
                 num_pruned: 0,
-                total_splats: new_total,
+                total_splats: splats.num_splats(),
             }
         };
 
@@ -341,11 +328,11 @@ pub(crate) async fn train_stream(
                 .eval_save_to_disk
                 .then(|| export_path.clone());
 
-            let res = run_eval(
+            let eval = run_eval(
                 device,
-                &emitter,
+                emitter,
                 &visualize,
-                splat_slot.clone_main().await.unwrap(),
+                splats.clone(),
                 iter,
                 eval_scene,
                 save_path,
@@ -353,7 +340,7 @@ pub(crate) async fn train_stream(
             .await
             .with_context(|| format!("Failed evaluation at iteration {iter}"));
 
-            if let Err(error) = res {
+            if let Err(error) = eval {
                 emitter.emit(ProcessMessage::Warning { error }).await;
             }
         }
@@ -375,15 +362,10 @@ pub(crate) async fn train_stream(
                         .replace(".ply", &format!("_lod{current_lod}.ply"));
                     (lod_name, lod_refine_steps, lod_refine_steps)
                 };
-                let res = export_checkpoint(
-                    splat_slot.clone_main().await.unwrap(),
-                    &export_path,
-                    &name,
-                    exp_iter,
-                    exp_total,
-                )
-                .await
-                .with_context(|| format!("Export at iteration {iter} failed"));
+                let res =
+                    export_checkpoint(splats.clone(), &export_path, &name, exp_iter, exp_total)
+                        .await
+                        .with_context(|| format!("Export at iteration {iter} failed"));
 
                 if let Err(error) = res {
                     emitter.emit(ProcessMessage::Warning { error }).await;
@@ -401,8 +383,7 @@ pub(crate) async fn train_stream(
             if let Some(every) = rerun_config.rerun_log_splats_every
                 && (iter.is_multiple_of(every) || is_last_step)
             {
-                let splats = splat_slot.clone_main().await.unwrap();
-                visualize.log_splats(iter, splats).await.unwrap();
+                visualize.log_splats(iter, splats.clone()).await.unwrap();
             }
 
             if iter.is_multiple_of(rerun_config.rerun_log_train_stats_every) || is_last_step {
@@ -451,7 +432,7 @@ pub(crate) async fn train_stream(
                 .await;
         }
 
-        tokio_wasm::task::yield_now().await;
+        brush_async::yield_now().await;
     }
 
     emitter
@@ -463,7 +444,7 @@ pub(crate) async fn train_stream(
 
 async fn run_eval(
     device: &WgpuDevice,
-    emitter: &TryStreamEmitter<ProcessMessage, anyhow::Error>,
+    emitter: &Emitter,
     visualize: &VisualizeTools,
     splats: Splats<MainBackend>,
     iter: u32,
@@ -476,7 +457,7 @@ async fn run_eval(
     log::info!("Running evaluation for iteration {iter}");
 
     for (i, view) in eval_scene.views.iter().enumerate() {
-        tokio_wasm::task::yield_now().await;
+        brush_async::yield_now().await;
 
         let eval_img = view.image.load().await?;
         let sample = eval_stats(

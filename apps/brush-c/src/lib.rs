@@ -2,9 +2,9 @@
 #![cfg(not(target_family = "wasm"))]
 
 use brush_process::DataSource;
+use brush_process::burn_init_setup;
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::TrainMessage;
-use brush_process::{burn_init_setup, cubecl_startup};
 use brush_process::{create_process, message::ProcessMessage};
 use std::convert::TryFrom;
 use std::ffi::{CStr, c_char, c_void};
@@ -135,7 +135,6 @@ pub unsafe extern "C" fn train_and_save(
         .block_on(async {
             SETUP
                 .get_or_init(async move || {
-                    cubecl_startup();
                     burn_init_setup().await;
                 })
                 .await;

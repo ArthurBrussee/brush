@@ -35,6 +35,7 @@ brush-rerun = { path = "../brush-rerun" }
 rerun = { workspace = true }
 
 [dev-dependencies]
+brush-async = { path = "../brush-async" }
 brush-cube = { path = "../brush-cube" }
 wasm-bindgen-test = "0.3"
 

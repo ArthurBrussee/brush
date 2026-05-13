@@ -2,7 +2,6 @@ use std::io::{self};
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncBufRead, AsyncRead};
-use tokio_with_wasm::alias as tokio_wasm;
 
 // TODO: Really these should each hold their respective params but bit of an annoying refactor. We just need
 // basic params.
@@ -268,7 +267,7 @@ async fn read_cameras_text<R: AsyncBufRead + Unpin>(mut reader: R) -> io::Result
         });
         line.clear();
 
-        tokio_wasm::task::yield_now().await;
+        brush_async::yield_now().await;
     }
 
     Ok(cameras)

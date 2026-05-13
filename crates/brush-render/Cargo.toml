@@ -26,11 +26,12 @@ tracing.workspace = true
 log.workspace = true
 futures-lite = "2"
 
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
+
 [features]
 debug-validation = []
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
 wasm-bindgen-test = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]

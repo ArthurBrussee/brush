@@ -15,6 +15,7 @@ use brush_render_bwd::render_splats;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
     backend::{Autodiff, wgpu::WgpuDevice},
+    module::AutodiffModule,
     tensor::{Tensor, TensorData, TensorPrimitive},
 };
 use glam::{Quat, Vec3};
@@ -303,4 +304,79 @@ async fn test_gradient_validation() {
     let rendered: Tensor<DiffBackend, 3> =
         Tensor::from_primitive(TensorPrimitive::Float(result.img));
     splats.bwd_validate(rendered.mean()).await;
+}
+
+// One trainer + many parallel viewers.
+// Test whether multithreading produces any issues.
+#[cfg(not(target_family = "wasm"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn stress_concurrent_train_and_view() {
+    use brush_async::Actor;
+    use brush_render::TextureMode;
+    use brush_render::gaussian_splats::render_splats as render_splats_fwd;
+    use tokio::sync::watch;
+
+    let device = brush_cube::test_helpers::test_device().await;
+    let img_size = glam::uvec2(64, 64);
+
+    let viewer_count = 12;
+    let train_steps = 250;
+    let viewer_iters_per_task = 50;
+
+    let initial = generate_test_splats(&device, 500);
+    let (tx, rx) = watch::channel::<Splats<MainBackend>>(initial.clone().valid());
+
+    let trainer_actor = Actor::new("test-trainer");
+    let device_c = device.clone();
+    let mut splats = initial;
+    let trainer_done = trainer_actor.run(move || async move {
+        let batch = generate_test_batch((64, 64));
+        let config = TrainConfig::default();
+        let mut trainer = SplatTrainer::new(
+            &config,
+            &device_c,
+            BoundingBox::from_min_max(Vec3::splat(-2.0), Vec3::splat(2.0)),
+        );
+        for _ in 0..train_steps {
+            let (new_splats, _) = trainer.step(batch.clone(), splats).await;
+            splats = new_splats;
+            let _ = tx.send(splats.valid());
+        }
+    });
+
+    let mut viewer_actors = Vec::with_capacity(viewer_count);
+    let mut viewer_dones = Vec::with_capacity(viewer_count);
+    for v in 0..viewer_count {
+        let actor = Actor::new(&format!("test-viewer-{v}"));
+        let mut rx = rx.clone();
+        let done = actor.run(move || async move {
+            let camera = Camera::new(
+                Vec3::new(0.0, 0.0, -5.0 - v as f32 * 0.3),
+                Quat::IDENTITY,
+                45.0,
+                45.0,
+                glam::vec2(0.5, 0.5),
+            );
+            for _ in 0..viewer_iters_per_task {
+                let snap = rx.borrow_and_update().clone();
+                render_splats_fwd(
+                    snap,
+                    &camera,
+                    img_size,
+                    Vec3::ZERO,
+                    None,
+                    TextureMode::Float,
+                )
+                .await;
+            }
+        });
+        viewer_actors.push(actor);
+        viewer_dones.push(done);
+    }
+
+    trainer_done.await;
+    for d in viewer_dones {
+        d.await;
+    }
+    drop(viewer_actors);
 }

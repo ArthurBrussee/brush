@@ -9,12 +9,10 @@ mod ui;
 #[allow(clippy::unnecessary_wraps)]
 fn main() -> Result<(), anyhow::Error> {
     use brush_cli::Cli;
-    use brush_process::{create_process, cubecl_startup};
+    use brush_process::create_process;
     use clap::Parser;
 
     let args = Cli::parse().validate()?;
-
-    cubecl_startup();
 
     #[cfg(target_family = "windows")]
     {
@@ -94,11 +92,8 @@ fn main() -> Result<(), anyhow::Error> {
                 )?;
             } else {
                 brush_process::burn_init_setup().await;
-                brush_cli::run_cli_ui(
-                    init_process.expect("Must provide a source"),
-                    args.train_stream,
-                )
-                .await?;
+                let process = init_process.expect("Must provide a source");
+                brush_cli::run_cli_ui(process, args.train_stream).await?;
             }
 
             anyhow::Result::<(), anyhow::Error>::Ok(())

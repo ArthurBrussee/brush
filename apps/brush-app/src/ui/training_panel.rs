@@ -1,10 +1,10 @@
 use anyhow::Error;
+use brush_async::Actor;
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::{MainBackend, gaussian_splats::Splats};
 use egui::RichText;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio_with_wasm::alias::task;
 use web_time::Duration;
 
 use crate::ui::UiMode;
@@ -21,6 +21,9 @@ pub struct TrainingPanel {
     export_channel: (UnboundedSender<Error>, UnboundedReceiver<Error>),
     training_done: bool,
     lod_progress: Option<(u32, u32)>,
+    // Owns the export worker thread. One Actor for the whole panel
+    // lifetime; export clicks just queue more work on it.
+    export_actor: Actor,
 }
 
 impl Default for TrainingPanel {
@@ -35,6 +38,7 @@ impl Default for TrainingPanel {
             export_channel: tokio::sync::mpsc::unbounded_channel(),
             training_done: false,
             lod_progress: None,
+            export_actor: Actor::new("training-panel-export"),
         }
     }
 }
@@ -286,18 +290,18 @@ impl AppPane for TrainingPanel {
                         }
                         let sender = self.export_channel.0.clone();
                         let ctx = ui.ctx().clone();
-                        let slot = process.current_splats();
+                        let Some(splats) = process.current_splats().latest() else {
+                            return;
+                        };
 
-                        task::spawn(async move {
-                            let Some(splats) = slot.clone_main().await else {
-                                return;
-                            };
-
-                            if let Err(e) = export(splats).await {
-                                let _ = sender.send(e);
-                                ctx.request_repaint();
-                            }
-                        });
+                        self.export_actor
+                            .run(move || async move {
+                                if let Err(e) = export(splats).await {
+                                    let _ = sender.send(e);
+                                    ctx.request_repaint();
+                                }
+                            })
+                            .detach();
                     }
                 });
             }

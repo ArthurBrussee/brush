@@ -1,15 +1,18 @@
 #![recursion_limit = "256"]
 #![cfg(not(target_family = "wasm"))]
 
+use brush_async::Actor;
 use brush_process::DataSource;
+use brush_process::RunningProcess;
 use brush_process::config::TrainStreamConfig;
+use brush_process::message::ProcessMessage;
 use brush_process::message::TrainMessage;
-use brush_process::{RunningProcess, message::ProcessMessage};
 
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::trace_span;
 
@@ -49,10 +52,30 @@ impl Cli {
     }
 }
 
+/// Run the CLI: pin the trainer stream to a dedicated [`Actor`] thread,
+/// drive the indicatif UI on the main task.
 pub async fn run_cli_ui(
     mut process: RunningProcess,
     #[allow(unused)] train_stream_config: TrainStreamConfig,
 ) -> Result<(), anyhow::Error> {
+    // Pump the trainer stream from a dedicated Actor thread; the
+    // indicatif UI loop below consumes its output on the main task.
+    let (tx, mut messages) = mpsc::unbounded_channel();
+    let trainer = Actor::new("cli-trainer");
+    trainer
+        .run(move || async move {
+            while let Some(msg) = process.stream.next().await {
+                if tx.send(msg).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+
+    // Hold the actor for the lifetime of the UI loop; dropping it
+    // would kill the pump.
+    let _trainer = trainer;
+
     // Initialize the logger with indicatif integration to prevent
     // progress bars from clobbering log output.
     let sp = {
@@ -145,7 +168,7 @@ pub async fn run_cli_ui(
     #[allow(unused_mut)]
     let mut duration = Duration::from_secs(0);
 
-    while let Some(msg) = process.stream.next().await {
+    while let Some(msg) = messages.recv().await {
         let _span = trace_span!("CLI UI").entered();
 
         let msg = match msg {

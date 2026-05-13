@@ -16,7 +16,6 @@ use tokio::{
     sync::Mutex,
 };
 use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
-use tokio_with_wasm::alias as tokio_wasm;
 
 pub use data_source::{DataSource, DataSourceError};
 
@@ -170,7 +169,7 @@ impl BrushVfs {
                     zip_reader = entry.skip().await.map_err(zip_error)?;
                 }
 
-                tokio_wasm::task::yield_now().await;
+                brush_async::yield_now().await;
             }
 
             let path_bufs = entries.keys().cloned().collect::<Vec<_>>();
@@ -220,7 +219,7 @@ impl BrushVfs {
                             paths.push(path);
                         }
 
-                        tokio_wasm::task::yield_now().await;
+                        brush_async::yield_now().await;
                     }
                 }
                 Ok(paths)
