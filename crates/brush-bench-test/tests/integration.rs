@@ -318,7 +318,7 @@ async fn test_gradient_validation() {
 // issue (NaN values in `projected_splats`) we haven't fixed yet. We
 // want CI to surface that visibly so it's not forgotten.
 #[cfg(not(target_family = "wasm"))]
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread")]
 async fn stress_concurrent_train_and_view() {
     use brush_async::Actor;
     use brush_render::TextureMode;

@@ -84,9 +84,10 @@ mod tests {
         assert_eq!(results, (0..16).collect::<Vec<_>>());
     }
 
-    /// Panic in a spawned task should propagate to the caller.
+    /// Panic in a spawned task should propagate to the caller with
+    /// the original message preserved (via `resume_unwind`).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[should_panic(expected = "actor task panicked")]
+    #[should_panic(expected = "boom")]
     async fn actor_propagates_panic() {
         let actor = Actor::new("test-actor");
         actor

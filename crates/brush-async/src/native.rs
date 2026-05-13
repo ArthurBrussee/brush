@@ -67,24 +67,28 @@ impl Actor {
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        let (tx, rx) = oneshot::channel::<R>();
+        // Result delivery is `Result<R, JoinError>` so panic payloads
+        // ride back to the caller with their original location + msg
+        // (via `resume_unwind`), not flattened into a generic string.
+        let (tx, rx) = oneshot::channel::<Result<R, tokio::task::JoinError>>();
         let state = Arc::new(HandleState::default());
         let state_setup = state.clone();
         let state_task = state.clone();
         let setup: Setup = Box::new(move || {
-            let jh = tokio::task::spawn_local(async move {
-                let r = f().await;
+            let user_task = tokio::task::spawn_local(f());
+            let abort = user_task.abort_handle();
+            // Waiter forwards the user task's join result to the caller.
+            tokio::task::spawn_local(async move {
+                let result = user_task.await;
                 state_task.finished.store(true, Ordering::SeqCst);
-                let _ = tx.send(r);
+                let _ = tx.send(result);
             });
-            // If abort() was called before the task got scheduled,
-            // honor it now; otherwise stash the AbortHandle so a later
-            // abort() can cancel. `finished` is set by abort() itself
-            // — the cancelled future won't run its completion block.
+            // If abort() was called before scheduling, honor it now;
+            // otherwise stash the AbortHandle for a later abort().
             if state_setup.aborted.load(Ordering::SeqCst) {
-                jh.abort();
+                abort.abort();
             } else {
-                *state_setup.abort.lock().expect("poisoned") = Some(jh.abort_handle());
+                *state_setup.abort.lock().expect("poisoned") = Some(abort);
             }
         });
         let _ = self.tx.send(setup);
@@ -101,12 +105,12 @@ struct HandleState {
 
 /// Awaitable handle to the result of [`Actor::run`].
 ///
-/// `await` resolves to the task's return value, or panics if the task
-/// panicked / was aborted / the actor was dropped before completion.
-/// Tokio's default panic hook prints the original panic to stderr
-/// from the actor's thread, so the real cause is visible regardless.
+/// `.await` resolves to the task's return value. If the task panicked,
+/// the original panic is re-raised on the awaiter via
+/// [`std::panic::resume_unwind`] so the panic message, location, and
+/// payload type are preserved.
 pub struct JoinHandle<R> {
-    rx: oneshot::Receiver<R>,
+    rx: oneshot::Receiver<Result<R, tokio::task::JoinError>>,
     state: Arc<HandleState>,
 }
 
@@ -140,10 +144,16 @@ impl<R> Future for JoinHandle<R> {
     type Output = R;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<R> {
         match Pin::new(&mut self.rx).poll(cx) {
-            Poll::Ready(Ok(r)) => Poll::Ready(r),
-            Poll::Ready(Err(_)) => {
-                panic!("brush-async: actor task panicked, was aborted, or actor dropped")
+            Poll::Ready(Ok(Ok(r))) => Poll::Ready(r),
+            Poll::Ready(Ok(Err(join_err))) => {
+                if join_err.is_panic() {
+                    // Re-raise the original panic with full info.
+                    std::panic::resume_unwind(join_err.into_panic());
+                } else {
+                    panic!("brush-async: actor task was cancelled");
+                }
             }
+            Poll::Ready(Err(_)) => panic!("brush-async: actor dropped before task completed"),
             Poll::Pending => Poll::Pending,
         }
     }
