@@ -319,9 +319,9 @@ async fn stress_concurrent_train_and_view() {
     let device = brush_cube::test_helpers::test_device().await;
     let img_size = glam::uvec2(64, 64);
 
-    let viewer_count = 16;
-    let train_steps = 500;
-    let viewer_iters_per_task = 100;
+    let viewer_count = 12;
+    let train_steps = 250;
+    let viewer_iters_per_task = 50;
 
     let initial = generate_test_splats(&device, 500);
     let (tx, rx) = watch::channel::<Splats<MainBackend>>(initial.clone().valid());

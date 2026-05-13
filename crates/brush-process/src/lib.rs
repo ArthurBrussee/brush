@@ -12,7 +12,7 @@ use burn_wgpu::{
     RuntimeOptions, WgpuDevice,
     graphics::{AutoGraphicsApi, GraphicsApi},
 };
-use wgpu::{Adapter, Device, Queue, WasmNotSend};
+use wgpu::{Adapter, Device, Queue};
 
 use std::future::Future;
 use std::pin::{Pin, pin};
@@ -63,8 +63,8 @@ use crate::{
     train_stream::train_stream,
 };
 
-pub trait ProcessStream: Stream<Item = Result<ProcessMessage, Error>> + WasmNotSend {}
-impl<T> ProcessStream for T where T: Stream<Item = Result<ProcessMessage, Error>> + WasmNotSend {}
+pub trait ProcessStream: Stream<Item = Result<ProcessMessage, Error>> + SendNotWasm {}
+impl<T> ProcessStream for T where T: Stream<Item = Result<ProcessMessage, Error>> + SendNotWasm {}
 
 pub struct RunningProcess {
     pub stream: Pin<Box<dyn ProcessStream>>,
