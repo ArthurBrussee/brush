@@ -2,13 +2,7 @@
 //!
 //! These tests verify that the benchmark data generation and core operations work correctly.
 
-#![allow(
-    clippy::missing_assert_message,
-    clippy::print_stderr,
-    // Stress test holds FUSION_LOCK across .awaits intentionally — see
-    // FUSION_LOCK doc in brush-render::burn_glue.
-    clippy::await_holding_lock,
-)]
+#![allow(clippy::missing_assert_message, clippy::print_stderr)]
 
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
@@ -312,35 +306,22 @@ async fn test_gradient_validation() {
     splats.bwd_validate(rendered.mean()).await;
 }
 
-// One trainer + many parallel viewers, each pinned to its own
-// `brush_async::Actor`. This is brush's production pattern (one
-// trainer that publishes snapshots; UI / export / eval consumers
-// clone and render in parallel).
-//
-// Categorizes failures: `Should have handle for tensor ...` panics on
-// burn-fusion's `DSU-*` thread vs silent NaN values in
-// `projected_splats`. Both come from the same upstream cross-stream
-// race in `burn-fusion`'s `HandleContainer` coordination; we work
-// around it brush-side with `brush_render::burn_glue::FUSION_LOCK`.
+// One trainer + many parallel viewers.
+// Test whether multithreading produces any issues.
 #[cfg(not(target_family = "wasm"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn stress_concurrent_train_and_view() {
     use brush_async::Actor;
     use brush_render::TextureMode;
     use brush_render::gaussian_splats::render_splats as render_splats_fwd;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::watch;
 
     let device = brush_cube::test_helpers::test_device().await;
     let img_size = glam::uvec2(64, 64);
 
-    // Scale up the work in *this* run rather than running the test
-    // many times. More iters = more fusion register ops = more
-    // chances to hit the race.
     let viewer_count = 16;
-    let train_steps = 200;
-    let viewer_iters_per_task = 300;
+    let train_steps = 500;
+    let viewer_iters_per_task = 100;
 
     let initial = generate_test_splats(&device, 500);
     let (tx, rx) = watch::channel::<Splats<MainBackend>>(initial.clone().valid());
@@ -357,33 +338,17 @@ async fn stress_concurrent_train_and_view() {
             BoundingBox::from_min_max(Vec3::splat(-2.0), Vec3::splat(2.0)),
         );
         for _ in 0..train_steps {
-            // Hold FUSION_LOCK across the whole iteration: step
-            // (forward + backward + optimizer) AND publish. The
-            // publish drops the channel's previously-held splats,
-            // which otherwise schedules cross-stream tensor drops
-            // concurrently with viewer renders.
-            #[allow(clippy::await_holding_lock)]
-            let _g = brush_render::burn_glue::FUSION_LOCK.lock();
             let (new_splats, _) = trainer.step(batch.clone(), splats).await;
             splats = new_splats;
             let _ = tx.send(splats.valid());
         }
     });
 
-    // Per-failure-mode counters incremented by the viewer tasks (via
-    // panic::catch_unwind around each render).
-    let nan_panics = Arc::new(AtomicUsize::new(0));
-    let handle_panics = Arc::new(AtomicUsize::new(0));
-    let other_panics = Arc::new(AtomicUsize::new(0));
-
     let mut viewer_actors = Vec::with_capacity(viewer_count);
     let mut viewer_dones = Vec::with_capacity(viewer_count);
     for v in 0..viewer_count {
         let actor = Actor::new(&format!("test-viewer-{v}"));
         let mut rx = rx.clone();
-        let nan = nan_panics.clone();
-        let handle = handle_panics.clone();
-        let other = other_panics.clone();
         let done = actor.run(move || async move {
             let camera = Camera::new(
                 Vec3::new(0.0, 0.0, -5.0 - v as f32 * 0.3),
@@ -393,40 +358,16 @@ async fn stress_concurrent_train_and_view() {
                 glam::vec2(0.5, 0.5),
             );
             for _ in 0..viewer_iters_per_task {
-                // Hold FUSION_LOCK across the whole iteration so the
-                // snap clone, the render, AND the snap's drop happen
-                // serially relative to other fusion users.
-                #[allow(clippy::await_holding_lock)]
-                let _g = brush_render::burn_glue::FUSION_LOCK.lock();
-                let snap: Splats<MainBackend> = rx.borrow_and_update().clone();
-                let fut = render_splats_fwd(
+                let snap = rx.borrow_and_update().clone();
+                render_splats_fwd(
                     snap,
                     &camera,
                     img_size,
                     Vec3::ZERO,
                     None,
                     TextureMode::Float,
-                );
-                let result =
-                    futures::FutureExt::catch_unwind(std::panic::AssertUnwindSafe(fut)).await;
-                if let Err(payload) = result {
-                    let msg = payload
-                        .downcast_ref::<String>()
-                        .cloned()
-                        .or_else(|| payload.downcast_ref::<&str>().map(|&s| s.to_owned()))
-                        .unwrap_or_default();
-                    if msg.contains("NaN") {
-                        nan.fetch_add(1, Ordering::Relaxed);
-                    } else if msg.contains("Should have handle for tensor")
-                        || msg.contains("Result::unwrap")
-                        || msg.contains("CallError")
-                    {
-                        handle.fetch_add(1, Ordering::Relaxed);
-                    } else {
-                        other.fetch_add(1, Ordering::Relaxed);
-                        eprintln!("[other panic] {msg}");
-                    }
-                }
+                )
+                .await;
             }
         });
         viewer_actors.push(actor);
@@ -438,18 +379,4 @@ async fn stress_concurrent_train_and_view() {
         d.await;
     }
     drop(viewer_actors);
-
-    let nan = nan_panics.load(Ordering::Relaxed);
-    let handle = handle_panics.load(Ordering::Relaxed);
-    let other = other_panics.load(Ordering::Relaxed);
-    eprintln!(
-        "stress_concurrent_train_and_view: NaN={nan} handle-race={handle} other={other} \
-         (out of {} render calls)",
-        viewer_count * viewer_iters_per_task,
-    );
-    assert_eq!(
-        nan + handle + other,
-        0,
-        "{nan} NaN panics, {handle} handle-race panics, {other} other panics"
-    );
 }

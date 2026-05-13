@@ -3,9 +3,10 @@
 
 use brush_async::Actor;
 use brush_process::DataSource;
+use brush_process::RunningProcess;
 use brush_process::config::TrainStreamConfig;
+use brush_process::message::ProcessMessage;
 use brush_process::message::TrainMessage;
-use brush_process::{RunningProcess, message::ProcessMessage};
 
 use clap::{Error, Parser, builder::ArgPredicate, error::ErrorKind};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -74,6 +75,7 @@ pub async fn run_cli_ui(
             }
         })
         .detach();
+
     // Hold the actor for the lifetime of the UI loop; dropping it
     // would kill the pump.
     let _trainer = trainer;

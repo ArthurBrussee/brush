@@ -47,10 +47,11 @@ use crate::{
 /// awaits.
 ///
 /// **Remove when upstream burn fixes cross-thread handle drops.**
-pub static FUSION_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+pub static FUSION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 impl SplatOps<Self> for Fusion<MainBackendBase> {
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::await_holding_lock)]
     async fn render(
         camera: &Camera,
         img_size: glam::UVec2,
@@ -61,9 +62,8 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         background: Vec3,
         bwd_info: bool,
     ) -> RenderOutput<Self> {
-        // Callers (trainer step, viewer render, etc.) must hold
-        // FUSION_LOCK across their whole iteration — see FUSION_LOCK
-        // doc. This impl assumes that and just runs.
+        let _lock = FUSION_LOCK.lock().await;
+
         let client = transforms.client.clone();
 
         // Resolve fusion inputs to MainBackendBase tensors. This

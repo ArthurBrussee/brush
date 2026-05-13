@@ -36,8 +36,6 @@ use std::path::Path;
 use tracing::{Instrument, trace_span};
 use web_time::{Duration, Instant};
 
-// Holds `brush_render::burn_glue::FUSION_LOCK` across awaits during
-// step / refine / eval / export / rerun-log — see FUSION_LOCK doc.
 #[allow(clippy::large_stack_frames, clippy::await_holding_lock)]
 pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
@@ -247,7 +245,6 @@ pub(crate) async fn train_stream(
             log::info!("LOD {current_lod}/{lod_levels}: Computing sensitivity scores...");
             #[allow(clippy::await_holding_lock)]
             {
-                let _g = brush_render::burn_glue::FUSION_LOCK.lock();
                 let scores = compute_pup_scores(splats.clone(), &dataset.train, device).await;
                 splats = decimate_to_count(splats, &scores, target_count).await;
                 slot.set(0, splats.clone());
@@ -284,12 +281,6 @@ pub(crate) async fn train_stream(
             .await;
 
         let stats = {
-            // FUSION_LOCK held across the whole step: forward +
-            // backward + optimizer + publish. The publish drops the
-            // channel's previous held splats, which otherwise races
-            // with concurrent viewer renders. See FUSION_LOCK doc.
-            #[allow(clippy::await_holding_lock)]
-            let _g = brush_render::burn_glue::FUSION_LOCK.lock();
             let mut diff_splats = splats.train();
             diff_splats.transforms = diff_splats.transforms.map(|m| m.require_grad());
             diff_splats.raw_opacities = diff_splats.raw_opacities.map(|m| m.require_grad());
@@ -317,8 +308,6 @@ pub(crate) async fn train_stream(
             && phase_iter.is_multiple_of(train_stream_config.train_config.refine_every)
             && phase_progress <= 0.95
         {
-            #[allow(clippy::await_holding_lock)]
-            let _g = brush_render::burn_glue::FUSION_LOCK.lock();
             let (new_splats, refine_stats) = trainer.refine(iter, splats).await;
             splats = new_splats;
             slot.set(0, splats.clone());
@@ -348,9 +337,7 @@ pub(crate) async fn train_stream(
                 .eval_save_to_disk
                 .then(|| export_path.clone());
 
-            #[allow(clippy::await_holding_lock)]
-            let res = {
-                let _g = brush_render::burn_glue::FUSION_LOCK.lock();
+            let eval = {
                 run_eval(
                     device,
                     emitter,
@@ -364,7 +351,7 @@ pub(crate) async fn train_stream(
                 .with_context(|| format!("Failed evaluation at iteration {iter}"))
             };
 
-            if let Err(error) = res {
+            if let Err(error) = eval {
                 emitter.emit(ProcessMessage::Warning { error }).await;
             }
         }
@@ -386,9 +373,7 @@ pub(crate) async fn train_stream(
                         .replace(".ply", &format!("_lod{current_lod}.ply"));
                     (lod_name, lod_refine_steps, lod_refine_steps)
                 };
-                #[allow(clippy::await_holding_lock)]
                 let res = {
-                    let _g = brush_render::burn_glue::FUSION_LOCK.lock();
                     export_checkpoint(splats.clone(), &export_path, &name, exp_iter, exp_total)
                         .await
                         .with_context(|| format!("Export at iteration {iter} failed"))
@@ -410,11 +395,7 @@ pub(crate) async fn train_stream(
             if let Some(every) = rerun_config.rerun_log_splats_every
                 && (iter.is_multiple_of(every) || is_last_step)
             {
-                #[allow(clippy::await_holding_lock)]
-                {
-                    let _g = brush_render::burn_glue::FUSION_LOCK.lock();
-                    visualize.log_splats(iter, splats.clone()).await.unwrap();
-                }
+                visualize.log_splats(iter, splats.clone()).await.unwrap();
             }
 
             if iter.is_multiple_of(rerun_config.rerun_log_train_stats_every) || is_last_step {
