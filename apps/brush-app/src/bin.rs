@@ -91,9 +91,6 @@ fn main() -> Result<(), anyhow::Error> {
                     Box::new(move |cc| Ok(Box::new(App::new(cc, init_process)))),
                 )?;
             } else {
-                // CLI path: just one consumer driving the trainer stream
-                // — no viewer, no competing GPU work — so no Actor
-                // pinning needed.
                 brush_process::burn_init_setup().await;
                 let process = init_process.expect("Must provide a source");
                 brush_cli::run_cli_ui(process, args.train_stream).await?;

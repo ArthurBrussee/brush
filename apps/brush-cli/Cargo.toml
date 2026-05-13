@@ -6,12 +6,14 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
+brush-async.path = "../../crates/brush-async"
 brush-process.path = "../../crates/brush-process"
 
 indicatif.workspace = true
 indicatif-log-bridge = "0.2"
 clap.workspace = true
 tracing.workspace = true
+tokio.workspace = true
 tokio-stream.workspace = true
 humantime.workspace = true
 log.workspace = true

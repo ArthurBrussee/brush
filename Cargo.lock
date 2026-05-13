@@ -1055,6 +1055,7 @@ name = "brush-cli"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "brush-async",
  "brush-process",
  "clap",
  "env_logger",
@@ -1063,6 +1064,7 @@ dependencies = [
  "indicatif",
  "indicatif-log-bridge",
  "log",
+ "tokio",
  "tokio-stream",
  "tracing",
 ]
