@@ -2,7 +2,7 @@ use crate::{
     Emitter,
     config::TrainStreamConfig,
     message::{ProcessMessage, TrainMessage},
-    slot::Slot,
+    slot::SlotSender,
     wait_for_device,
 };
 use anyhow::Context;
@@ -41,7 +41,7 @@ pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
     train_stream_config: TrainStreamConfig,
     emitter: &Emitter,
-    slot: Slot<Splats<MainBackend>>,
+    slot: SlotSender<Splats<MainBackend>>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
