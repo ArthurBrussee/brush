@@ -14,7 +14,6 @@ burn-fusion.workspace = true
 burn-ir.workspace = true
 burn-wgpu.workspace = true
 glam.workspace = true
-half = "2"
 
 [dev-dependencies]
 brush-cube = { path = "../brush-cube" }

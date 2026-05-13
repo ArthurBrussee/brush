@@ -1130,7 +1130,6 @@ dependencies = [
  "burn-wgpu",
  "getrandom 0.4.2",
  "glam",
- "half",
  "tokio",
  "wasm-bindgen-test",
 ]
