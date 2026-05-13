@@ -309,6 +309,10 @@ impl CallbackTrait for SplatBackbufferPainter {
 }
 
 /// Async render worker that processes render requests.
+///
+/// Holds `brush_render::burn_glue::FUSION_LOCK` across the render's
+/// `.await` — see `FUSION_LOCK` doc.
+#[allow(clippy::await_holding_lock)]
 async fn render_worker(
     mut receiver: mpsc::UnboundedReceiver<RenderRequest>,
     img_sender: mpsc::Sender<Tensor<MainBackend, 3>>,
@@ -322,20 +326,25 @@ async fn render_worker(
             request = newer;
         }
 
-        // Clone a snapshot out of the channel; render outside any
-        // lock. If the channel is empty (no splats yet), skip.
-        let Some(splats) = request.splats.get(request.state.frame) else {
-            continue;
+        // FUSION_LOCK held across the whole iteration: clone the
+        // snap, render, then drop the snap. See FUSION_LOCK doc.
+        #[allow(clippy::await_holding_lock)]
+        let image = {
+            let _g = brush_render::burn_glue::FUSION_LOCK.lock();
+            let Some(splats) = request.splats.get(request.state.frame) else {
+                continue;
+            };
+            let (image, _) = render_splats(
+                splats,
+                &request.state.camera,
+                request.state.img_size,
+                request.state.background,
+                request.state.splat_scale,
+                TextureMode::Packed,
+            )
+            .await;
+            image
         };
-        let (image, _) = render_splats(
-            splats,
-            &request.state.camera,
-            request.state.img_size,
-            request.state.background,
-            request.state.splat_scale,
-            TextureMode::Packed,
-        )
-        .await;
         let _ = img_sender.send(image).await;
 
         // Trigger egui repaint so the new texture gets picked up.

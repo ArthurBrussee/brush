@@ -294,14 +294,17 @@ impl AppPane for TrainingPanel {
                             return;
                         };
 
-                        self.export_actor
-                            .run(move || async move {
-                                if let Err(e) = export(splats).await {
-                                    let _ = sender.send(e);
-                                    ctx.request_repaint();
-                                }
-                            })
-                            .detach();
+                        // Holds FUSION_LOCK across export's `.await`
+                        // — see FUSION_LOCK doc.
+                        #[allow(clippy::await_holding_lock)]
+                        let task = async move {
+                            let _g = brush_render::burn_glue::FUSION_LOCK.lock();
+                            if let Err(e) = export(splats).await {
+                                let _ = sender.send(e);
+                                ctx.request_repaint();
+                            }
+                        };
+                        self.export_actor.run(move || task).detach();
                     }
                 });
             }

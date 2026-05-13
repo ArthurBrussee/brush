@@ -13,7 +13,7 @@ use crate::gaussian_splats::SplatRenderMode;
 pub use crate::gaussian_splats::{TextureMode, render_splats};
 pub use crate::render_aux::{RenderAux, RenderOutput};
 
-mod burn_glue;
+pub mod burn_glue;
 #[doc(hidden)]
 pub mod dim_check;
 #[doc(hidden)]

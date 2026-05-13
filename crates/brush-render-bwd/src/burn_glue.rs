@@ -336,12 +336,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         let client = v_output.client.clone();
         let num_visible = (num_visible_val as usize).max(1);
 
-        let v_combined_out = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_visible, 10]),
-            DType::F32,
-        );
-
         let input_tensors = [
             v_output,
             out_img,
@@ -350,21 +344,27 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
             tile_offsets,
         ];
 
-        let stream = OperationStreams::with_inputs(&input_tensors);
-        let desc = CustomOpIr::new(
-            "rasterize_bwd",
-            &input_tensors.map(|t| t.into_ir()),
-            &[v_combined_out],
-        );
-        let op = CustomOp {
-            desc: desc.clone(),
-            background,
-            img_size,
+        let outputs = {
+            let v_combined_out = TensorIr::uninit(
+                client.create_empty_handle(),
+                Shape::new([num_visible, 10]),
+                DType::F32,
+            );
+            let stream = OperationStreams::with_inputs(&input_tensors);
+            let desc = CustomOpIr::new(
+                "rasterize_bwd",
+                &input_tensors.map(|t| t.into_ir()),
+                &[v_combined_out],
+            );
+            let op = CustomOp {
+                desc: desc.clone(),
+                background,
+                img_size,
+            };
+            client
+                .register(stream, OperationIr::Custom(desc), op)
+                .outputs()
         };
-
-        let outputs = client
-            .register(stream, OperationIr::Custom(desc), op)
-            .outputs();
 
         let [v_combined] = outputs;
 
@@ -421,52 +421,54 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         let num_points = transforms.shape[0];
         let coeffs = sh_coeffs_for_degree(project_uniforms.sh_degree) as usize;
 
-        let v_transforms_out = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_points, 10]),
-            DType::F32,
-        );
-        let v_coeffs_out = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_points, coeffs, 3]),
-            DType::F32,
-        );
-        let v_raw_opac_out = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_points]),
-            DType::F32,
-        );
-        let v_refine_weight_out = TensorIr::uninit(
-            client.create_empty_handle(),
-            Shape::new([num_points]),
-            DType::F32,
-        );
-
         let input_tensors = [transforms, raw_opac, global_from_compact_gid, v_combined];
 
-        let stream = OperationStreams::with_inputs(&input_tensors);
-        let desc = CustomOpIr::new(
-            "project_bwd",
-            &input_tensors.map(|t| t.into_ir()),
-            &[
-                v_transforms_out,
-                v_coeffs_out,
-                v_raw_opac_out,
-                v_refine_weight_out,
-            ],
-        );
+        let outputs = {
+            let v_transforms_out = TensorIr::uninit(
+                client.create_empty_handle(),
+                Shape::new([num_points, 10]),
+                DType::F32,
+            );
+            let v_coeffs_out = TensorIr::uninit(
+                client.create_empty_handle(),
+                Shape::new([num_points, coeffs, 3]),
+                DType::F32,
+            );
+            let v_raw_opac_out = TensorIr::uninit(
+                client.create_empty_handle(),
+                Shape::new([num_points]),
+                DType::F32,
+            );
+            let v_refine_weight_out = TensorIr::uninit(
+                client.create_empty_handle(),
+                Shape::new([num_points]),
+                DType::F32,
+            );
 
-        let outputs = client
-            .register(
-                stream,
-                OperationIr::Custom(desc.clone()),
-                CustomOp {
-                    desc,
-                    render_mode,
-                    project_uniforms,
-                },
-            )
-            .outputs();
+            let stream = OperationStreams::with_inputs(&input_tensors);
+            let desc = CustomOpIr::new(
+                "project_bwd",
+                &input_tensors.map(|t| t.into_ir()),
+                &[
+                    v_transforms_out,
+                    v_coeffs_out,
+                    v_raw_opac_out,
+                    v_refine_weight_out,
+                ],
+            );
+
+            client
+                .register(
+                    stream,
+                    OperationIr::Custom(desc.clone()),
+                    CustomOp {
+                        desc,
+                        render_mode,
+                        project_uniforms,
+                    },
+                )
+                .outputs()
+        };
 
         let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
 
