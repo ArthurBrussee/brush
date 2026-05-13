@@ -126,7 +126,7 @@ async fn read_chunk<T: AsyncRead + Unpin>(
             break;
         }
         total_read += bytes_read;
-        brush_async::task::yield_now().await;
+        brush_async::yield_now().await;
     }
     if total_read == 0 {
         Err(std::io::Error::new(

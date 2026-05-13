@@ -1,6 +1,6 @@
 use anyhow::Result;
-use brush_async::{Actor, task};
-use brush_process::{RunningProcess, message::ProcessMessage, splat_channel::SplatChannel};
+use brush_async::Actor;
+use brush_process::{RunningProcess, message::ProcessMessage, slot::Slot};
 use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
@@ -19,7 +19,7 @@ enum ControlMessage {
 struct ProcessHandle {
     messages: mpsc::UnboundedReceiver<anyhow::Result<ProcessMessage>>,
     control: mpsc::UnboundedSender<ControlMessage>,
-    splat_view: SplatChannel<Splats<MainBackend>>,
+    splat_view: Slot<Splats<MainBackend>>,
     // Owns the actor thread that polls `process.stream`. Pinning the
     // poll to one OS thread keeps `cubecl`'s `StreamId::current()`
     // invariant for the whole trainer state machine (tokio's
@@ -73,11 +73,11 @@ impl UiProcess {
         self.write().background_style = style;
     }
 
-    pub(crate) fn current_splats(&self) -> SplatChannel<Splats<MainBackend>> {
+    pub(crate) fn current_splats(&self) -> Slot<Splats<MainBackend>> {
         self.read()
             .process_handle
             .as_ref()
-            .map_or(SplatChannel::default(), |s| s.splat_view.clone())
+            .map_or(Slot::default(), |s| s.splat_view.clone())
     }
 
     pub fn is_loading(&self) -> bool {
@@ -207,33 +207,35 @@ impl UiProcess {
         let egui_ctx = self.read().ui_ctx.clone();
 
         let actor = Actor::new("ui-process");
-        actor.spawn(move || async move {
-            while let Some(msg) = process.stream.next().await {
-                // Stop the process if no one is listening anymore.
-                if sender.send(msg).is_err() {
-                    break;
+        actor
+            .run(move || async move {
+                while let Some(msg) = process.stream.next().await {
+                    // Stop the process if no one is listening anymore.
+                    if sender.send(msg).is_err() {
+                        break;
+                    }
+
+                    // Check if training is paused. Don't care about other messages as pausing loading
+                    // doesn't make much sense.
+                    if matches!(train_receiver.try_recv(), Ok(ControlMessage::Paused(true))) {
+                        // Pause if needed.
+                        while !matches!(
+                            train_receiver.recv().await,
+                            Some(ControlMessage::Paused(false))
+                        ) {}
+                    }
+
+                    // Mark egui as needing a repaint.
+                    egui_ctx.request_repaint();
+
+                    // Give back control to the runtime.
+                    // This only really matters in the browser:
+                    // on native, receiving also yields. In the browser that doesn't yield
+                    // back control fully though whereas yield_now() does.
+                    brush_async::yield_now().await;
                 }
-
-                // Check if training is paused. Don't care about other messages as pausing loading
-                // doesn't make much sense.
-                if matches!(train_receiver.try_recv(), Ok(ControlMessage::Paused(true))) {
-                    // Pause if needed.
-                    while !matches!(
-                        train_receiver.recv().await,
-                        Some(ControlMessage::Paused(false))
-                    ) {}
-                }
-
-                // Mark egui as needing a repaint.
-                egui_ctx.request_repaint();
-
-                // Give back control to the runtime.
-                // This only really matters in the browser:
-                // on native, receiving also yields. In the browser that doesn't yield
-                // back control fully though whereas yield_now() does.
-                task::yield_now().await;
-            }
-        });
+            })
+            .detach();
 
         self.write().process_handle = Some(ProcessHandle {
             messages: receiver,

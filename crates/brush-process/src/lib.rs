@@ -3,7 +3,7 @@
 pub mod args_file;
 pub mod config;
 pub mod message;
-pub mod splat_channel;
+pub mod slot;
 pub mod train_stream;
 
 pub use brush_vfs::DataSource;
@@ -57,14 +57,14 @@ pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuD
     burn
 }
 
-use crate::{message::ProcessMessage, splat_channel::SplatChannel, train_stream::train_stream};
+use crate::{message::ProcessMessage, slot::Slot, train_stream::train_stream};
 
 pub trait ProcessStream: Stream<Item = Result<ProcessMessage, Error>> + SendNotWasm {}
 impl<T> ProcessStream for T where T: Stream<Item = Result<ProcessMessage, Error>> + SendNotWasm {}
 
 pub struct RunningProcess {
     pub stream: Pin<Box<dyn ProcessStream>>,
-    pub splat_view: SplatChannel<Splats<MainBackend>>,
+    pub splat_view: Slot<Splats<MainBackend>>,
 }
 
 /// Convenience alias for the emitter `try_fn_stream` hands us inside
@@ -105,7 +105,7 @@ pub fn create_process<
     source: DataSource,
     config_fn: Fun,
 ) -> RunningProcess {
-    let splat_view = SplatChannel::default();
+    let splat_view = Slot::default();
     let splat_state_cl = splat_view.clone();
 
     let stream = try_fn_stream(|emitter| async move {
@@ -125,7 +125,7 @@ async fn run_process<
     source: DataSource,
     config_fn: Fun,
     emitter: &Emitter,
-    splat_view: SplatChannel<Splats<MainBackend>>,
+    splat_view: Slot<Splats<MainBackend>>,
 ) -> Result<(), Error> {
     log::info!("Starting process with source {source:?}");
     emitter.emit(ProcessMessage::NewProcess).await;

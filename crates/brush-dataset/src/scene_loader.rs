@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use brush_async::{Actor, task};
+use brush_async::Actor;
 use image::DynamicImage;
 use rand::{SeedableRng, seq::SliceRandom};
 use tokio::sync::{Mutex, mpsc};
@@ -57,8 +57,10 @@ pub struct SceneLoader {
 
 impl SceneLoader {
     pub fn new(scene: &Scene, seed: u64) -> Self {
-        // Prefetch buffer: at most 2 batches ahead of the trainer.
-        let (tx, rx) = mpsc::channel(2);
+        // Prefetch buffer: at most 4 batches ahead of the trainer.
+        // Two tasks per actor share this buffer so one task's I/O can
+        // overlap with the other's decode + GPU upload.
+        let (tx, rx) = mpsc::channel(4);
 
         // Fan out only as many loaders as we have real parallelism.
         // Wasm shares one JS event loop, so extra actors just add
@@ -68,18 +70,25 @@ impl SceneLoader {
         } else {
             std::thread::available_parallelism().map_or(8, |p| p.get())
         };
+        const TASKS_PER_ACTOR: usize = 2;
 
         let views = scene.views.clone();
         let cache = Arc::new(Mutex::new(ImageCache::new(views.len())));
 
+        let mut task_idx: u64 = 0;
         let actors: Vec<Actor> = (0..n_actors)
             .map(|i| {
                 let actor = Actor::new(&format!("dataloader-{i}"));
-                let views = views.clone();
-                let cache = cache.clone();
-                let tx = tx.clone();
-                let task_seed = seed.wrapping_add(i as u64);
-                actor.spawn(move || run_loader(views, cache, tx, task_seed));
+                for _ in 0..TASKS_PER_ACTOR {
+                    let views = views.clone();
+                    let cache = cache.clone();
+                    let tx = tx.clone();
+                    let task_seed = seed.wrapping_add(task_idx);
+                    task_idx += 1;
+                    actor
+                        .run(move || run_loader(views, cache, tx, task_seed))
+                        .detach();
+                }
                 actor
             })
             .collect();
@@ -139,6 +148,6 @@ async fn run_loader(
         if tx.send(batch).await.is_err() {
             break;
         }
-        task::yield_now().await;
+        brush_async::yield_now().await;
     }
 }

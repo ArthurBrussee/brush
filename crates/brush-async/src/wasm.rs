@@ -2,13 +2,11 @@
 //!
 //! Wasm only has one thread by default — the JS event loop — so every
 //! `Actor` here just shares the main-thread `wasm_bindgen_futures`
-//! executor. The `Actor::run` / `Actor::spawn` surface still works
-//! because single-thread is trivially `!Send`-friendly.
+//! executor. `Actor::run` still works because single-thread is
+//! trivially `!Send`-friendly.
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
 use tokio::sync::oneshot;
@@ -27,115 +25,47 @@ impl Actor {
         }
     }
 
-    pub fn run<F, Fut, R>(&self, f: F) -> impl Future<Output = R>
+    /// Run a closure that produces a (possibly !Send) future. Returns
+    /// a [`JoinHandle`] for the result. Drop the handle to
+    /// fire-and-forget.
+    pub fn run<F, Fut, R>(&self, f: F) -> JoinHandle<R>
     where
         F: FnOnce() -> Fut + 'static,
         Fut: Future<Output = R> + 'static,
         R: 'static,
     {
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel::<R>();
         spawn_local(async move {
             let r = f().await;
             let _ = tx.send(r);
         });
-        async move { rx.await.expect("brush-async: spawned task dropped") }
-    }
-
-    pub fn spawn<F, Fut>(&self, f: F)
-    where
-        F: FnOnce() -> Fut + 'static,
-        Fut: Future<Output = ()> + 'static,
-    {
-        spawn_local(async move { f().await });
+        JoinHandle { rx }
     }
 }
 
-/// Mirror of [`tokio::task::JoinError`] for the wasm shim. Only the
-/// `is_cancelled` / `is_panic` query methods are provided — the
-/// `into_panic` family is unsupported on wasm.
-#[derive(Debug)]
-pub struct JoinError {
-    cancelled: bool,
-}
-
-impl JoinError {
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled
-    }
-    pub fn is_panic(&self) -> bool {
-        !self.cancelled
-    }
-}
-
-impl std::fmt::Display for JoinError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.cancelled {
-            f.write_str("task was cancelled")
-        } else {
-            f.write_str("task panicked")
-        }
-    }
-}
-
-impl std::error::Error for JoinError {}
-
-/// Wasm shim mirroring [`tokio::task::JoinHandle`]. Backed by a
-/// `oneshot` channel plus shared `AtomicBool` flags for abort/finished
-/// state. Awaiting yields `Result<T, JoinError>`.
+/// Awaitable handle to the result of [`Actor::run`].
 ///
-/// `abort` is cooperative on wasm: the spawned future is not literally
-/// cancelled, but on completion the handle reports `JoinError::is_cancelled`
-/// instead of returning the result. Tasks that need promptness should
-/// `task::yield_now().await` and exit when the handle's caller is gone.
-pub struct JoinHandle<T> {
-    rx: oneshot::Receiver<T>,
-    aborted: Arc<AtomicBool>,
-    finished: Arc<AtomicBool>,
+/// Backed by a `oneshot`. Drop to fire-and-forget; awaiting panics if
+/// the task panicked or was dropped before completing.
+pub struct JoinHandle<R> {
+    rx: oneshot::Receiver<R>,
 }
 
-impl<T> JoinHandle<T> {
-    pub fn abort(&self) {
-        self.aborted.store(true, Ordering::SeqCst);
-    }
-    pub fn is_finished(&self) -> bool {
-        self.finished.load(Ordering::SeqCst)
-    }
+impl<R> JoinHandle<R> {
+    /// Drop the handle without awaiting. The underlying task keeps
+    /// running until it completes. Cleaner than `let _ =
+    /// actor.run(...)` (which clippy flags).
+    pub fn detach(self) {}
 }
 
-impl<T> Future for JoinHandle<T> {
-    type Output = Result<T, JoinError>;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.aborted.load(Ordering::SeqCst) && self.finished.load(Ordering::SeqCst) {
-            return Poll::Ready(Err(JoinError { cancelled: true }));
-        }
+impl<R> Future for JoinHandle<R> {
+    type Output = R;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<R> {
         match Pin::new(&mut self.rx).poll(cx) {
-            Poll::Ready(Ok(v)) => Poll::Ready(Ok(v)),
-            Poll::Ready(Err(_)) => Poll::Ready(Err(JoinError { cancelled: true })),
+            Poll::Ready(Ok(r)) => Poll::Ready(r),
+            Poll::Ready(Err(_)) => panic!("brush-async: actor task panicked or actor dropped"),
             Poll::Pending => Poll::Pending,
         }
-    }
-}
-
-/// Migration shim for `tokio_with_wasm::task::spawn`. Schedules `future`
-/// on `wasm_bindgen_futures::spawn_local` and returns a `JoinHandle`.
-pub fn spawn<F>(future: F) -> JoinHandle<F::Output>
-where
-    F: Future + 'static,
-    F::Output: 'static,
-{
-    let (tx, rx) = oneshot::channel();
-    let aborted = Arc::new(AtomicBool::new(false));
-    let finished = Arc::new(AtomicBool::new(false));
-    let finished_c = finished.clone();
-    spawn_local(async move {
-        let r = future.await;
-        finished_c.store(true, Ordering::SeqCst);
-        let _ = tx.send(r);
-    });
-    JoinHandle {
-        rx,
-        aborted,
-        finished,
     }
 }
 

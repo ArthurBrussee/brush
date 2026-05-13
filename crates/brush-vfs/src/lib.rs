@@ -169,7 +169,7 @@ impl BrushVfs {
                     zip_reader = entry.skip().await.map_err(zip_error)?;
                 }
 
-                brush_async::task::yield_now().await;
+                brush_async::yield_now().await;
             }
 
             let path_bufs = entries.keys().cloned().collect::<Vec<_>>();
@@ -219,7 +219,7 @@ impl BrushVfs {
                             paths.push(path);
                         }
 
-                        brush_async::task::yield_now().await;
+                        brush_async::yield_now().await;
                     }
                 }
                 Ok(paths)

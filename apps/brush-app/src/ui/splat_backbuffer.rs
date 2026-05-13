@@ -1,5 +1,5 @@
 use brush_async::Actor;
-use brush_process::splat_channel::SplatChannel;
+use brush_process::slot::Slot;
 use brush_render::{
     MainBackend, MainBackendBase, TextureMode, camera::Camera, gaussian_splats::Splats,
     render_splats,
@@ -13,7 +13,7 @@ use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 
 #[derive(Clone)]
 struct RenderRequest {
-    splats: SplatChannel<Splats<MainBackend>>,
+    splats: Slot<Splats<MainBackend>>,
     ctx: egui::Context,
     state: LastRenderState,
 }
@@ -54,7 +54,7 @@ impl SplatBackbuffer {
             ));
 
         let actor = Actor::new("viewer");
-        actor.spawn(move || render_worker(req_rec, img_send));
+        actor.run(move || render_worker(req_rec, img_send)).detach();
         Self {
             req_send,
             img_rec,
@@ -69,7 +69,7 @@ impl SplatBackbuffer {
         &mut self,
         rect: Rect,
         ui: &egui::Ui,
-        splats: &SplatChannel<Splats<MainBackend>>,
+        splats: &Slot<Splats<MainBackend>>,
         camera: &Camera,
         frame: usize,
         background: Vec3,

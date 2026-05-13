@@ -15,6 +15,7 @@ use brush_render_bwd::render_splats;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
     backend::{Autodiff, wgpu::WgpuDevice},
+    module::AutodiffModule,
     tensor::{Tensor, TensorData, TensorPrimitive},
 };
 use glam::{Quat, Vec3};
@@ -303,4 +304,95 @@ async fn test_gradient_validation() {
     let rendered: Tensor<DiffBackend, 3> =
         Tensor::from_primitive(TensorPrimitive::Float(result.img));
     splats.bwd_validate(rendered.mean()).await;
+}
+
+// Concurrent trainer + N viewers, every task pinned to its own
+// `brush_async::Actor` thread. This is the pattern brush production
+// uses (trainer / viewer / dataloader each have their own Actor) and
+// the workload that used to surface the burn-fusion cross-thread
+// handle-race crash before the Slot + Actor refactor.
+//
+// Not `#[ignore]` on purpose: this test is stable in isolation but
+// flakes occasionally when other tests share `WgpuDevice::DefaultDevice`
+// on the same machine — that's a *separate* upstream cross-stream
+// issue (NaN values in `projected_splats`) we haven't fixed yet. We
+// want CI to surface that visibly so it's not forgotten.
+#[cfg(not(target_family = "wasm"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stress_concurrent_train_and_view() {
+    use brush_async::Actor;
+    use brush_render::TextureMode;
+    use brush_render::gaussian_splats::render_splats as render_splats_fwd;
+    use std::sync::Arc;
+    use tokio::sync::watch;
+
+    let device = brush_cube::test_helpers::test_device().await;
+    let img_size = glam::uvec2(64, 64);
+    let viewer_count = 4;
+    let train_steps = 50;
+    let viewer_iters_per_task = 75;
+
+    let initial = generate_test_splats(&device, 500);
+    // Trainer publishes snapshots via watch; viewers subscribe and
+    // clone latest.
+    let (tx, rx) = watch::channel::<Splats<MainBackend>>(initial.valid());
+
+    let trainer_actor = Actor::new("test-trainer");
+    let trainer_done = {
+        let device = device.clone();
+        let mut splats = initial;
+        trainer_actor.run(move || async move {
+            let batch = generate_test_batch((64, 64));
+            let config = TrainConfig::default();
+            let mut trainer = SplatTrainer::new(
+                &config,
+                &device,
+                BoundingBox::from_min_max(Vec3::splat(-2.0), Vec3::splat(2.0)),
+            );
+            for _ in 0..train_steps {
+                let (new_splats, _) = trainer.step(batch.clone(), splats).await;
+                splats = new_splats;
+                let _ = tx.send(splats.valid());
+            }
+        })
+    };
+
+    let viewers: Vec<Actor> = (0..viewer_count)
+        .map(|i| Actor::new(&format!("test-viewer-{i}")))
+        .collect();
+    let viewer_dones: Vec<_> = viewers
+        .iter()
+        .enumerate()
+        .map(|(view_id, actor)| {
+            let mut rx = rx.clone();
+            actor.run(move || async move {
+                let camera = Camera::new(
+                    Vec3::new(0.0, 0.0, -5.0 - view_id as f32 * 0.5),
+                    Quat::IDENTITY,
+                    45.0,
+                    45.0,
+                    glam::vec2(0.5, 0.5),
+                );
+                for _ in 0..viewer_iters_per_task {
+                    let snap: Splats<MainBackend> = rx.borrow_and_update().clone();
+                    let _ = render_splats_fwd(
+                        snap,
+                        &camera,
+                        img_size,
+                        Vec3::ZERO,
+                        None,
+                        TextureMode::Float,
+                    )
+                    .await;
+                }
+            })
+        })
+        .collect();
+
+    trainer_done.await;
+    for d in viewer_dones {
+        d.await;
+    }
+    // Suppress unused warning — actors must outlive their tasks.
+    let _ = Arc::new(viewers);
 }

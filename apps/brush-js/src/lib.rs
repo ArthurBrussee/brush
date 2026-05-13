@@ -3,7 +3,7 @@
 #![cfg(target_family = "wasm")]
 
 use brush_process::message::{ProcessMessage, TrainMessage};
-use brush_process::splat_channel::SplatChannel;
+use brush_process::slot::Slot;
 use brush_process::{DataSource, ProcessStream, burn_init_device, burn_init_setup, create_process};
 use brush_render::MainBackend;
 use brush_render::gaussian_splats::Splats;
@@ -308,7 +308,7 @@ impl BrushApp {
 #[wasm_bindgen]
 pub struct Training {
     stream: Mutex<Pin<Box<dyn ProcessStream>>>,
-    splat_view: SplatChannel<Splats<MainBackend>>,
+    splat_view: Slot<Splats<MainBackend>>,
 }
 
 #[wasm_bindgen]

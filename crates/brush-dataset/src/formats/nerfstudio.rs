@@ -111,7 +111,7 @@ async fn read_transforms_file(
         .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
         .take(load_args.max_frames.unwrap_or(usize::MAX))
     {
-        brush_async::task::yield_now().await;
+        brush_async::yield_now().await;
 
         // NeRF 'transform_matrix' is a camera-to-world transform
         let transform_matrix: Vec<f32> = frame.transform_matrix.iter().flatten().copied().collect();

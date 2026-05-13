@@ -23,7 +23,9 @@
 //! # async fn doc() {
 //! let renderer = Actor::new("renderer");
 //! // Closure is Send + 'static (must cross threads to reach the
-//! // actor). The future it produces does NOT need to be Send.
+//! // actor). The future it produces does NOT need to be Send. The
+//! // returned `JoinHandle` resolves to the closure's output; drop it
+//! // to fire-and-forget.
 //! let pixels: Vec<u8> = renderer
 //!     .run(|| async move {
 //!         // ... work that needs !Send types ...
@@ -32,10 +34,6 @@
 //!     .await;
 //! # }
 //! ```
-//!
-//! Fan-out workloads like the dataloader just build a `Vec<Actor>`
-//! and `actor.spawn(...)` per task on each — see
-//! `brush_dataset::scene_loader::SceneLoader`.
 
 #[cfg(not(target_family = "wasm"))]
 mod native;
@@ -46,19 +44,6 @@ pub use native::*;
 mod wasm;
 #[cfg(target_family = "wasm")]
 pub use wasm::*;
-
-/// Drop-in shims for `tokio_with_wasm::alias::*` paths so migrating
-/// existing code is a find/replace. Prefer [`Actor`] for new code.
-pub mod task {
-    pub use super::{JoinHandle, spawn};
-
-    /// Cooperatively yield to the executor. Same semantics as
-    /// `tokio::task::yield_now` on native and
-    /// `wasm_bindgen_futures::yield_now` on wasm.
-    pub async fn yield_now() {
-        super::yield_now().await;
-    }
-}
 
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
@@ -101,7 +86,7 @@ mod tests {
 
     /// Panic in a spawned task should propagate to the caller.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[should_panic(expected = "task panicked")]
+    #[should_panic(expected = "actor task panicked")]
     async fn actor_propagates_panic() {
         let actor = Actor::new("test-actor");
         actor

@@ -217,7 +217,7 @@ async fn read_cameras_text<R: AsyncBufRead + Unpin>(mut reader: R) -> io::Result
         });
         line.clear();
 
-        brush_async::task::yield_now().await;
+        brush_async::yield_now().await;
     }
 
     Ok(cameras)

@@ -2,7 +2,7 @@ use crate::{
     Emitter,
     config::TrainStreamConfig,
     message::{ProcessMessage, TrainMessage},
-    splat_channel::SplatChannel,
+    slot::Slot,
     wait_for_device,
 };
 use anyhow::Context;
@@ -41,7 +41,7 @@ pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
     train_stream_config: TrainStreamConfig,
     emitter: &Emitter,
-    splat_channel: SplatChannel<Splats<MainBackend>>,
+    slot: Slot<Splats<MainBackend>>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
@@ -144,13 +144,13 @@ pub(crate) async fn train_stream(
     let up_axis = up_axis.or(Some(estimated_up));
 
     // The trainer owns its working `splats` locally and publishes a
-    // clone to the `SplatChannel` after every modification (train
+    // clone to the `Slot` after every modification (train
     // step, refine, LOD decimation). Consumers (UI viewer, export,
     // eval, rerun) read clones from the channel and render outside
     // any lock — no transform-in-place round-trip through a shared
     // slot.
     let mut splats: Splats<MainBackend> = init_splats.clone();
-    splat_channel.set(0, splats.clone());
+    slot.set(0, splats.clone());
     emitter
         .emit(ProcessMessage::SplatsUpdated {
             up_axis,
@@ -245,7 +245,7 @@ pub(crate) async fn train_stream(
             log::info!("LOD {current_lod}/{lod_levels}: Computing sensitivity scores...");
             let scores = compute_pup_scores(splats.clone(), &dataset.train, device).await;
             splats = decimate_to_count(splats, &scores, target_count).await;
-            splat_channel.set(0, splats.clone());
+            slot.set(0, splats.clone());
 
             let after = splats.num_splats();
             log::info!("LOD {current_lod}/{lod_levels}: {before} -> {after} splats");
@@ -284,7 +284,7 @@ pub(crate) async fn train_stream(
             diff_splats.sh_coeffs = diff_splats.sh_coeffs.map(|m| m.require_grad());
             let (new_diff_splats, stats) = trainer.step(batch, diff_splats).await;
             splats = new_diff_splats.valid();
-            splat_channel.set(0, splats.clone());
+            slot.set(0, splats.clone());
             stats
         };
 
@@ -307,7 +307,7 @@ pub(crate) async fn train_stream(
         {
             let (new_splats, refine_stats) = trainer.refine(iter, splats).await;
             splats = new_splats;
-            splat_channel.set(0, splats.clone());
+            slot.set(0, splats.clone());
             refine_stats
         } else {
             RefineStats {
@@ -438,7 +438,7 @@ pub(crate) async fn train_stream(
                 .await;
         }
 
-        brush_async::task::yield_now().await;
+        brush_async::yield_now().await;
     }
 
     emitter
@@ -463,7 +463,7 @@ async fn run_eval(
     log::info!("Running evaluation for iteration {iter}");
 
     for (i, view) in eval_scene.views.iter().enumerate() {
-        brush_async::task::yield_now().await;
+        brush_async::yield_now().await;
 
         let eval_img = view.image.load().await?;
         let sample = eval_stats(

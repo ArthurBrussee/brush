@@ -1,5 +1,5 @@
 use anyhow::Error;
-use brush_async::task;
+use brush_async::Actor;
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::{MainBackend, gaussian_splats::Splats};
@@ -21,6 +21,9 @@ pub struct TrainingPanel {
     export_channel: (UnboundedSender<Error>, UnboundedReceiver<Error>),
     training_done: bool,
     lod_progress: Option<(u32, u32)>,
+    // Owns the export worker thread. One Actor for the whole panel
+    // lifetime; export clicks just queue more work on it.
+    export_actor: Actor,
 }
 
 impl Default for TrainingPanel {
@@ -35,6 +38,7 @@ impl Default for TrainingPanel {
             export_channel: tokio::sync::mpsc::unbounded_channel(),
             training_done: false,
             lod_progress: None,
+            export_actor: Actor::new("training-panel-export"),
         }
     }
 }
@@ -290,12 +294,14 @@ impl AppPane for TrainingPanel {
                             return;
                         };
 
-                        task::spawn(async move {
-                            if let Err(e) = export(splats).await {
-                                let _ = sender.send(e);
-                                ctx.request_repaint();
-                            }
-                        });
+                        self.export_actor
+                            .run(move || async move {
+                                if let Err(e) = export(splats).await {
+                                    let _ = sender.send(e);
+                                    ctx.request_repaint();
+                                }
+                            })
+                            .detach();
                     }
                 });
             }
