@@ -94,7 +94,7 @@ skip = [
 
     # Pulled in transitively by burn-dispatch's `ndarray` feature, which we
     # enable purely as a build-time workaround for an upstream non-exhaustive
-    # match (see Cargo.toml comment). The NdArray backend is never used at
+    # match (see Cargo.toml comment). The ndarray backend is never used at
     # runtime — only its variant in the dispatch enums.
     { name = "ndarray" },
 ]

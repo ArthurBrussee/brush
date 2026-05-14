@@ -180,7 +180,7 @@ pub struct SplatOutputDiff {
 /// `checkpointing` field that upstream burn-dispatch's `from_inner` leaves
 /// at `None`. Without that field set, ops on the resulting tensor hit
 /// `unreachable!("Should only be called with autodiff.")`.
-fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
+pub fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
     let dispatch = t.into_primitive().tensor();
     match dispatch.kind {
         DispatchTensorKind::Wgpu(BackendTensor::Float(inner)) => {
