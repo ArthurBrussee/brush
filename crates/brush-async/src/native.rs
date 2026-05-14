@@ -9,8 +9,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
+use tokio::runtime::LocalRuntime;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::{AbortHandle, LocalSet};
+use tokio::task::AbortHandle;
 
 /// A task to be set up on the actor's thread. When invoked there it
 /// builds the (possibly !Send) future and spawns it on the `LocalSet`.
@@ -19,9 +20,6 @@ type Setup = Box<dyn FnOnce() + Send + 'static>;
 /// Single-threaded pinned async executor. See crate docs for rationale.
 pub struct Actor {
     tx: mpsc::UnboundedSender<Setup>,
-    // Held to keep the thread name diagnostic alive; the actor thread
-    // exits on Drop when `tx` is dropped (channel closes).
-    _join: std::thread::JoinHandle<()>,
 }
 
 impl Actor {
@@ -32,23 +30,19 @@ impl Actor {
     pub fn new(name: &str) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<Setup>();
         let name_owned = name.to_owned();
-        let join = std::thread::Builder::new()
-            .name(name_owned.clone())
+        std::thread::Builder::new()
+            .name(name_owned)
             .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .thread_name(&name_owned)
-                    .build()
-                    .expect("brush-async: build current_thread runtime");
-                let local = LocalSet::new();
-                local.block_on(&rt, async move {
+                let rt = LocalRuntime::new().expect("brush-async: build current_thread runtime");
+
+                rt.block_on(async move {
                     while let Some(setup) = rx.recv().await {
                         setup();
                     }
                 });
             })
             .expect("brush-async: spawn actor thread");
-        Self { tx, _join: join }
+        Self { tx }
     }
 
     /// Run a closure on the actor that produces a (possibly !Send)
@@ -114,8 +108,7 @@ pub struct JoinHandle<R> {
 }
 
 impl<R> JoinHandle<R> {
-    /// Drop the handle without awaiting. Cleaner than `let _ =
-    /// actor.run(...)` (which clippy flags).
+    /// Drop the handle without awaiting.
     pub fn detach(self) {}
 
     /// Cancel the underlying task. Real cancellation via
