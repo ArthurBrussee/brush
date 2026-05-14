@@ -14,8 +14,7 @@ use std::task::{Context, Poll};
 use tokio::sync::oneshot;
 use wasm_bindgen_futures::spawn_local;
 
-/// Single-threaded `Actor`: shares the main-thread executor. No `Send`
-/// bound since nothing actually crosses threads.
+/// Single-threaded `Actor`: shares the main-thread executor.
 pub struct Actor {
     _name: String,
 }

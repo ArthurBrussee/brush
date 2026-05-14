@@ -5,7 +5,7 @@ use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
 use glam::{Affine3A, Quat, Vec3};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
@@ -20,13 +20,6 @@ struct ProcessHandle {
     messages: mpsc::UnboundedReceiver<anyhow::Result<ProcessMessage>>,
     control: mpsc::UnboundedSender<ControlMessage>,
     splat_view: Slot<Splats<MainBackend>>,
-    // Owns the actor thread that polls `process.stream`. Pinning the
-    // poll to one OS thread keeps `cubecl`'s `StreamId::current()`
-    // invariant for the whole trainer state machine (tokio's
-    // work-stealing scheduler would otherwise move the future across
-    // workers between awaits). Dropping the handle drops the actor,
-    // which cancels training.
-    _actor: Actor,
 }
 
 /// A thread-safe wrapper around the UI process.
@@ -43,16 +36,6 @@ pub enum BackgroundStyle {
     Checkerboard,
 }
 
-impl UiProcess {
-    fn read(&self) -> std::sync::RwLockReadGuard<'_, UiProcessInner> {
-        self.0.read().expect("RwLock poisoned")
-    }
-
-    fn write(&self) -> std::sync::RwLockWriteGuard<'_, UiProcessInner> {
-        self.0.write().expect("RwLock poisoned")
-    }
-}
-
 pub struct TexHandle {
     pub handle: TextureHandle,
     pub has_alpha: bool,
@@ -61,7 +44,16 @@ pub struct TexHandle {
 
 impl UiProcess {
     pub fn new(dev: WgpuDevice, ui_ctx: egui::Context) -> Self {
-        Self(RwLock::new(UiProcessInner::new(dev, ui_ctx)))
+        let actor = Arc::new(Actor::new("ui-process"));
+        Self(RwLock::new(UiProcessInner::new(dev, ui_ctx, actor)))
+    }
+
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, UiProcessInner> {
+        self.0.read().expect("RwLock poisoned")
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, UiProcessInner> {
+        self.0.write().expect("RwLock poisoned")
     }
 
     pub(crate) fn background_style(&self) -> BackgroundStyle {
@@ -195,7 +187,11 @@ impl UiProcess {
     pub fn connect_to_process(&self, process: RunningProcess) {
         {
             let mut inner = self.write();
-            let reset = UiProcessInner::new(inner.burn_device.clone(), inner.ui_ctx.clone());
+            let reset = UiProcessInner::new(
+                inner.burn_device.clone(),
+                inner.ui_ctx.clone(),
+                inner.actor.clone(),
+            );
             *inner = reset;
         }
 
@@ -206,8 +202,8 @@ impl UiProcess {
 
         let egui_ctx = self.read().ui_ctx.clone();
 
-        let actor = Actor::new("ui-process");
-        actor
+        self.read()
+            .actor
             .run(move || async move {
                 while let Some(msg) = process.stream.next().await {
                     // Stop the process if no one is listening anymore.
@@ -241,7 +237,6 @@ impl UiProcess {
             messages: receiver,
             control: train_sender,
             splat_view: process.splat_view,
-            _actor: actor,
         });
     }
 
@@ -302,7 +297,11 @@ impl UiProcess {
 
     pub fn reset_session(&self) {
         let mut inner = self.write();
-        *inner = UiProcessInner::new(inner.burn_device.clone(), inner.ui_ctx.clone());
+        *inner = UiProcessInner::new(
+            inner.burn_device.clone(),
+            inner.ui_ctx.clone(),
+            inner.actor.clone(),
+        );
         inner.session_reset_requested = true;
     }
 
@@ -315,6 +314,10 @@ impl UiProcess {
 
     pub fn burn_device(&self) -> WgpuDevice {
         self.read().burn_device.clone()
+    }
+
+    pub(crate) fn actor(&self) -> Arc<Actor> {
+        self.read().actor.clone()
     }
 }
 
@@ -333,10 +336,11 @@ struct UiProcessInner {
     session_reset_requested: bool,
     ui_ctx: egui::Context,
     burn_device: WgpuDevice,
+    actor: Arc<Actor>,
 }
 
 impl UiProcessInner {
-    pub fn new(burn_device: WgpuDevice, ui_ctx: egui::Context) -> Self {
+    pub fn new(burn_device: WgpuDevice, ui_ctx: egui::Context, actor: Arc<Actor>) -> Self {
         let position = -Vec3::Z * 2.5;
         let rotation = Quat::IDENTITY;
 
@@ -358,6 +362,7 @@ impl UiProcessInner {
             session_reset_requested: false,
             burn_device,
             ui_ctx,
+            actor,
         }
     }
 

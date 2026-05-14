@@ -32,13 +32,10 @@ pub struct SplatBackbuffer {
     img_rec: mpsc::Receiver<Tensor<MainBackend, 3>>,
     last_image: Option<Tensor<MainBackend, 3>>,
     last_state: Option<LastRenderState>,
-    // Owns the render worker. Dropping closes the channel, which makes
-    // the worker exit and the actor's thread shut down.
-    _actor: Actor,
 }
 
 impl SplatBackbuffer {
-    pub fn new(state: &eframe::egui_wgpu::RenderState) -> Self {
+    pub fn new(state: &eframe::egui_wgpu::RenderState, actor: &Actor) -> Self {
         // Create channel for render requests
         let (req_send, req_rec) = mpsc::unbounded_channel();
         let (img_send, img_rec) = mpsc::channel(1);
@@ -53,14 +50,13 @@ impl SplatBackbuffer {
                 state.target_format,
             ));
 
-        let actor = Actor::new("viewer");
         actor.run(move || render_worker(req_rec, img_send)).detach();
+
         Self {
             req_send,
             img_rec,
             last_image: None,
             last_state: None,
-            _actor: actor,
         }
     }
 
