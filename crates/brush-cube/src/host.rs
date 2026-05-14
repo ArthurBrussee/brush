@@ -1,5 +1,6 @@
 use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::tensor::{DType, Scalar, Shape};
+use bytemuck::Pod;
 
 pub use burn_cubecl::cubecl::prelude::KernelId;
 use burn_cubecl::cubecl::server::MetadataBindingInfo;
@@ -47,7 +48,7 @@ pub fn create_tensor<const D: usize>(
     let mut buffer = client.empty(bufsize);
 
     if cfg!(test) {
-        use burn::tensor::ops::FloatTensorOps;
+        use burn::tensor::backend::ops::FloatTensorOps;
         use burn_cubecl::CubeBackend;
         // for tests - make doubly sure we're not accidentally relying on values
         // being initialized to zero by adding in some random noise.
@@ -63,6 +64,23 @@ pub fn create_tensor<const D: usize>(
         buffer = noised.handle;
     }
     CubeTensor::new_contiguous(client, device.clone(), shape, buffer, dtype)
+}
+
+/// Upload a slice of POD data to the GPU as a 1D `CubeTensor`.
+pub fn create_tensor_from_slice<T: Pod>(
+    data: &[T],
+    device: &WgpuDevice,
+    dtype: DType,
+) -> CubeTensor<WgpuRuntime> {
+    let client = WgpuRuntime::client(device);
+    let handle = client.create_from_slice(bytemuck::cast_slice(data));
+    CubeTensor::new_contiguous(
+        client,
+        device.clone(),
+        Shape::new([data.len()]),
+        handle,
+        dtype,
+    )
 }
 
 pub fn create_meta_binding<T: NoUninit>(val: T) -> MetadataBindingInfo {

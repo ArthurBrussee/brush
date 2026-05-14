@@ -15,15 +15,15 @@ use tokio::sync::oneshot;
 use wasm_bindgen_futures::spawn_local;
 
 /// Single-threaded `Actor`: shares the main-thread executor.
-pub struct Actor {
-    _name: String,
-}
+///
+/// On wasm everything lives on the main thread anyway; `Actor` is just a
+/// trivial handle that's cheap to clone.
+#[derive(Clone)]
+pub struct Actor;
 
 impl Actor {
-    pub fn new(name: &str) -> Self {
-        Self {
-            _name: name.to_owned(),
-        }
+    pub fn new(_name: &str) -> Self {
+        Self
     }
 
     /// Run a closure that produces a (possibly !Send) future. Returns

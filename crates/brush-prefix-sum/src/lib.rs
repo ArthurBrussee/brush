@@ -2,7 +2,7 @@ mod kernels;
 
 use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
-use burn::tensor::TensorMetadata;
+use burn::tensor::backend::TensorMetadata;
 use burn_cubecl::cubecl::CubeDim;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
@@ -99,8 +99,11 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
 #[cfg(test)]
 mod tests {
     use crate::prefix_sum;
-    use burn::tensor::{Int, Tensor};
-    use burn_wgpu::{CubeBackend, WgpuRuntime};
+    use brush_cube::create_tensor_from_slice;
+    use burn::tensor::DType;
+    use burn::tensor::backend::ops::IntTensorOps;
+    use burn_cubecl::CubeBackend;
+    use burn_wgpu::{CubeTensor, WgpuRuntime};
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[cfg(target_family = "wasm")]
@@ -108,16 +111,16 @@ mod tests {
 
     type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
 
+    async fn read_i32(tensor: CubeTensor<WgpuRuntime>) -> Vec<i32> {
+        let data = Backend::int_into_data(tensor).await.expect("readback");
+        data.as_slice::<i32>().expect("Wrong type").to_vec()
+    }
+
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_sum_tiny() {
         let device = brush_cube::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data([1, 1, 1, 1], &device).into_primitive();
-        let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
-            .to_data_async()
-            .await
-            .expect("readback");
-        let summed = summed.as_slice::<i32>().expect("Wrong type");
+        let keys = create_tensor_from_slice(&[1i32, 1, 1, 1], &device, DType::I32);
+        let summed = read_i32(prefix_sum(keys)).await;
         assert_eq!(summed.len(), 4);
         assert_eq!(summed, [1, 2, 3, 4]);
     }
@@ -125,17 +128,10 @@ mod tests {
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_512_multiple() {
         const ITERS: usize = 1024;
-        let mut data = vec![];
-        for i in 0..ITERS {
-            data.push(90 + i as i32);
-        }
+        let data: Vec<i32> = (0..ITERS).map(|i| 90 + i as i32).collect();
         let device = brush_cube::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
-        let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
-            .to_data_async()
-            .await
-            .expect("readback");
+        let keys = create_tensor_from_slice(&data, &device, DType::I32);
+        let summed = read_i32(prefix_sum(keys)).await;
         let prefix_sum_ref: Vec<_> = data
             .into_iter()
             .scan(0, |x, y| {
@@ -143,12 +139,7 @@ mod tests {
                 Some(*x)
             })
             .collect();
-        for (summed, reff) in summed
-            .as_slice::<i32>()
-            .expect("Wrong type")
-            .iter()
-            .zip(prefix_sum_ref)
-        {
+        for (summed, reff) in summed.iter().zip(prefix_sum_ref) {
             assert_eq!(*summed, reff);
         }
     }
@@ -166,12 +157,8 @@ mod tests {
         }
 
         let device = brush_cube::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
-        let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
-            .to_data_async()
-            .await
-            .expect("readback");
+        let keys = create_tensor_from_slice(&data, &device, DType::I32);
+        let summed = read_i32(prefix_sum(keys)).await;
 
         let prefix_sum_ref: Vec<_> = data
             .into_iter()
@@ -181,12 +168,7 @@ mod tests {
             })
             .collect();
 
-        for (summed, reff) in summed
-            .as_slice::<i32>()
-            .expect("Wrong type")
-            .iter()
-            .zip(prefix_sum_ref)
-        {
+        for (summed, reff) in summed.iter().zip(prefix_sum_ref) {
             assert_eq!(*summed, reff);
         }
     }
@@ -200,15 +182,9 @@ mod tests {
         let data: Vec<i32> = (0..NUM_ELEMENTS).map(|i| (i % 100) as i32).collect();
 
         let device = brush_cube::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
-        let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
-            .to_data_async()
-            .await
-            .expect("readback");
+        let keys = create_tensor_from_slice(&data, &device, DType::I32);
+        let summed_slice = read_i32(prefix_sum(keys)).await;
 
-        // Verify a few samples rather than all 20M elements
-        let summed_slice = summed.as_slice::<i32>().expect("Wrong type");
         assert_eq!(summed_slice.len(), NUM_ELEMENTS);
 
         // First element should equal first input

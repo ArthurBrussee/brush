@@ -158,7 +158,7 @@ impl BrushMessage {
 
 #[wasm_bindgen]
 pub struct BrushSplats {
-    inner: Splats<MainBackend>,
+    inner: Splats,
 }
 
 /// Snapshot of the GPU buffers backing a [`BrushSplats`]. All three buffers
@@ -308,7 +308,7 @@ impl BrushApp {
 #[wasm_bindgen]
 pub struct Training {
     stream: Mutex<Pin<Box<dyn ProcessStream>>>,
-    splat_view: Slot<Splats<MainBackend>>,
+    splat_view: Slot<Splats>,
 }
 
 #[wasm_bindgen]
@@ -420,9 +420,7 @@ async fn bridge_config_callback(
 /// and return it as a JS `GPUBuffer`. Returns `None` when Brush isn't on
 /// the WebGPU backend (which is the only backend brush-js currently
 /// supports anyway).
-fn tensor_buffer_js<const D: usize>(
-    tensor: burn::tensor::Tensor<MainBackend, D>,
-) -> Option<JsValue> {
+fn tensor_buffer_js<const D: usize>(tensor: burn::tensor::Tensor<D>) -> Option<JsValue> {
     use brush_render::MainBackendBase;
 
     let fusion_tensor = tensor.into_primitive().tensor();

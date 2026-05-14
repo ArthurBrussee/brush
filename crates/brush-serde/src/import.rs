@@ -41,11 +41,7 @@ impl SplatData {
     }
 
     /// Convert into Splats using simple defaults for missing fields.
-    pub fn into_splats<B: burn::prelude::Backend>(
-        self,
-        device: &B::Device,
-        mode: SplatRenderMode,
-    ) -> Splats<B> {
+    pub fn into_splats(self, device: &burn::tensor::Device, mode: SplatRenderMode) -> Splats {
         let n_splats = self.num_splats();
         let rotations = self
             .rotations

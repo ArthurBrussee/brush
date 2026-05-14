@@ -91,6 +91,12 @@ skip = [
     { name = "block-buffer" },
 
     { name = "wasm-streams" },
+
+    # Pulled in transitively by burn-dispatch's `ndarray` feature, which we
+    # enable purely as a build-time workaround for an upstream non-exhaustive
+    # match (see Cargo.toml comment). The NdArray backend is never used at
+    # runtime — only its variant in the dispatch enums.
+    { name = "ndarray" },
 ]
 
 [licenses]

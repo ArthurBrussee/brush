@@ -7,11 +7,7 @@ use burn::nn::pool::MaxPool2d;
 use burn::nn::pool::MaxPool2dConfig;
 use burn::tensor::Device;
 use burn::tensor::activation::relu;
-use burn::{
-    config::Config,
-    module::Module,
-    tensor::{Tensor, backend::Backend},
-};
+use burn::{config::Config, module::Module, tensor::Tensor};
 
 /// Residual layer block configuration.
 #[derive(Config, Debug)]
@@ -23,7 +19,7 @@ struct VggBlockConfig {
 
 impl VggBlockConfig {
     /// Initialize a new `LayerBlock` module.
-    fn init<B: Backend>(&self, device: &Device<B>) -> VggBlock<B> {
+    fn init(&self, device: &Device) -> VggBlock {
         let convs = (0..self.num_blocks)
             .map(|b| {
                 let in_channels = if b == 0 {
@@ -46,12 +42,12 @@ impl VggBlockConfig {
 }
 
 #[derive(Module, Debug)]
-struct VggBlock<B: Backend> {
-    convs: Vec<Conv2d<B>>,
+struct VggBlock {
+    convs: Vec<Conv2d>,
 }
 
-impl<B: Backend> VggBlock<B> {
-    pub(crate) fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
+impl VggBlock {
+    pub(crate) fn forward(&self, input: Tensor<4>) -> Tensor<4> {
         let mut cur = input;
         for conv in &self.convs {
             cur = relu(conv.forward(cur));
@@ -61,20 +57,20 @@ impl<B: Backend> VggBlock<B> {
 }
 
 #[derive(Module, Debug)]
-pub struct LpipsModel<B: Backend> {
-    blocks: Vec<VggBlock<B>>,
-    heads: Vec<Conv2d<B>>,
+pub struct LpipsModel {
+    blocks: Vec<VggBlock>,
+    heads: Vec<Conv2d>,
     max_pool: MaxPool2d,
 }
 
-fn norm_vec<B: Backend>(vec: Tensor<B, 4>) -> Tensor<B, 4> {
+fn norm_vec(vec: Tensor<4>) -> Tensor<4> {
     let norm_factor = vec.clone().powi_scalar(2).sum_dim(1).sqrt();
     vec / (norm_factor + 1e-10)
 }
 
-impl<B: Backend> LpipsModel<B> {
+impl LpipsModel {
     /// Calculate the lpips. Imgs are in NCHW order. Inputs should be 0-1 normalised.
-    pub fn lpips(&self, imgs_a: Tensor<B, 4>, imgs_b: Tensor<B, 4>) -> Tensor<B, 1> {
+    pub fn lpips(&self, imgs_a: Tensor<4>, imgs_b: Tensor<4>) -> Tensor<1> {
         let device = imgs_a.device();
 
         // Convert NHWC to NCHW and to [-1, 1].
@@ -82,14 +78,13 @@ impl<B: Backend> LpipsModel<B> {
         let imgs_b = imgs_b.permute([0, 3, 1, 2]) * 2.0 - 1.0;
 
         let shift =
-            Tensor::<B, 1>::from_floats([-0.030, -0.088, -0.188], &device).reshape([1, 3, 1, 1]);
-        let scale =
-            Tensor::<B, 1>::from_floats([0.458, 0.448, 0.450], &device).reshape([1, 3, 1, 1]);
+            Tensor::<1>::from_floats([-0.030, -0.088, -0.188], &device).reshape([1, 3, 1, 1]);
+        let scale = Tensor::<1>::from_floats([0.458, 0.448, 0.450], &device).reshape([1, 3, 1, 1]);
 
         let mut imgs_a = (imgs_a - shift.clone()) / scale.clone();
         let mut imgs_b = (imgs_b - shift) / scale;
 
-        let mut loss = Tensor::<B, 1>::zeros([1], &device);
+        let mut loss = Tensor::<1>::zeros([1], &device);
         for (i, (block, head)) in self.blocks.iter().zip(&self.heads).enumerate() {
             // TODO: concatenating first might be faster.
             if i != 0 {
@@ -113,8 +108,8 @@ impl<B: Backend> LpipsModel<B> {
     }
 }
 
-impl<B: Backend> LpipsModel<B> {
-    pub fn new(device: &B::Device) -> Self {
+impl LpipsModel {
+    pub fn new(device: &Device) -> Self {
         // Could have different variations here but just doing VGG for now.
         let blocks = [
             (2, 3, 64),
@@ -147,10 +142,9 @@ impl<B: Backend> LpipsModel<B> {
     }
 }
 
-pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
+pub fn load_vgg_lpips(device: &Device) -> LpipsModel {
     use burn::record::{BinBytesRecorder, HalfPrecisionSettings, Recorder};
-
-    let model = LpipsModel::<B>::new(device);
+    let model = LpipsModel::new(device);
 
     #[allow(clippy::large_include_file)]
     let bytes = include_bytes!("../burn_mapped.bin");
@@ -165,9 +159,8 @@ pub fn load_vgg_lpips<B: Backend>(device: &B::Device) -> LpipsModel<B> {
 #[cfg(test)]
 mod tests {
     use super::load_vgg_lpips;
-    use burn::backend::Wgpu;
+    use burn::tensor::{Device, Tensor};
     use burn::tensor::{ElementConversion, TensorData};
-    use burn::tensor::{Tensor, backend::Backend};
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[cfg(target_family = "wasm")]
@@ -176,24 +169,24 @@ mod tests {
     static APPLE_PNG: &[u8] = include_bytes!("../apple.png");
     static PEAR_PNG: &[u8] = include_bytes!("../pear.png");
 
-    fn image_to_tensor<B: Backend>(device: &B::Device, img: &image::DynamicImage) -> Tensor<B, 4> {
+    fn image_to_tensor(device: &Device, img: &image::DynamicImage) -> Tensor<4> {
         let rgb_img = img.to_rgb32f();
         let (w, h) = rgb_img.dimensions();
         let data = TensorData::new(rgb_img.into_vec(), [1, h as usize, w as usize, 3]);
         Tensor::from_data(data, device)
     }
 
-    async fn read_scalar<B: Backend>(t: Tensor<B, 1>) -> f32 {
+    async fn read_scalar(t: Tensor<1>) -> f32 {
         t.into_scalar_async().await.expect("readback").elem()
     }
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_structural_properties() {
-        let device = brush_cube::test_helpers::test_device().await;
+        let device: Device = brush_cube::test_helpers::test_device().await.into();
         let image1 = image::load_from_memory(APPLE_PNG).expect("Failed to load apple.png");
         let image2 = image::load_from_memory(PEAR_PNG).expect("Failed to load pear.png");
-        let apple = image_to_tensor::<Wgpu>(&device, &image1);
-        let pear = image_to_tensor::<Wgpu>(&device, &image2);
+        let apple = image_to_tensor(&device, &image1);
+        let pear = image_to_tensor(&device, &image2);
         let model = load_vgg_lpips(&device);
 
         // Identity: LPIPS(x, x) == 0.
@@ -208,11 +201,11 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_matches_pytorch_reference() {
-        let device = brush_cube::test_helpers::test_device().await;
+        let device: Device = brush_cube::test_helpers::test_device().await.into();
         let image1 = image::load_from_memory(APPLE_PNG).expect("Failed to load apple.png");
         let image2 = image::load_from_memory(PEAR_PNG).expect("Failed to load pear.png");
-        let apple = image_to_tensor::<Wgpu>(&device, &image1);
-        let pear = image_to_tensor::<Wgpu>(&device, &image2);
+        let apple = image_to_tensor(&device, &image1);
+        let pear = image_to_tensor(&device, &image2);
         let model = load_vgg_lpips(&device);
         let score = read_scalar(model.lpips(apple, pear)).await;
         assert!(

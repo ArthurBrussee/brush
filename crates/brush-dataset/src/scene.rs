@@ -251,9 +251,13 @@ pub fn sample_to_packed_data(sample: DynamicImage) -> (TensorData, bool) {
         }
         bytes
     };
-    // Reinterpret the `[r g b a r g b a ...]` byte stream as `[u32]` little-endian.
-    // The kernel reads the same way (`val & 0xff` is `r`, `>> 24` is `a`).
-    let packed: Vec<u32> = bytemuck::pod_collect_to_vec(&bytes);
+    // Reinterpret the `[r g b a r g b a ...]` byte stream as `[i32]` little-endian
+    // (i32 bit-pattern same as the underlying u32; we use i32 because the burn
+    // dispatch backend's default int dtype is i32 and refuses to cast u32
+    // values >= 2^31). The kernel reads the same way (`val & 0xff` is `r`,
+    // `>> 24` is `a`) — the signedness only affects the host-side TensorData
+    // metadata, not the GPU bytes.
+    let packed: Vec<i32> = bytemuck::pod_collect_to_vec(&bytes);
     (TensorData::new(packed, [h as usize, w as usize]), has_alpha)
 }
 

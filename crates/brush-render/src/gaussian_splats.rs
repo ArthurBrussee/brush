@@ -1,16 +1,15 @@
 use burn::{
     Tensor,
     module::{Module, Param, ParamId},
-    prelude::Backend,
-    tensor::{TensorData, TensorPrimitive, activation::sigmoid, s},
+    tensor::{Device, Gradients, TensorData, activation::sigmoid, s},
 };
 use clap::ValueEnum;
 use glam::Vec3;
 use tracing::trace_span;
 
 use crate::{
-    RenderAux, SplatOps,
-    burn_glue::FUSION_LOCK,
+    RenderAux,
+    burn_glue::{FUSION_LOCK, unwrap_wgpu_float, wrap_wgpu_float, wrap_wgpu_int},
     camera::Camera,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
@@ -34,10 +33,10 @@ pub enum TextureMode {
 /// `transforms` stores means(3) + rotations(4) + log scales(3) = 10 floats per splat
 /// as a single contiguous [N, 10] tensor to minimize GPU shader bindings.
 #[derive(Module, Debug)]
-pub struct Splats<B: Backend> {
-    pub transforms: Param<Tensor<B, 2>>,
-    pub sh_coeffs: Param<Tensor<B, 3>>,
-    pub raw_opacities: Param<Tensor<B, 1>>,
+pub struct Splats {
+    pub transforms: Param<Tensor<2>>,
+    pub sh_coeffs: Param<Tensor<3>>,
+    pub raw_opacities: Param<Tensor<1>>,
     #[module(skip)]
     pub render_mip: bool,
 }
@@ -46,7 +45,7 @@ pub fn inverse_sigmoid(x: f32) -> f32 {
     (x / (1.0 - x)).ln()
 }
 
-impl<B: Backend> Splats<B> {
+impl Splats {
     pub fn from_raw(
         pos_data: Vec<f32>,
         rot_data: Vec<f32>,
@@ -54,7 +53,7 @@ impl<B: Backend> Splats<B> {
         coeffs_data: Vec<f32>,
         opac_data: Vec<f32>,
         mode: SplatRenderMode,
-        device: &B::Device,
+        device: &Device,
     ) -> Self {
         let _ = trace_span!("Splats::from_raw").entered();
         let n_splats = pos_data.len() / 3;
@@ -87,7 +86,7 @@ impl<B: Backend> Splats<B> {
             let device = coeffs.device();
             let cur = coeffs.dims()[1];
             if cur < n_coeffs {
-                let zeros = Tensor::<B, 3>::zeros([n, n_coeffs - cur, 3], &device);
+                let zeros = Tensor::<3>::zeros([n, n_coeffs - cur, 3], &device);
                 Tensor::cat(vec![coeffs, zeros], 1)
             } else {
                 coeffs.slice(s![.., 0..n_coeffs])
@@ -99,11 +98,11 @@ impl<B: Backend> Splats<B> {
     }
 
     pub fn from_tensor_data(
-        means: Tensor<B, 2>,
-        rotation: Tensor<B, 2>,
-        log_scales: Tensor<B, 2>,
-        sh_coeffs: Tensor<B, 3>,
-        raw_opacity: Tensor<B, 1>,
+        means: Tensor<2>,
+        rotation: Tensor<2>,
+        log_scales: Tensor<2>,
+        sh_coeffs: Tensor<3>,
+        raw_opacity: Tensor<1>,
         mode: SplatRenderMode,
     ) -> Self {
         assert_eq!(means.dims()[1], 3, "Means must be 3D");
@@ -121,25 +120,25 @@ impl<B: Backend> Splats<B> {
     }
 
     /// Get means (positions) — slice of transforms columns 0..3.
-    pub fn means(&self) -> Tensor<B, 2> {
+    pub fn means(&self) -> Tensor<2> {
         self.transforms.val().slice(s![.., 0..3])
     }
 
     /// Get rotation quaternions — slice of transforms columns 3..7.
-    pub fn rotations(&self) -> Tensor<B, 2> {
+    pub fn rotations(&self) -> Tensor<2> {
         self.transforms.val().slice(s![.., 3..7])
     }
 
     /// Get log-space scales — slice of transforms columns 7..10.
-    pub fn log_scales(&self) -> Tensor<B, 2> {
+    pub fn log_scales(&self) -> Tensor<2> {
         self.transforms.val().slice(s![.., 7..10])
     }
 
-    pub fn opacities(&self) -> Tensor<B, 1> {
+    pub fn opacities(&self) -> Tensor<1> {
         sigmoid(self.raw_opacities.val())
     }
 
-    pub fn scales(&self) -> Tensor<B, 2> {
+    pub fn scales(&self) -> Tensor<2> {
         self.log_scales().exp()
     }
 
@@ -152,7 +151,7 @@ impl<B: Backend> Splats<B> {
         sh_degree_from_coeffs(n_coeffs as u32)
     }
 
-    pub fn device(&self) -> B::Device {
+    pub fn device(&self) -> Device {
         self.transforms.device()
     }
 
@@ -214,13 +213,11 @@ impl<B: Backend> Splats<B> {
             );
         }
     }
-}
 
-impl<B: burn::tensor::backend::AutodiffBackend> Splats<B> {
     /// Post-backward variant of `validate_values`, checks that no splat
     /// parameter gradient has a NaN or Inf. Debug-only.
     #[allow(unused_variables)]
-    pub async fn bwd_validate(&self, loss: Tensor<B, 1>) -> B::Gradients {
+    pub async fn bwd_validate(&self, loss: Tensor<1>) -> Gradients {
         let grads = loss.backward();
         #[cfg(any(test, feature = "debug-validation"))]
         let (t, sh, opac) = (
@@ -252,20 +249,20 @@ impl<B: burn::tensor::backend::AutodiffBackend> Splats<B> {
     }
 }
 
-/// Render splats on a non-differentiable backend.
+/// Render splats on a non-differentiable device.
 ///
-/// NB: This doesn't work on a differentiable backend, use
+/// NB: This panics on autodiff-enabled devices; use
 /// `brush_render_bwd::render_splats` for that.
 ///
 /// Takes ownership of the splats. Clone before calling if you need to reuse them.
-pub async fn render_splats<B: Backend + SplatOps<B>>(
-    splats: Splats<B>,
+pub async fn render_splats(
+    splats: Splats,
     camera: &Camera,
     img_size: glam::UVec2,
     background: Vec3,
     splat_scale: Option<f32>,
     texture_mode: TextureMode,
-) -> (Tensor<B, 3>, RenderAux<B>) {
+) -> (Tensor<3>, RenderAux) {
     let _lock = FUSION_LOCK.lock().await;
 
     splats.clone().validate_values().await;
@@ -288,12 +285,16 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
 
     let use_float = matches!(texture_mode, TextureMode::Float);
 
-    let output = B::render(
+    let transforms_p = unwrap_wgpu_float(transforms);
+    let sh_coeffs_p = unwrap_wgpu_float(sh_coeffs);
+    let raw_opacities_p = unwrap_wgpu_float(raw_opacities);
+
+    let output = <crate::MainBackend as crate::SplatOps<crate::MainBackend>>::render(
         camera,
         img_size,
-        transforms.into_primitive().tensor(),
-        sh_coeffs.into_primitive().tensor(),
-        raw_opacities.into_primitive().tensor(),
+        transforms_p,
+        sh_coeffs_p,
+        raw_opacities_p,
         render_mode,
         background,
         use_float,
@@ -302,8 +303,18 @@ pub async fn render_splats<B: Backend + SplatOps<B>>(
 
     output.clone().validate().await;
 
-    (
-        Tensor::from_primitive(TensorPrimitive::Float(output.out_img)),
-        output.aux,
-    )
+    let img_size = output.aux.img_size;
+    let num_visible = output.aux.num_visible;
+    let num_intersections = output.aux.num_intersections;
+
+    let aux = RenderAux {
+        num_visible,
+        num_intersections,
+        visible: wrap_wgpu_float(output.aux.visible),
+        max_radius: wrap_wgpu_float(output.aux.max_radius),
+        tile_offsets: wrap_wgpu_int(output.aux.tile_offsets),
+        img_size,
+    };
+
+    (wrap_wgpu_float(output.out_img), aux)
 }

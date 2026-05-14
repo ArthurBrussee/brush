@@ -1,6 +1,6 @@
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
-    AlphaMode, MainBackend, TextureMode,
+    AlphaMode, TextureMode,
     bounding_box::BoundingBox,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
@@ -9,19 +9,16 @@ use brush_render::{
 use brush_render_bwd::render_splats as render_splats_diff;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
-    backend::{Autodiff, wgpu::WgpuDevice},
     module::AutodiffModule,
-    tensor::{Tensor, TensorData, TensorPrimitive},
+    tensor::{Device, TensorData},
 };
 use glam::{Quat, Vec3};
 use rand::{RngExt, SeedableRng};
 
-type DiffBackend = Autodiff<MainBackend>;
-
 const SEED: u64 = 42;
 const ITERS_PER_SYNC: u32 = 4;
 
-fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
+fn gen_splats(device: &Device, count: usize) -> Splats {
     let mut rng = rand::rngs::StdRng::seed_from_u64(SEED);
 
     let means: Vec<f32> = (0..count)
@@ -89,7 +86,7 @@ fn gen_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
     // Realistic opacity distribution (mostly opaque with some variation)
     let opacities: Vec<f32> = (0..count).map(|_| rng.random_range(0.05..1.0)).collect();
 
-    Splats::<DiffBackend>::from_raw(
+    Splats::from_raw(
         means,
         rotations,
         log_scales,
@@ -107,7 +104,7 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
     let (width, height) = resolution;
     let pixel_count = (width * height) as usize;
 
-    let img_packed_data: Vec<u32> = (0..pixel_count)
+    let img_packed_data: Vec<i32> = (0..pixel_count)
         .map(|i| {
             let x = (i as u32) % width;
             let y = (i as u32) / width;
@@ -120,7 +117,7 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
             let r = mk_byte(nx * 0.6 + 0.2);
             let g = mk_byte(ny * 0.6 + 0.2);
             let b = mk_byte((nx + ny) * 0.3 + 0.4);
-            r | g << 8 | b << 16 | 255 << 24
+            (r | g << 8 | b << 16 | 255 << 24) as i32
         })
         .collect();
 
@@ -147,7 +144,7 @@ fn bench_camera() -> Camera {
 
 /// Run forward rendering loop. Generates splats once, then renders `iters` times.
 pub async fn run_forward_render(
-    device: &WgpuDevice,
+    device: &Device,
     splat_count: usize,
     resolution: (u32, u32),
     iters: u32,
@@ -169,7 +166,7 @@ pub async fn run_forward_render(
 
 /// Run backward rendering loop. Generates splats once, then renders+backward `iters` times.
 pub async fn run_backward_render(
-    device: &WgpuDevice,
+    device: &Device,
     splat_count: usize,
     resolution: (u32, u32),
     iters: u32,
@@ -184,15 +181,13 @@ pub async fn run_backward_render(
             Vec3::ZERO,
         )
         .await;
-        let img: Tensor<DiffBackend, 3> =
-            Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-        let _ = img.mean().backward();
+        let _ = diff_out.img.mean().backward();
     }
 }
 
 /// Run training loop. Generates splats once, then trains `iters` steps.
 pub async fn run_training_steps(
-    device: &WgpuDevice,
+    device: &Device,
     splat_count: usize,
     resolution: (u32, u32),
     iters: u32,
@@ -221,30 +216,29 @@ mod forward_rendering {
     const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
     const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
 
-    use brush_render::MainBackend;
-    use burn::{backend::wgpu::WgpuDevice, prelude::*};
+    use burn::{backend::wgpu::WgpuDevice, prelude::Device};
     use burn_cubecl::cubecl::future::block_on;
 
     use crate::benches::{ITERS_PER_SYNC, run_forward_render};
 
     #[divan::bench(args = SPLAT_COUNTS)]
     fn render_1080p(bencher: divan::Bencher, splat_count: usize) {
-        let device = WgpuDevice::default();
+        let device: Device = WgpuDevice::default().into();
         bencher.bench_local(move || {
             block_on(async {
                 run_forward_render(&device, splat_count, (1920, 1080), ITERS_PER_SYNC).await;
-                MainBackend::sync(&device).expect("Failed to sync");
+                device.sync().expect("Failed to sync");
             });
         });
     }
 
     #[divan::bench(args = RESOLUTIONS)]
     fn render_2m_splats(bencher: divan::Bencher, (width, height): (u32, u32)) {
-        let device = WgpuDevice::default();
+        let device: Device = WgpuDevice::default().into();
         bencher.bench_local(move || {
             block_on(async {
                 run_forward_render(&device, 2_000_000, (width, height), ITERS_PER_SYNC).await;
-                MainBackend::sync(&device).expect("Failed to sync");
+                device.sync().expect("Failed to sync");
             });
         });
     }
@@ -255,30 +249,29 @@ mod forward_rendering {
 mod backward_rendering {
     const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
 
-    use brush_render::MainBackend;
-    use burn::{backend::wgpu::WgpuDevice, prelude::*};
+    use burn::{backend::wgpu::WgpuDevice, prelude::Device};
     use burn_cubecl::cubecl::future::block_on;
 
     use crate::benches::{ITERS_PER_SYNC, run_backward_render};
 
     #[divan::bench(args = [1_000_000, 2_000_000, 5_000_000])]
     fn render_grad_1080p(bencher: divan::Bencher, splat_count: usize) {
-        let device = WgpuDevice::default();
+        let device: Device = WgpuDevice::default().into();
         bencher.bench_local(move || {
             block_on(async {
                 run_backward_render(&device, splat_count, (1920, 1080), ITERS_PER_SYNC).await;
-                MainBackend::sync(&device).expect("Failed to sync");
+                device.sync().expect("Failed to sync");
             });
         });
     }
 
     #[divan::bench(args = RESOLUTIONS)]
     fn render_grad_2m_splats(bencher: divan::Bencher, (width, height): (u32, u32)) {
-        let device = WgpuDevice::default();
+        let device: Device = WgpuDevice::default().into();
         bencher.bench_local(move || {
             block_on(async {
                 run_backward_render(&device, 2_000_000, (width, height), ITERS_PER_SYNC).await;
-                MainBackend::sync(&device).expect("Failed to sync");
+                device.sync().expect("Failed to sync");
             });
         });
     }
@@ -289,18 +282,17 @@ mod backward_rendering {
 mod training {
     const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
 
-    use brush_render::MainBackend;
-    use burn::{backend::wgpu::WgpuDevice, prelude::*};
+    use burn::{backend::wgpu::WgpuDevice, prelude::Device};
     use burn_cubecl::cubecl::future::block_on;
 
     use crate::benches::{ITERS_PER_SYNC, run_training_steps};
 
     #[divan::bench(args = SPLAT_COUNTS)]
     fn train_steps(splat_count: usize) {
-        let device = WgpuDevice::default();
+        let device: Device = WgpuDevice::default().into();
         block_on(async {
             run_training_steps(&device, splat_count, (1920, 1080), ITERS_PER_SYNC).await;
-            MainBackend::sync(&device).expect("Failed to sync");
+            device.sync().expect("Failed to sync");
         });
     }
 }
@@ -318,19 +310,22 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_fwd_render() {
-        let device = brush_cube::test_helpers::test_device().await;
+        let device =
+            burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
         run_forward_render(&device, 500_000, (1920, 1080), ITERS_PER_SYNC).await;
     }
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_bwd_render() {
-        let device = brush_cube::test_helpers::test_device().await;
+        let device =
+            burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
         run_backward_render(&device, 500_000, (1920, 1080), ITERS_PER_SYNC).await;
     }
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_training() {
-        let device = brush_cube::test_helpers::test_device().await;
+        let device =
+            burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
         run_training_steps(&device, 500_000, (1920, 1080), ITERS_PER_SYNC).await;
     }
 }

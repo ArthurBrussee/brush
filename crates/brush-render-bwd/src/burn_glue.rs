@@ -1,6 +1,8 @@
+use brush_render::burn_glue::{
+    AutodiffMain, FUSION_LOCK, unwrap_ad_wgpu_float, wrap_ad_wgpu_float, wrap_wgpu_float,
+};
 use brush_render::{
-    MainBackendBase, SplatOps,
-    burn_glue::FUSION_LOCK,
+    MainBackend, MainBackendBase, SplatOps,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
     sh::sh_coeffs_for_degree,
@@ -8,19 +10,20 @@ use brush_render::{
 };
 use burn::{
     backend::{
-        Autodiff,
         autodiff::{
-            checkpoint::{base::Checkpointer, strategy::CheckpointStrategy},
+            checkpoint::{base::Checkpointer, strategy::NoCheckpointing},
             grads::Gradients,
             ops::{Backward, Ops, OpsKind},
         },
         wgpu::WgpuRuntime,
     },
-    prelude::Backend,
+    module::Param,
     tensor::{
-        DType, Shape, Tensor, TensorMetadata, TensorPrimitive,
-        backend::AutodiffBackend,
-        ops::{FloatTensor, IntTensor},
+        DType, Shape, Tensor,
+        backend::{
+            AutodiffBackend, Backend, FloatTensor, IntTensor, TensorMetadata, TensorPrimitive,
+            extension::{BackendTensor, DispatchTensorKind},
+        },
     },
 };
 use burn_cubecl::fusion::FusionCubeRuntime;
@@ -164,78 +167,102 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
     }
 }
 
-pub struct SplatOutputDiff<B: Backend> {
-    pub img: FloatTensor<B>,
+pub struct SplatOutputDiff {
+    pub img: Tensor<3>,
     pub num_visible: u32,
-    pub visible: FloatTensor<B>,
-    pub max_radius: FloatTensor<B>,
-    pub refine_weight_holder: Tensor<B, 1>,
+    pub visible: Tensor<1>,
+    pub max_radius: Tensor<1>,
+    pub refine_weight_holder: Tensor<1>,
 }
 
-/// Render splats on a differentiable backend.
+/// Lift a non-autodiff `Tensor<D>` (on a Wgpu device) into the autodiff
+/// graph. Equivalent to `Tensor::from_inner` but additionally sets the
+/// `checkpointing` field that upstream burn-dispatch's `from_inner` leaves
+/// at `None`. Without that field set, ops on the resulting tensor hit
+/// `unreachable!("Should only be called with autodiff.")`.
+fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
+    let dispatch = t.into_primitive().tensor();
+    match dispatch.kind {
+        DispatchTensorKind::Wgpu(BackendTensor::Float(inner)) => {
+            wrap_ad_wgpu_float(<AutodiffMain as AutodiffBackend>::from_inner(inner))
+        }
+        // Already autodiff — no-op.
+        DispatchTensorKind::Autodiff(_) => Tensor::from_primitive(TensorPrimitive::Float(dispatch)),
+        _ => panic!("expected Wgpu tensor to lift to autodiff"),
+    }
+}
+
+/// Equivalent to `Module::train()` for [`Splats`], routing through
+/// [`lift_to_autodiff`] so the autodiff `checkpointing` field is set. Use this
+/// instead of `splats.train()` until upstream burn-dispatch fixes `from_inner`.
+pub fn lift_splats_to_autodiff(splats: Splats) -> Splats {
+    let mip = splats.render_mip;
+    let (transforms_id, transforms, _) = splats.transforms.consume();
+    let (sh_coeffs_id, sh_coeffs, _) = splats.sh_coeffs.consume();
+    let (raw_opacity_id, raw_opacity, _) = splats.raw_opacities.consume();
+    Splats {
+        transforms: Param::initialized(transforms_id, lift_to_autodiff(transforms).require_grad()),
+        sh_coeffs: Param::initialized(sh_coeffs_id, lift_to_autodiff(sh_coeffs).require_grad()),
+        raw_opacities: Param::initialized(
+            raw_opacity_id,
+            lift_to_autodiff(raw_opacity).require_grad(),
+        ),
+        render_mip: mip,
+    }
+}
+
+/// Render splats on a differentiable device.
 ///
-/// This is the main entry point for differentiable rendering, wrapping
-/// the forward pass with autodiff support.
-pub async fn render_splats<B, C>(
-    splats: Splats<Autodiff<B, C>>,
+/// Panics if the device is not autodiff-enabled.
+pub async fn render_splats(
+    splats: Splats,
     camera: &Camera,
     img_size: glam::UVec2,
     background: Vec3,
-) -> SplatOutputDiff<Autodiff<B, C>>
-where
-    B: Backend + SplatBwdOps<B>,
-    C: CheckpointStrategy,
-{
+) -> SplatOutputDiff {
     let _lock = FUSION_LOCK.lock().await;
 
     splats.clone().validate_values().await;
 
-    let device = Tensor::<Autodiff<B, C>, 2>::from_primitive(TensorPrimitive::Float(
-        splats.transforms.val().into_primitive().tensor(),
-    ))
-    .device();
-    let refine_weight_holder = Tensor::<Autodiff<B, C>, 1>::zeros([1], &device).require_grad();
+    let device = splats.device();
+    assert!(
+        device.is_autodiff(),
+        "brush_render_bwd::render_splats requires an autodiff-enabled device"
+    );
+
+    let refine_weight_holder = Tensor::<1>::zeros([1], &device).require_grad();
+
+    let transforms_ad = unwrap_ad_wgpu_float(splats.transforms.val());
+    let sh_coeffs_ad = unwrap_ad_wgpu_float(splats.sh_coeffs.val());
+    let raw_opac_ad = unwrap_ad_wgpu_float(splats.raw_opacities.val());
+    let refine_weight_ad = unwrap_ad_wgpu_float(refine_weight_holder.clone());
 
     let prep_nodes = RenderBackwards
-        .prepare::<C>([
-            splats.transforms.val().into_primitive().tensor().node,
-            refine_weight_holder.clone().into_primitive().tensor().node,
-            splats.sh_coeffs.val().into_primitive().tensor().node,
-            splats.raw_opacities.val().into_primitive().tensor().node,
+        .prepare::<NoCheckpointing>([
+            transforms_ad.node.clone(),
+            refine_weight_ad.node.clone(),
+            sh_coeffs_ad.node.clone(),
+            raw_opac_ad.node.clone(),
         ])
         .compute_bound()
         .stateful();
-
-    let sh_coeffs = splats
-        .sh_coeffs
-        .val()
-        .into_primitive()
-        .tensor()
-        .into_primitive();
-    let raw_opacity = splats
-        .raw_opacities
-        .val()
-        .into_primitive()
-        .tensor()
-        .into_primitive();
-    let transforms = splats
-        .transforms
-        .val()
-        .into_primitive()
-        .tensor()
-        .into_primitive();
 
     let render_mode = if splats.render_mip {
         SplatRenderMode::Mip
     } else {
         SplatRenderMode::Default
     };
-    let output = <B as SplatOps<B>>::render(
+
+    let transforms_inner: FloatTensor<MainBackend> = transforms_ad.primitive.clone();
+    let sh_inner: FloatTensor<MainBackend> = sh_coeffs_ad.primitive;
+    let raw_opac_inner: FloatTensor<MainBackend> = raw_opac_ad.primitive.clone();
+
+    let output = <MainBackend as SplatOps<MainBackend>>::render(
         camera,
         img_size,
-        transforms.clone(),
-        sh_coeffs,
-        raw_opacity.clone(),
+        transforms_inner.clone(),
+        sh_inner,
+        raw_opac_inner.clone(),
         render_mode,
         background,
         true,
@@ -244,11 +271,15 @@ where
 
     output.clone().validate().await;
 
-    match prep_nodes {
+    let num_visible = output.aux.num_visible;
+    let visible_inner = output.aux.visible.clone();
+    let max_radius_inner = output.aux.max_radius.clone();
+
+    let img_ad: FloatTensor<AutodiffMain> = match prep_nodes {
         OpsKind::Tracked(prep) => {
             let state = GaussianBackwardState {
-                transforms,
-                raw_opacity,
+                transforms: transforms_inner,
+                raw_opacity: raw_opac_inner,
                 out_img: output.out_img.clone(),
                 projected_splats: output.projected_splats,
                 project_uniforms: output.project_uniforms,
@@ -259,28 +290,17 @@ where
                 background,
                 img_size,
             };
-
-            SplatOutputDiff {
-                img: prep.finish(state, output.out_img),
-                num_visible: output.aux.num_visible,
-                visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(
-                    output.aux.visible.clone(),
-                ),
-                max_radius: <Autodiff<B, C> as AutodiffBackend>::from_inner(
-                    output.aux.max_radius.clone(),
-                ),
-                refine_weight_holder,
-            }
+            prep.finish(state, output.out_img)
         }
-        OpsKind::UnTracked(prep) => SplatOutputDiff {
-            img: prep.finish(output.out_img),
-            num_visible: output.aux.num_visible,
-            visible: <Autodiff<B, C> as AutodiffBackend>::from_inner(output.aux.visible.clone()),
-            max_radius: <Autodiff<B, C> as AutodiffBackend>::from_inner(
-                output.aux.max_radius.clone(),
-            ),
-            refine_weight_holder,
-        },
+        OpsKind::UnTracked(prep) => prep.finish(output.out_img),
+    };
+
+    SplatOutputDiff {
+        img: wrap_ad_wgpu_float(img_ad),
+        num_visible,
+        visible: Tensor::from_inner(wrap_wgpu_float(visible_inner)),
+        max_radius: Tensor::from_inner(wrap_wgpu_float(max_radius_inner)),
+        refine_weight_holder,
     }
 }
 

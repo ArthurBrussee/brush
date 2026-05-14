@@ -1,24 +1,16 @@
 use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
 use brush_loss::{ImageLossConfig, image_loss};
-use brush_render::{MainBackend, gaussian_splats::Splats};
+use brush_render::gaussian_splats::Splats;
 use brush_render_bwd::render_splats;
 use burn::{
-    backend::Autodiff,
     prelude::Module,
-    tensor::{Int, Tensor, TensorData, TensorPrimitive, ops::IntTensorOps, s},
+    tensor::{Device, Int, Tensor, TensorData, s},
 };
-use burn_cubecl::cubecl::wgpu::WgpuDevice;
 use glam::Vec3;
-
-type DiffBackend = Autodiff<MainBackend>;
 
 /// Decimate splats to `target_count` using pre-computed per-Gaussian scores.
 /// Higher scores are considered more important and kept.
-pub async fn decimate_to_count(
-    mut splats: Splats<MainBackend>,
-    scores: &[f32],
-    target_count: u32,
-) -> Splats<MainBackend> {
+pub async fn decimate_to_count(mut splats: Splats, scores: &[f32], target_count: u32) -> Splats {
     let num = splats.num_splats();
     if target_count >= num {
         return splats;
@@ -84,12 +76,12 @@ fn log_det_6x6(m: &[f32; 36]) -> f32 {
 /// the per-Gaussian Hessian approximation `H_i = sum(J_i * J_i^T)` where `J_i` is
 /// the 6-element gradient vector `[d_mean, d_log_scale]`. The score is `log|det(H_i)|`.
 pub async fn compute_pup_scores(
-    splats: Splats<MainBackend>,
+    splats: Splats,
     scene: &brush_dataset::scene::Scene,
-    device: &WgpuDevice,
+    device: &Device,
 ) -> Vec<f32> {
     let num_splats = splats.num_splats() as usize;
-    let mut hessian_accum: Tensor<MainBackend, 3> = Tensor::zeros([num_splats, 6, 6], device);
+    let mut hessian_accum: Tensor<3> = Tensor::zeros([num_splats, 6, 6], device);
 
     for (vi, view) in scene.views.iter().enumerate() {
         log::info!("PUP scoring: view {}/{}", vi + 1, scene.views.len());
@@ -103,18 +95,13 @@ pub async fn compute_pup_scores(
         let img_size = glam::uvec2(sample.width(), sample.height());
         let (gt_data, _has_alpha) = sample_to_packed_data(sample);
 
-        let mut splats: Splats<DiffBackend> = splats.clone().train();
-        splats.transforms = splats
-            .transforms
-            .map(|t: Tensor<DiffBackend, 2>| t.require_grad());
+        let mut splats: Splats = splats.clone().train();
+        splats.transforms = splats.transforms.map(|t: Tensor<2>| t.require_grad());
 
         let diff_out = render_splats(splats.clone(), &view.camera, img_size, Vec3::ZERO).await;
-        let pred_image: Tensor<DiffBackend, 3> =
-            Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-        let pred_rgb = pred_image.slice(s![.., .., 0..3]);
+        let pred_rgb = diff_out.img.slice(s![.., .., 0..3]);
 
-        let gt_packed: Tensor<MainBackend, 2, Int> =
-            Tensor::new(MainBackend::int_from_data(gt_data, device));
+        let gt_packed: Tensor<2, Int> = Tensor::from_data(gt_data, device);
         let l1_cfg = ImageLossConfig {
             l1_weight: 1.0,
             ssim_weight: 0.0,

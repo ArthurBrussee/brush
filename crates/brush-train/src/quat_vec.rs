@@ -1,10 +1,7 @@
-use burn::{prelude::Backend, tensor::Tensor};
+use burn::tensor::Tensor;
 
 // TODO: Make a cube kernel.
-pub(crate) fn quaternion_vec_multiply<B: Backend>(
-    quaternions: Tensor<B, 2>,
-    vectors: Tensor<B, 2>,
-) -> Tensor<B, 2> {
+pub(crate) fn quaternion_vec_multiply(quaternions: Tensor<2>, vectors: Tensor<2>) -> Tensor<2> {
     let num_points = quaternions.dims()[0];
 
     // Extract components
@@ -49,7 +46,7 @@ pub(crate) fn quaternion_vec_multiply<B: Backend>(
 
 #[cfg(test)]
 mod tests {
-    use burn::{backend::Wgpu, tensor::Tensor};
+    use burn::tensor::Tensor;
     use glam::Quat;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -64,10 +61,10 @@ mod tests {
         let vec = glam::vec3(0.5, 0.7, 0.1);
         let result_ref = quat * vec;
 
-        let device = brush_cube::test_helpers::test_device().await;
-        let quaternions = Tensor::<Wgpu, 1>::from_floats([quat.w, quat.x, quat.y, quat.z], &device)
-            .reshape([1, 4]);
-        let vecs = Tensor::<Wgpu, 1>::from_floats([vec.x, vec.y, vec.z], &device).reshape([1, 3]);
+        let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
+        let quaternions =
+            Tensor::<1>::from_floats([quat.w, quat.x, quat.y, quat.z], &device).reshape([1, 4]);
+        let vecs = Tensor::<1>::from_floats([vec.x, vec.y, vec.z], &device).reshape([1, 3]);
         let result = quaternion_vec_multiply(quaternions, vecs);
         let result: Vec<f32> = result
             .into_data_async()

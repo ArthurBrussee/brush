@@ -1,10 +1,10 @@
-use burn::{prelude::Backend, tensor::Tensor};
+use burn::tensor::Tensor;
 
 /// Scan a tensor for NaN / Inf and out-of-range values. Logs range
 /// violations; under `cfg(test)` / `debug-validation` NaN and Inf are
 /// promoted to hard panics so CI surfaces them.
-pub async fn validate_tensor_val<B: Backend, const D: usize>(
-    tensor: Tensor<B, D>,
+pub async fn validate_tensor_val<const D: usize>(
+    tensor: Tensor<D>,
     name: &str,
     min_val: Option<f32>,
     max_val: Option<f32>,
@@ -80,6 +80,6 @@ pub async fn validate_tensor_val<B: Backend, const D: usize>(
     }
 }
 
-pub async fn validate_gradient<B: Backend, const D: usize>(gradient: Tensor<B, D>, name: &str) {
+pub async fn validate_gradient<const D: usize>(gradient: Tensor<D>, name: &str) {
     validate_tensor_val(gradient, &format!("gradient_{name}"), None, None).await;
 }

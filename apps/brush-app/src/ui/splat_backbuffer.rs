@@ -1,7 +1,7 @@
 use brush_async::Actor;
 use brush_process::slot::Slot;
 use brush_render::{
-    MainBackend, MainBackendBase, TextureMode, camera::Camera, gaussian_splats::Splats,
+    TextureMode, burn_glue::resolve_to_cube_float, camera::Camera, gaussian_splats::Splats,
     render_splats,
 };
 use burn::tensor::Tensor;
@@ -13,7 +13,7 @@ use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 
 #[derive(Clone)]
 struct RenderRequest {
-    splats: Slot<Splats<MainBackend>>,
+    splats: Slot<Splats>,
     ctx: egui::Context,
     state: LastRenderState,
 }
@@ -29,8 +29,8 @@ struct LastRenderState {
 
 pub struct SplatBackbuffer {
     req_send: mpsc::UnboundedSender<RenderRequest>,
-    img_rec: mpsc::Receiver<Tensor<MainBackend, 3>>,
-    last_image: Option<Tensor<MainBackend, 3>>,
+    img_rec: mpsc::Receiver<Tensor<3>>,
+    last_image: Option<Tensor<3>>,
     last_state: Option<LastRenderState>,
 }
 
@@ -65,7 +65,7 @@ impl SplatBackbuffer {
         &mut self,
         rect: Rect,
         ui: &egui::Ui,
-        splats: &Slot<Splats<MainBackend>>,
+        splats: &Slot<Splats>,
         camera: &Camera,
         frame: usize,
         background: Vec3,
@@ -225,7 +225,7 @@ impl SplatBackbufferResources {
 }
 
 struct SplatBackbufferPainter {
-    last_img: Tensor<MainBackend, 3>,
+    last_img: Tensor<3>,
     img_width: u32,
     img_height: u32,
 }
@@ -254,11 +254,7 @@ impl CallbackTrait for SplatBackbufferPainter {
         );
 
         // Extract the wgpu buffer from the Burn tensor
-        let last_img = self.last_img.clone().into_primitive().tensor();
-        let prim_tensor = last_img
-            .client
-            .clone()
-            .resolve_tensor_int::<MainBackendBase>(last_img);
+        let prim_tensor = resolve_to_cube_float(self.last_img.clone());
         let img_res_handle = prim_tensor
             .client
             .get_resource(prim_tensor.handle)
@@ -307,7 +303,7 @@ impl CallbackTrait for SplatBackbufferPainter {
 /// Async render worker that processes render requests.
 async fn render_worker(
     mut receiver: mpsc::UnboundedReceiver<RenderRequest>,
-    img_sender: mpsc::Sender<Tensor<MainBackend, 3>>,
+    img_sender: mpsc::Sender<Tensor<3>>,
 ) {
     loop {
         // Wait for at least one request and get latest.

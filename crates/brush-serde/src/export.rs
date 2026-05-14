@@ -2,7 +2,6 @@ use std::vec;
 
 use brush_render::gaussian_splats::Splats;
 use brush_render::sh::sh_coeffs_for_degree;
-use burn::prelude::Backend;
 use burn::tensor::Transaction;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
@@ -80,7 +79,7 @@ struct DynamicPly {
     vertex: Vec<DynamicPlyGaussian>,
 }
 
-async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<DynamicPly, ExportError> {
+async fn read_splat_data(splats: Splats) -> Result<DynamicPly, ExportError> {
     let data = Transaction::default()
         .register(splats.transforms.val())
         .register(splats.raw_opacities.val())
@@ -177,7 +176,7 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> Result<DynamicPly, Ex
     Ok(DynamicPly { vertex: vertices })
 }
 
-pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, ExportError> {
+pub async fn splat_to_ply(splats: Splats) -> Result<Vec<u8>, ExportError> {
     let sh_degree = splats.sh_degree();
     let ply = read_splat_data(splats.clone()).await?;
 
@@ -200,7 +199,7 @@ mod tests {
     use super::*;
     use crate::import::load_splat_from_ply;
     use crate::test_utils::create_test_splats;
-    use brush_render::MainBackend;
+
     use brush_render::gaussian_splats::SplatRenderMode;
     use std::io::Cursor;
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -208,7 +207,7 @@ mod tests {
     #[cfg(target_family = "wasm")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    async fn assert_coeffs_match(orig: &Splats<MainBackend>, imported: &Splats<MainBackend>) {
+    async fn assert_coeffs_match(orig: &Splats, imported: &Splats) {
         let orig_sh: Vec<f32> = orig
             .sh_coeffs
             .val()
@@ -285,7 +284,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_roundtrip_sh_coefficient_ordering() {
-        let device = brush_cube::test_helpers::test_device().await;
+        let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
 
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);
@@ -310,7 +309,7 @@ mod tests {
     async fn test_export_roundtrip_multiple_splats() {
         use crate::test_utils::create_test_splats_with_count;
 
-        let device = brush_cube::test_helpers::test_device().await;
+        let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
         let num_splats = 100;
 
         for degree in [0, 1, 2, 3] {

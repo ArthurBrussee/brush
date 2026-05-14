@@ -18,6 +18,10 @@ use tokio::task::AbortHandle;
 type Setup = Box<dyn FnOnce() + Send + 'static>;
 
 /// Single-threaded pinned async executor. See crate docs for rationale.
+///
+/// `Actor` is itself a cheap handle: cloning it shares the underlying thread
+/// and runtime. The thread exits when the last clone is dropped.
+#[derive(Clone)]
 pub struct Actor {
     tx: mpsc::UnboundedSender<Setup>,
 }

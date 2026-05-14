@@ -37,6 +37,7 @@ rerun = { workspace = true }
 [dev-dependencies]
 brush-async = { path = "../brush-async" }
 brush-cube = { path = "../brush-cube" }
+bytemuck.workspace = true
 wasm-bindgen-test = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]

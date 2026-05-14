@@ -1,14 +1,8 @@
 use brush_render::{
-    MainBackend,
     camera::{Camera, focal_to_fov, fov_to_focal},
     gaussian_splats::Splats,
 };
-use burn::{
-    Tensor,
-    backend::Autodiff,
-    prelude::Backend,
-    tensor::{TensorPrimitive, s},
-};
+use burn::{Tensor, tensor::s};
 
 use anyhow::{Context, Result};
 use glam::Vec3;
@@ -20,18 +14,16 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 use crate::safetensor_utils::{safetensor_to_burn, splats_from_safetensors};
 
-type DiffBack = Autodiff<MainBackend>;
-
 static CRAB_PNG: &[u8] = include_bytes!("../test_cases/crab.png");
 static TINY_CASE: &[u8] = include_bytes!("../test_cases/tiny_case.safetensors");
 static BASIC_CASE: &[u8] = include_bytes!("../test_cases/basic_case.safetensors");
 #[allow(clippy::large_include_file)] // It's fine, just for a test, not the final binary.
 static MIX_CASE: &[u8] = include_bytes!("../test_cases/mix_case.safetensors");
 
-async fn compare<B: Backend, const D1: usize>(
+async fn compare<const D1: usize>(
     name: &str,
-    tensor_a: Tensor<B, D1>,
-    tensor_b: Tensor<B, D1>,
+    tensor_a: Tensor<D1>,
+    tensor_b: Tensor<D1>,
     atol: f32,
     rtol: f32,
 ) {
@@ -85,12 +77,13 @@ async fn test_reference() -> Result<()> {
             .try_init();
     }
 
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
 
     let crab_img = image::load_from_memory(CRAB_PNG)?;
 
     let raw_buffer = crab_img.to_rgb8().into_raw();
-    let crab_tens: Tensor<DiffBack, 3> = Tensor::<_, 1>::from_floats(
+    let crab_tens: Tensor<3> = Tensor::<1>::from_floats(
         raw_buffer
             .iter()
             .map(|&b| b as f32 / 255.0)
@@ -131,9 +124,9 @@ async fn test_reference() -> Result<()> {
         log::info!("Checking path {path}");
 
         let tensors = SafeTensors::deserialize(data)?;
-        let splats: Splats<DiffBack> = splats_from_safetensors(&tensors, &device)?;
+        let splats: Splats = splats_from_safetensors(&tensors, &device)?;
 
-        let img_ref = safetensor_to_burn::<DiffBack, 3>(&tensors.tensor("out_img")?, &device);
+        let img_ref = safetensor_to_burn::<3>(&tensors.tensor("out_img")?, &device);
         let [h, w, _] = img_ref.dims();
 
         let fov = std::f64::consts::PI * 0.5;
@@ -158,7 +151,7 @@ async fn test_reference() -> Result<()> {
         )
         .await;
 
-        let out: Tensor<DiffBack, 3> = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
+        let out: Tensor<3> = diff_out.img;
 
         #[cfg(not(target_family = "wasm"))]
         if let Some(rec) = rec.as_ref() {
@@ -181,8 +174,7 @@ async fn test_reference() -> Result<()> {
             .mean()
             .backward();
 
-        let v_coeffs_ref =
-            safetensor_to_burn::<DiffBack, 3>(&tensors.tensor("v_coeffs")?, &device).inner();
+        let v_coeffs_ref = safetensor_to_burn::<3>(&tensors.tensor("v_coeffs")?, &device).inner();
         let v_coeffs = splats.sh_coeffs.grad(&grads).context("coeffs grad")?;
         let [n, c, _] = v_coeffs.dims();
         let v_coeffs_ref = v_coeffs_ref.slice(s![0..n, 0..c]);
@@ -191,22 +183,19 @@ async fn test_reference() -> Result<()> {
         let v_transforms = splats.transforms.grad(&grads).context("transforms grad")?;
         // Slice transforms gradient: means(0..3), quats(3..7), log_scales(7..10)
         let v_means = v_transforms.clone().slice(s![.., 0..3]);
-        let v_means_ref =
-            safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_means")?, &device).inner();
+        let v_means_ref = safetensor_to_burn::<2>(&tensors.tensor("v_means")?, &device).inner();
         compare("v_means", v_means, v_means_ref, 1e-5, 1e-7).await;
 
         let v_quats = v_transforms.clone().slice(s![.., 3..7]);
-        let v_quats_ref =
-            safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_quats")?, &device).inner();
+        let v_quats_ref = safetensor_to_burn::<2>(&tensors.tensor("v_quats")?, &device).inner();
         compare("v_quats", v_quats, v_quats_ref, 1e-5, 1e-7).await;
 
         let v_scales = v_transforms.slice(s![.., 7..10]);
-        let v_scales_ref =
-            safetensor_to_burn::<DiffBack, 2>(&tensors.tensor("v_scales")?, &device).inner();
+        let v_scales_ref = safetensor_to_burn::<2>(&tensors.tensor("v_scales")?, &device).inner();
         compare("v_scales", v_scales, v_scales_ref, 1e-5, 1e-7).await;
 
         let v_opacities_ref =
-            safetensor_to_burn::<DiffBack, 1>(&tensors.tensor("v_opacities")?, &device).inner();
+            safetensor_to_burn::<1>(&tensors.tensor("v_opacities")?, &device).inner();
         let v_opacities = splats
             .raw_opacities
             .grad(&grads)

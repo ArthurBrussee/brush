@@ -14,10 +14,8 @@ mod visualize_tools_impl {
     use brush_render::shaders::SH_C0;
     use brush_train::eval::EvalSample;
     use brush_train::msg::{RefineStats, TrainStepStats};
-    use burn::prelude::Backend;
-    use burn::tensor::backend::AutodiffBackend;
+    use burn::tensor::ElementConversion;
     use burn::tensor::{DType, TensorData, s};
-    use burn::tensor::{ElementConversion, activation::sigmoid};
 
     use anyhow::Result;
 
@@ -45,7 +43,7 @@ mod visualize_tools_impl {
         }
 
         #[allow(unused_variables)]
-        pub async fn log_splats<B: Backend>(&self, iter: u32, splats: Splats<B>) -> Result<()> {
+        pub async fn log_splats(&self, iter: u32, splats: Splats) -> Result<()> {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
 
@@ -137,12 +135,7 @@ mod visualize_tools_impl {
         }
 
         #[allow(unused_variables)]
-        pub async fn log_eval_sample<B: Backend>(
-            &self,
-            iter: u32,
-            index: u32,
-            eval: EvalSample<B>,
-        ) -> Result<()> {
+        pub async fn log_eval_sample(&self, iter: u32, index: u32, eval: EvalSample) -> Result<()> {
             if self.rec.is_enabled() {
                 fn tensor_into_image(data: TensorData) -> image::DynamicImage {
                     let [h, w, c] = [data.shape[0], data.shape[1], data.shape[2]];
@@ -291,10 +284,7 @@ mod visualize_tools_impl {
     use brush_render::gaussian_splats::Splats;
     use brush_train::eval::EvalSample;
     use brush_train::msg::{RefineStats, TrainStepStats};
-    use burn::prelude::Backend;
-    use burn::tensor::backend::AutodiffBackend;
     use burn::tensor::{DType, TensorData};
-    use burn::tensor::{ElementConversion, activation::sigmoid};
 
     use super::VisualizeTools;
     use anyhow::Result;
@@ -305,7 +295,7 @@ mod visualize_tools_impl {
             Self {}
         }
 
-        pub async fn log_splats<B: Backend>(&self, _iter: u32, _splats: Splats<B>) -> Result<()> {
+        pub async fn log_splats(&self, _iter: u32, _splats: Splats) -> Result<()> {
             Ok(())
         }
 
@@ -321,11 +311,11 @@ mod visualize_tools_impl {
             Ok(())
         }
 
-        pub async fn log_eval_sample<B: Backend>(
+        pub async fn log_eval_sample(
             &self,
             _iter: u32,
             _index: u32,
-            _eval: EvalSample<B>,
+            _eval: EvalSample,
         ) -> Result<()> {
             Ok(())
         }

@@ -1,11 +1,11 @@
 use anyhow::Result;
 use brush_async::Actor;
 use brush_process::{RunningProcess, message::ProcessMessage, slot::Slot};
-use brush_render::{MainBackend, camera::Camera, gaussian_splats::Splats};
+use brush_render::{camera::Camera, gaussian_splats::Splats};
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
 use glam::{Affine3A, Quat, Vec3};
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 
@@ -19,7 +19,7 @@ enum ControlMessage {
 struct ProcessHandle {
     messages: mpsc::UnboundedReceiver<anyhow::Result<ProcessMessage>>,
     control: mpsc::UnboundedSender<ControlMessage>,
-    splat_view: Slot<Splats<MainBackend>>,
+    splat_view: Slot<Splats>,
 }
 
 /// A thread-safe wrapper around the UI process.
@@ -44,7 +44,7 @@ pub struct TexHandle {
 
 impl UiProcess {
     pub fn new(dev: WgpuDevice, ui_ctx: egui::Context) -> Self {
-        let actor = Arc::new(Actor::new("ui-process"));
+        let actor = Actor::new("ui-process");
         Self(RwLock::new(UiProcessInner::new(dev, ui_ctx, actor)))
     }
 
@@ -65,7 +65,7 @@ impl UiProcess {
         self.write().background_style = style;
     }
 
-    pub(crate) fn current_splats(&self) -> Slot<Splats<MainBackend>> {
+    pub(crate) fn current_splats(&self) -> Slot<Splats> {
         self.read()
             .process_handle
             .as_ref()
@@ -316,7 +316,7 @@ impl UiProcess {
         self.read().burn_device.clone()
     }
 
-    pub(crate) fn actor(&self) -> Arc<Actor> {
+    pub(crate) fn actor(&self) -> Actor {
         self.read().actor.clone()
     }
 }
@@ -336,11 +336,11 @@ struct UiProcessInner {
     session_reset_requested: bool,
     ui_ctx: egui::Context,
     burn_device: WgpuDevice,
-    actor: Arc<Actor>,
+    actor: Actor,
 }
 
 impl UiProcessInner {
-    pub fn new(burn_device: WgpuDevice, ui_ctx: egui::Context, actor: Arc<Actor>) -> Self {
+    pub fn new(burn_device: WgpuDevice, ui_ctx: egui::Context, actor: Actor) -> Self {
         let position = -Vec3::Z * 2.5;
         let rotation = Quat::IDENTITY;
 
