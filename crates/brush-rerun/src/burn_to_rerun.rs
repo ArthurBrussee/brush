@@ -1,7 +1,4 @@
-use burn::{
-    prelude::Backend,
-    tensor::{Bool, Int, Tensor},
-};
+use burn::tensor::{Bool, Int, Tensor};
 use burn_cubecl::cubecl::future::block_on;
 use rerun::{ChannelDatatype, ColorModel};
 
@@ -9,7 +6,7 @@ trait BurnToRerunData {
     fn into_rerun_data(self) -> impl Future<Output = rerun::TensorData>;
 }
 
-impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D> {
+impl<const D: usize> BurnToRerunData for Tensor<D> {
     async fn into_rerun_data(self) -> rerun::TensorData {
         rerun::TensorData::new(
             self.dims().map(|x| x as u64).to_vec(),
@@ -25,7 +22,7 @@ impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D> {
     }
 }
 
-impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D, Int> {
+impl<const D: usize> BurnToRerunData for Tensor<D, Int> {
     async fn into_rerun_data(self) -> rerun::TensorData {
         rerun::TensorData::new(
             self.dims().map(|x| x as u64).to_vec(),
@@ -41,7 +38,7 @@ impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D, Int> {
     }
 }
 
-impl<B: Backend, const D: usize> BurnToRerunData for Tensor<B, D, Bool> {
+impl<const D: usize> BurnToRerunData for Tensor<D, Bool> {
     async fn into_rerun_data(self) -> rerun::TensorData {
         rerun::TensorData::new(
             self.dims().map(|x| x as u64).to_vec(),
@@ -79,7 +76,7 @@ pub trait BurnToImage: Sized {
     }
 }
 
-impl<B: Backend> BurnToImage for Tensor<B, 3> {
+impl BurnToImage for Tensor<3> {
     async fn into_rerun_image(self) -> rerun::Image {
         let [h, w, c] = self.dims();
         let color_model = if c == 3 {
@@ -101,7 +98,7 @@ impl<B: Backend> BurnToImage for Tensor<B, 3> {
 }
 
 // Assume int images encode u8 data.
-impl<B: Backend> BurnToImage for Tensor<B, 3, Int> {
+impl BurnToImage for Tensor<3, Int> {
     async fn into_rerun_image(self) -> rerun::Image {
         let [h, w, c] = self.dims();
         let color_model = if c == 3 {

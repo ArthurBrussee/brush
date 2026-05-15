@@ -1,5 +1,5 @@
 use crate::{
-    MainBackendBase, RenderAux, SplatOps,
+    MainBackendBase, RenderAuxInner, SplatOps,
     camera::Camera,
     dim_check::DimCheck,
     gaussian_splats::SplatRenderMode,
@@ -13,8 +13,11 @@ use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
-use burn::tensor::ops::{FloatTensor, FloatTensorOps, IntTensorOps};
-use burn::tensor::{DType, FloatDType, Int, IntDType, Tensor, TensorMetadata, Transaction};
+use burn::backend::TensorMetadata;
+use burn::backend::ops::TransactionPrimitive;
+use burn::backend::ops::{FloatTensorOps, IntTensorOps, TransactionOps};
+use burn::backend::tensor::FloatTensor;
+use burn::tensor::{DType, FloatDType, IntDType};
 use burn_cubecl::cubecl::CubeDim;
 use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
@@ -185,16 +188,20 @@ impl SplatOps<Self> for MainBackendBase {
         let (num_visible, num_intersections) = if total_splats == 0 {
             (0, 0)
         } else {
-            let data = Transaction::default()
-                .register(Tensor::<Self, 1, Int>::from_primitive(num_visible_buf))
-                .register(Tensor::<Self, 1, Int>::from_primitive(
-                    num_intersections_buf,
-                ))
-                .execute_async()
+            let tp = TransactionPrimitive::<Self>::new(
+                vec![],
+                vec![],
+                vec![num_visible_buf, num_intersections_buf],
+                vec![],
+            );
+            let data = <Self as TransactionOps<Self>>::tr_execute(tp)
                 .await
                 .expect("Failed to read counts");
-            let num_visible = data[0].clone().into_vec::<u32>().expect("num_visible")[0];
-            let num_intersections = data[1]
+            let num_visible = data.read_ints[0]
+                .clone()
+                .into_vec::<u32>()
+                .expect("num_visible")[0];
+            let num_intersections = data.read_ints[1]
                 .clone()
                 .into_vec::<u32>()
                 .expect("num_intersections")[0];
@@ -351,7 +358,7 @@ impl SplatOps<Self> for MainBackendBase {
         });
         RenderOutput {
             out_img,
-            aux: RenderAux {
+            aux: RenderAuxInner {
                 num_visible,
                 num_intersections,
                 visible,

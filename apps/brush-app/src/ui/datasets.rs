@@ -8,20 +8,13 @@ use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::AlphaMode;
 use egui::{Color32, Rect, Slider, TextureOptions, pos2};
 
-use brush_async::{Actor, JoinHandle};
-use tokio::sync::watch::Sender;
+use brush_async::{Actor, AsyncMap};
 
 use crate::ui::{
     UiMode, draw_checkerboard,
     panels::AppPane,
     ui_process::{BackgroundStyle, TexHandle, UiProcess},
 };
-
-#[derive(Clone)]
-pub struct SelectedView {
-    pub view: Option<SceneView>,
-    pub tex: tokio::sync::watch::Receiver<Option<TexHandle>>,
-}
 
 fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
     match t {
@@ -39,28 +32,73 @@ fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
 pub struct DatasetPanel {
     view_type: ViewType,
     cur_dataset: Dataset,
-    selected_view: Option<SelectedView>,
-    sender: Option<Sender<Option<TexHandle>>>,
-    // Long-lived worker for image-preview decodes.
-    loader_actor: Actor,
-    // Tracks the latest decode so we can `abort()` it when the user
-    // picks a different view, and ask `is_finished()` for the spinner.
-    loading_task: Option<JoinHandle<()>>,
+
     current_view_index: Cell<Option<usize>>,
     loading_start: Option<web_time::Instant>,
+
+    tex_map: AsyncMap<(SceneView, egui::Context), (SceneView, TexHandle)>,
 }
 
 impl Default for DatasetPanel {
     fn default() -> Self {
-        let (sender, tex) = tokio::sync::watch::channel(None);
+        let pipe = AsyncMap::new(
+            Actor::new("dataset-preview"),
+            async move |(view, ctx): &(SceneView, egui::Context)| {
+                let image = view
+                    .image
+                    .load()
+                    .await
+                    .expect("Failed to load dataset image");
+
+                let has_alpha = image.color().has_alpha();
+                let img_size = [image.width() as usize, image.height() as usize];
+
+                // Create blurred background: downscale 32x then blur
+                let bg_width = (image.width() / 32).max(1);
+                let bg_height = (image.height() / 32).max(1);
+                let blurred = image
+                    .resize(bg_width, bg_height, image::imageops::FilterType::Triangle)
+                    .blur(6.0);
+
+                brush_async::yield_now().await;
+
+                let blurred_size = [blurred.width() as usize, blurred.height() as usize];
+                let blurred_img =
+                    egui::ColorImage::from_rgb(blurred_size, &blurred.into_rgb8().into_vec());
+
+                brush_async::yield_now().await;
+
+                let color_img = if has_alpha {
+                    let data = image.into_rgba8().into_vec();
+                    egui::ColorImage::from_rgba_unmultiplied(img_size, &data)
+                } else {
+                    egui::ColorImage::from_rgb(img_size, &image.into_rgb8().into_vec())
+                };
+
+                let image_name = view.image.img_name();
+                let egui_handle =
+                    ctx.load_texture(image_name, color_img, TextureOptions::default());
+                let blurred_handle = ctx.load_texture(
+                    format!("{}_blurred", view.image.img_name()),
+                    blurred_img,
+                    TextureOptions::default(),
+                );
+                brush_async::yield_now().await;
+
+                let handle = TexHandle {
+                    handle: egui_handle,
+                    has_alpha,
+                    blurred_bg: Some(blurred_handle),
+                };
+                (view.clone(), handle)
+            },
+            |req| req.1.request_repaint(),
+        );
 
         Self {
             view_type: ViewType::Train,
             cur_dataset: Dataset::empty(),
-            loader_actor: Actor::new("dataset-preview"),
-            loading_task: None,
-            sender: Some(sender),
-            selected_view: Some(SelectedView { view: None, tex }),
+            tex_map: pipe,
             current_view_index: Cell::new(None),
             loading_start: None,
         }
@@ -69,84 +107,8 @@ impl Default for DatasetPanel {
 
 impl DatasetPanel {
     pub fn set_selected_view(&mut self, view: &SceneView, ctx: &egui::Context) {
-        let Some(sender) = self.sender.clone() else {
-            return;
-        };
-
-        let view_send = view.clone();
-
-        // Cancel the previous preview decode if it's still running.
-        if let Some(task) = self.loading_task.take() {
-            task.abort();
-        }
-
+        self.tex_map.request((view.clone(), ctx.clone()));
         self.loading_start = Some(web_time::Instant::now());
-        let ctx = ctx.clone();
-
-        self.loading_task = Some(self.loader_actor.run(move || async move {
-            let image = view_send
-                .image
-                .load()
-                .await
-                .expect("Failed to load dataset image");
-
-            if sender.is_closed() {
-                return;
-            }
-
-            // Yield in case we're cancelled.
-            brush_async::yield_now().await;
-
-            let has_alpha = image.color().has_alpha();
-            let img_size = [image.width() as usize, image.height() as usize];
-
-            // Create blurred background: downscale 32x then blur
-            let bg_width = (image.width() / 32).max(1);
-            let bg_height = (image.height() / 32).max(1);
-            let blurred = image
-                .resize(bg_width, bg_height, image::imageops::FilterType::Triangle)
-                .blur(6.0);
-            let blurred_size = [blurred.width() as usize, blurred.height() as usize];
-            let blurred_img =
-                egui::ColorImage::from_rgb(blurred_size, &blurred.into_rgb8().into_vec());
-
-            // Yield in case we're cancelled.
-            brush_async::yield_now().await;
-
-            let color_img = if has_alpha {
-                let data = image.into_rgba8().into_vec();
-                egui::ColorImage::from_rgba_unmultiplied(img_size, &data)
-            } else {
-                egui::ColorImage::from_rgb(img_size, &image.into_rgb8().into_vec())
-            };
-
-            let image_name = view_send.image.img_name();
-            let egui_handle = ctx.load_texture(image_name, color_img, TextureOptions::default());
-            let blurred_handle = ctx.load_texture(
-                format!("{}_blurred", view_send.image.img_name()),
-                blurred_img,
-                TextureOptions::default(),
-            );
-
-            // Yield in case we're cancelled.
-            brush_async::yield_now().await;
-
-            // If channel is gone, that's fine.
-            let _ = sender.send(Some(TexHandle {
-                handle: egui_handle,
-                has_alpha,
-                blurred_bg: Some(blurred_handle),
-            }));
-            // Show updated texture asap.
-            ctx.request_repaint();
-        }));
-        if let Some(selected_view) = &mut self.selected_view {
-            selected_view.view = Some(view.clone());
-        }
-    }
-
-    pub fn is_selected_view_loading(&self) -> bool {
-        self.loading_task.as_ref().is_some_and(|t| !t.is_finished())
     }
 
     fn focus_picked(&self, process: &UiProcess) {
@@ -162,54 +124,46 @@ impl DatasetPanel {
 
 impl AppPane for DatasetPanel {
     fn title(&self) -> egui::WidgetText {
-        let Some(selected_view_state) = &self.selected_view else {
-            return "Dataset".into();
-        };
-        let Some(selected_view) = &selected_view_state.view else {
+        let Some((view, tex)) = self.tex_map.latest() else {
             return "Dataset".into();
         };
 
-        let img_name = selected_view.image.img_name();
+        let img_name = view.image.img_name();
 
         // Try to get image info from texture handle
-        let last_handle = selected_view_state.tex.borrow();
-        if let Some(texture_handle) = last_handle.as_ref() {
-            let mask_info = if texture_handle.has_alpha {
-                if selected_view.image.alpha_mode() == AlphaMode::Transparent {
-                    "rgba"
-                } else {
-                    "masked"
-                }
+        let mask_info = if tex.has_alpha {
+            if view.image.alpha_mode() == AlphaMode::Transparent {
+                "rgba"
             } else {
-                "rgb"
-            };
-
-            let mut job = egui::text::LayoutJob::default();
-            job.append(
-                &img_name,
-                0.0,
-                egui::TextFormat {
-                    color: Color32::WHITE,
-                    ..Default::default()
-                },
-            );
-            job.append(
-                &format!(
-                    "  |  {}x{} {}",
-                    texture_handle.handle.size()[0],
-                    texture_handle.handle.size()[1],
-                    mask_info
-                ),
-                0.0,
-                egui::TextFormat {
-                    color: Color32::from_rgb(140, 140, 140),
-                    ..Default::default()
-                },
-            );
-            job.into()
+                "masked"
+            }
         } else {
-            img_name.into()
-        }
+            "rgb"
+        };
+
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            &img_name,
+            0.0,
+            egui::TextFormat {
+                color: Color32::WHITE,
+                ..Default::default()
+            },
+        );
+        job.append(
+            &format!(
+                "  |  {}x{} {}",
+                tex.handle.size()[0],
+                tex.handle.size()[1],
+                mask_info
+            ),
+            0.0,
+            egui::TextFormat {
+                color: Color32::from_rgb(140, 140, 140),
+                ..Default::default()
+            },
+        );
+        job.into()
     }
 
     fn is_visible(&self, process: &UiProcess) -> bool {
@@ -243,7 +197,11 @@ impl AppPane for DatasetPanel {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess) {
-        let Some(selected_view_state) = &self.selected_view else {
+        let mv = process.current_camera().world_to_local() * process.model_local_to_world();
+        let pick_scene = selected_scene(self.view_type, &self.cur_dataset).clone();
+        let mut nearest_view_ind = pick_scene.get_nearest_view(mv.inverse());
+
+        let Some(nearest) = nearest_view_ind.as_mut() else {
             ui.centered_and_justified(|ui| {
                 ui.label(
                     egui::RichText::new("Waiting for training to start")
@@ -255,107 +213,91 @@ impl AppPane for DatasetPanel {
             return;
         };
 
-        let mv = process.current_camera().world_to_local() * process.model_local_to_world();
-        let pick_scene = selected_scene(self.view_type, &self.cur_dataset).clone();
-        let mut nearest_view_ind = pick_scene.get_nearest_view(mv.inverse());
+        let Some((view, tex)) = self.tex_map.latest() else {
+            self.set_selected_view(&pick_scene.views[*nearest], ui.ctx());
+            return;
+        };
 
-        if let Some(nearest) = nearest_view_ind.as_mut() {
-            // Update image if dirty.
-            let dirty = selected_view_state
-                .view
-                .as_ref()
-                .is_none_or(|view| view.image != pick_scene.views[*nearest].image);
+        // Update image if dirty.
+        let dirty = view.image != pick_scene.views[*nearest].image;
 
-            if dirty {
-                self.set_selected_view(&pick_scene.views[*nearest], ui.ctx());
-            }
+        if dirty {
+            self.set_selected_view(&pick_scene.views[*nearest], ui.ctx());
+        }
 
-            let Some(selected_view_state) = &self.selected_view else {
-                return;
-            };
+        // if training views have alpha, show a background checker. Masked images
+        // should still use a black background.
+        let background = if tex.has_alpha && view.image.alpha_mode() == AlphaMode::Transparent {
+            BackgroundStyle::Checkerboard
+        } else {
+            BackgroundStyle::Black
+        };
+        process.set_background_style(background);
 
-            if let Some(selected_view) = &selected_view_state.view {
-                let last_handle = selected_view_state.tex.borrow();
+        let available = ui.available_size();
+        let cursor_min = ui.cursor().min;
+        let aspect_ratio = tex.handle.aspect_ratio();
 
-                if let Some(texture_handle) = last_handle.as_ref() {
-                    // if training views have alpha, show a background checker. Masked images
-                    // should still use a black background.
-                    let background = if texture_handle.has_alpha
-                        && selected_view.image.alpha_mode() == AlphaMode::Transparent
-                    {
-                        BackgroundStyle::Checkerboard
-                    } else {
-                        BackgroundStyle::Black
-                    };
-                    process.set_background_style(background);
+        let mut size = available;
+        if size.x / size.y > aspect_ratio {
+            size.x = size.y * aspect_ratio;
+        } else {
+            size.y = size.x / aspect_ratio;
+        }
 
-                    let available = ui.available_size();
-                    let cursor_min = ui.cursor().min;
-                    let aspect_ratio = texture_handle.handle.aspect_ratio();
+        // Center the image in the available space
+        let offset_x = (available.x - size.x) / 2.0;
+        let offset_y = (available.y - size.y) / 2.0;
+        let min = cursor_min + egui::vec2(offset_x, offset_y);
+        let rect = egui::Rect::from_min_size(min, size);
 
-                    let mut size = available;
-                    if size.x / size.y > aspect_ratio {
-                        size.x = size.y * aspect_ratio;
-                    } else {
-                        size.y = size.x / aspect_ratio;
-                    }
+        // Blurred background for letterbox areas
+        let full_rect = egui::Rect::from_min_size(cursor_min, available);
+        if let Some(blurred) = &tex.blurred_bg {
+            ui.painter().image(
+                blurred.id(),
+                full_rect,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::from_gray(80),
+            );
+        } else {
+            ui.painter()
+                .rect_filled(full_rect, 0.0, Color32::from_gray(30));
+        }
 
-                    // Center the image in the available space
-                    let offset_x = (available.x - size.x) / 2.0;
-                    let offset_y = (available.y - size.y) / 2.0;
-                    let min = cursor_min + egui::vec2(offset_x, offset_y);
-                    let rect = egui::Rect::from_min_size(min, size);
-
-                    // Blurred background for letterbox areas
-                    let full_rect = egui::Rect::from_min_size(cursor_min, available);
-                    if let Some(blurred) = &texture_handle.blurred_bg {
-                        ui.painter().image(
-                            blurred.id(),
-                            full_rect,
-                            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                            Color32::from_gray(80),
-                        );
-                    } else {
-                        ui.painter()
-                            .rect_filled(full_rect, 0.0, Color32::from_gray(30));
-                    }
-
-                    if texture_handle.has_alpha {
-                        if selected_view.image.alpha_mode() == AlphaMode::Masked {
-                            draw_checkerboard(ui, rect, egui::Color32::DARK_RED);
-                        } else {
-                            draw_checkerboard(ui, rect, egui::Color32::WHITE);
-                        }
-                    }
-
-                    ui.painter().image(
-                        texture_handle.handle.id(),
-                        rect,
-                        egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
-                    );
-
-                    if self.is_selected_view_loading() {
-                        if self
-                            .loading_start
-                            .is_some_and(|t| t.elapsed().as_secs_f32() > 0.1)
-                        {
-                            ui.painter().rect_filled(
-                                rect,
-                                0.0,
-                                Color32::from_rgba_unmultiplied(200, 200, 220, 80),
-                            );
-                        }
-                    } else {
-                        // Clear loading start when done
-                        self.loading_start = None;
-                    }
-
-                    ui.allocate_rect(full_rect, egui::Sense::click());
-                    self.current_view_index.set(Some(*nearest));
-                }
+        if tex.has_alpha {
+            if view.image.alpha_mode() == AlphaMode::Masked {
+                draw_checkerboard(ui, rect, egui::Color32::DARK_RED);
+            } else {
+                draw_checkerboard(ui, rect, egui::Color32::WHITE);
             }
         }
+
+        ui.painter().image(
+            tex.handle.id(),
+            rect,
+            egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+
+        if self.tex_map.is_running() {
+            if self
+                .loading_start
+                .is_some_and(|t| t.elapsed().as_secs_f32() > 0.1)
+            {
+                ui.painter().rect_filled(
+                    rect,
+                    0.0,
+                    Color32::from_rgba_unmultiplied(200, 200, 220, 80),
+                );
+            }
+        } else {
+            // Clear loading start when done
+            self.loading_start = None;
+        }
+
+        ui.allocate_rect(full_rect, egui::Sense::click());
+        self.current_view_index.set(Some(*nearest));
     }
 
     fn inner_margin(&self) -> f32 {

@@ -2,7 +2,7 @@ use anyhow::Error;
 use brush_async::Actor;
 use brush_process::config::TrainStreamConfig;
 use brush_process::message::{ProcessMessage, TrainMessage};
-use brush_render::{MainBackend, gaussian_splats::Splats};
+use brush_render::gaussian_splats::Splats;
 use egui::RichText;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use web_time::Duration;
@@ -91,7 +91,7 @@ impl TrainingPanel {
     }
 }
 
-async fn export(splat: Splats<MainBackend>) -> Result<(), Error> {
+async fn export(splat: Splats) -> Result<(), Error> {
     let data = brush_serde::splat_to_ply(splat).await?;
     rrfd::save_file("export.ply", data).await?;
     Ok(())

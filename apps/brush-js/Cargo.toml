@@ -12,7 +12,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 brush-process.path = "../../crates/brush-process"
 brush-render.path = "../../crates/brush-render"
-brush-vfs.path = "../../crates/brush-vfs"
 rrfd.path = "../../crates/rrfd"
 
 burn.workspace = true

@@ -7,10 +7,7 @@ use crate::{
 };
 use anyhow::Context;
 use brush_dataset::{load_dataset, scene::Scene, scene_loader::SceneLoader};
-use brush_render::{
-    MainBackend,
-    gaussian_splats::{SplatRenderMode, Splats},
-};
+use brush_render::gaussian_splats::{SplatRenderMode, Splats};
 use brush_rerun::visualize_tools::VisualizeTools;
 use brush_train::{
     RandomSplatsConfig, create_random_splats,
@@ -21,12 +18,9 @@ use brush_train::{
     train::{BOUND_PERCENTILE, SplatTrainer, get_splat_bounds},
 };
 use brush_vfs::BrushVfs;
-use burn::{
-    module::{AutodiffModule, Module},
-    prelude::Backend,
-};
+use burn::module::AutodiffModule;
 use burn_cubecl::cubecl::Runtime;
-use burn_wgpu::{WgpuDevice, WgpuRuntime};
+use burn_wgpu::WgpuRuntime;
 use rand::SeedableRng;
 use std::{path::PathBuf, sync::Arc};
 
@@ -41,7 +35,7 @@ pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
     train_stream_config: TrainStreamConfig,
     emitter: &Emitter,
-    slot: SlotSender<Splats<MainBackend>>,
+    slot: SlotSender<Splats>,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
@@ -57,8 +51,13 @@ pub(crate) async fn train_stream(
     let process_config = &train_stream_config.process_config;
     log::info!("Using seed {}", process_config.seed);
 
-    let device = wait_for_device().await;
-    <MainBackend as Backend>::seed(device, process_config.seed);
+    let wgpu_device = wait_for_device().await;
+    // Splats live on the inner (non-autodiff) device between steps; each
+    // training step lifts them via [`lift_splats_to_autodiff`] then strips
+    // back via `.valid()`. Going through `Module::train()` would hit
+    // burn-dispatch's `from_inner` checkpointing bug.
+    let device: burn::tensor::Device = wgpu_device.clone().into();
+    device.seed(process_config.seed);
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
     log::info!("Loading dataset");
@@ -110,7 +109,7 @@ pub(crate) async fn train_stream(
             .render_mode
             .or(msg.meta.render_mode)
             .unwrap_or(SplatRenderMode::Default);
-        let splats = to_init_splats(msg.data, render_mode, device);
+        let splats = to_init_splats(msg.data, render_mode, &device);
         (msg.meta.up_axis, splats)
     } else {
         // Default: just use random splats
@@ -133,7 +132,7 @@ pub(crate) async fn train_stream(
             scene_scale,
             &mut rng,
             render_mode,
-            device,
+            &device,
         );
         (None, splats)
     };
@@ -146,7 +145,7 @@ pub(crate) async fn train_stream(
     // The trainer owns its working `splats` locally and publishes a
     // clone to the `Slot` after every modification (train
     // step, refine, LOD decimation).
-    let mut splats: Splats<MainBackend> = init_splats.clone();
+    let mut splats: Splats = init_splats.clone();
     slot.set(0, splats.clone());
     emitter
         .emit(ProcessMessage::SplatsUpdated {
@@ -161,7 +160,7 @@ pub(crate) async fn train_stream(
     emitter.emit(ProcessMessage::DoneLoading).await;
 
     // Start with memory cleared out.
-    let client = WgpuRuntime::client(device);
+    let client = WgpuRuntime::client(wgpu_device);
     client.memory_cleanup();
 
     let mut eval_scene = dataset.eval;
@@ -169,7 +168,7 @@ pub(crate) async fn train_stream(
     let mut train_duration = Duration::from_secs(0);
     let mut dataloader = SceneLoader::new(&dataset.train, 42);
     let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
-    let mut trainer = SplatTrainer::new(&train_stream_config.train_config, device, bounds);
+    let mut trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
 
     // Get the dataset name from the base path (if available) for interpolation.
     let dataset_name = vfs
@@ -240,14 +239,14 @@ pub(crate) async fn train_stream(
             let target_count = (before as f32 * lod_keep_pct as f32 / 100.0).max(1.0) as u32;
 
             log::info!("LOD {current_lod}/{lod_levels}: Computing sensitivity scores...");
-            let scores = compute_pup_scores(splats.clone(), &dataset.train, device).await;
+            let scores = compute_pup_scores(splats.clone(), &dataset.train, &device).await;
             splats = decimate_to_count(splats, &scores, target_count).await;
             slot.set(0, splats.clone());
 
             let after = splats.num_splats();
             log::info!("LOD {current_lod}/{lod_levels}: {before} -> {after} splats");
 
-            let client = WgpuRuntime::client(device);
+            let client = WgpuRuntime::client(wgpu_device);
             client.memory_cleanup();
 
             let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(current_lod as i32);
@@ -259,7 +258,7 @@ pub(crate) async fn train_stream(
             };
 
             let bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
-            trainer = SplatTrainer::new(&train_stream_config.train_config, device, bounds);
+            trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
 
             log::info!(
                 "LOD {current_lod}/{lod_levels}: Training for {lod_refine_steps} steps (image scale {:.0}%)",
@@ -274,10 +273,9 @@ pub(crate) async fn train_stream(
             .instrument(trace_span!("Wait for next data batch"))
             .await;
 
-        let mut diff_splats = splats.train();
-        diff_splats.transforms = diff_splats.transforms.map(|m| m.require_grad());
-        diff_splats.raw_opacities = diff_splats.raw_opacities.map(|m| m.require_grad());
-        diff_splats.sh_coeffs = diff_splats.sh_coeffs.map(|m| m.require_grad());
+        // Lift splats onto the autodiff graph for this step, run training,
+        // then strip back to inner so the viewer slot sees plain splats.
+        let diff_splats = brush_render_bwd::burn_glue::lift_splats_to_autodiff(splats.clone());
         let (new_diff_splats, stats) = trainer.step(batch, diff_splats).await;
         splats = new_diff_splats.valid();
         slot.set(0, splats.clone());
@@ -329,7 +327,7 @@ pub(crate) async fn train_stream(
                 .then(|| export_path.clone());
 
             let eval = run_eval(
-                device,
+                &device,
                 emitter,
                 &visualize,
                 splats.clone(),
@@ -390,7 +388,7 @@ pub(crate) async fn train_stream(
                 visualize.log_train_stats(iter, &stats).unwrap();
             }
 
-            visualize.log_memory(iter, &WgpuRuntime::client(device).memory_usage()?)?;
+            visualize.log_memory(iter, &WgpuRuntime::client(wgpu_device).memory_usage()?)?;
             if refine.num_added > 0 {
                 visualize.log_refine_stats(iter, &refine).unwrap();
             }
@@ -443,10 +441,10 @@ pub(crate) async fn train_stream(
 }
 
 async fn run_eval(
-    device: &WgpuDevice,
+    device: &burn::tensor::Device,
     emitter: &Emitter,
     visualize: &VisualizeTools,
-    splats: Splats<MainBackend>,
+    splats: Splats,
     iter: u32,
     eval_scene: &Scene,
     save_path: Option<PathBuf>,
@@ -471,8 +469,8 @@ async fn run_eval(
         .context("Failed to run eval for sample.")?;
 
         count += 1;
-        psnr += sample.psnr.clone().into_scalar_async().await?;
-        ssim += sample.ssim.clone().into_scalar_async().await?;
+        psnr += sample.psnr.clone().into_scalar_async::<f32>().await?;
+        ssim += sample.ssim.clone().into_scalar_async::<f32>().await?;
 
         #[cfg(not(target_family = "wasm"))]
         if let Some(path) = &save_path {
@@ -506,7 +504,7 @@ async fn run_eval(
 // and write to it repeatedly?
 #[cfg(not(target_family = "wasm"))]
 async fn export_checkpoint(
-    splats: Splats<MainBackend>,
+    splats: Splats,
     export_path: &Path,
     export_name: &str,
     iter: u32,

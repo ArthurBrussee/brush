@@ -3,11 +3,9 @@ mod kernels;
 use brush_cube::CubeCount;
 use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
+use brush_cube::create_tensor_from_slice;
+use burn::backend::TensorMetadata;
 use burn::tensor::DType;
-use burn::tensor::Int;
-use burn::tensor::Tensor;
-use burn::tensor::TensorMetadata;
-use burn_cubecl::CubeBackend;
 use burn_cubecl::cubecl::CubeDim;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
@@ -49,10 +47,7 @@ pub fn radix_argsort(
 
     let cube_dim = CubeDim::new_1d(WG);
 
-    let num_keys_buf = {
-        type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
-        Tensor::<Backend, 1, Int>::from_ints([max_n as i32], &device).into_primitive()
-    };
+    let num_keys_buf = create_tensor_from_slice(&[max_n as i32], &device, DType::I32);
     let num_wgs = calc_cube_count_1d(max_n, BLOCK_SIZE);
     let num_reduce_wgs = calc_cube_count_1d(num_reduce_wgs_count, 1);
 
@@ -147,8 +142,11 @@ pub fn radix_argsort(
 #[cfg(test)]
 mod tests {
     use crate::radix_argsort;
-    use burn::tensor::{Int, Tensor};
-    use burn_wgpu::{CubeBackend, WgpuRuntime};
+    use brush_cube::create_tensor_from_slice;
+    use burn::backend::ops::IntTensorOps;
+    use burn::tensor::DType;
+    use burn_cubecl::CubeBackend;
+    use burn_wgpu::{CubeTensor, WgpuRuntime};
     use rand::RngExt;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -156,6 +154,11 @@ mod tests {
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
+
+    async fn read_i32(tensor: CubeTensor<WgpuRuntime>) -> Vec<i32> {
+        let data = Backend::int_into_data(tensor).await.expect("readback");
+        data.as_slice::<i32>().expect("Wrong type").to_vec()
+    }
 
     pub fn argsort<T: Ord>(data: &[T]) -> Vec<usize> {
         let mut indices = (0..data.len()).collect::<Vec<_>>();
@@ -188,20 +191,12 @@ mod tests {
 
             let values_inp: Vec<_> = keys_inp.iter().copied().map(|x| x * 2 + 5).collect();
 
-            let keys = Tensor::<Backend, 1, Int>::from_ints(keys_inp, &device).into_primitive();
-            let values = Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device)
-                .into_primitive();
+            let keys = create_tensor_from_slice(&keys_inp, &device, DType::I32);
+            let values = create_tensor_from_slice(&values_inp, &device, DType::I32);
             let (ret_keys, ret_values) = radix_argsort(keys, values, 32);
 
-            let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
-                .into_data_async()
-                .await
-                .expect("readback");
-
-            let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values)
-                .into_data_async()
-                .await
-                .expect("readback");
+            let ret_keys = read_i32(ret_keys).await;
+            let ret_values = read_i32(ret_values).await;
 
             let inds = argsort(&keys_inp);
 
@@ -209,10 +204,8 @@ mod tests {
             let ref_values: Vec<u32> = inds.iter().map(|&i| values_inp[i] as u32).collect();
 
             for (((key, val), ref_key), ref_val) in ret_keys
-                .as_slice::<i32>()
-                .expect("Wrong type")
                 .iter()
-                .zip(ret_values.as_slice::<i32>().expect("Wrong type"))
+                .zip(&ret_values)
                 .zip(ref_keys)
                 .zip(ref_values)
             {
@@ -241,30 +234,20 @@ mod tests {
         let values_inp: Vec<_> = keys_inp.iter().map(|&x| x * 2 + 5).collect();
 
         let device = brush_cube::test_helpers::test_device().await;
-        let keys =
-            Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
-        let values =
-            Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
+        let keys = create_tensor_from_slice(&keys_inp, &device, DType::I32);
+        let values = create_tensor_from_slice(&values_inp, &device, DType::I32);
         let (ret_keys, ret_values) = radix_argsort(keys, values, 32);
 
-        let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
-            .to_data_async()
-            .await
-            .expect("readback");
-        let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values)
-            .to_data_async()
-            .await
-            .expect("readback");
+        let ret_keys = read_i32(ret_keys).await;
+        let ret_values = read_i32(ret_values).await;
 
         let inds = argsort(&keys_inp);
         let ref_keys: Vec<u32> = inds.iter().map(|&i| keys_inp[i]).collect();
         let ref_values: Vec<u32> = inds.iter().map(|&i| values_inp[i]).collect();
 
         for (((key, val), ref_key), ref_val) in ret_keys
-            .as_slice::<i32>()
-            .expect("Wrong type")
             .iter()
-            .zip(ret_values.as_slice::<i32>().expect("Wrong type"))
+            .zip(&ret_values)
             .zip(ref_keys)
             .zip(ref_values)
         {
@@ -287,23 +270,12 @@ mod tests {
         let values_inp: Vec<u32> = (0..NUM_ELEMENTS).map(|i| i as u32).collect();
 
         let device = brush_cube::test_helpers::test_device().await;
-        let keys =
-            Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
-        let values =
-            Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
+        let keys = create_tensor_from_slice(&keys_inp, &device, DType::I32);
+        let values = create_tensor_from_slice(&values_inp, &device, DType::I32);
         let (ret_keys, ret_values) = radix_argsort(keys, values, 32);
 
-        let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
-            .to_data_async()
-            .await
-            .expect("readback");
-        let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values)
-            .to_data_async()
-            .await
-            .expect("readback");
-
-        let ret_keys_slice = ret_keys.as_slice::<i32>().expect("Wrong type");
-        let ret_values_slice = ret_values.as_slice::<i32>().expect("Wrong type");
+        let ret_keys_slice = read_i32(ret_keys).await;
+        let ret_values_slice = read_i32(ret_values).await;
 
         assert_eq!(ret_keys_slice.len(), NUM_ELEMENTS);
         assert_eq!(ret_values_slice.len(), NUM_ELEMENTS);
@@ -358,23 +330,12 @@ mod tests {
         }
 
         let device = brush_cube::test_helpers::test_device().await;
-        let keys =
-            Tensor::<Backend, 1, Int>::from_ints(keys_inp.as_slice(), &device).into_primitive();
-        let values =
-            Tensor::<Backend, 1, Int>::from_ints(values_inp.as_slice(), &device).into_primitive();
+        let keys = create_tensor_from_slice(&keys_inp, &device, DType::I32);
+        let values = create_tensor_from_slice(&values_inp, &device, DType::I32);
         let (ret_keys, ret_values) = radix_argsort(keys, values, 32);
 
-        let ret_keys = Tensor::<Backend, 1, Int>::from_primitive(ret_keys)
-            .to_data_async()
-            .await
-            .expect("readback");
-        let ret_values = Tensor::<Backend, 1, Int>::from_primitive(ret_values)
-            .to_data_async()
-            .await
-            .expect("readback");
-
-        let ret_keys_slice = ret_keys.as_slice::<i32>().expect("Wrong type");
-        let ret_values_slice = ret_values.as_slice::<i32>().expect("Wrong type");
+        let ret_keys_slice = read_i32(ret_keys).await;
+        let ret_values_slice = read_i32(ret_values).await;
 
         assert_eq!(ret_keys_slice.len(), NUM_ELEMENTS);
         assert_eq!(ret_values_slice.len(), NUM_ELEMENTS);

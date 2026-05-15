@@ -16,21 +16,19 @@
 //! tests run on `Autodiff<MainBackend>` (via fusion), exercising the
 //! gradient kernels.
 
+use brush_cube::Runtime;
 use brush_render::{
     MainBackendBase, RenderOutput, SplatOps,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
     shaders::helpers::TILE_WIDTH,
 };
-use burn::backend::{Autodiff, wgpu::WgpuDevice};
-use burn::tensor::{DType, Tensor, TensorData, TensorMetadata, TensorPrimitive};
+use burn::backend::wgpu::WgpuDevice;
+use burn::tensor::DType;
 use burn_cubecl::tensor::CubeTensor;
 use burn_wgpu::WgpuRuntime;
 use std::num::Wrapping;
 
-type DiffBackend = Autodiff<brush_render::MainBackend>;
-
-// SplitMix64 — deterministic, no test-only dep.
 struct Sm64(Wrapping<u64>);
 
 impl Sm64 {
@@ -153,11 +151,15 @@ fn cube_tensor<const D: usize>(
     shape: [usize; D],
     data: &[f32],
 ) -> CubeTensor<WgpuRuntime> {
-    let t: Tensor<MainBackendBase, D> =
-        Tensor::from_data(TensorData::new(data.to_vec(), shape), device);
-    let prim = t.into_primitive().tensor();
-    assert_eq!(prim.dtype(), DType::F32, "cube_tensor: expected F32");
-    prim
+    let client = WgpuRuntime::client(device);
+    let handle = client.create_from_slice(bytemuck::cast_slice(data));
+    CubeTensor::new_contiguous(
+        client,
+        device.clone(),
+        burn::tensor::Shape::new(shape),
+        handle,
+        DType::F32,
+    )
 }
 
 async fn render_raw(
@@ -499,12 +501,11 @@ async fn fuzz_bwd_random_scenes_gradients_are_finite() {
         };
         let (means, rots, ls, dc, opac) = finite_scene(seed, n);
 
-        let splats: Splats<DiffBackend> =
-            Splats::from_raw(means, rots, ls, dc, opac, mode, &device);
+        let device_d = burn::tensor::Device::from(device.clone()).autodiff();
+        let splats = Splats::from_raw(means, rots, ls, dc, opac, mode, &device_d);
         let diff =
             brush_render_bwd::render_splats(splats.clone(), &cam, img_size, glam::Vec3::ZERO).await;
-        let img: Tensor<DiffBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(diff.img));
-        splats.bwd_validate(img.mean()).await;
+        splats.bwd_validate(diff.img.mean()).await;
     }
 }
 
@@ -528,14 +529,20 @@ async fn fuzz_bwd_extreme_inputs_stay_finite() {
             let dc: Vec<f32> = (0..n).flat_map(|_| [mag, -mag, mag]).collect();
             let opac = vec![2.0f32; n];
 
-            let splats: Splats<DiffBackend> =
-                Splats::from_raw(means, rots, ls, dc, opac, SplatRenderMode::Default, &device);
+            let device_d = burn::tensor::Device::from(device.clone()).autodiff();
+            let splats = Splats::from_raw(
+                means,
+                rots,
+                ls,
+                dc,
+                opac,
+                SplatRenderMode::Default,
+                &device_d,
+            );
             let diff =
                 brush_render_bwd::render_splats(splats.clone(), &cam, img_size, glam::Vec3::ZERO)
                     .await;
-            let img: Tensor<DiffBackend, 3> =
-                Tensor::from_primitive(TensorPrimitive::Float(diff.img));
-            splats.bwd_validate(img.mean()).await;
+            splats.bwd_validate(diff.img.mean()).await;
         }
     }
 }

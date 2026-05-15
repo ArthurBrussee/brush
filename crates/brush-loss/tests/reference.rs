@@ -6,17 +6,11 @@
 //! matching is covered by the integration training tests in `brush-bench-test`.
 
 use brush_loss::{ImageLossConfig, image_loss};
-use brush_render::MainBackend;
-use burn::{
-    backend::Autodiff,
-    tensor::{Int, Tensor, TensorData, ops::IntTensorOps},
-};
+use burn::tensor::{Device, Int, Tensor, TensorData};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[cfg(target_family = "wasm")]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
-
-type DiffBack = Autodiff<MainBackend>;
 
 fn pack_rgba(bytes: &[u8]) -> Vec<u32> {
     bytes
@@ -35,29 +29,19 @@ fn make_pattern(h: usize, w: usize, scale: u32, offset: u32) -> Vec<u8> {
         .collect()
 }
 
-fn pred_from_bytes(
-    bytes: &[u8],
-    h: usize,
-    w: usize,
-    device: &burn::backend::wgpu::WgpuDevice,
-) -> Tensor<DiffBack, 3> {
+fn pred_from_bytes(bytes: &[u8], h: usize, w: usize, device: &Device) -> Tensor<3> {
     let rgb: Vec<f32> = bytes
         .chunks_exact(4)
         .flat_map(|p| [p[0], p[1], p[2]].map(|b| b as f32 / 255.0))
         .collect();
-    Tensor::<DiffBack, 1>::from_floats(rgb.as_slice(), device).reshape([h, w, 3])
+    Tensor::<1>::from_floats(rgb.as_slice(), device).reshape([h, w, 3])
 }
 
-fn gt_packed_from_bytes(
-    bytes: &[u8],
-    h: usize,
-    w: usize,
-    device: &burn::backend::wgpu::WgpuDevice,
-) -> Tensor<MainBackend, 2, Int> {
-    Tensor::new(MainBackend::int_from_data(
-        TensorData::new(pack_rgba(bytes), [h, w]),
-        device,
-    ))
+fn gt_packed_from_bytes(bytes: &[u8], h: usize, w: usize, device: &Device) -> Tensor<2, Int> {
+    // Bit-reinterpret the u32 packing as i32 so the dispatch int_from_data
+    // path doesn't reject magnitudes > i32::MAX.
+    let packed: Vec<i32> = pack_rgba(bytes).into_iter().map(|x| x as i32).collect();
+    Tensor::from_data(TensorData::new(packed, [h, w]), device)
 }
 
 fn ssim_only_cfg() -> ImageLossConfig {
@@ -71,7 +55,8 @@ fn ssim_only_cfg() -> ImageLossConfig {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn ssim_identical_inputs_is_one() {
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let (h, w) = (40, 56);
     let bytes = make_pattern(h, w, 11, 13);
     let pred = pred_from_bytes(&bytes, h, w, &device);
@@ -94,7 +79,8 @@ async fn ssim_identical_inputs_is_one() {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn ssim_in_clamp_range() {
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let (h, w) = (40, 56);
     let bytes_a = make_pattern(h, w, 7, 19);
     let bytes_b = make_pattern(h, w, 13, 7);
@@ -117,7 +103,8 @@ async fn ssim_in_clamp_range() {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn image_loss_backward_runs() {
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let (h, w) = (32, 48);
     let bytes_a = make_pattern(h, w, 5, 1);
     let bytes_b = make_pattern(h, w, 7, 11);
@@ -141,11 +128,12 @@ async fn image_loss_backward_runs() {
 async fn alpha_match_via_4ch_pred() {
     // Feeding 4-channel `pred` makes the kernel emit `|pred.a - gt.a|`
     // into the alpha channel of the loss map.
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let (h, w) = (16, 24);
     let bytes = make_pattern(h, w, 17, 5);
     let rgba: Vec<f32> = bytes.iter().map(|b| *b as f32 / 255.0).collect();
-    let pred = Tensor::<DiffBack, 1>::from_floats(rgba.as_slice(), &device)
+    let pred = Tensor::<1>::from_floats(rgba.as_slice(), &device)
         .reshape([h, w, 4])
         .require_grad();
     let gt = gt_packed_from_bytes(&bytes, h, w, &device);

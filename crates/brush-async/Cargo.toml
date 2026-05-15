@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
-log.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen.workspace = true

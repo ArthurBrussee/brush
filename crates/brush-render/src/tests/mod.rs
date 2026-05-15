@@ -1,11 +1,10 @@
 use crate::{
-    MainBackend, TextureMode,
+    TextureMode,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats, render_splats},
 };
 use assert_approx_eq::assert_approx_eq;
 use burn::tensor::{Distribution, Tensor};
-use burn_wgpu::WgpuDevice;
 use glam::Vec3;
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -24,16 +23,15 @@ async fn renders_at_all() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(32, 32);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
     let num_points = 8;
-    let means = Tensor::<MainBackend, 2>::zeros([num_points, 3], &device);
-    let log_scales = Tensor::<MainBackend, 2>::ones([num_points, 3], &device) * 2.0;
-    let quats: Tensor<MainBackend, 2> =
-        Tensor::<MainBackend, 1>::from_floats(glam::Quat::IDENTITY.to_array(), &device)
-            .unsqueeze_dim(0)
-            .repeat_dim(0, num_points);
-    let sh_coeffs = Tensor::<MainBackend, 3>::ones([num_points, 1, 3], &device);
-    let raw_opacity = Tensor::<MainBackend, 1>::zeros([num_points], &device);
+    let means = Tensor::<2>::zeros([num_points, 3], &device);
+    let log_scales = Tensor::<2>::ones([num_points, 3], &device) * 2.0;
+    let quats: Tensor<2> = Tensor::<1>::from_floats(glam::Quat::IDENTITY.to_array(), &device)
+        .unsqueeze_dim(0)
+        .repeat_dim(0, num_points);
+    let sh_coeffs = Tensor::<3>::ones([num_points, 1, 3], &device);
+    let raw_opacity = Tensor::<1>::zeros([num_points], &device);
 
     let splats = Splats::from_tensor_data(
         means,
@@ -79,35 +77,20 @@ async fn renders_many_splats() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(64, 64);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
 
     // Create random gaussians spread in front of the camera
-    let means = Tensor::<MainBackend, 2>::random(
-        [num_splats, 3],
-        Distribution::Uniform(-2.0, 2.0),
-        &device,
-    );
+    let means = Tensor::<2>::random([num_splats, 3], Distribution::Uniform(-2.0, 2.0), &device);
     // Small scales so they don't cover everything
-    let log_scales = Tensor::<MainBackend, 2>::random(
-        [num_splats, 3],
-        Distribution::Uniform(-4.0, -2.0),
-        &device,
-    );
+    let log_scales =
+        Tensor::<2>::random([num_splats, 3], Distribution::Uniform(-4.0, -2.0), &device);
     // Random rotations (will be normalized)
-    let quats = Tensor::<MainBackend, 2>::random(
-        [num_splats, 4],
-        Distribution::Uniform(-1.0, 1.0),
-        &device,
-    );
+    let quats = Tensor::<2>::random([num_splats, 4], Distribution::Uniform(-1.0, 1.0), &device);
     // Simple SH coefficients (just base color)
-    let sh_coeffs = Tensor::<MainBackend, 3>::random(
-        [num_splats, 1, 3],
-        Distribution::Uniform(0.0, 1.0),
-        &device,
-    );
+    let sh_coeffs =
+        Tensor::<3>::random([num_splats, 1, 3], Distribution::Uniform(0.0, 1.0), &device);
     // Some visible, some not
-    let raw_opacity =
-        Tensor::<MainBackend, 1>::random([num_splats], Distribution::Uniform(-2.0, 2.0), &device);
+    let raw_opacity = Tensor::<1>::random([num_splats], Distribution::Uniform(-2.0, 2.0), &device);
 
     let splats = Splats::from_tensor_data(
         means,
@@ -132,7 +115,7 @@ async fn renders_many_splats() {
 // ---------- Shared helpers for the stress / invariance tests ----------
 
 // Pull pixels off device and assert no NaNs/infs.
-async fn read_finite(output: Tensor<MainBackend, 3>) -> Vec<f32> {
+async fn read_finite(output: Tensor<3>) -> Vec<f32> {
     let data = output
         .to_data_async()
         .await
@@ -231,9 +214,9 @@ fn rng_scene(
     }
 }
 
-fn scene_to_splats(scene: &Scene, device: &WgpuDevice) -> Splats<MainBackend> {
+fn scene_to_splats(scene: &Scene, device: &burn::tensor::Device) -> Splats {
     let n = scene.len();
-    let means = Tensor::<MainBackend, 1>::from_floats(
+    let means = Tensor::<1>::from_floats(
         scene
             .means
             .iter()
@@ -244,7 +227,7 @@ fn scene_to_splats(scene: &Scene, device: &WgpuDevice) -> Splats<MainBackend> {
         device,
     )
     .reshape([n, 3]);
-    let quats = Tensor::<MainBackend, 1>::from_floats(
+    let quats = Tensor::<1>::from_floats(
         scene
             .quats
             .iter()
@@ -255,7 +238,7 @@ fn scene_to_splats(scene: &Scene, device: &WgpuDevice) -> Splats<MainBackend> {
         device,
     )
     .reshape([n, 4]);
-    let log_scales = Tensor::<MainBackend, 1>::from_floats(
+    let log_scales = Tensor::<1>::from_floats(
         scene
             .log_scales
             .iter()
@@ -266,7 +249,7 @@ fn scene_to_splats(scene: &Scene, device: &WgpuDevice) -> Splats<MainBackend> {
         device,
     )
     .reshape([n, 3]);
-    let sh = Tensor::<MainBackend, 1>::from_floats(
+    let sh = Tensor::<1>::from_floats(
         scene
             .sh_dc
             .iter()
@@ -277,7 +260,7 @@ fn scene_to_splats(scene: &Scene, device: &WgpuDevice) -> Splats<MainBackend> {
         device,
     )
     .reshape([n, 1, 3]);
-    let opac = Tensor::<MainBackend, 1>::from_floats(scene.raw_opacity.as_slice(), device);
+    let opac = Tensor::<1>::from_floats(scene.raw_opacity.as_slice(), device);
     Splats::from_tensor_data(means, quats, log_scales, sh, opac, SplatRenderMode::Default)
 }
 
@@ -285,7 +268,7 @@ async fn render_scene(
     scene: &Scene,
     cam: &Camera,
     img_size: glam::UVec2,
-    device: &WgpuDevice,
+    device: &burn::tensor::Device,
 ) -> Vec<f32> {
     let splats = scene_to_splats(scene, device);
     let (output, _aux) =
@@ -304,7 +287,7 @@ async fn render_is_deterministic_on_large_splats() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(256, 256);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
 
     let scene = rng_scene(20_000, 2.0, (0.5, 3.0), (-1.0, 2.0), 0xA11CE);
 
@@ -330,7 +313,7 @@ async fn hidden_splats_do_not_perturb_render() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(256, 256);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
 
     let visible = rng_scene(5_000, 1.5, (0.0, 2.5), (0.0, 3.0), 0xBEEF);
 
@@ -374,7 +357,7 @@ async fn culled_prefix_does_not_perturb_render() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(256, 256);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
 
     let visible = rng_scene(4_000, 1.5, (0.0, 2.5), (0.0, 3.0), 0xC0FFEE);
 
@@ -407,7 +390,7 @@ async fn mega_stress_fullscreen_splats() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(512, 512);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
 
     // Force every splat to be huge: exp(3.5) ≈ 33 world units, at distance 5
     // with our focal this projects to a footprint larger than the image. Every
@@ -466,23 +449,18 @@ async fn renders_large_rotated_splats() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(256, 256);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
 
     // Big anisotropic splats stacked at origin — every splat covers the
     // whole image. If PF and MG disagree on tile count for even one splat,
     // other splats' intersection records get clobbered.
     let num_splats = 2048;
-    let means = Tensor::<MainBackend, 2>::zeros([num_splats, 3], &device);
-    let log_scales =
-        Tensor::<MainBackend, 2>::random([num_splats, 3], Distribution::Uniform(1.0, 3.0), &device);
-    let quats = Tensor::<MainBackend, 2>::random(
-        [num_splats, 4],
-        Distribution::Uniform(-1.0, 1.0),
-        &device,
-    );
-    let sh_coeffs = Tensor::<MainBackend, 3>::ones([num_splats, 1, 3], &device) * 0.5;
+    let means = Tensor::<2>::zeros([num_splats, 3], &device);
+    let log_scales = Tensor::<2>::random([num_splats, 3], Distribution::Uniform(1.0, 3.0), &device);
+    let quats = Tensor::<2>::random([num_splats, 4], Distribution::Uniform(-1.0, 1.0), &device);
+    let sh_coeffs = Tensor::<3>::ones([num_splats, 1, 3], &device) * 0.5;
     // Low per-splat opacity so T doesn't hit the early-out for many splats.
-    let raw_opacity = Tensor::<MainBackend, 1>::ones([num_splats], &device) * -4.0;
+    let raw_opacity = Tensor::<1>::ones([num_splats], &device) * -4.0;
 
     let splats = Splats::from_tensor_data(
         means,
@@ -535,31 +513,16 @@ async fn renders_many_large_splats_stress() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(128, 128);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
 
     let num_splats = 200_000;
-    let means = Tensor::<MainBackend, 2>::random(
-        [num_splats, 3],
-        Distribution::Uniform(-0.5, 0.5),
-        &device,
-    );
-    let log_scales = Tensor::<MainBackend, 2>::random(
-        [num_splats, 3],
-        Distribution::Uniform(-1.0, 2.5),
-        &device,
-    );
-    let quats = Tensor::<MainBackend, 2>::random(
-        [num_splats, 4],
-        Distribution::Uniform(-1.0, 1.0),
-        &device,
-    );
-    let sh_coeffs = Tensor::<MainBackend, 3>::random(
-        [num_splats, 1, 3],
-        Distribution::Uniform(0.0, 1.0),
-        &device,
-    );
-    let raw_opacity =
-        Tensor::<MainBackend, 1>::random([num_splats], Distribution::Uniform(-2.0, 2.0), &device);
+    let means = Tensor::<2>::random([num_splats, 3], Distribution::Uniform(-0.5, 0.5), &device);
+    let log_scales =
+        Tensor::<2>::random([num_splats, 3], Distribution::Uniform(-1.0, 2.5), &device);
+    let quats = Tensor::<2>::random([num_splats, 4], Distribution::Uniform(-1.0, 1.0), &device);
+    let sh_coeffs =
+        Tensor::<3>::random([num_splats, 1, 3], Distribution::Uniform(0.0, 1.0), &device);
+    let raw_opacity = Tensor::<1>::random([num_splats], Distribution::Uniform(-2.0, 2.0), &device);
 
     let splats = Splats::from_tensor_data(
         means,
@@ -618,20 +581,18 @@ async fn render_panics_loudly_on_nan_positions() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(32, 32);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
     let n = 16;
 
     let mut means_vec = vec![0.0f32; n * 3];
     means_vec[3] = f32::NAN; // one NaN position
-    let means =
-        Tensor::<MainBackend, 1>::from_floats(means_vec.as_slice(), &device).reshape([n, 3]);
-    let quats: Tensor<MainBackend, 2> =
-        Tensor::<MainBackend, 1>::from_floats([1.0, 0.0, 0.0, 0.0], &device)
-            .unsqueeze_dim(0)
-            .repeat_dim(0, n);
-    let log_scales = Tensor::<MainBackend, 2>::zeros([n, 3], &device);
-    let sh_coeffs = Tensor::<MainBackend, 3>::ones([n, 1, 3], &device);
-    let raw_opacity = Tensor::<MainBackend, 1>::zeros([n], &device);
+    let means = Tensor::<1>::from_floats(means_vec.as_slice(), &device).reshape([n, 3]);
+    let quats: Tensor<2> = Tensor::<1>::from_floats([1.0, 0.0, 0.0, 0.0], &device)
+        .unsqueeze_dim(0)
+        .repeat_dim(0, n);
+    let log_scales = Tensor::<2>::zeros([n, 3], &device);
+    let sh_coeffs = Tensor::<3>::ones([n, 1, 3], &device);
+    let raw_opacity = Tensor::<1>::zeros([n], &device);
     let splats = Splats::from_tensor_data(
         means,
         quats,
@@ -657,14 +618,14 @@ async fn zero_splats_renders_background() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(32, 32);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
 
     let splats = Splats::from_tensor_data(
-        Tensor::<MainBackend, 2>::zeros([0, 3], &device),
-        Tensor::<MainBackend, 2>::zeros([0, 4], &device),
-        Tensor::<MainBackend, 2>::zeros([0, 3], &device),
-        Tensor::<MainBackend, 3>::zeros([0, 1, 3], &device),
-        Tensor::<MainBackend, 1>::zeros([0], &device),
+        Tensor::<2>::zeros([0, 3], &device),
+        Tensor::<2>::zeros([0, 4], &device),
+        Tensor::<2>::zeros([0, 3], &device),
+        Tensor::<3>::zeros([0, 1, 3], &device),
+        Tensor::<1>::zeros([0], &device),
         SplatRenderMode::Default,
     );
     assert_eq!(splats.num_splats(), 0);
@@ -706,7 +667,7 @@ async fn zero_quaternion_splats_dont_poison_render() {
         glam::vec2(0.5, 0.5),
     );
     let img_size = glam::uvec2(64, 64);
-    let device = brush_cube::test_helpers::test_device().await;
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
 
     // Half valid splats, half with zero-length quaternion. The zero-quat ones
     // should be culled cleanly and the output should match rendering just the

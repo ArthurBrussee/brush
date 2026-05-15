@@ -4,13 +4,13 @@
 mod convert {
     use burn::module::Module;
     use burn::record::HalfPrecisionSettings;
-    use burn::tensor::backend::Backend;
+    use burn::tensor::Device;
     use burn_store::ModuleSnapshot;
     use lpips::LpipsModel;
 
-    pub fn convert_lpips<B: Backend>(device: &B::Device) {
+    pub fn convert_lpips(device: &Device) {
         let mut store = burn_store::pytorch::PytorchStore::from_file("./lpips_vgg_remapped.pth");
-        let mut model = LpipsModel::<B>::new(device);
+        let mut model = LpipsModel::new(device);
         model.load_from(&mut store).expect("Failed to load model");
 
         let recorder = burn::record::BinFileRecorder::<HalfPrecisionSettings>::new();
@@ -24,7 +24,7 @@ fn main() {
     #[cfg(not(target_family = "wasm"))]
     {
         println!("Converting LPIPS PyTorch model to Burn format...");
-        convert::convert_lpips::<burn::backend::Wgpu>(&burn::backend::wgpu::WgpuDevice::default());
+        convert::convert_lpips(&burn::backend::wgpu::WgpuDevice::default().into());
         println!("Conversion completed successfully!");
     }
 }

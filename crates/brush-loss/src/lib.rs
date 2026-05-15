@@ -14,22 +14,23 @@
 //! Backward recomputes SSIM partials inline so no per-pixel state survives
 //! across the autograd tape.
 
-use brush_render::MainBackendBase;
+use brush_render::burn_glue::{
+    AutodiffMain, unwrap_ad_wgpu_float, unwrap_ad_wgpu_int, unwrap_wgpu_float, unwrap_wgpu_int,
+    wrap_ad_wgpu_float, wrap_wgpu_float,
+};
+use brush_render::{MainBackend, MainBackendBase};
 use burn::{
     backend::{
-        Autodiff,
+        Backend, TensorMetadata,
         autodiff::{
-            checkpoint::{base::Checkpointer, strategy::CheckpointStrategy},
+            checkpoint::{base::Checkpointer, strategy::NoCheckpointing},
             grads::Gradients,
             ops::{Backward, Ops, OpsKind},
         },
+        tensor::{FloatTensor, IntTensor},
         wgpu::WgpuRuntime,
     },
-    prelude::Backend,
-    tensor::{
-        DType, Int, Shape, Tensor, TensorMetadata, TensorPrimitive,
-        ops::{FloatTensor, IntTensor},
-    },
+    tensor::{DType, Int, Shape, Tensor},
 };
 use burn_cubecl::{
     CubeRuntime, fusion::FusionCubeRuntime, kernel::into_contiguous, tensor::CubeTensor,
@@ -1050,27 +1051,26 @@ impl<B: Backend + LossOps<B>> Backward<B, 1> for ImageLossBackward {
 /// into a single fused kernel. Pass `pred` with 4 channels (RGBA) to also
 /// emit `|pred.a - gt.a|` into the alpha channel of the loss map; pass 3
 /// (RGB) to skip the alpha-match work entirely.
-pub fn image_loss<B, C>(
-    pred: Tensor<Autodiff<B, C>, 3>,
-    gt_packed: Tensor<B, 2, Int>,
-    cfg: ImageLossConfig,
-) -> Tensor<Autodiff<B, C>, 3>
-where
-    B: Backend + LossOps<B>,
-    C: CheckpointStrategy,
-{
-    let pred_chw = pred.permute([2, 0, 1]).into_primitive().tensor();
-    let gt_p = gt_packed.into_primitive();
+///
+/// `pred` must be on an autodiff-enabled Wgpu device.
+pub fn image_loss(pred: Tensor<3>, gt_packed: Tensor<2, Int>, cfg: ImageLossConfig) -> Tensor<3> {
+    let pred_chw = pred.permute([2, 0, 1]);
+    let pred_ad = unwrap_ad_wgpu_float(pred_chw);
+    let gt_p = unwrap_ad_wgpu_int(gt_packed);
 
     let prep = ImageLossBackward
-        .prepare::<C>([pred_chw.node.clone()])
+        .prepare::<NoCheckpointing>([pred_ad.node.clone()])
         .compute_bound()
         .stateful();
 
-    let pred_p = pred_chw.primitive;
-    let map = B::image_loss_forward(pred_p.clone(), gt_p.clone(), cfg);
+    let pred_p = pred_ad.primitive;
+    let map = <MainBackend as LossOps<MainBackend>>::image_loss_forward(
+        pred_p.clone(),
+        gt_p.clone(),
+        cfg,
+    );
 
-    let map_p = match prep {
+    let map_ad: FloatTensor<AutodiffMain> = match prep {
         OpsKind::Tracked(prep) => prep.finish(
             ImageLossState {
                 pred: pred_p,
@@ -1081,24 +1081,22 @@ where
         ),
         OpsKind::UnTracked(prep) => prep.finish(map),
     };
-    Tensor::<Autodiff<B, C>, 3>::from_primitive(TensorPrimitive::Float(map_p)).permute([1, 2, 0])
+    wrap_ad_wgpu_float::<3>(map_ad).permute([1, 2, 0])
 }
 
 /// Forward-only loss map for non-differentiable backends. Same kernel as
 /// the training forward; eval picks `cfg` to compute SSIM, L1, or whatever
 /// combination it needs (e.g. MSE = `l1_eval(...).powi(2).mean()`).
-pub fn image_loss_eval<B>(
-    pred: Tensor<B, 3>,
-    gt_packed: Tensor<B, 2, Int>,
+pub fn image_loss_eval(
+    pred: Tensor<3>,
+    gt_packed: Tensor<2, Int>,
     cfg: ImageLossConfig,
-) -> Tensor<B, 3>
-where
-    B: Backend + LossOps<B>,
-{
-    let pred_chw = pred.permute([2, 0, 1]).into_primitive().tensor();
-    let gt_p = gt_packed.into_primitive();
-    let map = B::image_loss_forward(pred_chw, gt_p, cfg);
-    Tensor::<B, 3>::from_primitive(TensorPrimitive::Float(map)).permute([1, 2, 0])
+) -> Tensor<3> {
+    let pred_chw = pred.permute([2, 0, 1]);
+    let pred_p = unwrap_wgpu_float(pred_chw);
+    let gt_p = unwrap_wgpu_int(gt_packed);
+    let map = <MainBackend as LossOps<MainBackend>>::image_loss_forward(pred_p, gt_p, cfg);
+    wrap_wgpu_float::<3>(map).permute([1, 2, 0])
 }
 
 /// Decode `gt_packed` back to a `[H, W, 3]` f32 RGB tensor. `composite_bg =
@@ -1106,10 +1104,8 @@ where
 /// Materialising f32 GT defeats the whole point of the packed format, so
 /// this is reserved for the LPIPS path which feeds f32 RGB into a VGG
 /// forward and has no kernel-fused alternative today.
-pub fn unpack_gt_rgb<B>(gt_packed: Tensor<B, 2, Int>, composite_bg: Option<Vec3>) -> Tensor<B, 3>
-where
-    B: Backend + LossOps<B>,
-{
-    let out = B::unpack_gt_rgb(gt_packed.into_primitive(), composite_bg);
-    Tensor::<B, 3>::from_primitive(TensorPrimitive::Float(out))
+pub fn unpack_gt_rgb(gt_packed: Tensor<2, Int>, composite_bg: Option<Vec3>) -> Tensor<3> {
+    let gt_p = unwrap_wgpu_int(gt_packed);
+    let out = <MainBackend as LossOps<MainBackend>>::unpack_gt_rgb(gt_p, composite_bg);
+    wrap_wgpu_float(out)
 }

@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 
-use burn::prelude::Backend;
-use burn::tensor::ops::FloatTensor;
+use burn::backend::Backend;
+use burn::backend::tensor::FloatTensor;
 use burn_cubecl::CubeBackend;
 use burn_fusion::Fusion;
 use burn_wgpu::WgpuRuntime;
@@ -10,8 +10,8 @@ use clap::ValueEnum;
 use glam::Vec3;
 
 use crate::gaussian_splats::SplatRenderMode;
-pub use crate::gaussian_splats::{TextureMode, render_splats};
-pub use crate::render_aux::{RenderAux, RenderOutput};
+pub use crate::gaussian_splats::{Splats, TextureMode, render_splats};
+pub use crate::render_aux::{RenderAux, RenderAuxInner, RenderOutput};
 
 pub mod burn_glue;
 #[doc(hidden)]

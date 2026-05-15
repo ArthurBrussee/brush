@@ -6,18 +6,15 @@
 
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
-    AlphaMode, MainBackend,
+    AlphaMode,
     bounding_box::BoundingBox,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
 };
 use brush_render_bwd::render_splats;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
-use burn::{
-    backend::{Autodiff, wgpu::WgpuDevice},
-    module::AutodiffModule,
-    tensor::{Tensor, TensorData, TensorPrimitive},
-};
+use burn::module::AutodiffModule;
+use burn::tensor::{Device, TensorData};
 use glam::{Quat, Vec3};
 use rand::{RngExt, SeedableRng};
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -25,12 +22,10 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[cfg(target_family = "wasm")]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-type DiffBackend = Autodiff<MainBackend>;
-
 const TEST_SEED: u64 = 12345;
 
 /// Generate small realistic splats for testing
-fn generate_test_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend> {
+fn generate_test_splats(device: &Device, count: usize) -> Splats {
     let mut rng = rand::rngs::StdRng::seed_from_u64(TEST_SEED);
 
     let means: Vec<f32> = (0..count)
@@ -82,7 +77,7 @@ fn generate_test_splats(device: &WgpuDevice, count: usize) -> Splats<DiffBackend
 
     let opacities: Vec<f32> = (0..count).map(|_| rng.random_range(0.6..1.0)).collect();
 
-    Splats::<DiffBackend>::from_raw(
+    Splats::from_raw(
         means,
         rotations,
         log_scales,
@@ -103,7 +98,7 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
         let v = (v + (rng.random::<f32>() - 0.5) * 0.05).clamp(0.0, 1.0);
         (v * 255.0).round() as u32
     };
-    let img_packed_data: Vec<u32> = (0..pixel_count)
+    let img_packed_data: Vec<i32> = (0..pixel_count)
         .map(|i| {
             let x = (i as u32) % width;
             let y = (i as u32) / width;
@@ -112,7 +107,7 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
             let r = byte(nx * 0.5 + 0.25);
             let g = byte(ny * 0.5 + 0.25);
             let b = byte((nx + ny) * 0.25 + 0.5);
-            r | g << 8 | b << 16 | 255 << 24
+            (r | g << 8 | b << 16 | 255 << 24) as i32
         })
         .collect();
 
@@ -135,7 +130,8 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_splat_generation() {
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let splats = generate_test_splats(&device, 1000);
 
     assert_eq!(splats.num_splats(), 1000);
@@ -158,7 +154,8 @@ async fn test_splat_generation() {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_forward_rendering() {
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let splats = generate_test_splats(&device, 1000);
     assert_eq!(splats.num_splats(), 1000);
 
@@ -172,8 +169,8 @@ async fn test_forward_rendering() {
     let img_size = glam::uvec2(64, 64);
     let result = render_splats(splats, &camera, img_size, Vec3::ZERO).await;
     assert!(result.num_visible > 0, "no splats rendered");
-    let pixels: Tensor<DiffBackend, 3> = Tensor::from_primitive(TensorPrimitive::Float(result.img));
-    let data = pixels
+    let data = result
+        .img
         .into_data_async()
         .await
         .expect("readback")
@@ -184,7 +181,8 @@ async fn test_forward_rendering() {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_training_step() {
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let batch = generate_test_batch((64, 64));
     let splats = generate_test_splats(&device, 500);
     let config = TrainConfig::default();
@@ -203,13 +201,14 @@ fn test_batch_generation() {
     let batch = generate_test_batch((256, 128));
     let img_dims = batch.img_packed.shape.as_slice();
     assert_eq!(img_dims, &[128, 256]);
-    let img_data = batch.img_packed.into_vec::<u32>().unwrap();
+    let img_data = batch.img_packed.into_vec::<i32>().unwrap();
     assert_eq!(img_data.len(), 128 * 256);
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_multi_step_training() {
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let batch = generate_test_batch((64, 64));
     let config = TrainConfig::default();
     let mut splats = generate_test_splats(&device, 100);
@@ -231,7 +230,8 @@ async fn test_multi_step_training() {
 // be zero (or at least finite) and the optimizer step should be a no-op.
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn train_with_zero_visible_does_not_crash() {
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let splats = generate_test_splats(&device, 200);
 
     // Camera pointing away from the scene (looking along +Z, scene is at ±5).
@@ -243,7 +243,7 @@ async fn train_with_zero_visible_does_not_crash() {
         glam::vec2(0.5, 0.5),
     );
 
-    let pixel = 0x80808080u32; // mid-grey, opaque
+    let pixel = 0x80808080u32 as i32; // mid-grey, opaque; bit-cast to i32 for the dispatch backend
     let batch = SceneBatch {
         img_packed: TensorData::new(vec![pixel; 64 * 64], [64usize, 64]),
         has_alpha: false,
@@ -269,7 +269,8 @@ async fn train_with_zero_visible_does_not_crash() {
 // `validate_gradient` under the debug-validation feature.
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn trainer_tolerates_nan_bounds() {
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let splats = generate_test_splats(&device, 100);
     let config = TrainConfig::default();
 
@@ -286,7 +287,8 @@ async fn trainer_tolerates_nan_bounds() {
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn test_gradient_validation() {
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let splats = generate_test_splats(&device, 100);
 
     // Create a simple loss by rendering and taking the mean
@@ -301,9 +303,7 @@ async fn test_gradient_validation() {
 
     // Clone splats since render_splats takes ownership and we need splats for gradient validation
     let result = render_splats(splats.clone(), &camera, img_size, Vec3::ZERO).await;
-    let rendered: Tensor<DiffBackend, 3> =
-        Tensor::from_primitive(TensorPrimitive::Float(result.img));
-    splats.bwd_validate(rendered.mean()).await;
+    splats.bwd_validate(result.img.mean()).await;
 }
 
 // One trainer + many parallel viewers.
@@ -316,7 +316,8 @@ async fn stress_concurrent_train_and_view() {
     use brush_render::gaussian_splats::render_splats as render_splats_fwd;
     use tokio::sync::watch;
 
-    let device = brush_cube::test_helpers::test_device().await;
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let img_size = glam::uvec2(64, 64);
 
     let viewer_count = 12;
@@ -324,7 +325,7 @@ async fn stress_concurrent_train_and_view() {
     let viewer_iters_per_task = 50;
 
     let initial = generate_test_splats(&device, 500);
-    let (tx, rx) = watch::channel::<Splats<MainBackend>>(initial.clone().valid());
+    let (tx, rx) = watch::channel::<Splats>(initial.clone().valid());
 
     let trainer_actor = Actor::new("test-trainer");
     let device_c = device.clone();

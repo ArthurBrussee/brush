@@ -1,8 +1,13 @@
-use burn::tensor::{
-    DType, TensorMetadata,
-    ops::{FloatTensor, IntTensor},
+#![allow(clippy::match_wildcard_for_single_variants)]
+
+use burn::backend::{
+    Autodiff, BackendTensor, CheckpointingStrategy, DispatchTensor, DispatchTensorKind,
+    TensorMetadata, TensorPrimitive,
+    tensor::{FloatTensor, IntTensor},
 };
+use burn::tensor::{DType, Int, Tensor};
 use burn_cubecl::fusion::FusionCubeRuntime;
+use burn_cubecl::tensor::CubeTensor;
 use burn_fusion::{
     Fusion, FusionHandle,
     stream::{Operation, OperationStreams},
@@ -12,41 +17,159 @@ use burn_wgpu::WgpuRuntime;
 use glam::Vec3;
 
 use crate::{
-    MainBackendBase, RenderAux, SplatOps, camera::Camera, gaussian_splats::SplatRenderMode,
-    render_aux::RenderOutput,
+    MainBackend, MainBackendBase, RenderAuxInner, SplatOps, camera::Camera,
+    gaussian_splats::SplatRenderMode, render_aux::RenderOutput,
 };
 
-/// **Workaround for an upstream `burn-fusion` cross-thread race.**
+/// Inner Wgpu autodiff backend (same as `Autodiff<burn::backend::Wgpu>`).
+/// Used as the primitive backend for autodiff `Tensor<D>` operations.
+pub type AutodiffMain = Autodiff<MainBackend>;
+
+// ---------------------------------------------------------------------------
+// `Tensor<D>` ↔ backend-level primitive bridges.
+//
+// `Tensor<D>` is pinned to burn's `Dispatch` backend; brush only ever runs on
+// a wgpu device, so every helper here assumes a `DispatchTensorKind::Wgpu`
+// (optionally wrapped in `Autodiff`) and panics otherwise.
+//
+// The autodiff wraps explicitly set `checkpointing: Some(NoCheckpointing)`:
+// burn-dispatch's stock `from_inner` / `inner` paths leave that field
+// inconsistent with the `kind` enum, which trips macro-dispatched ops.
+// ---------------------------------------------------------------------------
+
+/// Extract the inner fusion-Wgpu float tensor from a non-autodiff
+/// `Tensor<D>`.
+pub fn unwrap_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<MainBackend> {
+    match t.into_primitive().tensor().kind {
+        DispatchTensorKind::Wgpu(bt) => bt.float(),
+        other => panic!(
+            "expected Wgpu tensor, got: {:?}",
+            std::mem::discriminant(&other)
+        ),
+    }
+}
+
+/// Extract the inner fusion-Wgpu int tensor from a non-autodiff
+/// `Tensor<D, Int>`.
+pub fn unwrap_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBackend> {
+    match t.into_primitive().kind {
+        DispatchTensorKind::Wgpu(bt) => bt.int(),
+        other => panic!(
+            "expected Wgpu int tensor, got: {:?}",
+            std::mem::discriminant(&other)
+        ),
+    }
+}
+
+/// Inverse of [`unwrap_wgpu_float`]: wraps a fusion-Wgpu float tensor as a
+/// user-facing `Tensor<D>`.
+pub fn wrap_wgpu_float<const D: usize>(t: FloatTensor<MainBackend>) -> Tensor<D> {
+    Tensor::from_primitive(TensorPrimitive::Float(DispatchTensor {
+        kind: DispatchTensorKind::Wgpu(BackendTensor::Float(t)),
+        checkpointing: None,
+    }))
+}
+
+/// Like [`wrap_wgpu_float`] for an int tensor.
+pub fn wrap_wgpu_int<const D: usize>(t: IntTensor<MainBackend>) -> Tensor<D, Int> {
+    Tensor::from_primitive(DispatchTensor {
+        kind: DispatchTensorKind::Wgpu(BackendTensor::Int(t)),
+        checkpointing: None,
+    })
+}
+
+/// Extract the inner `AutodiffTensor<MainBackend>` from a `Tensor<D>` on an
+/// autodiff-enabled Wgpu device. Panics on any other shape.
+pub fn unwrap_ad_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<AutodiffMain> {
+    let prim = t.into_primitive().tensor();
+    match prim.kind {
+        DispatchTensorKind::Autodiff(inner) => match *inner {
+            DispatchTensorKind::Wgpu(BackendTensor::Autodiff(t)) => t,
+            other => panic!(
+                "autodiff inner kind is not Wgpu: {:?}",
+                std::mem::discriminant(&other)
+            ),
+        },
+        other => panic!(
+            "expected autodiff-enabled tensor; got: {:?}",
+            std::mem::discriminant(&other)
+        ),
+    }
+}
+
+/// Extract the inner Wgpu `IntTensor` regardless of whether the tensor is
+/// wrapped in an autodiff device — ints are never autodiff-tracked.
+pub fn unwrap_ad_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBackend> {
+    let kind = match t.into_primitive().kind {
+        DispatchTensorKind::Autodiff(inner) => *inner,
+        other => other,
+    };
+    match kind {
+        DispatchTensorKind::Wgpu(bt) => bt.int(),
+        other => panic!(
+            "expected Wgpu int tensor; got: {:?}",
+            std::mem::discriminant(&other)
+        ),
+    }
+}
+
+/// Inverse of [`unwrap_ad_wgpu_float`]: wraps an autodiff tensor as a
+/// user-facing `Tensor<D>` on the autodiff device.
+pub fn wrap_ad_wgpu_float<const D: usize>(t: FloatTensor<AutodiffMain>) -> Tensor<D> {
+    Tensor::from_primitive(TensorPrimitive::Float(DispatchTensor {
+        kind: DispatchTensorKind::Autodiff(Box::new(DispatchTensorKind::Wgpu(
+            BackendTensor::Autodiff(t),
+        ))),
+        checkpointing: Some(CheckpointingStrategy::None),
+    }))
+}
+
+/// Strip the autodiff wrapping from a `Tensor<D>` and clear the residual
+/// `checkpointing` field that `Tensor::inner()` leaves behind.
 ///
-/// `burn-fusion`'s `Client` dispatches custom ops to a small pool of
-/// per-stream worker threads (the `DSU-N` threads in stack traces).
-/// Each worker owns its own `HandleContainer` and processes ops
-/// serially. When a `FusionTensor` is shared across threads (e.g. a
-/// `Splats` clone published via `Slot` / `tokio::sync::watch` and
-/// rendered on a different thread than the trainer),
-/// `FusionTensor::Drop` from the *reading* thread enqueues a `Drop`
-/// op onto the *origin* stream's worker. The cross-stream
-/// coordination has a window where the `Drop` can be processed before
-/// a pending op on another stream that still needs the handle —
-/// hence `Should have handle for tensor TensorId { value: N }` panics
-/// from `burn-ir/src/handle.rs::HandleContainer::get_handle`, and
-/// the silent variant: a freed page reread as stale memory, surfacing
-/// as NaNs in `projected_splats`.
-///
-/// brush-side workaround: every public render entry point
-/// (`gaussian_splats::render_splats` for the fwd-only path,
-/// `brush_render_bwd::render_splats` for the diff path) acquires this
-/// lock for the duration of the render. That serializes the
-/// fusion-touching reads against each other and against the eventual
-/// `FusionTensor::Drop`s scheduled by the readback's epilogue, which
-/// is enough to keep the cross-thread race quiet at the rates brush
-/// actually does — one trainer + N concurrent viewer renders.
-///
-/// **Remove when upstream burn fixes cross-thread handle drops.**
-pub static FUSION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// Upstream burn-dispatch's `inner()` preserves the original tensor's
+/// `checkpointing: Some(…)` even after the kind has been downgraded from
+/// `Autodiff(...)` to plain `Wgpu(...)`. Downstream macros (e.g. the
+/// `Float` variant of `unary_op_arms!`) use `checkpointing.is_some()` as
+/// a "this came from autodiff" signal and silently re-lift the output to
+/// the autodiff backend, which then trips cross-backend assertions when
+/// it's combined with a tensor whose checkpointing is `None`. Using this
+/// helper instead of bare `.inner()` avoids the trap.
+pub fn detach_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
+    let dispatch = t.into_primitive().tensor();
+    let kind = match dispatch.kind {
+        DispatchTensorKind::Autodiff(inner) => *inner,
+        other => other,
+    };
+    Tensor::from_primitive(TensorPrimitive::Float(DispatchTensor {
+        kind,
+        checkpointing: None,
+    }))
+}
+
+/// Like [`detach_autodiff`] for `Tensor<D, Int>`.
+pub fn detach_autodiff_int<const D: usize>(t: Tensor<D, Int>) -> Tensor<D, Int> {
+    let dispatch = t.into_primitive();
+    let kind = match dispatch.kind {
+        DispatchTensorKind::Autodiff(inner) => *inner,
+        other => other,
+    };
+    Tensor::from_primitive(DispatchTensor {
+        kind,
+        checkpointing: None,
+    })
+}
+
+/// Resolve a `Tensor<D>` on a Wgpu device down to the underlying
+/// `CubeTensor<WgpuRuntime>`, draining any pending fusion ops. Useful for
+/// direct GPU resource access (e.g. binding the buffer into a wgpu pipeline).
+pub fn resolve_to_cube_float<const D: usize>(tensor: Tensor<D>) -> CubeTensor<WgpuRuntime> {
+    let fusion = unwrap_wgpu_float(tensor);
+    let client = fusion.client.clone();
+    client.resolve_tensor_float::<MainBackendBase>(fusion)
+}
 
 impl SplatOps<Self> for Fusion<MainBackendBase> {
-    #[allow(clippy::too_many_arguments)]
     async fn render(
         camera: &Camera,
         img_size: glam::UVec2,
@@ -71,8 +194,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             .clone()
             .resolve_tensor_float::<MainBackendBase>(raw_opacities);
 
-        // Run the full pipeline on MainBackendBase (with its own
-        // internal readback for num_visible / num_intersections).
+        // Run the full pipeline on MainBackendBase.
         let out = MainBackendBase::render(
             camera,
             img_size,
@@ -213,7 +335,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
 
         RenderOutput {
             out_img,
-            aux: RenderAux {
+            aux: RenderAuxInner {
                 num_visible: out.aux.num_visible,
                 num_intersections: out.aux.num_intersections,
                 visible,

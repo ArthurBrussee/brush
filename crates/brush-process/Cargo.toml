@@ -10,8 +10,8 @@ license.workspace = true
 debug-validation = ["brush-train/debug-validation"]
 
 [dependencies]
-brush-cube.path = "../brush-cube"
 brush-render.path = "../brush-render"
+brush-render-bwd.path = "../brush-render-bwd"
 brush-vfs.path = "../brush-vfs"
 brush-serde.path = "../brush-serde"
 

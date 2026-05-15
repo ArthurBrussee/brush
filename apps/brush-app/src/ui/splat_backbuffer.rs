@@ -1,19 +1,18 @@
-use brush_async::Actor;
+use brush_async::{Actor, AsyncMap};
 use brush_process::slot::Slot;
 use brush_render::{
-    MainBackend, MainBackendBase, TextureMode, camera::Camera, gaussian_splats::Splats,
+    TextureMode, burn_glue::resolve_to_cube_float, camera::Camera, gaussian_splats::Splats,
     render_splats,
 };
 use burn::tensor::Tensor;
 use egui::Rect;
 use glam::{UVec2, Vec3};
-use tokio::sync::mpsc;
 
 use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 
 #[derive(Clone)]
 struct RenderRequest {
-    splats: Slot<Splats<MainBackend>>,
+    splats: Slot<Splats>,
     ctx: egui::Context,
     state: LastRenderState,
 }
@@ -28,18 +27,11 @@ struct LastRenderState {
 }
 
 pub struct SplatBackbuffer {
-    req_send: mpsc::UnboundedSender<RenderRequest>,
-    img_rec: mpsc::Receiver<Tensor<MainBackend, 3>>,
-    last_image: Option<Tensor<MainBackend, 3>>,
-    last_state: Option<LastRenderState>,
+    pipe: AsyncMap<RenderRequest, Tensor<3>>,
 }
 
 impl SplatBackbuffer {
-    pub fn new(state: &eframe::egui_wgpu::RenderState, actor: &Actor) -> Self {
-        // Create channel for render requests
-        let (req_send, req_rec) = mpsc::unbounded_channel();
-        let (img_send, img_rec) = mpsc::channel(1);
-
+    pub fn new(state: &eframe::egui_wgpu::RenderState, actor: Actor) -> Self {
         // Register splat backbuffer resources
         state
             .renderer
@@ -50,22 +42,31 @@ impl SplatBackbuffer {
                 state.target_format,
             ));
 
-        actor.run(move || render_worker(req_rec, img_send)).detach();
+        let pipe = AsyncMap::new(
+            actor,
+            async move |req: &RenderRequest| {
+                let (image, _) = render_splats(
+                    req.splats.get(req.state.frame).unwrap(),
+                    &req.state.camera,
+                    req.state.img_size,
+                    req.state.background,
+                    req.state.splat_scale,
+                    TextureMode::Packed,
+                )
+                .await;
+                image
+            },
+            |req: &RenderRequest| req.ctx.request_repaint(),
+        );
 
-        Self {
-            req_send,
-            img_rec,
-            last_image: None,
-            last_state: None,
-        }
+        Self { pipe }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn paint(
-        &mut self,
+        &self,
         rect: Rect,
         ui: &egui::Ui,
-        splats: &Slot<Splats<MainBackend>>,
+        splats: &Slot<Splats>,
         camera: &Camera,
         frame: usize,
         background: Vec3,
@@ -88,23 +89,18 @@ impl SplatBackbuffer {
             img_size,
         };
 
-        let dirty = splats_dirty || self.last_state.as_ref() != Some(&current_state);
+        let dirty = splats_dirty
+            || self.pipe.last_request().map(|r| r.state) != Some(current_state.clone());
 
-        if dirty {
-            self.last_state = Some(current_state.clone());
-            // Send request to worker (ignore send errors if channel closed)
-            let _ = self.req_send.send(RenderRequest {
+        if dirty && !splats.is_empty() {
+            self.pipe.request(RenderRequest {
                 splats: splats.clone(),
                 ctx: ui.ctx().clone(),
                 state: current_state,
             });
         }
 
-        while let Ok(img) = self.img_rec.try_recv() {
-            self.last_image = Some(img);
-        }
-
-        if let Some(image) = &self.last_image {
+        if let Some(image) = self.pipe.latest() {
             let shape = image.shape();
             let img_height = shape[0] as u32;
             let img_width = shape[1] as u32;
@@ -113,7 +109,7 @@ impl SplatBackbuffer {
                 .add(eframe::egui_wgpu::Callback::new_paint_callback(
                     rect,
                     SplatBackbufferPainter {
-                        last_img: image.clone(),
+                        last_img: image,
                         img_width,
                         img_height,
                     },
@@ -225,7 +221,7 @@ impl SplatBackbufferResources {
 }
 
 struct SplatBackbufferPainter {
-    last_img: Tensor<MainBackend, 3>,
+    last_img: Tensor<3>,
     img_width: u32,
     img_height: u32,
 }
@@ -254,11 +250,7 @@ impl CallbackTrait for SplatBackbufferPainter {
         );
 
         // Extract the wgpu buffer from the Burn tensor
-        let last_img = self.last_img.clone().into_primitive().tensor();
-        let prim_tensor = last_img
-            .client
-            .clone()
-            .resolve_tensor_int::<MainBackendBase>(last_img);
+        let prim_tensor = resolve_to_cube_float(self.last_img.clone());
         let img_res_handle = prim_tensor
             .client
             .get_resource(prim_tensor.handle)
@@ -301,38 +293,5 @@ impl CallbackTrait for SplatBackbufferPainter {
         render_pass.set_pipeline(&res.pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
         render_pass.draw(0..3, 0..1);
-    }
-}
-
-/// Async render worker that processes render requests.
-async fn render_worker(
-    mut receiver: mpsc::UnboundedReceiver<RenderRequest>,
-    img_sender: mpsc::Sender<Tensor<MainBackend, 3>>,
-) {
-    loop {
-        // Wait for at least one request and get latest.
-        let Some(mut request) = receiver.recv().await else {
-            break;
-        };
-        while let Ok(newer) = receiver.try_recv() {
-            request = newer;
-        }
-
-        let Some(splats) = request.splats.get(request.state.frame) else {
-            continue;
-        };
-        let (image, _) = render_splats(
-            splats,
-            &request.state.camera,
-            request.state.img_size,
-            request.state.background,
-            request.state.splat_scale,
-            TextureMode::Packed,
-        )
-        .await;
-        let _ = img_sender.send(image).await;
-
-        // Trigger egui repaint so the new texture gets picked up.
-        request.ctx.request_repaint();
     }
 }

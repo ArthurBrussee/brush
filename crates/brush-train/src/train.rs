@@ -10,24 +10,20 @@ use crate::{
 
 use brush_dataset::scene::SceneBatch;
 use brush_loss::{ImageLossConfig, image_loss, unpack_gt_rgb};
-use brush_render::{AlphaMode, MainBackend, gaussian_splats::Splats};
-use brush_render::{bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
+use brush_render::gaussian_splats::Splats;
+use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
 use burn::{
-    backend::{
-        Autodiff,
-        wgpu::{WgpuDevice, WgpuRuntime},
-    },
+    backend::wgpu::{WgpuDevice, WgpuRuntime},
     lr_scheduler::{
         LrScheduler,
         exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig},
     },
     module::ParamId,
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
-    prelude::Backend,
     tensor::{
-        Bool, Distribution, IndexingUpdateOp, Int, Tensor, TensorData, TensorPrimitive,
-        activation::sigmoid, backend::AutodiffBackend, ops::IntTensorOps, s,
+        Bool, Device, Distribution, IndexingUpdateOp, Int, Tensor, TensorData, activation::sigmoid,
+        s,
     },
 };
 
@@ -39,24 +35,23 @@ pub const BOUND_PERCENTILE: f32 = 0.8;
 
 const MIN_OPACITY: f32 = 1.0 / 255.0;
 
-type DiffBackend = Autodiff<MainBackend>;
-type OptimizerType = OptimizerAdaptor<AdamScaled, Splats<DiffBackend>, DiffBackend>;
+type OptimizerType = OptimizerAdaptor<AdamScaled, Splats>;
 
 pub struct SplatTrainer {
     config: TrainConfig,
     sched_mean: ExponentialLrScheduler,
     sched_scale: ExponentialLrScheduler,
-    refine_record: Option<RefineRecord<MainBackend>>,
+    refine_record: Option<RefineRecord>,
     optim: Option<OptimizerType>,
     ssim_enabled: bool,
     bounds: BoundingBox,
     step_count: u32,
     max_sh_degree: u32,
     #[cfg(not(target_family = "wasm"))]
-    lpips: Option<lpips::LpipsModel<DiffBackend>>,
+    lpips: Option<lpips::LpipsModel>,
 }
 
-fn inv_sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
+fn inv_sigmoid(x: Tensor<1>) -> Tensor<1> {
     (x.clone() / (1.0f32 - x)).log()
 }
 
@@ -64,7 +59,7 @@ fn create_optimizer_from_config() -> OptimizerType {
     AdamScaledConfig::new().with_epsilon(1e-15).init()
 }
 
-pub async fn get_splat_bounds<B: Backend>(splats: Splats<B>, percentile: f32) -> BoundingBox {
+pub async fn get_splat_bounds(splats: Splats, percentile: f32) -> BoundingBox {
     let means: Vec<f32> = splats
         .means()
         .into_data_async()
@@ -77,7 +72,7 @@ pub async fn get_splat_bounds<B: Backend>(splats: Splats<B>, percentile: f32) ->
 
 impl SplatTrainer {
     #[allow(unused_variables)]
-    pub fn new(config: &TrainConfig, device: &WgpuDevice, bounds: BoundingBox) -> Self {
+    pub fn new(config: &TrainConfig, device: &Device, bounds: BoundingBox) -> Self {
         let decay =
             (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_train_iters as f64);
         let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean, decay);
@@ -103,11 +98,7 @@ impl SplatTrainer {
         }
     }
 
-    pub async fn step(
-        &mut self,
-        batch: SceneBatch,
-        splats: Splats<DiffBackend>,
-    ) -> (Splats<DiffBackend>, TrainStepStats) {
+    pub async fn step(&mut self, batch: SceneBatch, splats: Splats) -> (Splats, TrainStepStats) {
         let mut splats = splats;
 
         // Track max SH degree from the first splats we see.
@@ -123,11 +114,8 @@ impl SplatTrainer {
         let has_alpha = batch.has_alpha;
         // GT lives on the GPU as packed `[H, W]` u32 (RGBA u8). All mixing
         // (bg compositing, alpha matching, mask) is folded into the loss
-        // kernels; no f32 GT image is ever materialised here. Going through
-        // `int_from_data` directly avoids `Tensor::from_data` casting u32 →
-        // i32 and panicking for alpha bytes ≥ 128.
-        let gt_packed: Tensor<MainBackend, 2, Int> =
-            Tensor::new(MainBackend::int_from_data(batch.img_packed, &device));
+        // kernels; no f32 GT image is ever materialised here.
+        let gt_packed: Tensor<2, Int> = Tensor::from_data(batch.img_packed, &device);
         let img_size = glam::uvec2(img_w as u32, img_h as u32);
         let base = &self.config.background_color;
         let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
@@ -141,14 +129,10 @@ impl SplatTrainer {
                 .instrument(trace_span!("Forward"))
                 .await;
 
-            let pred_image = Tensor::from_primitive(TensorPrimitive::Float(diff_out.img));
-
+            let pred_image = diff_out.img;
             let refine_weight_holder = diff_out.refine_weight_holder;
-
-            let visible: Tensor<Autodiff<MainBackend>, 1> =
-                Tensor::from_primitive(TensorPrimitive::Float(diff_out.visible));
-            let max_radius: Tensor<Autodiff<MainBackend>, 1> =
-                Tensor::from_primitive(TensorPrimitive::Float(diff_out.max_radius));
+            let visible = diff_out.visible;
+            let max_radius = diff_out.max_radius;
 
             // RGB loss is `(1 - w) * L1 + (-w) * SSIM` per pixel. Bg
             // compositing always runs in the kernel; for synthesised opaque
@@ -194,8 +178,8 @@ impl SplatTrainer {
             // here costs ~99 MB at 4K, only when LPIPS is enabled.
             #[cfg(not(target_family = "wasm"))]
             if let Some(lpips) = &self.lpips {
-                let gt_rgb = unpack_gt_rgb::<MainBackend>(gt_packed.clone(), composite_bg);
-                let gt_rgb_diff: Tensor<DiffBackend, 3> = Tensor::from_inner(gt_rgb);
+                let gt_rgb = unpack_gt_rgb(gt_packed.clone(), composite_bg);
+                let gt_rgb_diff: Tensor<3> = Tensor::from_inner(gt_rgb);
                 loss = loss
                     + lpips.lpips(
                         pred_image.clone().slice(s![.., .., 0..3]).unsqueeze_dim(0),
@@ -206,17 +190,24 @@ impl SplatTrainer {
             let mut grads = splats.bwd_validate(loss.clone()).await;
 
             trace_span!("Housekeeping").in_scope(|| {
-                // Get the xy gradient norm from the dummy tensor.
+                // Refine state accumulates on the inner (non-autodiff) device
+                // so we can mix it with `.inner()`-stripped gradients/aux
+                // without crossing backends. `detach_autodiff` also clears
+                // the residual `checkpointing` flag that bare `.inner()`
+                // leaves behind (see `brush_render::burn_glue`).
+                use brush_render::burn_glue::detach_autodiff;
                 let refine_weight = refine_weight_holder
                     .grad_remove(&mut grads)
                     .expect("XY gradients need to be calculated.");
-                let device = splats.device();
-                let num_splats = splats.num_splats();
+                let device = splats.device().inner();
                 let record = self
                     .refine_record
-                    .get_or_insert_with(|| RefineRecord::new(num_splats, &device));
-
-                record.gather_stats(refine_weight, visible.clone().inner(), max_radius.inner());
+                    .get_or_insert_with(|| RefineRecord::new(splats.num_splats(), &device));
+                record.gather_stats(
+                    detach_autodiff(refine_weight),
+                    detach_autodiff(visible.clone().inner()),
+                    detach_autodiff(max_radius.inner()),
+                );
             });
 
             (grads, visible, diff_out.num_visible)
@@ -232,6 +223,9 @@ impl SplatTrainer {
             self.config.lr_opac,
         );
 
+        // OptimizerAdaptor strips autodiff before calling SimpleOptimizer::step,
+        // so optimizer state (scaling, momentum) lives on the inner device.
+        let opt_device = device.clone().inner();
         let optimizer =
             self.optim.get_or_insert_with(|| {
                 let sh_degree = splats.sh_degree();
@@ -243,7 +237,7 @@ impl SplatTrainer {
                 for s in &mut scales[1..] {
                     *s = rest_scale;
                 }
-                let sh_lr_scales = Tensor::<_, 1>::from_floats(scales.as_slice(), &device)
+                let sh_lr_scales = Tensor::<1>::from_floats(scales.as_slice(), &opt_device)
                     .reshape([1, num_coeffs as i32, 1]);
 
                 create_optimizer_from_config().load_record(HashMap::from([(
@@ -273,8 +267,7 @@ impl SplatTrainer {
                 lr_scale as f32,
             ];
             let transform_scaling =
-                Tensor::<MainBackend, 1>::from_floats(lr_values.as_slice(), &device)
-                    .reshape([1, 10]);
+                Tensor::<1>::from_floats(lr_values.as_slice(), &opt_device).reshape([1, 10]);
 
             let mut record = optimizer.to_record();
             let existing = record.remove(&splats.transforms.id);
@@ -311,13 +304,16 @@ impl SplatTrainer {
 
         // Add random noise. Only do this in the growth phase, otherwise
         // let the splats settle in without noise, not much point in exploring regions anymore.
-        let inv_opac: Tensor<_, 1> = 1.0 - splats.opacities();
+        let inv_opac: Tensor<1> = 1.0 - splats.opacities();
         let noise_weight = inv_opac.inner().powi_scalar(150.0).clamp(0.0, 1.0) * visible.inner();
         let noise_weight = noise_weight.unsqueeze_dim(1);
+        // `samples` is pure data — keep it on the inner device so it can
+        // multiply with the `.inner()`-stripped `noise_weight` without
+        // crossing backends.
         let samples = Tensor::random(
             [splats.num_splats() as usize, 3],
             Distribution::Normal(0.0, 1.0),
-            &splats.device(),
+            &splats.device().inner(),
         );
 
         // Could scale by train time, but, the mean_lr already decays over time.
@@ -349,13 +345,10 @@ impl SplatTrainer {
         (splats, stats)
     }
 
-    pub async fn refine(
-        &mut self,
-        iter: u32,
-        splats: Splats<MainBackend>,
-    ) -> (Splats<MainBackend>, RefineStats) {
+    pub async fn refine(&mut self, iter: u32, splats: Splats) -> (Splats, RefineStats) {
         let device = splats.device();
-        let client = WgpuRuntime::client(&device);
+        // `memory_cleanup` lives on the wgpu client, not on `Device`.
+        let client = WgpuRuntime::client(&WgpuDevice::default());
 
         let refiner = self
             .refine_record
@@ -383,7 +376,7 @@ impl SplatTrainer {
         // Remove splats that are way out of bounds.
         let center = self.bounds.center;
         let bound_center =
-            Tensor::<_, 1>::from_floats([center.x, center.y, center.z], &device).reshape([1, 3]);
+            Tensor::<1>::from_floats([center.x, center.y, center.z], &device).reshape([1, 3]);
         let splat_dists = (splats.means() - bound_center).abs();
         let bound_mask = splat_dists
             .greater_elem(max_allowed_bounds)
@@ -391,7 +384,7 @@ impl SplatTrainer {
             .squeeze_dim(1);
 
         // Prune parameter that's NaN.
-        fn row_non_finite(t: &Tensor<MainBackend, 2>) -> Tensor<MainBackend, 1, Bool> {
+        fn row_non_finite(t: &Tensor<2>) -> Tensor<1, Bool> {
             t.clone().is_finite().bool_not().any_dim(1).squeeze_dim(1)
         }
         let transforms_bad = row_non_finite(&splats.transforms.val());
@@ -459,7 +452,7 @@ impl SplatTrainer {
                 .clone()
                 .int()
                 .sum()
-                .into_scalar_async()
+                .into_scalar_async::<i32>()
                 .await
                 .expect("Failed to get threshold") as u32;
 
@@ -510,17 +503,17 @@ impl SplatTrainer {
 
     fn refine_splats(
         &mut self,
-        device: &WgpuDevice,
-        mut record: HashMap<ParamId, AdaptorRecord<AdamScaled, DiffBackend>>,
-        mut splats: Splats<MainBackend>,
+        device: &Device,
+        mut record: HashMap<ParamId, AdaptorRecord<AdamScaled>>,
+        mut splats: Splats,
         split_inds: HashSet<i32>,
         iter: u32,
-    ) -> Splats<MainBackend> {
+    ) -> Splats {
         let refine_count = split_inds.len();
 
         if refine_count > 0 {
             let refine_inds = Tensor::from_data(
-                TensorData::new(split_inds.into_iter().collect(), [refine_count]),
+                TensorData::new(split_inds.into_iter().collect::<Vec<_>>(), [refine_count]),
                 device,
             );
 
@@ -544,8 +537,8 @@ impl SplatTrainer {
             let cur_scales = cur_log_scale.clone().exp();
 
             let cur_opac = sigmoid(cur_raw_opac.clone());
-            let inv_opac: Tensor<_, 1> = 1.0 - cur_opac;
-            let new_opac: Tensor<_, 1> = 1.0 - inv_opac.sqrt();
+            let inv_opac: Tensor<1> = 1.0 - cur_opac;
+            let new_opac: Tensor<1> = 1.0 - inv_opac.sqrt();
             let new_raw_opac = inv_sigmoid(new_opac.clamp(MIN_OPACITY, 1.0 - MIN_OPACITY));
 
             let f_clamped = std::f32::consts::FRAC_1_SQRT_2;
@@ -590,6 +583,8 @@ impl SplatTrainer {
             // Build new transforms row: means(3) + rotations(4) + log_scales(3)
             let new_transforms =
                 Tensor::cat(vec![cur_means + samples, cur_rots, new_log_scales], 1);
+            // Momentum/state slots must match the optimizer's inner device.
+            let opt_device = device.clone().inner();
             splats = map_splats_and_opt(
                 splats,
                 &mut record,
@@ -597,15 +592,18 @@ impl SplatTrainer {
                 |x| Tensor::cat(vec![x, cur_sh_coeffs], 0),
                 |x| Tensor::cat(vec![x, new_raw_opac], 0),
                 // Read dims from tensor: moment_2 may have reduced trailing dims.
-                |x: Tensor<MainBackend, 2>| {
+                |x: Tensor<2>| {
                     let d1 = x.dims()[1];
-                    Tensor::cat(vec![x, Tensor::zeros([refine_count, d1], device)], 0)
+                    Tensor::cat(vec![x, Tensor::zeros([refine_count, d1], &opt_device)], 0)
                 },
-                |x: Tensor<MainBackend, 3>| {
+                |x: Tensor<3>| {
                     let [_, d1, d2] = x.dims();
-                    Tensor::cat(vec![x, Tensor::zeros([refine_count, d1, d2], device)], 0)
+                    Tensor::cat(
+                        vec![x, Tensor::zeros([refine_count, d1, d2], &opt_device)],
+                        0,
+                    )
                 },
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count], device)], 0),
+                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count], &opt_device)], 0),
             );
         }
 
@@ -633,16 +631,16 @@ impl SplatTrainer {
 }
 
 fn map_splats_and_opt(
-    mut splats: Splats<MainBackend>,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, DiffBackend>>,
-    map_transforms: impl FnOnce(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
-    map_sh_coeffs: impl FnOnce(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
-    map_opac: impl FnOnce(Tensor<MainBackend, 1>) -> Tensor<MainBackend, 1>,
+    mut splats: Splats,
+    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled>>,
+    map_transforms: impl FnOnce(Tensor<2>) -> Tensor<2>,
+    map_sh_coeffs: impl FnOnce(Tensor<3>) -> Tensor<3>,
+    map_opac: impl FnOnce(Tensor<1>) -> Tensor<1>,
 
-    map_opt_transforms: impl Fn(Tensor<MainBackend, 2>) -> Tensor<MainBackend, 2>,
-    map_opt_sh_coeffs: impl Fn(Tensor<MainBackend, 3>) -> Tensor<MainBackend, 3>,
-    map_opt_opac: impl Fn(Tensor<MainBackend, 1>) -> Tensor<MainBackend, 1>,
-) -> Splats<MainBackend> {
+    map_opt_transforms: impl Fn(Tensor<2>) -> Tensor<2>,
+    map_opt_sh_coeffs: impl Fn(Tensor<3>) -> Tensor<3>,
+    map_opt_opac: impl Fn(Tensor<1>) -> Tensor<1>,
+) -> Splats {
     splats.transforms = splats.transforms.map(map_transforms);
     map_opt(splats.transforms.id, record, &map_opt_transforms);
     splats.sh_coeffs = splats.sh_coeffs.map(map_sh_coeffs);
@@ -655,12 +653,12 @@ fn map_splats_and_opt(
 /// Apply `map_fn` to both `moment_1` and `moment_2` in the optimizer state.
 /// `map_fn` must be shape-agnostic along trailing dims because `moment_2`
 /// may have reduced trailing dims (size 1) when `reduce_moment_2` is set.
-fn map_opt<B: AutodiffBackend, const D: usize>(
+fn map_opt<const D: usize>(
     param_id: ParamId,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, B>>,
-    map_fn: &impl Fn(Tensor<B::InnerBackend, D>) -> Tensor<B::InnerBackend, D>,
+    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled>>,
+    map_fn: &impl Fn(Tensor<D>) -> Tensor<D>,
 ) {
-    let mut state: AdamState<_, D> = record
+    let mut state: AdamState<D> = record
         .remove(&param_id)
         .expect("failed to get optimizer record")
         .into_state();
@@ -679,11 +677,11 @@ fn map_opt<B: AutodiffBackend, const D: usize>(
 // Args:
 //   mask: bool[n]. If True, prune this Gaussian.
 async fn prune_points(
-    mut splats: Splats<MainBackend>,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, DiffBackend>>,
-    mut refiner: RefineRecord<MainBackend>,
-    prune: Tensor<MainBackend, 1, Bool>,
-) -> (Splats<MainBackend>, RefineRecord<MainBackend>, u32) {
+    mut splats: Splats,
+    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled>>,
+    mut refiner: RefineRecord,
+    prune: Tensor<1, Bool>,
+) -> (Splats, RefineRecord, u32) {
     assert_eq!(
         prune.dims()[0] as u32,
         splats.num_splats(),
@@ -706,6 +704,10 @@ async fn prune_points(
     let new_points = valid_inds.dims()[0] as u32;
     if new_points < start_splats {
         let valid_inds = valid_inds.squeeze_dim(1);
+        // Splat params + optimizer state share the autodiff device, but the
+        // refiner runs on the inner device — give `keep()` an inner copy.
+        use brush_render::burn_glue::detach_autodiff_int;
+        let inner_valid_inds = detach_autodiff_int(valid_inds.clone().inner());
         splats = map_splats_and_opt(
             splats,
             record,
@@ -716,7 +718,7 @@ async fn prune_points(
             |x| x.select(0, valid_inds.clone()),
             |x| x.select(0, valid_inds.clone()),
         );
-        refiner = refiner.keep(valid_inds);
+        refiner = refiner.keep(inner_valid_inds);
     }
     (splats, refiner, start_splats - new_points)
 }

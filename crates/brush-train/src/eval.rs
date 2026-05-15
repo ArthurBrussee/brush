@@ -3,35 +3,34 @@ use std::path::Path;
 
 use anyhow::Result;
 use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
-use brush_loss::{ImageLossConfig, LossOps, image_loss_eval};
+use brush_loss::{ImageLossConfig, image_loss_eval};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
-use brush_render::{AlphaMode, RenderAux, SplatOps, TextureMode, render_splats};
-use burn::prelude::Backend;
-use burn::tensor::{Int, Tensor, s};
+use brush_render::{AlphaMode, RenderAux, TextureMode, render_splats};
+use burn::tensor::{Device, Int, Tensor, s};
 use glam::Vec3;
 use image::DynamicImage;
 
-pub struct EvalSample<B: Backend> {
+pub struct EvalSample {
     pub gt_img: DynamicImage,
-    pub rendered: Tensor<B, 3>,
-    pub psnr: Tensor<B, 1>,
-    pub ssim: Tensor<B, 1>,
-    pub render_aux: RenderAux<B>,
+    pub rendered: Tensor<3>,
+    pub psnr: Tensor<1>,
+    pub ssim: Tensor<1>,
+    pub render_aux: RenderAux,
 }
 
-pub async fn eval_stats<B: Backend + SplatOps<B> + LossOps<B>>(
-    splats: Splats<B>,
+pub async fn eval_stats(
+    splats: Splats,
     gt_cam: &Camera,
     gt_img: DynamicImage,
     alpha_mode: AlphaMode,
-    device: &B::Device,
-) -> Result<EvalSample<B>> {
+    device: &Device,
+) -> Result<EvalSample> {
     let res = glam::uvec2(gt_img.width(), gt_img.height());
 
     let (gt_packed_data, _has_alpha) =
         sample_to_packed_data(view_to_sample_image(gt_img.clone(), alpha_mode));
-    let gt_packed: Tensor<B, 2, Int> = Tensor::new(B::int_from_data(gt_packed_data, device));
+    let gt_packed: Tensor<2, Int> = Tensor::from_data(gt_packed_data, device);
 
     // Render on reference black background.
     let (img, render_aux) =
@@ -63,7 +62,7 @@ pub async fn eval_stats<B: Backend + SplatOps<B> + LossOps<B>>(
     })
 }
 
-impl<B: Backend> EvalSample<B> {
+impl EvalSample {
     #[cfg(not(target_family = "wasm"))]
     pub async fn save_to_disk(&self, path: &Path) -> anyhow::Result<()> {
         use image::Rgb32FImage;

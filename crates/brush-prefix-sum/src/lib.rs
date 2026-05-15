@@ -2,43 +2,41 @@ mod kernels;
 
 use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
-use burn::tensor::TensorMetadata;
+use burn::backend::TensorMetadata;
 use burn_cubecl::cubecl::CubeDim;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
-
 use kernels::THREADS_PER_GROUP;
 
 pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     assert!(input.is_contiguous(), "Please ensure input is contiguous");
 
-    let threads_per_group = THREADS_PER_GROUP as usize;
     let num = input.shape()[0];
     let client = input.client.clone();
     let outputs = create_tensor(input.shape().dims::<1>(), &input.device, input.dtype);
 
-    let cube_dim = CubeDim::new_1d(THREADS_PER_GROUP);
+    let cube_dim = CubeDim::new_1d(THREADS_PER_GROUP as u32);
 
     // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
         kernels::prefix_sum_scan_kernel::launch_unchecked::<WgpuRuntime>(
             &client,
-            calc_cube_count_1d(num as u32, THREADS_PER_GROUP),
+            calc_cube_count_1d(num as u32, THREADS_PER_GROUP as u32),
             cube_dim,
             input.into_tensor_arg(),
             outputs.clone().into_tensor_arg(),
         );
     }
 
-    if num <= threads_per_group {
+    if num <= THREADS_PER_GROUP {
         return outputs;
     }
 
     let mut group_buffer = vec![];
     let mut work_size = vec![];
     let mut work_sz = num;
-    while work_sz > threads_per_group {
-        work_sz = work_sz.div_ceil(threads_per_group);
+    while work_sz > THREADS_PER_GROUP {
+        work_sz = work_sz.div_ceil(THREADS_PER_GROUP);
         group_buffer.push(create_tensor([work_sz], &outputs.device, outputs.dtype));
         work_size.push(work_sz);
     }
@@ -47,7 +45,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     unsafe {
         kernels::prefix_sum_scan_sums_kernel::launch_unchecked::<WgpuRuntime>(
             &client,
-            calc_cube_count_1d(work_size[0] as u32, THREADS_PER_GROUP),
+            calc_cube_count_1d(work_size[0] as u32, THREADS_PER_GROUP as u32),
             cube_dim,
             outputs.clone().into_tensor_arg(),
             group_buffer[0].clone().into_tensor_arg(),
@@ -59,7 +57,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
         unsafe {
             kernels::prefix_sum_scan_sums_kernel::launch_unchecked::<WgpuRuntime>(
                 &client,
-                calc_cube_count_1d(work_size[l + 1] as u32, THREADS_PER_GROUP),
+                calc_cube_count_1d(work_size[l + 1] as u32, THREADS_PER_GROUP as u32),
                 cube_dim,
                 group_buffer[l].clone().into_tensor_arg(),
                 group_buffer[l + 1].clone().into_tensor_arg(),
@@ -74,7 +72,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
         unsafe {
             kernels::prefix_sum_add_scanned_sums_kernel::launch_unchecked::<WgpuRuntime>(
                 &client,
-                calc_cube_count_1d(work_sz as u32, THREADS_PER_GROUP),
+                calc_cube_count_1d(work_sz as u32, THREADS_PER_GROUP as u32),
                 cube_dim,
                 group_buffer[l].clone().into_tensor_arg(),
                 group_buffer[l - 1].clone().into_tensor_arg(),
@@ -86,7 +84,10 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     unsafe {
         kernels::prefix_sum_add_scanned_sums_kernel::launch_unchecked::<WgpuRuntime>(
             &client,
-            calc_cube_count_1d((work_size[0] * threads_per_group) as u32, THREADS_PER_GROUP),
+            calc_cube_count_1d(
+                (work_size[0] * THREADS_PER_GROUP) as u32,
+                THREADS_PER_GROUP as u32,
+            ),
             cube_dim,
             group_buffer[0].clone().into_tensor_arg(),
             outputs.clone().into_tensor_arg(),
@@ -99,8 +100,11 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
 #[cfg(test)]
 mod tests {
     use crate::prefix_sum;
-    use burn::tensor::{Int, Tensor};
-    use burn_wgpu::{CubeBackend, WgpuRuntime};
+    use brush_cube::create_tensor_from_slice;
+    use burn::backend::ops::IntTensorOps;
+    use burn::tensor::DType;
+    use burn_cubecl::CubeBackend;
+    use burn_wgpu::{CubeTensor, WgpuRuntime};
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[cfg(target_family = "wasm")]
@@ -108,16 +112,16 @@ mod tests {
 
     type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
 
+    async fn read_i32(tensor: CubeTensor<WgpuRuntime>) -> Vec<i32> {
+        let data = Backend::int_into_data(tensor).await.expect("readback");
+        data.as_slice::<i32>().expect("Wrong type").to_vec()
+    }
+
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_sum_tiny() {
         let device = brush_cube::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data([1, 1, 1, 1], &device).into_primitive();
-        let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
-            .to_data_async()
-            .await
-            .expect("readback");
-        let summed = summed.as_slice::<i32>().expect("Wrong type");
+        let keys = create_tensor_from_slice(&[1i32, 1, 1, 1], &device, DType::I32);
+        let summed = read_i32(prefix_sum(keys)).await;
         assert_eq!(summed.len(), 4);
         assert_eq!(summed, [1, 2, 3, 4]);
     }
@@ -125,17 +129,10 @@ mod tests {
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_512_multiple() {
         const ITERS: usize = 1024;
-        let mut data = vec![];
-        for i in 0..ITERS {
-            data.push(90 + i as i32);
-        }
+        let data: Vec<i32> = (0..ITERS).map(|i| 90 + i as i32).collect();
         let device = brush_cube::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
-        let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
-            .to_data_async()
-            .await
-            .expect("readback");
+        let keys = create_tensor_from_slice(&data, &device, DType::I32);
+        let summed = read_i32(prefix_sum(keys)).await;
         let prefix_sum_ref: Vec<_> = data
             .into_iter()
             .scan(0, |x, y| {
@@ -143,12 +140,7 @@ mod tests {
                 Some(*x)
             })
             .collect();
-        for (summed, reff) in summed
-            .as_slice::<i32>()
-            .expect("Wrong type")
-            .iter()
-            .zip(prefix_sum_ref)
-        {
+        for (summed, reff) in summed.iter().zip(prefix_sum_ref) {
             assert_eq!(*summed, reff);
         }
     }
@@ -166,12 +158,8 @@ mod tests {
         }
 
         let device = brush_cube::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
-        let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
-            .to_data_async()
-            .await
-            .expect("readback");
+        let keys = create_tensor_from_slice(&data, &device, DType::I32);
+        let summed = read_i32(prefix_sum(keys)).await;
 
         let prefix_sum_ref: Vec<_> = data
             .into_iter()
@@ -181,12 +169,7 @@ mod tests {
             })
             .collect();
 
-        for (summed, reff) in summed
-            .as_slice::<i32>()
-            .expect("Wrong type")
-            .iter()
-            .zip(prefix_sum_ref)
-        {
+        for (summed, reff) in summed.iter().zip(prefix_sum_ref) {
             assert_eq!(*summed, reff);
         }
     }
@@ -200,15 +183,9 @@ mod tests {
         let data: Vec<i32> = (0..NUM_ELEMENTS).map(|i| (i % 100) as i32).collect();
 
         let device = brush_cube::test_helpers::test_device().await;
-        let keys = Tensor::<Backend, 1, Int>::from_data(data.as_slice(), &device).into_primitive();
-        let summed = prefix_sum(keys);
-        let summed = Tensor::<Backend, 1, Int>::from_primitive(summed)
-            .to_data_async()
-            .await
-            .expect("readback");
+        let keys = create_tensor_from_slice(&data, &device, DType::I32);
+        let summed_slice = read_i32(prefix_sum(keys)).await;
 
-        // Verify a few samples rather than all 20M elements
-        let summed_slice = summed.as_slice::<i32>().expect("Wrong type");
         assert_eq!(summed_slice.len(), NUM_ELEMENTS);
 
         // First element should equal first input

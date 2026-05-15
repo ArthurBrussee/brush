@@ -91,19 +91,20 @@ wgpu = { version = "29", default-features = false, features = ["naga-ir"] }
 serde-ply = "0.2.1"
 
 burn = { git = "https://github.com/tracel-ai/burn", features = [
-    'wgpu',
+    'webgpu',
+    "metal",
+    'extension',
 ] }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
-half = "2"
 burn-ir = { git = "https://github.com/tracel-ai/burn" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
-    "metal",
 ] }
 burn-fusion = { git = "https://github.com/tracel-ai/burn" }
-burn-store = { git = "https://github.com/tracel-ai/burn", features = [
-    "pytorch",
-] }
+# `pytorch` is only needed by lpips-convert (one-off weight conversion tool).
+# Enabled there directly so the main graph doesn't grow `zip 8` and its newer
+# crypto family (digest 0.11, hmac 0.13, ...).
+burn-store = { git = "https://github.com/tracel-ai/burn" }
 
 egui = { version = "0.34"  }
 eframe = { version = "0.34", default-features = false, features = [
@@ -116,7 +117,7 @@ eframe = { version = "0.34", default-features = false, features = [
 
 egui_tiles = { version = "0.15", features = ["serde"] }
 
-rerun = { version = "0.31", default-features = false, features = [
+rerun = { version = "0.32", default-features = false, features = [
     'sdk',
     'glam',
 ] }

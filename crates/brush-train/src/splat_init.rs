@@ -5,7 +5,7 @@ use brush_render::{
     gaussian_splats::{SplatRenderMode, Splats, inverse_sigmoid},
 };
 use brush_serde::SplatData;
-use burn::{config::Config, prelude::Backend};
+use burn::{config::Config, tensor::Device};
 use glam::Vec3;
 use rand::{Rng, RngExt};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -51,14 +51,14 @@ fn estimate_scene_scale(cameras: &[Camera]) -> f32 {
 /// For each splat, a random camera is chosen, then a random ray direction
 /// within its field of view is sampled, and a random depth along that ray
 /// is picked.
-pub fn create_random_splats<B: Backend>(
+pub fn create_random_splats(
     config: &RandomSplatsConfig,
     cameras: &[Camera],
     scene_scale_override: Option<f32>,
     rng: &mut impl Rng,
     mode: SplatRenderMode,
-    device: &B::Device,
-) -> Splats<B> {
+    device: &Device,
+) -> Splats {
     let num_points = config.init_count;
     let scene_scale = scene_scale_override.unwrap_or_else(|| estimate_scene_scale(cameras));
 
@@ -215,11 +215,7 @@ fn compute_knn_scales(pos_data: &[f32]) -> Vec<f32> {
     })
 }
 
-pub fn to_init_splats<B: Backend>(
-    data: SplatData,
-    mode: SplatRenderMode,
-    device: &B::Device,
-) -> Splats<B> {
+pub fn to_init_splats(data: SplatData, mode: SplatRenderMode, device: &Device) -> Splats {
     let n_splats = data.num_splats();
 
     // Use KNN for scales if not provided

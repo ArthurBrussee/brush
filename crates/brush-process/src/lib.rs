@@ -1,5 +1,3 @@
-#![recursion_limit = "256"]
-
 pub mod args_file;
 pub mod config;
 pub mod message;
@@ -19,7 +17,6 @@ use std::pin::{Pin, pin};
 
 use anyhow::Error;
 use async_fn_stream::{TryStreamEmitter, try_fn_stream};
-use brush_render::MainBackend;
 use brush_render::gaussian_splats::{SplatRenderMode, Splats};
 use brush_vfs::SendNotWasm;
 use burn_cubecl::cubecl::Runtime;
@@ -68,7 +65,7 @@ impl<T> ProcessStream for T where T: Stream<Item = Result<ProcessMessage, Error>
 
 pub struct RunningProcess {
     pub stream: Pin<Box<dyn ProcessStream>>,
-    pub splat_view: Slot<Splats<MainBackend>>,
+    pub splat_view: Slot<Splats>,
 }
 
 /// Convenience alias for the emitter `try_fn_stream` hands us inside
@@ -121,7 +118,7 @@ async fn run_process<
     source: DataSource,
     config_fn: Fun,
     emitter: &Emitter,
-    splat_view: SlotSender<Splats<MainBackend>>,
+    splat_view: SlotSender<Splats>,
 ) -> Result<(), Error> {
     log::info!("Starting process with source {source:?}");
     emitter.emit(ProcessMessage::NewProcess).await;
@@ -176,10 +173,11 @@ async fn run_process<
         .await;
 
     if !is_training {
-        let device = wait_for_device().await;
+        let wgpu_device = wait_for_device().await;
+        let device: burn::tensor::Device = wgpu_device.clone().into();
         let mut paths: Vec<_> = vfs.file_paths().collect();
         alphanumeric_sort::sort_path_slice(&mut paths);
-        let client = WgpuRuntime::client(device);
+        let client = WgpuRuntime::client(wgpu_device);
         let total_frames = paths.len() as u32;
 
         for (frame, path) in paths.iter().enumerate() {
@@ -195,7 +193,7 @@ async fn run_process<
                 let message = message?;
 
                 let mode = message.meta.render_mode.unwrap_or(SplatRenderMode::Default);
-                let splats = message.data.into_splats(device, mode);
+                let splats = message.data.into_splats(&device, mode);
 
                 // As loading concatenates splats each time, memory usage tends to accumulate a lot
                 // over time. Clear out memory after each step to prevent this buildup.

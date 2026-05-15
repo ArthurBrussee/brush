@@ -4,67 +4,63 @@ use burn_cubecl::cubecl::frontend::CompilationArg;
 use burn_cubecl::cubecl::frontend::CubeIndexMutExpand;
 use burn_cubecl::cubecl::prelude::*;
 
-pub const THREADS_PER_GROUP: u32 = 512;
-const TPG_USIZE: usize = THREADS_PER_GROUP as usize;
+pub const THREADS_PER_GROUP: usize = 512;
 
 #[cube]
-fn linear_workgroup_id() -> u32 {
-    CUBE_POS_X + CUBE_POS_Y * CUBE_COUNT_X
+fn linear_workgroup_id() -> usize {
+    CUBE_POS
 }
 
 #[cube]
-fn linear_global_id() -> u32 {
-    linear_workgroup_id() * THREADS_PER_GROUP + UNIT_POS
+fn linear_global_id() -> usize {
+    ABSOLUTE_POS
 }
 
 #[cube]
-fn group_scan(id: u32, gi: u32, x: u32, output: &mut Tensor<u32>) {
-    let mut bucket = SharedMemory::<u32>::new(TPG_USIZE);
-    bucket[gi as usize] = x;
+fn group_scan(id: usize, gi: usize, x: u32, output: &mut Tensor<u32>) {
+    let mut bucket = SharedMemory::<u32>::new(THREADS_PER_GROUP);
+    bucket[gi] = x;
 
-    let mut t = 1u32;
+    let mut t = 1;
     while t < THREADS_PER_GROUP {
         sync_cube();
-        let mut temp = bucket[gi as usize];
+        let mut temp = bucket[gi];
         if gi >= t {
-            temp += bucket[(gi - t) as usize];
+            temp += bucket[gi - t];
         }
         sync_cube();
-        bucket[gi as usize] = temp;
-        t *= 2u32;
+        bucket[gi] = temp;
+        t *= 2;
     }
-    if (id as usize) < output.len() {
-        output[id as usize] = bucket[gi as usize];
+    if id < output.len() {
+        output[id] = bucket[gi];
     }
 }
 
 #[cube(launch_unchecked)]
 pub fn prefix_sum_scan_kernel(input: &Tensor<u32>, output: &mut Tensor<u32>) {
     let id = linear_global_id();
-    let gi = UNIT_POS;
 
     let mut x = 0u32;
-    if (id as usize) < input.len() {
-        x = input[id as usize];
+    if id < input.len() {
+        x = input[id];
     }
 
-    group_scan(id, gi, x, output);
+    group_scan(id, UNIT_POS as usize, x, output);
 }
 
 #[cube(launch_unchecked)]
 pub fn prefix_sum_scan_sums_kernel(input: &Tensor<u32>, output: &mut Tensor<u32>) {
     let id = linear_global_id();
-    let gi = UNIT_POS;
     // id * THREADS_PER_GROUP - 1, gated on id != 0 to avoid underflow.
     let mut x = 0u32;
-    if id != 0u32 {
-        let idx = id * THREADS_PER_GROUP - 1u32;
-        if (idx as usize) < input.len() {
-            x = input[idx as usize];
+    if id != 0 {
+        let idx = id * THREADS_PER_GROUP - 1;
+        if idx < input.len() {
+            x = input[idx];
         }
     }
-
-    group_scan(id, gi, x, output);
+    group_scan(id, UNIT_POS as usize, x, output);
 }
 
 #[cube(launch_unchecked)]
@@ -72,7 +68,7 @@ pub fn prefix_sum_add_scanned_sums_kernel(input: &Tensor<u32>, output: &mut Tens
     let id = linear_global_id();
     let workgroup_id = linear_workgroup_id();
 
-    if (id as usize) < output.len() {
-        output[id as usize] += input[workgroup_id as usize];
+    if id < output.len() {
+        output[id] += input[workgroup_id];
     }
 }
