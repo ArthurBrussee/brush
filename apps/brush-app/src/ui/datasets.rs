@@ -86,7 +86,7 @@ impl Default for DatasetPanel {
                 let bg_height = (image.height() / 32).max(1);
                 let blurred = image
                     .resize(bg_width, bg_height, image::imageops::FilterType::Triangle)
-                    .blur(6.0);
+                    .fast_blur(6.0);
                 let blurred_size = [blurred.width() as usize, blurred.height() as usize];
                 let blurred_img =
                     egui::ColorImage::from_rgb(blurred_size, &blurred.into_rgb8().into_vec());
