@@ -15,15 +15,15 @@ use tokio::sync::oneshot;
 use wasm_bindgen_futures::spawn_local;
 
 /// Single-threaded `Actor`: shares the main-thread executor.
-///
-/// On wasm everything lives on the main thread anyway; `Actor` is just a
-/// trivial handle that's cheap to clone.
 #[derive(Clone)]
-pub struct Actor;
-
+pub struct Actor {
+    _name: String,
+}
 impl Actor {
-    pub fn new(_name: &str) -> Self {
-        Self
+    pub fn new(name: &str) -> Self {
+        Self {
+            _name: name.to_owned(),
+        }
     }
 
     /// Run a closure that produces a (possibly !Send) future. Returns
@@ -49,33 +49,19 @@ impl Actor {
 
 #[derive(Default)]
 struct HandleState {
-    /// Set by `abort()`. Cooperative: tasks that care should check it
-    /// at await points (wasm-bindgen-futures has no real cancellation).
-    aborted: AtomicBool,
     /// Set by the spawned task when it returns.
     finished: AtomicBool,
 }
 
 /// Awaitable handle to the result of [`Actor::run`].
-///
-/// `await` resolves to the task's return value, or panics if the task
-/// panicked. `abort()` on wasm is cooperative: the task continues
-/// running but tasks that check the flag can early-exit.
 pub struct JoinHandle<R> {
     rx: oneshot::Receiver<R>,
     state: Arc<HandleState>,
 }
 
 impl<R> JoinHandle<R> {
-    /// Drop the handle without awaiting. Cleaner than `let _ =
-    /// actor.run(...)` (which clippy flags).
+    /// Drop the handle without awaiting.
     pub fn detach(self) {}
-
-    /// Mark the task as aborted. Cooperative on wasm — the task keeps
-    /// running unless it checks the flag at a yield point.
-    pub fn abort(&self) {
-        self.state.aborted.store(true, Ordering::SeqCst);
-    }
 
     /// `true` once the task has finished.
     pub fn is_finished(&self) -> bool {
@@ -96,20 +82,18 @@ impl<R> Future for JoinHandle<R> {
 
 /// Yield to the browser event loop.
 ///
-/// Schedules a `setTimeout(_, 0)`-resolved Promise and awaits it. That's
-/// a real macrotask yield, so the browser gets a chance to paint, run
-/// requestAnimationFrame, handle input, and run GC between iterations
-/// of a long-running async task. A plain
+/// Schedules a `setTimeout(_, 0)`-resolved Promise and awaits it. This
+/// works as a real macrotask yield, so the browser gets a chance to paint,
+/// run requestAnimationFrame, handle input, and run GC between iterations
+/// of a long-running async task.
 /// `cx.waker().wake_by_ref(); Poll::Pending` only yields to the
-/// `wasm_bindgen_futures` microtask queue — the browser stays starved.
-/// Matches `tokio_with_wasm::task::yield_now`.
+/// `wasm_bindgen_futures` microtask queue.
 pub async fn yield_now() {
     #[wasm_bindgen::prelude::wasm_bindgen]
     extern "C" {
         #[wasm_bindgen(js_namespace = globalThis, js_name = setTimeout)]
         fn set_timeout(cb: &js_sys::Function, ms: f64);
     }
-
     let promise = js_sys::Promise::new(&mut |resolve, _reject| {
         set_timeout(&resolve, 0.0);
     });

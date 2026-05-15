@@ -1,5 +1,5 @@
 use brush_render::burn_glue::{
-    AutodiffMain, FUSION_LOCK, unwrap_ad_wgpu_float, wrap_ad_wgpu_float, wrap_wgpu_float,
+    AutodiffMain, unwrap_ad_wgpu_float, wrap_ad_wgpu_float, wrap_wgpu_float,
 };
 use brush_render::{
     MainBackend, MainBackendBase, SplatOps,
@@ -217,8 +217,6 @@ pub async fn render_splats(
     img_size: glam::UVec2,
     background: Vec3,
 ) -> SplatOutputDiff {
-    let _lock = FUSION_LOCK.lock().await;
-
     splats.clone().validate_values().await;
 
     let device = splats.device();

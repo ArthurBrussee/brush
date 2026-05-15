@@ -9,7 +9,7 @@ use tracing::trace_span;
 
 use crate::{
     RenderAux,
-    burn_glue::{FUSION_LOCK, unwrap_wgpu_float, wrap_wgpu_float, wrap_wgpu_int},
+    burn_glue::{unwrap_wgpu_float, wrap_wgpu_float, wrap_wgpu_int},
     camera::Camera,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
@@ -263,8 +263,6 @@ pub async fn render_splats(
     splat_scale: Option<f32>,
     texture_mode: TextureMode,
 ) -> (Tensor<3>, RenderAux) {
-    let _lock = FUSION_LOCK.lock().await;
-
     splats.clone().validate_values().await;
 
     let sh_coeffs = splats.sh_coeffs.into_value();

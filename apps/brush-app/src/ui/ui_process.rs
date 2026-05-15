@@ -36,6 +36,7 @@ pub enum BackgroundStyle {
     Checkerboard,
 }
 
+#[derive(Clone)]
 pub struct TexHandle {
     pub handle: TextureHandle,
     pub has_alpha: bool,
