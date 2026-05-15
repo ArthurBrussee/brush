@@ -62,21 +62,19 @@ impl Default for DatasetPanel {
         let actor = Actor::new("dataset-preview");
         actor.run(move || async move {
             loop {
-                let view = view_rec
-                    .wait_for(|x: &Option<(SceneView, egui::Context)>| x.is_some())
-                    .await;
-
-                let Ok(view) = view else {
+                if view_rec.changed().await.is_err() {
                     return;
+                }
+                let view: Option<(SceneView, egui::Context)> = view_rec.borrow().clone();
+                let Some((view, ctx)) = view else {
+                    continue;
                 };
-                let (view, ctx) = view.as_ref().unwrap().clone();
+                loading_task.store(true, Ordering::SeqCst);
                 let image = view
                     .image
                     .load()
                     .await
                     .expect("Failed to load dataset image");
-
-                loading_task.store(true, Ordering::SeqCst);
 
                 let has_alpha = image.color().has_alpha();
                 let img_size = [image.width() as usize, image.height() as usize];
@@ -86,7 +84,10 @@ impl Default for DatasetPanel {
                 let bg_height = (image.height() / 32).max(1);
                 let blurred = image
                     .resize(bg_width, bg_height, image::imageops::FilterType::Triangle)
-                    .fast_blur(6.0);
+                    .blur(6.0);
+
+                brush_async::yield_now().await;
+
                 let blurred_size = [blurred.width() as usize, blurred.height() as usize];
                 let blurred_img =
                     egui::ColorImage::from_rgb(blurred_size, &blurred.into_rgb8().into_vec());

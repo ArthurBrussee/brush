@@ -1,3 +1,5 @@
+#![allow(clippy::match_wildcard_for_single_variants)]
+
 use burn::backend::{
     Autodiff, BackendTensor, CheckpointingStrategy, DispatchTensor, DispatchTensorKind,
     TensorMetadata, TensorPrimitive,

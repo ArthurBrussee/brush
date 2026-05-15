@@ -7,7 +7,7 @@ use brush_render::{
 use burn::tensor::Tensor;
 use egui::Rect;
 use glam::{UVec2, Vec3};
-use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 
@@ -28,17 +28,15 @@ struct LastRenderState {
 }
 
 pub struct SplatBackbuffer {
-    req_send: mpsc::UnboundedSender<RenderRequest>,
-    img_rec: mpsc::Receiver<Tensor<3>>,
-    last_image: Option<Tensor<3>>,
-    last_state: Option<LastRenderState>,
+    req_send: watch::Sender<Option<RenderRequest>>,
+    img_rec: watch::Receiver<Option<Tensor<3>>>,
 }
 
 impl SplatBackbuffer {
     pub fn new(state: &eframe::egui_wgpu::RenderState, actor: &Actor) -> Self {
         // Create channel for render requests
-        let (req_send, req_rec) = mpsc::unbounded_channel();
-        let (img_send, img_rec) = mpsc::channel(1);
+        let (req_send, req_rec) = watch::channel(None);
+        let (img_send, img_rec) = watch::channel(None);
 
         // Register splat backbuffer resources
         state
@@ -52,17 +50,11 @@ impl SplatBackbuffer {
 
         actor.run(move || render_worker(req_rec, img_send)).detach();
 
-        Self {
-            req_send,
-            img_rec,
-            last_image: None,
-            last_state: None,
-        }
+        Self { req_send, img_rec }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn paint(
-        &mut self,
+        &self,
         rect: Rect,
         ui: &egui::Ui,
         splats: &Slot<Splats>,
@@ -88,23 +80,19 @@ impl SplatBackbuffer {
             img_size,
         };
 
-        let dirty = splats_dirty || self.last_state.as_ref() != Some(&current_state);
+        let dirty = splats_dirty
+            || self.req_send.borrow().as_ref().map(|x| &x.state) != Some(&current_state);
 
         if dirty {
-            self.last_state = Some(current_state.clone());
             // Send request to worker (ignore send errors if channel closed)
-            let _ = self.req_send.send(RenderRequest {
+            let _ = self.req_send.send(Some(RenderRequest {
                 splats: splats.clone(),
                 ctx: ui.ctx().clone(),
                 state: current_state,
-            });
+            }));
         }
 
-        while let Ok(img) = self.img_rec.try_recv() {
-            self.last_image = Some(img);
-        }
-
-        if let Some(image) = &self.last_image {
+        if let Some(image) = self.img_rec.borrow().as_ref() {
             let shape = image.shape();
             let img_height = shape[0] as u32;
             let img_width = shape[1] as u32;
@@ -302,33 +290,36 @@ impl CallbackTrait for SplatBackbufferPainter {
 
 /// Async render worker that processes render requests.
 async fn render_worker(
-    mut receiver: mpsc::UnboundedReceiver<RenderRequest>,
-    img_sender: mpsc::Sender<Tensor<3>>,
+    mut receiver: watch::Receiver<Option<RenderRequest>>,
+    img_sender: watch::Sender<Option<Tensor<3>>>,
 ) {
     loop {
-        // Wait for at least one request and get latest.
-        let Some(mut request) = receiver.recv().await else {
+        if receiver.changed().await.is_err() {
             break;
-        };
-        while let Ok(newer) = receiver.try_recv() {
-            request = newer;
         }
 
-        let Some(splats) = request.splats.get(request.state.frame) else {
+        let req = receiver.borrow();
+
+        let Some(req) = req.as_ref() else {
             continue;
         };
+        let Some(splats) = req.splats.get(req.state.frame) else {
+            continue;
+        };
+
         let (image, _) = render_splats(
             splats,
-            &request.state.camera,
-            request.state.img_size,
-            request.state.background,
-            request.state.splat_scale,
+            &req.state.camera,
+            req.state.img_size,
+            req.state.background,
+            req.state.splat_scale,
             TextureMode::Packed,
         )
         .await;
-        let _ = img_sender.send(image).await;
-
+        if img_sender.send(Some(image)).is_err() {
+            break;
+        }
         // Trigger egui repaint so the new texture gets picked up.
-        request.ctx.request_repaint();
+        req.ctx.request_repaint();
     }
 }
