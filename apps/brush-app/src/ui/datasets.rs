@@ -240,7 +240,7 @@ impl AppPane for DatasetPanel {
         let Some(nearest) = nearest_view_ind.as_mut() else {
             ui.centered_and_justified(|ui| {
                 ui.label(
-                    egui::RichText::new("Waitng for training to start")
+                    egui::RichText::new("Waiting for training to start")
                         .size(14.0)
                         .color(Color32::from_rgb(140, 140, 140))
                         .italics(),
