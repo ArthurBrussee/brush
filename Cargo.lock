@@ -875,7 +875,7 @@ version = "3.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "519bd3116aeeb42d5372c29d982d16d0170d3d4a5ed85fc7dd91642ffff3c67c"
 dependencies = [
- "darling 0.23.0",
+ "darling 0.20.11",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -2672,8 +2672,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "cubecl-core",
  "cubecl-cpu",
@@ -2688,8 +2688,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-common"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "backtrace",
  "bytemuck",
@@ -2729,8 +2729,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-core"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "bitflags 2.11.1",
  "bytemuck",
@@ -2756,8 +2756,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-cpp"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2772,8 +2772,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-cpu"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2793,8 +2793,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-cuda"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2811,8 +2811,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-hip"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2840,8 +2840,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-ir"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "cubecl-common",
  "cubecl-macros-internal",
@@ -2861,8 +2861,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-macros"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "cubecl-common",
  "darling 0.23.0",
@@ -2877,8 +2877,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-macros-internal"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -2888,8 +2888,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-opt"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "cubecl-common",
  "cubecl-core",
@@ -2905,8 +2905,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-runtime"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "ahash",
  "async-channel",
@@ -2935,8 +2935,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-std"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "cubecl-common",
  "cubecl-core",
@@ -2951,8 +2951,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-wgpu"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "async-channel",
  "bytemuck",
@@ -2976,8 +2976,8 @@ dependencies = [
 
 [[package]]
 name = "cubecl-zspace"
-version = "0.10.0-pre.3"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#33809c5fb43776f9c4e8582ae8656c9b316a837a"
+version = "0.11.0-pre.1"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=feat%2Fworkgroup-uniform-load#70f82846e206a34edfc6665c3877c120a1db2365"
 dependencies = [
  "derive-new",
  "serde",
@@ -6727,15 +6727,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ordered-float"
-version = "5.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7d950ca161dc355eaf28f82b11345ed76c6e1f6eb1f4f4479e0323b9e2fbd0e"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "owned_ttf_parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9829,7 +9820,7 @@ dependencies = [
  "nix",
  "num-derive",
  "num-traits",
- "ordered-float 4.6.0",
+ "ordered-float",
  "pest",
  "pest_derive",
  "phf",
@@ -11250,7 +11241,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f2ab60e120fd6eaa68d9567f3226e876684639d22a4219b313ff69ec0ccd5ac"
 dependencies = [
  "log",
- "ordered-float 4.6.0",
+ "ordered-float",
  "strsim",
  "thiserror 1.0.69",
  "wezterm-dynamic-derive",
@@ -11406,7 +11397,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
  "once_cell",
- "ordered-float 5.3.0",
+ "ordered-float",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
