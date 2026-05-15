@@ -26,6 +26,9 @@ mod wasm;
 #[cfg(target_family = "wasm")]
 pub use wasm::*;
 
+mod latest;
+pub use latest::AsyncMap;
+
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;

@@ -1,10 +1,4 @@
-use std::{
-    cell::Cell,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::cell::Cell;
 
 use brush_dataset::{
     Dataset,
@@ -14,7 +8,7 @@ use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::AlphaMode;
 use egui::{Color32, Rect, Slider, TextureOptions, pos2};
 
-use brush_async::Actor;
+use brush_async::{Actor, AsyncMap};
 
 use crate::ui::{
     UiMode, draw_checkerboard,
@@ -42,34 +36,14 @@ pub struct DatasetPanel {
     current_view_index: Cell<Option<usize>>,
     loading_start: Option<web_time::Instant>,
 
-    loading: Arc<AtomicBool>,
-    view_send: tokio::sync::watch::Sender<Option<(SceneView, egui::Context)>>,
-    loaded_view_rec: tokio::sync::watch::Receiver<Option<(SceneView, TexHandle)>>,
-
-    // Keep actor live.
-    _actor: Actor,
+    tex_map: AsyncMap<(SceneView, egui::Context), (SceneView, TexHandle)>,
 }
 
 impl Default for DatasetPanel {
     fn default() -> Self {
-        let (view_send, mut view_rec) = tokio::sync::watch::channel(None);
-        let (tex_send, tex_rec) = tokio::sync::watch::channel(None);
-
-        let loading = Arc::new(AtomicBool::new(false));
-
-        let loading_task = loading.clone();
-
-        let actor = Actor::new("dataset-preview");
-        actor.run(move || async move {
-            loop {
-                if view_rec.changed().await.is_err() {
-                    return;
-                }
-                let view: Option<(SceneView, egui::Context)> = view_rec.borrow().clone();
-                let Some((view, ctx)) = view else {
-                    continue;
-                };
-                loading_task.store(true, Ordering::SeqCst);
+        let pipe = AsyncMap::new(
+            Actor::new("dataset-preview"),
+            async move |(view, ctx): &(SceneView, egui::Context)| {
                 let image = view
                     .image
                     .load()
@@ -116,36 +90,25 @@ impl Default for DatasetPanel {
                     has_alpha,
                     blurred_bg: Some(blurred_handle),
                 };
-
-                // If channel is gone, that's fine.
-                let _ = tex_send.send(Some((view, handle)));
-                loading_task.store(false, Ordering::SeqCst);
-
-                ctx.request_repaint();
-            }
-        });
+                (view.clone(), handle)
+            },
+            |req| req.1.request_repaint(),
+        );
 
         Self {
             view_type: ViewType::Train,
             cur_dataset: Dataset::empty(),
-            view_send,
-            loaded_view_rec: tex_rec,
+            tex_map: pipe,
             current_view_index: Cell::new(None),
             loading_start: None,
-            loading,
-            _actor: actor,
         }
     }
 }
 
 impl DatasetPanel {
     pub fn set_selected_view(&mut self, view: &SceneView, ctx: &egui::Context) {
-        let _ = self.view_send.send(Some((view.clone(), ctx.clone())));
+        self.tex_map.request((view.clone(), ctx.clone()));
         self.loading_start = Some(web_time::Instant::now());
-    }
-
-    pub fn is_selected_view_loading(&self) -> bool {
-        self.loading.load(Ordering::SeqCst)
     }
 
     fn focus_picked(&self, process: &UiProcess) {
@@ -161,7 +124,7 @@ impl DatasetPanel {
 
 impl AppPane for DatasetPanel {
     fn title(&self) -> egui::WidgetText {
-        let Some((view, tex)) = self.loaded_view_rec.borrow().clone() else {
+        let Some((view, tex)) = self.tex_map.latest() else {
             return "Dataset".into();
         };
 
@@ -250,7 +213,7 @@ impl AppPane for DatasetPanel {
             return;
         };
 
-        let Some((view, tex)) = self.loaded_view_rec.borrow().clone() else {
+        let Some((view, tex)) = self.tex_map.latest() else {
             self.set_selected_view(&pick_scene.views[*nearest], ui.ctx());
             return;
         };
@@ -317,7 +280,7 @@ impl AppPane for DatasetPanel {
             egui::Color32::WHITE,
         );
 
-        if self.is_selected_view_loading() {
+        if self.tex_map.is_running() {
             if self
                 .loading_start
                 .is_some_and(|t| t.elapsed().as_secs_f32() > 0.1)
