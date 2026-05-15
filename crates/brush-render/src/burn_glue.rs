@@ -170,7 +170,6 @@ pub fn resolve_to_cube_float<const D: usize>(tensor: Tensor<D>) -> CubeTensor<Wg
 }
 
 impl SplatOps<Self> for Fusion<MainBackendBase> {
-    #[allow(clippy::too_many_arguments)]
     async fn render(
         camera: &Camera,
         img_size: glam::UVec2,
@@ -195,8 +194,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             .clone()
             .resolve_tensor_float::<MainBackendBase>(raw_opacities);
 
-        // Run the full pipeline on MainBackendBase (with its own
-        // internal readback for num_visible / num_intersections).
+        // Run the full pipeline on MainBackendBase.
         let out = MainBackendBase::render(
             camera,
             img_size,

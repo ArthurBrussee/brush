@@ -267,6 +267,7 @@ pub async fn render_splats(
 
     let sh_coeffs = splats.sh_coeffs.into_value();
     let raw_opacities = splats.raw_opacities.into_value();
+
     let transforms = if let Some(scale) = splat_scale {
         let t = splats.transforms.into_value();
         let adjusted = t.clone().slice(s![.., 7..10]) + scale.ln();

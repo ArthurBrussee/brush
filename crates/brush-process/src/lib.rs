@@ -1,5 +1,3 @@
-#![recursion_limit = "256"]
-
 pub mod args_file;
 pub mod config;
 pub mod message;

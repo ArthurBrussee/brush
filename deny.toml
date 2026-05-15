@@ -19,6 +19,9 @@ targets = [
     { triple = "aarch64-linux-android" },
 ]
 all-features = true
+# One-off LPIPS weight-conversion tool - don't really mind deps of it and
+# it pulls in a ton of stuff through the pytorch feature.
+exclude = ["lpips-convert"]
 
 [advisories]
 version = 2
@@ -71,23 +74,15 @@ skip = [
 
     { name = 'hashbrown' },
     { name = "rustc-hash" },
-
     { name = "smithay-client-toolkit" },
     { name = "foldhash" },
-
     { name = "calloop-wayland-source" },
     { name = "calloop" },
-
     { name = "convert_case" },
-
     { name = "console" },
     { name = "jni-sys" },
-    { name = "hmac" },
-    { name = "digest" },
-    { name = "crypto-common" },
-    { name = "block-buffer" },
-
     { name = "wasm-streams" },
+    { name = "ndarray" },
 ]
 
 [licenses]
@@ -108,7 +103,6 @@ allow = [
     "Unlicense",                      # https://www.tldrlegal.com/license/unlicense
     "Unicode-3.0",
     "CDLA-Permissive-2.0",
-    "bzip2-1.0.6",
 ]
 
 [[licenses.clarify]]

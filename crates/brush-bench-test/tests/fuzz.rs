@@ -16,6 +16,7 @@
 //! tests run on `Autodiff<MainBackend>` (via fusion), exercising the
 //! gradient kernels.
 
+use brush_cube::Runtime;
 use brush_render::{
     MainBackendBase, RenderOutput, SplatOps,
     camera::Camera,
@@ -28,7 +29,6 @@ use burn_cubecl::tensor::CubeTensor;
 use burn_wgpu::WgpuRuntime;
 use std::num::Wrapping;
 
-// SplitMix64 — deterministic, no test-only dep.
 struct Sm64(Wrapping<u64>);
 
 impl Sm64 {
@@ -151,7 +151,6 @@ fn cube_tensor<const D: usize>(
     shape: [usize; D],
     data: &[f32],
 ) -> CubeTensor<WgpuRuntime> {
-    use burn_cubecl::cubecl::Runtime;
     let client = WgpuRuntime::client(device);
     let handle = client.create_from_slice(bytemuck::cast_slice(data));
     CubeTensor::new_contiguous(

@@ -6,14 +6,10 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
-brush-prefix-sum.path = "../brush-prefix-sum"
 brush-render = { path = "../brush-render", features = ["debug-validation"] }
 brush-render-bwd.path = "../brush-render-bwd"
-brush-sort.path = "../brush-sort"
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
-brush-loss.path = "../brush-loss"
-brush-serde.path = "../brush-serde"
 
 anyhow.workspace = true
 image.workspace = true
@@ -21,14 +17,11 @@ glam.workspace = true
 log.workspace = true
 burn = { workspace = true, features = ["autodiff"] }
 burn-cubecl.workspace = true
-burn-wgpu.workspace = true
 rand.workspace = true
 
 divan = "0.1.17"
 safetensors.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
-tracing.workspace = true
-tracing-subscriber.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 brush-rerun = { path = "../brush-rerun" }
@@ -37,7 +30,10 @@ rerun = { workspace = true }
 [dev-dependencies]
 brush-async = { path = "../brush-async" }
 brush-cube = { path = "../brush-cube" }
+
+burn-wgpu.workspace = true
 bytemuck.workspace = true
+
 wasm-bindgen-test = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]

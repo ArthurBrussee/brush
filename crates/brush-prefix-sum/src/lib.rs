@@ -6,39 +6,37 @@ use burn::backend::TensorMetadata;
 use burn_cubecl::cubecl::CubeDim;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
-
 use kernels::THREADS_PER_GROUP;
 
 pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     assert!(input.is_contiguous(), "Please ensure input is contiguous");
 
-    let threads_per_group = THREADS_PER_GROUP as usize;
     let num = input.shape()[0];
     let client = input.client.clone();
     let outputs = create_tensor(input.shape().dims::<1>(), &input.device, input.dtype);
 
-    let cube_dim = CubeDim::new_1d(THREADS_PER_GROUP);
+    let cube_dim = CubeDim::new_1d(THREADS_PER_GROUP as u32);
 
     // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
     unsafe {
         kernels::prefix_sum_scan_kernel::launch_unchecked::<WgpuRuntime>(
             &client,
-            calc_cube_count_1d(num as u32, THREADS_PER_GROUP),
+            calc_cube_count_1d(num as u32, THREADS_PER_GROUP as u32),
             cube_dim,
             input.into_tensor_arg(),
             outputs.clone().into_tensor_arg(),
         );
     }
 
-    if num <= threads_per_group {
+    if num <= THREADS_PER_GROUP {
         return outputs;
     }
 
     let mut group_buffer = vec![];
     let mut work_size = vec![];
     let mut work_sz = num;
-    while work_sz > threads_per_group {
-        work_sz = work_sz.div_ceil(threads_per_group);
+    while work_sz > THREADS_PER_GROUP {
+        work_sz = work_sz.div_ceil(THREADS_PER_GROUP);
         group_buffer.push(create_tensor([work_sz], &outputs.device, outputs.dtype));
         work_size.push(work_sz);
     }
@@ -47,7 +45,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     unsafe {
         kernels::prefix_sum_scan_sums_kernel::launch_unchecked::<WgpuRuntime>(
             &client,
-            calc_cube_count_1d(work_size[0] as u32, THREADS_PER_GROUP),
+            calc_cube_count_1d(work_size[0] as u32, THREADS_PER_GROUP as u32),
             cube_dim,
             outputs.clone().into_tensor_arg(),
             group_buffer[0].clone().into_tensor_arg(),
@@ -59,7 +57,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
         unsafe {
             kernels::prefix_sum_scan_sums_kernel::launch_unchecked::<WgpuRuntime>(
                 &client,
-                calc_cube_count_1d(work_size[l + 1] as u32, THREADS_PER_GROUP),
+                calc_cube_count_1d(work_size[l + 1] as u32, THREADS_PER_GROUP as u32),
                 cube_dim,
                 group_buffer[l].clone().into_tensor_arg(),
                 group_buffer[l + 1].clone().into_tensor_arg(),
@@ -74,7 +72,7 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
         unsafe {
             kernels::prefix_sum_add_scanned_sums_kernel::launch_unchecked::<WgpuRuntime>(
                 &client,
-                calc_cube_count_1d(work_sz as u32, THREADS_PER_GROUP),
+                calc_cube_count_1d(work_sz as u32, THREADS_PER_GROUP as u32),
                 cube_dim,
                 group_buffer[l].clone().into_tensor_arg(),
                 group_buffer[l - 1].clone().into_tensor_arg(),
@@ -86,7 +84,10 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
     unsafe {
         kernels::prefix_sum_add_scanned_sums_kernel::launch_unchecked::<WgpuRuntime>(
             &client,
-            calc_cube_count_1d((work_size[0] * threads_per_group) as u32, THREADS_PER_GROUP),
+            calc_cube_count_1d(
+                (work_size[0] * THREADS_PER_GROUP) as u32,
+                THREADS_PER_GROUP as u32,
+            ),
             cube_dim,
             group_buffer[0].clone().into_tensor_arg(),
             outputs.clone().into_tensor_arg(),

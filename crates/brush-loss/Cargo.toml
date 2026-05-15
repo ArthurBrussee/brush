@@ -12,7 +12,6 @@ burn = { workspace = true, features = ["autodiff"] }
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
-burn-wgpu.workspace = true
 glam.workspace = true
 
 [dev-dependencies]

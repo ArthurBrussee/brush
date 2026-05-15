@@ -16,4 +16,6 @@ lpips = { path = "../lpips" }
 # burn-store depends on zstd (C code) which can't compile for WASM.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 burn.workspace = true
-burn-store.workspace = true
+# `pytorch` is feature-gated here (not workspace) so the main brush graph
+# doesn't grow `zip 8` and its newer-RustCrypto family.
+burn-store = { workspace = true, features = ["pytorch"] }
