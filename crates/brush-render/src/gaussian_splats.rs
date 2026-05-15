@@ -250,11 +250,6 @@ impl Splats {
 }
 
 /// Render splats on a non-differentiable device.
-///
-/// NB: This panics on autodiff-enabled devices; use
-/// `brush_render_bwd::render_splats` for that.
-///
-/// Takes ownership of the splats. Clone before calling if you need to reuse them.
 pub async fn render_splats(
     splats: Splats,
     camera: &Camera,
