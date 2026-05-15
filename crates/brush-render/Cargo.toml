@@ -9,22 +9,20 @@ license.workspace = true
 [dependencies]
 brush-cube.path = "../brush-cube"
 brush-prefix-sum.path = "../brush-prefix-sum"
-assert_approx_eq.workspace = true
 brush-sort.path = "../brush-sort"
 
 burn.workspace = true
-bytemuck = { workspace = true, features = ["derive"] }
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
 
+assert_approx_eq.workspace = true
 glam.workspace = true
 clap.workspace = true
 serde.workspace = true
 tracing.workspace = true
 log.workspace = true
-futures-lite = "2"
 
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 

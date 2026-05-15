@@ -92,23 +92,13 @@ serde-ply = "0.2.1"
 
 burn = { git = "https://github.com/tracel-ai/burn", features = [
     'webgpu',
+    "metal",
     'extension',
-    # Upstream bug: with only `wgpu` enabled, burn-dispatch's build.rs sets
-    # `cfg(default_backend)`, which lights up the ndarray variant in
-    # `DispatchTensorKind` / `DispatchDevice` but leaves several of the
-    # to_device match arms gated on `feature = "ndarray"` (not
-    # `default_backend`), making the match non-exhaustive. Enabling `ndarray`
-    # explicitly aligns the cfg flags. We never use the ndarray backend at
-    # runtime — `deny.toml` allows it in the dependency graph but nothing
-    # else references it.
-    'ndarray',
 ] }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn" }
-half = "2"
 burn-ir = { git = "https://github.com/tracel-ai/burn" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", features = [
     "exclusive-memory-only",
-    "metal",
 ] }
 burn-fusion = { git = "https://github.com/tracel-ai/burn" }
 burn-store = { git = "https://github.com/tracel-ai/burn", features = [
@@ -126,7 +116,7 @@ eframe = { version = "0.34", default-features = false, features = [
 
 egui_tiles = { version = "0.15", features = ["serde"] }
 
-rerun = { version = "0.31", default-features = false, features = [
+rerun = { version = "0.32", default-features = false, features = [
     'sdk',
     'glam',
 ] }

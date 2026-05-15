@@ -61,8 +61,6 @@ skip = [
     { name = 'windows-targets' },     # Old version from winit.
     { name = 'windows-sys' },         # Old version from winit.
 
-    { name = 'windows-core' },      # Wgpu & rerun
-
     { name = 'rustix' },        # Winit & clap
     { name = 'linux-raw-sys' }, # Winit & clap
 
@@ -70,7 +68,6 @@ skip = [
     { name = 'objc2' },            # eframe & rfd
     { name = 'objc2-app-kit' },    # eframe & rfd
     { name = 'objc2-foundation' }, # eframe & rfd
-    { name = 'windows' },          # Wgpu & kiddo
 
     { name = 'hashbrown' },
     { name = "rustc-hash" },
@@ -91,12 +88,6 @@ skip = [
     { name = "block-buffer" },
 
     { name = "wasm-streams" },
-
-    # Pulled in transitively by burn-dispatch's `ndarray` feature, which we
-    # enable purely as a build-time workaround for an upstream non-exhaustive
-    # match (see Cargo.toml comment). The ndarray backend is never used at
-    # runtime — only its variant in the dispatch enums.
-    { name = "ndarray" },
 ]
 
 [licenses]
