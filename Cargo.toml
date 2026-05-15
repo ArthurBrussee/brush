@@ -125,7 +125,7 @@ rerun = { version = "0.32", default-features = false, features = [
 ball-tree = "0.5.1"
 web-sys = { version = "0.3.74" }
 async_zip = { version = "0.0.18", default-features = false, features = ["tokio", "deflate"] }
-hashbrown = "0.16"
+hashbrown = "0.17"
 alphanumeric-sort = "1.5.3"
 
 

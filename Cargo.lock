@@ -1244,7 +1244,7 @@ dependencies = [
  "clap",
  "getrandom 0.4.2",
  "glam",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
  "image",
  "log",
  "lpips",
@@ -4744,6 +4744,11 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "hashlink"
