@@ -159,8 +159,7 @@ pub fn load_vgg_lpips(device: &Device) -> LpipsModel {
 #[cfg(test)]
 mod tests {
     use super::load_vgg_lpips;
-    use burn::tensor::{Device, Tensor};
-    use burn::tensor::{ElementConversion, TensorData};
+    use burn::tensor::{Device, Tensor, TensorData};
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[cfg(target_family = "wasm")]
@@ -177,7 +176,7 @@ mod tests {
     }
 
     async fn read_scalar(t: Tensor<1>) -> f32 {
-        t.into_scalar_async().await.expect("readback").elem()
+        t.into_scalar_async::<f32>().await.expect("readback")
     }
 
     #[wasm_bindgen_test(unsupported = tokio::test)]

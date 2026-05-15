@@ -2,7 +2,7 @@ mod kernels;
 
 use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
-use burn::tensor::backend::TensorMetadata;
+use burn::backend::TensorMetadata;
 use burn_cubecl::cubecl::CubeDim;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
@@ -100,8 +100,8 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
 mod tests {
     use crate::prefix_sum;
     use brush_cube::create_tensor_from_slice;
+    use burn::backend::ops::IntTensorOps;
     use burn::tensor::DType;
-    use burn::tensor::backend::ops::IntTensorOps;
     use burn_cubecl::CubeBackend;
     use burn_wgpu::{CubeTensor, WgpuRuntime};
     use wasm_bindgen_test::wasm_bindgen_test;

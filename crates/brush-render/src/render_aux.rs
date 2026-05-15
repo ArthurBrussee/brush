@@ -1,9 +1,10 @@
 use burn::{
     Tensor,
-    tensor::{
-        Int,
-        backend::{Backend, FloatTensor, IntTensor},
+    backend::{
+        Backend,
+        tensor::{FloatTensor, IntTensor},
     },
+    tensor::Int,
 };
 
 use crate::shaders::helpers::ProjectUniforms;

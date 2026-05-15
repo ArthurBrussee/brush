@@ -452,7 +452,7 @@ impl SplatTrainer {
                 .clone()
                 .int()
                 .sum()
-                .into_scalar_async()
+                .into_scalar_async::<i32>()
                 .await
                 .expect("Failed to get threshold") as u32;
 

@@ -184,13 +184,13 @@ mod visualize_tools_impl {
                 self.rec.log(
                     format!("psnr/eval_{index}"),
                     &rerun::Scalars::new(vec![
-                        eval.psnr.clone().into_scalar_async().await?.elem::<f32>() as f64,
+                        eval.psnr.clone().into_scalar_async::<f32>().await? as f64,
                     ]),
                 )?;
                 self.rec.log(
                     format!("ssim/eval_{index}"),
                     &rerun::Scalars::new(vec![
-                        eval.ssim.clone().into_scalar_async().await?.elem::<f32>() as f64,
+                        eval.ssim.clone().into_scalar_async::<f32>().await? as f64,
                     ]),
                 )?;
             }

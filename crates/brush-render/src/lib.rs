@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 
-use burn::tensor::backend::Backend;
-use burn::tensor::backend::FloatTensor;
+use burn::backend::Backend;
+use burn::backend::tensor::FloatTensor;
 use burn_cubecl::CubeBackend;
 use burn_fusion::Fusion;
 use burn_wgpu::WgpuRuntime;

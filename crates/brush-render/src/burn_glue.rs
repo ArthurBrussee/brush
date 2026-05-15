@@ -1,11 +1,9 @@
-use burn::backend::Autodiff;
-use burn::tensor::{
-    DType, Int, Tensor,
-    backend::{
-        FloatTensor, IntTensor, TensorMetadata, TensorPrimitive,
-        extension::{BackendTensor, CheckpointingStrategy, DispatchTensor, DispatchTensorKind},
-    },
+use burn::backend::{
+    Autodiff, BackendTensor, CheckpointingStrategy, DispatchTensor, DispatchTensorKind,
+    TensorMetadata, TensorPrimitive,
+    tensor::{FloatTensor, IntTensor},
 };
+use burn::tensor::{DType, Int, Tensor};
 use burn_cubecl::fusion::FusionCubeRuntime;
 use burn_cubecl::tensor::CubeTensor;
 use burn_fusion::{

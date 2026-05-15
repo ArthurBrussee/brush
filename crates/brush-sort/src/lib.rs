@@ -4,8 +4,8 @@ use brush_cube::CubeCount;
 use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
 use brush_cube::create_tensor_from_slice;
+use burn::backend::TensorMetadata;
 use burn::tensor::DType;
-use burn::tensor::backend::TensorMetadata;
 use burn_cubecl::cubecl::CubeDim;
 use burn_wgpu::CubeTensor;
 use burn_wgpu::WgpuRuntime;
@@ -143,8 +143,8 @@ pub fn radix_argsort(
 mod tests {
     use crate::radix_argsort;
     use brush_cube::create_tensor_from_slice;
+    use burn::backend::ops::IntTensorOps;
     use burn::tensor::DType;
-    use burn::tensor::backend::ops::IntTensorOps;
     use burn_cubecl::CubeBackend;
     use burn_wgpu::{CubeTensor, WgpuRuntime};
     use rand::RngExt;

@@ -21,17 +21,16 @@ use brush_render::burn_glue::{
 use brush_render::{MainBackend, MainBackendBase};
 use burn::{
     backend::{
+        Backend, TensorMetadata,
         autodiff::{
             checkpoint::{base::Checkpointer, strategy::NoCheckpointing},
             grads::Gradients,
             ops::{Backward, Ops, OpsKind},
         },
+        tensor::{FloatTensor, IntTensor},
         wgpu::WgpuRuntime,
     },
-    tensor::{
-        DType, Int, Shape, Tensor,
-        backend::{Backend, FloatTensor, IntTensor, TensorMetadata},
-    },
+    tensor::{DType, Int, Shape, Tensor},
 };
 use burn_cubecl::{
     CubeRuntime, fusion::FusionCubeRuntime, kernel::into_contiguous, tensor::CubeTensor,

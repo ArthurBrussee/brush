@@ -48,7 +48,7 @@ pub fn create_tensor<const D: usize>(
     let mut buffer = client.empty(bufsize);
 
     if cfg!(test) {
-        use burn::tensor::backend::ops::FloatTensorOps;
+        use burn::backend::ops::FloatTensorOps;
         use burn_cubecl::CubeBackend;
         // for tests - make doubly sure we're not accidentally relying on values
         // being initialized to zero by adding in some random noise.

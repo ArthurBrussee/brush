@@ -1,4 +1,4 @@
-use burn::tensor::backend::TensorMetadata;
+use burn::backend::TensorMetadata;
 use burn_cubecl::CubeRuntime;
 use burn_wgpu::CubeTensor;
 use std::collections::HashMap;

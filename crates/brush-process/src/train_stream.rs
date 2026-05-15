@@ -469,8 +469,8 @@ async fn run_eval(
         .context("Failed to run eval for sample.")?;
 
         count += 1;
-        psnr += sample.psnr.clone().into_scalar_async().await?;
-        ssim += sample.ssim.clone().into_scalar_async().await?;
+        psnr += sample.psnr.clone().into_scalar_async::<f32>().await?;
+        ssim += sample.ssim.clone().into_scalar_async::<f32>().await?;
 
         #[cfg(not(target_family = "wasm"))]
         if let Some(path) = &save_path {

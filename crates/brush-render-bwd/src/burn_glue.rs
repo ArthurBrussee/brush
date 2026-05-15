@@ -10,21 +10,18 @@ use brush_render::{
 };
 use burn::{
     backend::{
+        AutodiffBackend, Backend, BackendTensor, DispatchTensorKind, TensorMetadata,
+        TensorPrimitive,
         autodiff::{
             checkpoint::{base::Checkpointer, strategy::NoCheckpointing},
             grads::Gradients,
             ops::{Backward, Ops, OpsKind},
         },
+        tensor::{FloatTensor, IntTensor},
         wgpu::WgpuRuntime,
     },
     module::Param,
-    tensor::{
-        DType, Shape, Tensor,
-        backend::{
-            AutodiffBackend, Backend, FloatTensor, IntTensor, TensorMetadata, TensorPrimitive,
-            extension::{BackendTensor, DispatchTensorKind},
-        },
-    },
+    tensor::{DType, Shape, Tensor},
 };
 use burn_cubecl::fusion::FusionCubeRuntime;
 use burn_fusion::{
