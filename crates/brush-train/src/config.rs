@@ -87,10 +87,6 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "0.002")]
     pub scale_decay: f32,
 
-    /// How long to apply aux losses and augementations for (1 being the full training duration).
-    #[arg(long, help_heading = "Training options", default_value = "0.8")]
-    pub aux_loss_time: f32,
-
     /// Weight of l1 loss on alpha if input view has transparency.
     #[arg(long, help_heading = "Refine options", default_value = "0.1")]
     pub match_alpha_weight: f32,
@@ -128,11 +124,6 @@ pub struct TrainConfig {
     /// Percentage to scale source images at each LOD level (1-100).
     #[arg(long, help_heading = "LOD options", default_value = "50")]
     pub lod_image_scale: u32,
-
-    /// Reduce optimizer memory by storing a scalar second moment per Gaussian
-    /// instead of per-element. Cuts optimizer state memory roughly in half.
-    #[arg(long, help_heading = "Training options", default_value = "false")]
-    pub reduce_second_moment: bool,
 
     /// Scene scale used for random splat initialization.
     /// When no init is provided, splats are randomly placed
