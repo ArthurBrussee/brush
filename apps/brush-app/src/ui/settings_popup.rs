@@ -141,7 +141,7 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
         slider(
             ui,
             &mut tc.growth_grad_threshold,
-            0.0001..=0.001,
+            1e-4..=1e-2,
             "Growth threshold",
             true,
             enabled,
@@ -149,7 +149,7 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
         slider(
             ui,
             &mut tc.growth_select_fraction,
-            0.01..=0.2,
+            0.0..=1.0,
             "Growth selection fraction",
             false,
             enabled,
@@ -159,6 +159,14 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             &mut tc.growth_stop_iter,
             5000..=20000,
             "Growth stop iteration",
+            false,
+            enabled,
+        );
+        slider(
+            ui,
+            &mut tc.split_at_screen_size,
+            0.0..=1.0,
+            "Split at screen size (0 disables)",
             false,
             enabled,
         );
