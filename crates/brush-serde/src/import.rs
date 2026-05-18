@@ -40,6 +40,39 @@ impl SplatData {
         self.means.len() / 3
     }
 
+    /// Strided subsample down to at most `max_splats` points.
+    ///
+    /// COLMAP / large PLY initialisations can hold far more points than the
+    /// training budget. Constructing GPU tensors for all of them blows the
+    /// buffer-size limit before training even starts, so cap the initial
+    /// point count here. No-op when already within budget.
+    pub fn subsample(self, max_splats: usize) -> Self {
+        let n = self.num_splats();
+        if max_splats == 0 || n <= max_splats {
+            return self;
+        }
+        // Ceil so the result never exceeds `max_splats`.
+        let step = n.div_ceil(max_splats);
+
+        let pick = |v: &[f32], stride: usize| -> Vec<f32> {
+            v.chunks_exact(stride)
+                .step_by(step)
+                .flatten()
+                .copied()
+                .collect()
+        };
+
+        let sh_stride = self.sh_coeffs.as_deref().map_or(0, |c| c.len() / n);
+
+        Self {
+            means: pick(&self.means, 3),
+            rotations: self.rotations.as_deref().map(|v| pick(v, 4)),
+            log_scales: self.log_scales.as_deref().map(|v| pick(v, 3)),
+            sh_coeffs: self.sh_coeffs.as_deref().map(|v| pick(v, sh_stride)),
+            raw_opacities: self.raw_opacities.as_deref().map(|v| pick(v, 1)),
+        }
+    }
+
     /// Convert into Splats using simple defaults for missing fields.
     pub fn into_splats(self, device: &burn::tensor::Device, mode: SplatRenderMode) -> Splats {
         let n_splats = self.num_splats();
@@ -614,5 +647,45 @@ mod tests {
         let cursor = Cursor::new(ply_bytes);
         let imported_message = load_splat_from_ply(cursor, Some(2)).await.unwrap();
         assert_eq!(imported_message.data.num_splats(), 2);
+    }
+
+    #[test]
+    fn test_splat_data_subsample() {
+        let n = 10;
+        // Per-splat value == splat index, so we can check which rows survived.
+        let make = |stride: usize| -> Vec<f32> {
+            (0..n)
+                .flat_map(|i| std::iter::repeat_n(i as f32, stride))
+                .collect()
+        };
+        let data = SplatData {
+            means: make(3),
+            rotations: Some(make(4)),
+            log_scales: Some(make(3)),
+            sh_coeffs: Some(make(6)),
+            raw_opacities: Some(make(1)),
+        };
+
+        // Within budget: untouched.
+        let same = data.clone().subsample(10);
+        assert_eq!(same.num_splats(), 10);
+        let same = data.clone().subsample(0);
+        assert_eq!(same.num_splats(), 10);
+
+        // step = ceil(10 / 3) = 4 -> rows 0, 4, 8 survive.
+        let sub = data.subsample(3);
+        assert_eq!(sub.num_splats(), 3);
+        assert!(sub.num_splats() <= 3);
+        assert_eq!(sub.means, vec![0., 0., 0., 4., 4., 4., 8., 8., 8.]);
+        assert_eq!(
+            sub.rotations.unwrap(),
+            vec![0., 0., 0., 0., 4., 4., 4., 4., 8., 8., 8., 8.]
+        );
+        assert_eq!(sub.log_scales.unwrap(), vec![0., 0., 0., 4., 4., 4., 8., 8., 8.]);
+        let sh = sub.sh_coeffs.unwrap();
+        assert_eq!(sh.len(), 3 * 6);
+        assert_eq!(&sh[0..6], &[0., 0., 0., 0., 0., 0.]);
+        assert_eq!(&sh[6..12], &[4., 4., 4., 4., 4., 4.]);
+        assert_eq!(sub.raw_opacities.unwrap(), vec![0., 4., 8.]);
     }
 }

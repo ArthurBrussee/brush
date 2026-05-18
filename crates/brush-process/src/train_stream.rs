@@ -108,7 +108,16 @@ pub(crate) async fn train_stream(
             .render_mode
             .or(msg.meta.render_mode)
             .unwrap_or(SplatRenderMode::Default);
-        let splats = to_init_splats(msg.data, render_mode, &device);
+        let max_splats = train_stream_config.train_config.max_splats as usize;
+        let original = msg.data.num_splats();
+        let data = msg.data.subsample(max_splats);
+        if data.num_splats() < original {
+            log::info!(
+                "Subsampled initial splats from {original} to {} (max-splats {max_splats})",
+                data.num_splats()
+            );
+        }
+        let splats = to_init_splats(data, render_mode, &device);
         (msg.meta.up_axis, splats)
     } else {
         // Default: just use random splats
