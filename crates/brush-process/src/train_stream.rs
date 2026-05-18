@@ -112,10 +112,14 @@ pub(crate) async fn train_stream(
         let original = msg.data.num_splats();
         let data = msg.data.subsample(max_splats);
         if data.num_splats() < original {
-            log::info!(
-                "Subsampled initial splats from {original} to {} (max-splats {max_splats})",
-                data.num_splats()
-            );
+            emitter
+                .emit(ProcessMessage::Warning {
+                    error: anyhow::anyhow!(
+                        "Initial point cloud has {original} points, exceeding --max-splats ({max_splats}). Subsampled to {}; the remaining points were discarded. Raise --max-splats to keep more.",
+                        data.num_splats()
+                    ),
+                })
+                .await;
         }
         let splats = to_init_splats(data, render_mode, &device);
         (msg.meta.up_axis, splats)
