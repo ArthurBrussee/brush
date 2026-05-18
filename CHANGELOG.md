@@ -1,5 +1,92 @@
 # Release Notes
 
+## Unreleased
+
+### Highlights
+
+#### Training performance
+
+Most of the loss and backward path was rewritten over the cycle. SSIM moved to a dedicated fused kernel and was then folded together with L1 into a single forward pass ([#394](https://github.com/ArthurBrussee/brush/pull/394), [#401](https://github.com/ArthurBrussee/brush/pull/401)). SSIM's saved-for-backward tensors are now recomputed on the fly ([#409](https://github.com/ArthurBrussee/brush/pull/409)). The per-splat backward early-outs for splats that don't actually contribute to any pixel ([#394](https://github.com/ArthurBrussee/brush/pull/394)). Internal gradients and buffers are sparse where they used to be dense ([#378](https://github.com/ArthurBrussee/brush/pull/378)). Ground-truth images are packed to u32 RGBA on the GPU with background compositing and masking folded into the loss kernel, roughly 4x less pixel-side memory plus a chain of mixed-dtype Burn ops gone ([#410](https://github.com/ArthurBrussee/brush/pull/410)). The radix sort was rewritten to be ~50% faster, which also lifted rendering ~10-15% ([#386](https://github.com/ArthurBrussee/brush/pull/386)). Loading throughput and peak memory both improved meaningfully ([#280](https://github.com/ArthurBrussee/brush/pull/280), [#325](https://github.com/ArthurBrussee/brush/pull/325)).
+
+#### Reconstruction quality & densification
+
+The growth path got a real overhaul: longer-edge split, "uni" noise, and a fix for far-away splats being deleted too early ([#265](https://github.com/ArthurBrussee/brush/pull/265)). Force-split kicks in for splats that grow too big, then later gated by `growth_stop_iter` to avoid pathological end-of-training behaviour ([#390](https://github.com/ArthurBrussee/brush/pull/390), [#398](https://github.com/ArthurBrussee/brush/pull/398)). Random frustum init helps when there are no good initial points ([#372](https://github.com/ArthurBrussee/brush/pull/372)). NaN handling was tightened up with a new fuzz suite ([#389](https://github.com/ArthurBrussee/brush/pull/389)).
+
+#### Mip-Splatting
+
+The 2D mip filter from Mip-Splatting is now implemented, with a `render_mode` flag and a UI toggle. Contributed by @fhahlbohm ([#337](https://github.com/ArthurBrussee/brush/pull/337)).
+
+#### LOD baking
+
+After training, Brush can optionally generate N lower-detail levels by iteratively decimating splats and refining against downscaled images. Each level exports as its own `.ply` with a `_lodN` suffix. CLI/GUI knobs: `lod_levels`, `lod_refine_steps`, `lod_decimation_keep`, `lod_image_scale`. Contributed by @mvaligursky ([#365](https://github.com/ArthurBrussee/brush/pull/365)).
+
+#### Embedding & web demos
+
+Two new front doors for using Brush as a library: a C FFI (`brush-c`) for native embedding ([#308](https://github.com/ArthurBrussee/brush/pull/308)), and `brush-js`, a thin `wasm-bindgen` wrapper that lets any JS page drive Brush directly ([#402](https://github.com/ArthurBrussee/brush/pull/402)). Hosts get zero-copy access to the WebGPU buffers backing the transforms / SH coefficients / opacities, so they can bind them straight into their own render pipelines without ever round-tripping splat data through CPU. The web demos moved from Next.js to Vite + React in the process. The web viewer can also accept initial camera position and rotation via URL parameters ([#309](https://github.com/ArthurBrussee/brush/pull/309)).
+
+#### UI overhaul
+
+Several rounds of cleanup: tabbed sidebar, persistent layout, a status bar that hosts export / live-view / play-pause, notches in the progress bar marking export points, a settings window editable while training, full save/load of training configs, framing bars for reference poses, more background controls including random noise, and DPI-aware splat rendering. ([#299](https://github.com/ArthurBrussee/brush/pull/299), [#329](https://github.com/ArthurBrussee/brush/pull/329), [#330](https://github.com/ArthurBrussee/brush/pull/330), [#334](https://github.com/ArthurBrussee/brush/pull/334), [#335](https://github.com/ArthurBrussee/brush/pull/335), [#338](https://github.com/ArthurBrussee/brush/pull/338), [#346](https://github.com/ArthurBrussee/brush/pull/346), [#347](https://github.com/ArthurBrussee/brush/pull/347), [#362](https://github.com/ArthurBrussee/brush/pull/362), [#377](https://github.com/ArthurBrussee/brush/pull/377), [#399](https://github.com/ArthurBrussee/brush/pull/399)).
+
+#### Masking & alpha
+
+More mask folder layouts accepted (COLMAP's `masks/img.jpeg.png`, `img.mask.*`, masks at arbitrary folder depths), mask resizing, and a configurable `--alpha_mode` exposed in CLI and UI ([#298](https://github.com/ArthurBrussee/brush/pull/298), [#300](https://github.com/ArthurBrussee/brush/pull/300), [#301](https://github.com/ArthurBrussee/brush/pull/301)).
+
+#### Web compatibility & robustness
+
+WebGPU's workgroup dispatch limit is handled correctly, so resolutions above 2048 work ([#363](https://github.com/ArthurBrussee/brush/pull/363), from @promontis). A long-standing intersection-buffer corruption is fixed ([#373](https://github.com/ArthurBrussee/brush/pull/373)), as is a separate sort corruption past ~78M keys ([#385](https://github.com/ArthurBrussee/brush/pull/385)). Intersection and splat limits were raised so larger and higher-resolution scenes work ([#340](https://github.com/ArthurBrussee/brush/pull/340)).
+
+#### Under the hood
+
+All WGSL kernels have been ported to CubeCL `#[cube]` kernels, with shared math types (`Vec3A`, `Quat`, `Mat3`, `Sym2`) in a new `brush-cube` crate. The port surfaced and fixed a long-standing fuzz failure where FP drift between `project_forward` and `map_gaussians_to_intersect` left uninitialised slots in the intersection list ([#411](https://github.com/ArthurBrussee/brush/pull/411)).
+
+### PRs of note (chronological)
+
+- [#265](https://github.com/ArthurBrussee/brush/pull/265) - Densification overhaul: longer-edge split, "uni" noise, fix far-away splats being deleted too early
+- [#280](https://github.com/ArthurBrussee/brush/pull/280) - Faster loading of big datasets
+- [#298](https://github.com/ArthurBrussee/brush/pull/298) - Accept `img.mask.*` masks, add `--alpha_mode`
+- [#299](https://github.com/ArthurBrussee/brush/pull/299) - DPI-aware splat rendering
+- [#300](https://github.com/ArthurBrussee/brush/pull/300) - Alpha mode in the UI
+- [#301](https://github.com/ArthurBrussee/brush/pull/301) - Fix mask discovery
+- [#308](https://github.com/ArthurBrussee/brush/pull/308) - Initial Brush C FFI (@dalnoguer)
+- [#309](https://github.com/ArthurBrussee/brush/pull/309) - Initial camera position/rotation via URL parameters (@dalnoguer)
+- [#319](https://github.com/ArthurBrussee/brush/pull/319) - Use export directory if available
+- [#325](https://github.com/ArthurBrussee/brush/pull/325) - Lower memory usage while loading
+- [#326](https://github.com/ArthurBrussee/brush/pull/326) - Fix broken wasm-pack links (@lanxinger)
+- [#327](https://github.com/ArthurBrussee/brush/pull/327) - 256-thread workgroup for `get_tile_offsets`
+- [#329](https://github.com/ArthurBrussee/brush/pull/329) - UI refresh
+- [#330](https://github.com/ArthurBrussee/brush/pull/330) - Move export / live view / play-pause into the status bar
+- [#334](https://github.com/ArthurBrussee/brush/pull/334) - Export notches on progress bar, more UI updates
+- [#335](https://github.com/ArthurBrussee/brush/pull/335) - Persistent UI layout, tab-bar improvements
+- [#337](https://github.com/ArthurBrussee/brush/pull/337) - Mip-Splatting 2D mip filter (@fhahlbohm)
+- [#338](https://github.com/ArthurBrussee/brush/pull/338) - Another UI revamp
+- [#340](https://github.com/ArthurBrussee/brush/pull/340) - Raise intersection and splat limits, higher-resolution benchmarks
+- [#346](https://github.com/ArthurBrussee/brush/pull/346) - Shared splat view across viewer + training UI
+- [#347](https://github.com/ArthurBrussee/brush/pull/347) - Save/load of training configs
+- [#350](https://github.com/ArthurBrussee/brush/pull/350) - Readback-based intersection count
+- [#362](https://github.com/ArthurBrussee/brush/pull/362) - Settings window editable during training
+- [#363](https://github.com/ArthurBrussee/brush/pull/363) - Support resolutions >2048 by chunking WebGPU dispatch (@promontis)
+- [#365](https://github.com/ArthurBrussee/brush/pull/365) - LOD baking (@mvaligursky)
+- [#372](https://github.com/ArthurBrussee/brush/pull/372) - Random frustum init
+- [#373](https://github.com/ArthurBrussee/brush/pull/373) - Fix intersection-buffer corruption
+- [#374](https://github.com/ArthurBrussee/brush/pull/374) - Better error checking for WASM export
+- [#377](https://github.com/ArthurBrussee/brush/pull/377) - More background controls
+- [#378](https://github.com/ArthurBrussee/brush/pull/378) - Sparse internal gradients / buffers
+- [#381](https://github.com/ArthurBrussee/brush/pull/381) - Adam-mini style optimizer for SH
+- [#385](https://github.com/ArthurBrussee/brush/pull/385) - Fix sort corruption past ~78M keys, add tests
+- [#386](https://github.com/ArthurBrussee/brush/pull/386) - Sort rewrite: ~50% faster sorting, ~10-15% faster rendering
+- [#389](https://github.com/ArthurBrussee/brush/pull/389) - Fuzz testing and NaN handling
+- [#390](https://github.com/ArthurBrussee/brush/pull/390) - Force-split oversized splats
+- [#392](https://github.com/ArthurBrussee/brush/pull/392) - Workaround SH0 crash
+- [#394](https://github.com/ArthurBrussee/brush/pull/394) - Fused SSIM kernel, per-splat backward early-out
+- [#398](https://github.com/ArthurBrussee/brush/pull/398) - Gate force-split by `growth_stop_iter`
+- [#399](https://github.com/ArthurBrussee/brush/pull/399) - Reference-pose framing bars
+- [#401](https://github.com/ArthurBrussee/brush/pull/401) - Per-splat backward + fused L1+SSIM loss
+- [#402](https://github.com/ArthurBrussee/brush/pull/402) - `brush-js` library + Vite-based web demos
+- [#409](https://github.com/ArthurBrussee/brush/pull/409) - Recompute SSIM partials in backward, drop saved tensors
+- [#410](https://github.com/ArthurBrussee/brush/pull/410) - Pack GT to u32 RGBA, fold bg-composite + mask into loss kernel
+- [#411](https://github.com/ArthurBrussee/brush/pull/411) - Port WGSL kernels to CubeCL
+
 ## 0.3
 
 Brush 0.3
