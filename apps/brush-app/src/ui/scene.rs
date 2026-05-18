@@ -803,9 +803,9 @@ impl AppPane for ScenePanel {
         }
     }
 
-    fn init(&mut self, state: &RenderState, process: &UiProcess) {
+    fn init(&mut self, state: &RenderState) {
         self.grid = Some(GridWidget::new(state));
-        self.backbuffer = Some(SplatBackbuffer::new(state, process.actor()));
+        self.backbuffer = Some(SplatBackbuffer::new(state));
         // Create the settings popup now that we have the base_path
         self.settings_popup = Some(Arc::new(Mutex::new(SettingsPopup::new())));
     }

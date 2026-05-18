@@ -31,7 +31,7 @@ pub struct SplatBackbuffer {
 }
 
 impl SplatBackbuffer {
-    pub fn new(state: &eframe::egui_wgpu::RenderState, actor: Actor) -> Self {
+    pub fn new(state: &eframe::egui_wgpu::RenderState) -> Self {
         // Register splat backbuffer resources
         state
             .renderer
@@ -41,6 +41,14 @@ impl SplatBackbuffer {
                 &state.device,
                 state.target_format,
             ));
+
+        // The viewer renders on its own OS thread, separate from the
+        // trainer's `ui-process` actor, so training and preview render
+        // genuinely run in parallel. Sharing tensors across the two
+        // threads (the trainer's splats are rendered here) is safe since
+        // burn's shared-tensor handling (tracel-ai/burn#4962). The actor
+        // is owned by `pipe`; dropping the backbuffer shuts the thread down.
+        let actor = Actor::new("viewer");
 
         let pipe = AsyncMap::new(
             actor,
