@@ -12,8 +12,8 @@ use brush_render::{
 };
 use burn::{
     backend::{
-        AutodiffBackend, Backend, BackendTensor, DispatchTensorKind, TensorMetadata,
-        TensorPrimitive,
+        AutodiffBackend, Backend, BackendTensor, DispatchTensor, DispatchTensorKind,
+        TensorMetadata,
         autodiff::{
             checkpoint::{base::Checkpointer, strategy::NoCheckpointing},
             grads::Gradients,
@@ -23,12 +23,12 @@ use burn::{
         wgpu::WgpuRuntime,
     },
     module::Param,
-    tensor::{DType, Shape, Tensor},
+    tensor::{DType, Shape, Tensor, kind::BridgeTensor},
 };
 use burn_cubecl::fusion::FusionCubeRuntime;
 use burn_fusion::{
     Fusion, FusionHandle,
-    stream::{Operation, OperationStreams},
+    stream::{Operation, StreamId},
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use glam::Vec3;
@@ -180,13 +180,13 @@ pub struct SplatOutputDiff {
 /// at `None`. Without that field set, ops on the resulting tensor hit
 /// `unreachable!("Should only be called with autodiff.")`.
 pub fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
-    let dispatch = t.into_primitive().tensor();
+    let dispatch: DispatchTensor = t.into_primitive().into();
     match dispatch.kind {
         DispatchTensorKind::Wgpu(BackendTensor::Float(inner)) => {
             wrap_ad_wgpu_float(<AutodiffMain as AutodiffBackend>::from_inner(inner))
         }
         // Already autodiff — no-op.
-        DispatchTensorKind::Autodiff(_) => Tensor::from_primitive(TensorPrimitive::Float(dispatch)),
+        DispatchTensorKind::Autodiff(_) => Tensor::from_primitive(BridgeTensor::Float(dispatch)),
         _ => panic!("expected Wgpu tensor to lift to autodiff"),
     }
 }
@@ -370,7 +370,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 Shape::new([num_visible, 10]),
                 DType::F32,
             );
-            let stream = OperationStreams::with_inputs(&input_tensors);
+            let stream = StreamId::current();
             let desc = CustomOpIr::new(
                 "rasterize_bwd",
                 &input_tensors.map(|t| t.into_ir()),
@@ -465,7 +465,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                 DType::F32,
             );
 
-            let stream = OperationStreams::with_inputs(&input_tensors);
+            let stream = StreamId::current();
             let desc = CustomOpIr::new(
                 "project_bwd",
                 &input_tensors.map(|t| t.into_ir()),
