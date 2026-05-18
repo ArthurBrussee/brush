@@ -1178,6 +1178,7 @@ dependencies = [
  "image",
  "rerun",
  "serde",
+ "tokio",
 ]
 
 [[package]]

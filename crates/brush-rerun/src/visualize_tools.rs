@@ -27,18 +27,22 @@ mod visualize_tools_impl {
 
     impl VisualizeTools {
         #[allow(unused_variables)]
-        pub fn new(enabled: bool) -> Self {
-            if enabled {
-                Self {
-                    // Spawn rerun - creating this is already explicitly done by a user.
-                    rec: rerun::RecordingStreamBuilder::new("Brush")
+        pub async fn new(enabled: bool) -> Self {
+            let rec = tokio::task::spawn_blocking(move || {
+                if enabled {
+                    rerun::RecordingStreamBuilder::new("Brush")
                         .spawn()
-                        .expect("Failed to connect to rerun"),
+                        .expect("Failed to spawn rerun")
+                } else {
+                    rerun::RecordingStream::disabled()
                 }
-            } else {
-                Self {
-                    rec: rerun::RecordingStream::disabled(),
-                }
+            })
+            .await
+            .expect("Failed to spawn rerun");
+
+            Self {
+                // Spawn rerun - creating this is already explicitly done by a user.
+                rec,
             }
         }
 

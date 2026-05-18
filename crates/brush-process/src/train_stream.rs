@@ -39,14 +39,13 @@ pub(crate) async fn train_stream(
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
+    let visualize = VisualizeTools::new(train_stream_config.rerun_config.rerun_enabled).await;
+
     emitter
         .emit(ProcessMessage::TrainMessage(TrainMessage::TrainConfig {
             config: Box::new(train_stream_config.clone()),
         }))
         .await;
-
-    let visualize = tracing::trace_span!("Create rerun")
-        .in_scope(|| VisualizeTools::new(train_stream_config.rerun_config.rerun_enabled));
 
     let process_config = &train_stream_config.process_config;
     log::info!("Using seed {}", process_config.seed);
