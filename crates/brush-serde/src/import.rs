@@ -681,7 +681,10 @@ mod tests {
             sub.rotations.unwrap(),
             vec![0., 0., 0., 0., 4., 4., 4., 4., 8., 8., 8., 8.]
         );
-        assert_eq!(sub.log_scales.unwrap(), vec![0., 0., 0., 4., 4., 4., 8., 8., 8.]);
+        assert_eq!(
+            sub.log_scales.unwrap(),
+            vec![0., 0., 0., 4., 4., 4., 8., 8., 8.]
+        );
         let sh = sub.sh_coeffs.unwrap();
         assert_eq!(sh.len(), 3 * 6);
         assert_eq!(&sh[0..6], &[0., 0., 0., 0., 0., 0.]);
