@@ -144,11 +144,11 @@ fn persp_proj_vjp(
 
         let mx_rz = mean_c.x() * inv_z;
         let my_rz = mean_c.y() * inv_z;
-        let tx = mean_c.z() * clamp(mx_rz, -lim_x_neg, lim_x_pos);
-        let ty = mean_c.z() * clamp(my_rz, -lim_y_neg, lim_y_pos);
+        let tx = mean_c.z() * clamp(mx_rz, lim_x_neg, lim_x_pos);
+        let ty = mean_c.z() * clamp(my_rz, lim_y_neg, lim_y_pos);
 
-        let in_x = mx_rz <= lim_x_pos && mx_rz >= -lim_x_neg;
-        let in_y = my_rz <= lim_y_pos && my_rz >= -lim_y_neg;
+        let in_x = mx_rz <= lim_x_pos && mx_rz >= lim_x_neg;
+        let in_y = my_rz <= lim_y_pos && my_rz >= lim_y_neg;
 
         if in_x {
             v_mx += -u.camera.focal_x * inv_z2 * vj20;
