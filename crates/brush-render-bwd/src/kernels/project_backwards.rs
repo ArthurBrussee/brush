@@ -166,240 +166,16 @@ fn persp_proj_vjp(
 
         Vec3A::new(v_mx, v_my, v_mz)
     } else if comptime![camera_model_id == KANNALA_BRANDT_4] {
-        /*let mx = mean_c.x();
-        let my = mean_c.y();
-        let mz = mean_c.z();
-        let inv_z = 1.0f32 / mz;
-
-        let fx = u.camera.focal_x;
-        let fy = u.camera.focal_y;
-        let k1 = u.camera.k1;
-        let k2 = u.camera.k2;
-        let k3 = u.camera.k3;
-        let k4 = u.camera.k4;
-
-        // --- Clamp the ray, same way the forward does ---
-        let img_w_f = u.img_w as f32;
-        let img_h_f = u.img_h as f32;
-        let lim_x_pos = (1.15f32 * img_w_f - u.camera.pixel_center_x) / fx;
-        let lim_y_pos = (1.15f32 * img_h_f - u.camera.pixel_center_y) / fy;
-        let lim_x_neg = (-0.15f32 * img_w_f - u.camera.pixel_center_x) / fx;
-        let lim_y_neg = (-0.15f32 * img_h_f - u.camera.pixel_center_y) / fy;
-
-        let mx_rz_raw = mx * inv_z;
-        let my_rz_raw = my * inv_z;
-        let in_x = mx_rz_raw <= lim_x_pos && mx_rz_raw >= lim_x_neg;
-        let in_y = my_rz_raw <= lim_y_pos && my_rz_raw >= lim_y_neg;
-        let mx_rz = f32::clamp(mx_rz_raw, lim_x_neg, lim_x_pos);
-        let my_rz = f32::clamp(my_rz_raw, lim_y_neg, lim_y_pos);
-        // Surrogate point (the point the forward J was evaluated at).
-        let xc = mx_rz * mz;
-        let yc = my_rz * mz;
-
-        // --- Forward intermediates at (xc, yc, mz) (mirrors calc_jacobian) ---
-        let r2 = xc * xc + yc * yc;
-        let r = r2.sqrt().max(1.0e-8f32);
-        let rho2 = r2 + mz * mz;
-
-        let theta = r.atan2(mz);
-        let th2 = theta * theta;
-        let th4 = th2 * th2;
-        let th6 = th4 * th2;
-        let th8 = th4 * th4;
-
-        let theta_d = theta * (1.0f32 + k1 * th2 + k2 * th4 + k3 * th6 + k4 * th8);
-        let p1 =
-            1.0f32 + 3.0f32 * k1 * th2 + 5.0f32 * k2 * th4 + 7.0f32 * k3 * th6 + 9.0f32 * k4 * th8;
-        let p2 = 6.0f32 * k1 * theta
-            + 20.0f32 * k2 * theta * th2
-            + 42.0f32 * k3 * theta * th4
-            + 72.0f32 * k4 * theta * th6;
-
-        let inv_r = 1.0f32 / r;
-        let inv_r3 = inv_r * inv_r * inv_r;
-        let inv_r5 = inv_r3 * inv_r * inv_r;
-        let inv_rho2 = 1.0f32 / rho2;
-        let inv_rho2_sq = inv_rho2 * inv_rho2;
-        let inv_rho2_r = inv_rho2 * inv_r;
-
-        // d theta / d {xc, yc, z}
-        let dth_xc = xc * mz * inv_rho2_r;
-        let dth_yc = yc * mz * inv_rho2_r;
-        let dth_z = -r * inv_rho2;
-
-        let xr = xc * inv_r;
-        let yr = yc * inv_r;
-        let dxr_xc = yc * yc * inv_r3;
-        let dxr_yc = -xc * yc * inv_r3;
-        let dyr_xc = dxr_yc;
-        let dyr_yc = xc * xc * inv_r3;
-
-        // dg/d {xc, yc, z} where g = theta_d
-        let dg_xc = p1 * dth_xc;
-        let dg_yc = p1 * dth_yc;
-        let dg_z = p1 * dth_z;
-
-        // J_surr entries (this is the J that calc_jacobian returns when
-        // called on the same surrogate point — equivalently cam_jac if you
-        // passed it in).
-        let js00 = fx * (dg_xc * xr + theta_d * dxr_xc);
-        let js01 = fx * (dg_yc * xr + theta_d * dxr_yc);
-        let js02 = fx * (dg_z * xr);
-        let js10 = fy * (dg_xc * yr + theta_d * dyr_xc);
-        let js11 = fy * (dg_yc * yr + theta_d * dyr_yc);
-        let js12 = fy * (dg_z * yr);
-
-        // --- Effective J_eff = J_surr * S  (2x3) ---
-        // S has structure:
-        //   col 0 of S = (in_x ? 1 : 0, 0, 0)         -> J_eff col 0 = (in_x ? js0* : 0)
-        //   col 1 of S = (0, in_y ? 1 : 0, 0)         -> J_eff col 1 = (in_y ? js1* : 0)
-        //   col 2 of S = (in_x ? 0 : mx_rz,           -> J_eff col 2 =
-        //                 in_y ? 0 : my_rz,                 (js0* if in_x else mx_rz*js0_)
-        //                 1)                                + ... + js2*
-        //
-        // Equivalently, J_eff = J_surr where the un-clamped axes go through,
-        // and where a clamp fires, that input column is rerouted into the
-        // z-column with weight (mx_rz or my_rz). We compute it explicitly:
-        let je00 = select(in_x, js00, 0.0f32);
-        let je10 = select(in_x, js10, 0.0f32);
-        let je01 = select(in_y, js01, 0.0f32);
-        let je11 = select(in_y, js11, 0.0f32);
-        let je02 = select(in_x, 0.0f32, mx_rz * js00)
-            + select(in_y, 0.0f32, my_rz * js01)
-            + js02;
-        let je12 = select(in_x, 0.0f32, mx_rz * js10)
-            + select(in_y, 0.0f32, my_rz * js11)
-            + js12;
-
-        // --- Path 1: v_mean_c = J_eff^T v_mean2d ---
-        let mut v_mx = je00 * v_mean2d_x + je10 * v_mean2d_y;
-        let mut v_my = je01 * v_mean2d_x + je11 * v_mean2d_y;
-        let mut v_mz = je02 * v_mean2d_x + je12 * v_mean2d_y;
-
-        // --- v_J_eff = 2 sym(v_cov2d) J_eff cov_c   (2x3) ---
-        let tmp = v_cov2d.mul_mat2x3(Mat2x3 {
-            c0_x: je00,
-            c0_y: je10,
-            c1_x: je01,
-            c1_y: je11,
-            c2_x: je02,
-            c2_y: je12,
-        });
-        let ve_u0 = 2.0f32 * tmp.row0().dot(cov_c.row0());
-        let ve_u1 = 2.0f32 * tmp.row0().dot(cov_c.row1());
-        let ve_u2 = 2.0f32 * tmp.row0().dot(cov_c.row2());
-        let ve_v0 = 2.0f32 * tmp.row1().dot(cov_c.row0());
-        let ve_v1 = 2.0f32 * tmp.row1().dot(cov_c.row1());
-        let ve_v2 = 2.0f32 * tmp.row1().dot(cov_c.row2());
-
-        // --- v_J_surr = v_J_eff * S^T  (still 2x3) ---
-        // S^T cols are S's rows. With S = block diag of two stop-grad routes:
-        //   v_J_surr[:, 0] = (in_x ? v_J_eff[:,0] : 0) + (in_x ? 0 : mx_rz * v_J_eff[:,2])
-        //   v_J_surr[:, 1] = (in_y ? v_J_eff[:,1] : 0) + (in_y ? 0 : my_rz * v_J_eff[:,2])
-        //   v_J_surr[:, 2] = v_J_eff[:, 2]
-        let vs_u0 = if in_x { ve_u0 } else { mx_rz * ve_u2 };
-        let vs_v0 = if in_x { ve_v0 } else { mx_rz * ve_v2 };
-        let vs_u1 = if in_y { ve_u1 } else { my_rz * ve_u2 };
-        let vs_v1 = if in_y { ve_v1 } else { my_rz * ve_v2 };
-        let vs_u2 = ve_u2;
-        let vs_v2 = ve_v2;
-
-        // --- Hessians of theta, x/r, y/r at the surrogate (xc, yc, mz) ---
-        let three_r2_z2 = 3.0f32 * r2 + mz * mz;
-        let r2_minus_z2 = r2 - mz * mz;
-        let h_th_00 = mz * (r2 * rho2 - xc * xc * three_r2_z2) * inv_r3 * inv_rho2_sq;
-        let h_th_11 = mz * (r2 * rho2 - yc * yc * three_r2_z2) * inv_r3 * inv_rho2_sq;
-        let h_th_01 = -xc * yc * mz * three_r2_z2 * inv_r3 * inv_rho2_sq;
-        let h_th_02 = xc * r2_minus_z2 * inv_r * inv_rho2_sq;
-        let h_th_12 = yc * r2_minus_z2 * inv_r * inv_rho2_sq;
-        let h_th_22 = 2.0f32 * mz * r * inv_rho2_sq;
-
-        let two_xc2_yc2 = 2.0f32 * xc * xc - yc * yc;
-        let two_yc2_xc2 = 2.0f32 * yc * yc - xc * xc;
-        let h_xr_00 = -3.0f32 * xc * yc * yc * inv_r5;
-        let h_xr_01 = yc * two_xc2_yc2 * inv_r5;
-        let h_xr_11 = xc * two_yc2_xc2 * inv_r5;
-        let h_yr_00 = yc * two_xc2_yc2 * inv_r5;
-        let h_yr_01 = xc * two_yc2_xc2 * inv_r5;
-        let h_yr_11 = -3.0f32 * xc * xc * yc * inv_r5;
-
-        // --- Path 2 contraction in SURROGATE coords: c_k = sum_{i,j} v_J_surr[i,j] * dJ_surr[i,j]/d (xc,yc,z)_k
-        //   dJ_surr[i,j]/d xk = f_i * ( d2g[j,k]*h_i + dg[j]*dh_i[k]
-        //                              + dg[k]*dh_i[j] + g * H_h_i[j,k] )
-        //   d2g[j,k] = P2*dth[j]*dth[k] + P1*H_theta[j,k]
-        //
-        // Unrolled for the 3 surrogate output coords; dh_*[2] = 0, H_h_*[*,2] = 0.
-
-        // c_xc (k = 0)
-        let c_xc = {
-            let d2g00 = p2 * dth_xc * dth_xc + p1 * h_th_00;
-            let d2g10 = p2 * dth_yc * dth_xc + p1 * h_th_01;
-            let d2g20 = p2 * dth_z * dth_xc + p1 * h_th_02;
-            // j = 0
-            let dJu0 = fx * (d2g00 * xr + 2.0f32 * dg_xc * dxr_xc + theta_d * h_xr_00);
-            let dJv0 = fy * (d2g00 * yr + 2.0f32 * dg_xc * dyr_xc + theta_d * h_yr_00);
-            // j = 1
-            let dJu1 = fx * (d2g10 * xr + dg_yc * dxr_xc + dg_xc * dxr_yc + theta_d * h_xr_01);
-            let dJv1 = fy * (d2g10 * yr + dg_yc * dyr_xc + dg_xc * dyr_yc + theta_d * h_yr_01);
-            // j = 2  (dh_*[2] = 0, H_h_*[2,0] = 0)
-            let dJu2 = fx * (d2g20 * xr + dg_z * dxr_xc);
-            let dJv2 = fy * (d2g20 * yr + dg_z * dyr_xc);
-            vs_u0 * dJu0 + vs_v0 * dJv0 + vs_u1 * dJu1 + vs_v1 * dJv1 + vs_u2 * dJu2 + vs_v2 * dJv2
-        };
-
-        // c_yc (k = 1)
-        let c_yc = {
-            let d2g01 = p2 * dth_xc * dth_yc + p1 * h_th_01;
-            let d2g11 = p2 * dth_yc * dth_yc + p1 * h_th_11;
-            let d2g21 = p2 * dth_z * dth_yc + p1 * h_th_12;
-            let dJu0 = fx * (d2g01 * xr + dg_xc * dxr_yc + dg_yc * dxr_xc + theta_d * h_xr_01);
-            let dJv0 = fy * (d2g01 * yr + dg_xc * dyr_yc + dg_yc * dyr_xc + theta_d * h_yr_01);
-            let dJu1 = fx * (d2g11 * xr + 2.0f32 * dg_yc * dxr_yc + theta_d * h_xr_11);
-            let dJv1 = fy * (d2g11 * yr + 2.0f32 * dg_yc * dyr_yc + theta_d * h_yr_11);
-            let dJu2 = fx * (d2g21 * xr + dg_z * dxr_yc);
-            let dJv2 = fy * (d2g21 * yr + dg_z * dyr_yc);
-            vs_u0 * dJu0 + vs_v0 * dJv0 + vs_u1 * dJu1 + vs_v1 * dJv1 + vs_u2 * dJu2 + vs_v2 * dJv2
-        };
-
-        // c_z (k = 2)
-        let c_z = {
-            let d2g02 = p2 * dth_xc * dth_z + p1 * h_th_02;
-            let d2g12 = p2 * dth_yc * dth_z + p1 * h_th_12;
-            let d2g22 = p2 * dth_z * dth_z + p1 * h_th_22;
-            // dh_*[2] = 0, H_h_*[j,2] = 0 for all j -> several terms drop.
-            let dJu0 = fx * (d2g02 * xr + dg_z * dxr_xc);
-            let dJv0 = fy * (d2g02 * yr + dg_z * dyr_xc);
-            let dJu1 = fx * (d2g12 * xr + dg_z * dxr_yc);
-            let dJv1 = fy * (d2g12 * yr + dg_z * dyr_yc);
-            let dJu2 = fx * (d2g22 * xr);
-            let dJv2 = fy * (d2g22 * yr);
-            vs_u0 * dJu0 + vs_v0 * dJv0 + vs_u1 * dJu1 + vs_v1 * dJv1 + vs_u2 * dJu2 + vs_v2 * dJv2
-        };
-
-        // --- Pull contraction back: v_mean_c += S^T * (c_xc, c_yc, c_z) ---
-        // S^T col 0 picks c_xc if in_x else 0.
-        // S^T col 1 picks c_yc if in_y else 0.
-        // S^T col 2 = (in_x ? 0 : mx_rz, in_y ? 0 : my_rz, 1).
-        if in_x {
-            v_mx += c_xc;
-        }
-        if in_y {
-            v_my += c_yc;
-        }
-        v_mz += c_z;
-        if !in_x {
-            v_mz += mx_rz * c_xc;
-        }
-        if !in_y {
-            v_mz += my_rz * c_yc;
-        }
-
-        Vec3A::new(v_mx, v_my, v_mz)*/
-        // tmp = v_cov2d * J (2x3, col-major). Same for all projection models.
         let Mat2x3 {
-            c0_x: j00, c0_y: j01, c1_x: j10, c1_y: j11, c2_x: j20, c2_y: j21
+            c0_x: j00,
+            c0_y: j01,
+            c1_x: j10,
+            c1_y: j11,
+            c2_x: j20,
+            c2_y: j21,
         } = cam_jac;
 
+        // tmp = v_cov2d * J (2x3, col-major).
         let t00 = v_cov2d.c00 * j00 + v_cov2d.c01 * j01;
         let t01 = v_cov2d.c01 * j00 + v_cov2d.c11 * j01;
         let t10 = v_cov2d.c00 * j10 + v_cov2d.c01 * j11;
@@ -443,8 +219,11 @@ fn persp_proj_vjp(
         let theta4 = theta2 * theta2;
         let theta6 = theta4 * theta2;
         let theta8 = theta4 * theta4;
-        let poly =
-            1.0f32 + u.camera.k1 * theta2 + u.camera.k2 * theta4 + u.camera.k3 * theta6 + u.camera.k4 * theta8;
+        let poly = 1.0f32
+            + u.camera.k1 * theta2
+            + u.camera.k2 * theta4
+            + u.camera.k3 * theta6
+            + u.camera.k4 * theta8;
         let dpoly = 2.0f32 * u.camera.k1 * theta
             + 4.0f32 * u.camera.k2 * theta2 * theta
             + 6.0f32 * u.camera.k3 * theta4 * theta
@@ -469,8 +248,8 @@ fn persp_proj_vjp(
         let fy = u.camera.focal_y;
 
         // Derivative scale factors: dA/dx = EA*x, dB/dx = EB*x, dC/dx = EC*x.
-        let ea = z / (r2 * d22)
-            * (ddtheta_d * z / r - 2.0f32 * dtheta_d * (2.0f32 * r2 + z * z) / r2);
+        let ea =
+            z / (r2 * d22) * (ddtheta_d * z / r - 2.0f32 * dtheta_d * (2.0f32 * r2 + z * z) / r2);
         let eb = dtheta_d * z / (r4 * d2) - 3.0f32 * theta_d / (r4 * r);
         let ec = ddtheta_d * z / (r * d22) - 2.0f32 * dtheta_d / d22;
         // z-derivatives of A, B, C.
@@ -486,12 +265,10 @@ fn persp_proj_vjp(
 
         let scale = ea * vja + eb * vjb + (ea - eb) * vjab - ec * vjc;
 
-        let dir_x = 2.0f32 * a_val * x * vj00 * fx
-            + (a_val - b_val) * y * (vj10 * fx + vj01 * fy)
+        let dir_x = 2.0f32 * a_val * x * vj00 * fx + (a_val - b_val) * y * (vj10 * fx + vj01 * fy)
             - c_val * vj20 * fx
             + 2.0f32 * b_val * x * vj11 * fy;
-        let dir_y = 2.0f32 * a_val * y * vj11 * fy
-            + (a_val - b_val) * x * (vj10 * fx + vj01 * fy)
+        let dir_y = 2.0f32 * a_val * y * vj11 * fy + (a_val - b_val) * x * (vj10 * fx + vj01 * fy)
             - c_val * vj21 * fy
             + 2.0f32 * b_val * y * vj00 * fx;
 
