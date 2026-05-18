@@ -82,7 +82,7 @@ impl AppPane for StatsPanel {
         "Stats".into()
     }
 
-    fn init(&mut self, state: &RenderState, _process: &UiProcess) {
+    fn init(&mut self, state: &RenderState) {
         self.adapter_info = Some(state.adapter.get_info());
     }
 

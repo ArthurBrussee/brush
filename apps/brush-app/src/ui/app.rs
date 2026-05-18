@@ -234,7 +234,7 @@ impl App {
         // Initialize all panels with runtime state
         for (_, tile) in tree.tiles.iter_mut() {
             if let egui_tiles::Tile::Pane(pane) = tile {
-                pane.get_mut().as_pane_mut().init(state, &context);
+                pane.get_mut().as_pane_mut().init(state);
             }
         }
 

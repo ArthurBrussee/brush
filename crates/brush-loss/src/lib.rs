@@ -37,7 +37,7 @@ use burn_cubecl::{
 };
 use burn_fusion::{
     Fusion, FusionHandle,
-    stream::{Operation, OperationStreams},
+    stream::{Operation, StreamId},
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use glam::Vec3;
@@ -766,7 +766,7 @@ where
 {
     let client = inputs[0].client.clone();
     let out = TensorIr::uninit(client.create_empty_handle(), out_shape, out_dtype);
-    let stream = OperationStreams::with_inputs(&inputs);
+    let stream = StreamId::current();
     let desc = CustomOpIr::new(name, &inputs.map(|t| t.into_ir()), &[out]);
     let wrapped = ClosureOp {
         desc: desc.clone(),
