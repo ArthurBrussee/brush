@@ -50,7 +50,7 @@ impl CameraParams {
                 select(near_axis, pinhole_v, fisheye_v),
             )
         } else {
-            todo!()
+            panic!("not implemented")
         }
     }
 
@@ -153,7 +153,7 @@ impl CameraParams {
                 c2_y: select(near_axis, -dy * pinhole_v, dv_dz),
             }
         } else {
-            todo!()
+            panic!("not implemented")
         }
     }
 }
