@@ -493,9 +493,7 @@ mod tests {
         // NeRFStudio transforms.json). When the directory was loaded as a
         // VFS, that absolute path should resolve to the file inside it.
         let dir = std::env::temp_dir().join("brush_vfs_abs_test_dir");
-        tokio::fs::create_dir_all(dir.join("images"))
-            .await
-            .unwrap();
+        tokio::fs::create_dir_all(dir.join("images")).await.unwrap();
         tokio::fs::write(dir.join("images/cam.png"), b"image content")
             .await
             .unwrap();
@@ -531,12 +529,7 @@ mod tests {
         assert!(vfs.reader_at_path(&outside).await.is_err());
 
         // An empty VFS has no prefix, so absolute paths never resolve.
-        assert!(
-            BrushVfs::empty()
-                .reader_at_path(&abs)
-                .await
-                .is_err()
-        );
+        assert!(BrushVfs::empty().reader_at_path(&abs).await.is_err());
 
         tokio::fs::remove_file(&outside).await.unwrap();
         tokio::fs::remove_dir_all(&dir).await.unwrap();
