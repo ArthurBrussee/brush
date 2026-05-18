@@ -30,20 +30,96 @@ fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
         .min()
 }
 
+/// COLMAP can emit several independent sparse reconstructions (`sparse/0`,
+/// `sparse/1`, ...) when the image graph is disconnected. They share no
+/// coordinate frame and cannot be merged here, so we pick the one that
+/// registered the most images (COLMAP's own "largest first" convention,
+/// determined empirically rather than trusting directory names).
+async fn select_colmap_model(vfs: &BrushVfs) -> Option<PathBuf> {
+    let candidates: Vec<PathBuf> = vfs
+        .files_ending_in("cameras.bin")
+        .chain(vfs.files_ending_in("cameras.txt"))
+        .map(Path::to_path_buf)
+        .collect();
+
+    if candidates.len() <= 1 {
+        return candidates.into_iter().next();
+    }
+
+    let mut best: Option<(usize, PathBuf)> = None;
+    for cam in &candidates {
+        let dir = cam
+            .parent()
+            .expect("colmap cameras file must have a parent");
+        let is_binary = cam.extension().and_then(|e| e.to_str()) == Some("bin");
+        let img_path = dir.join(if is_binary {
+            "images.bin"
+        } else {
+            "images.txt"
+        });
+
+        let Some(count) = count_registered_images(vfs, &img_path, is_binary).await else {
+            log::warn!(
+                "Skipping colmap model '{}': can't read images",
+                dir.display()
+            );
+            continue;
+        };
+        log::info!("Colmap model '{}' registered {count} images", dir.display());
+
+        // Tie-break on path so the choice is deterministic (VFS iteration isn't).
+        let better = best
+            .as_ref()
+            .is_none_or(|(bc, bp)| count > *bc || (count == *bc && cam < bp));
+        if better {
+            best = Some((count, cam.clone()));
+        }
+    }
+
+    // If every candidate failed to read, fall through to a deterministic pick
+    // so the caller still surfaces a proper parse error downstream.
+    let chosen = best
+        .map(|(_, p)| p)
+        .or_else(|| candidates.iter().min().cloned())?;
+    log::info!(
+        "Selected colmap model '{}'",
+        chosen
+            .parent()
+            .expect("colmap cameras file must have a parent")
+            .display()
+    );
+    Some(chosen)
+}
+
+async fn count_registered_images(
+    vfs: &BrushVfs,
+    img_path: &Path,
+    is_binary: bool,
+) -> Option<usize> {
+    let mut file = vfs.reader_at_path(img_path).await.ok()?;
+    let imgs = colmap_reader::read_images(&mut file, is_binary, false)
+        .await
+        .ok()?;
+    Some(imgs.len())
+}
+
 pub(crate) async fn load_dataset(
     vfs: Arc<BrushVfs>,
     load_args: &LoadDataseConfig,
 ) -> Option<Result<DatasetLoadResult, FormatError>> {
     log::info!("Loading colmap dataset");
 
-    let (cam_path, img_path) = if let Some(path) = vfs.files_ending_in("cameras.bin").next() {
-        let path = path.parent().expect("unreachable");
-        (path.join("cameras.bin"), path.join("images.bin"))
+    let cam_path = select_colmap_model(&vfs).await?;
+    let dir = cam_path
+        .parent()
+        .expect("colmap cameras file must have a parent");
+    let is_binary = cam_path.extension().and_then(|e| e.to_str()) == Some("bin");
+    let img_path = dir.join(if is_binary {
+        "images.bin"
     } else {
-        let path = vfs.files_ending_in("cameras.txt").next()?;
-        let path = path.parent().expect("unreachable");
-        (path.join("cameras.txt"), path.join("images.txt"))
-    };
+        "images.txt"
+    });
+
     Some(load_dataset_inner(vfs, load_args, cam_path, img_path).await)
 }
 
@@ -61,6 +137,13 @@ async fn load_dataset_inner(
     let vfs = vfs.clone();
 
     let vfs_init = vfs.clone();
+
+    // Resolve points3d from the same reconstruction as the chosen cameras,
+    // not an arbitrary one elsewhere in the VFS.
+    let points_dir = cam_path
+        .parent()
+        .expect("colmap cameras file must have a parent")
+        .to_path_buf();
 
     // One actor for both halves of the colmap load — the camera/image
     // parse and the points3d parse run concurrently on the same thread
@@ -155,8 +238,10 @@ async fn load_dataset_inner(
     let load_args = load_args.clone();
 
     let init = actor.run(move || async move {
-        let points_path = { vfs_init.files_ending_in("points3d.txt").next() }
-            .or_else(|| vfs_init.files_ending_in("points3d.bin").next())?;
+        let points_path = vfs_init
+            .files_ending_in("points3d.txt")
+            .chain(vfs_init.files_ending_in("points3d.bin"))
+            .find(|p| p.parent() == Some(points_dir.as_path()))?;
         let is_binary = matches!(
             points_path.extension().and_then(|p| p.to_str()),
             Some("bin")
