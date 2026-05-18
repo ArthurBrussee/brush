@@ -256,7 +256,7 @@ mod backward_rendering {
 
     #[divan::bench(args = [1_000_000, 2_000_000, 5_000_000])]
     fn render_grad_1080p(bencher: divan::Bencher, splat_count: usize) {
-        let device: Device = WgpuDevice::default().into();
+        let device = Device::from(WgpuDevice::default()).autodiff();
         bencher.bench_local(move || {
             block_on(async {
                 run_backward_render(&device, splat_count, (1920, 1080), ITERS_PER_SYNC).await;
@@ -267,7 +267,7 @@ mod backward_rendering {
 
     #[divan::bench(args = RESOLUTIONS)]
     fn render_grad_2m_splats(bencher: divan::Bencher, (width, height): (u32, u32)) {
-        let device: Device = WgpuDevice::default().into();
+        let device = Device::from(WgpuDevice::default()).autodiff();
         bencher.bench_local(move || {
             block_on(async {
                 run_backward_render(&device, 2_000_000, (width, height), ITERS_PER_SYNC).await;
@@ -289,7 +289,7 @@ mod training {
 
     #[divan::bench(args = SPLAT_COUNTS)]
     fn train_steps(splat_count: usize) {
-        let device: Device = WgpuDevice::default().into();
+        let device = Device::from(WgpuDevice::default()).autodiff();
         block_on(async {
             run_training_steps(&device, splat_count, (1920, 1080), ITERS_PER_SYNC).await;
             device.sync().expect("Failed to sync");
