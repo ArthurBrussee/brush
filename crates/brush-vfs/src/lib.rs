@@ -282,26 +282,25 @@ impl BrushVfs {
     pub async fn reader_at_path(&self, path: &Path) -> io::Result<Box<dyn DynRead>> {
         let key = PathKey::from_path(path);
 
-        let Some(path) = self.lookup.get(&key) else {
+        let resolved = self.lookup.get(&key).or_else(|| {
             // Datasets (e.g. a NeRFStudio transforms.json) sometimes reference
-            // images by absolute path. Those won't be in the VFS lookup since
-            // the lookup only tracks paths relative to the loaded directory.
-            // Fall back to reading the file directly from disk. This is only
-            // possible natively for real files, not zip/stream sources.
-            #[cfg(not(target_family = "wasm"))]
-            if path.is_absolute() {
-                let file = tokio::io::BufReader::with_capacity(
-                    5 * 1024 * 1024,
-                    tokio::fs::File::open(path).await?,
-                );
-                return Ok(Box::new(file));
-            }
+            // files by absolute path. If we loaded a directory and that path
+            // points inside it, strip the directory prefix and resolve it
+            // within the VFS. Files outside the VFS are never read.
+            let base = PathKey::from_path(&self.base_path()?);
+            let rel = key.0.strip_prefix(&base.0)?;
+            // Only a match on a path-component boundary counts.
+            rel.starts_with('/')
+                .then(|| self.lookup.get(&PathKey(rel.to_owned())))
+                .flatten()
+        });
 
-            return Err(Error::new(
+        let path = resolved.ok_or_else(|| {
+            Error::new(
                 io::ErrorKind::NotFound,
                 format!("File not found: {}", path.display()),
-            ));
-        };
+            )
+        })?;
 
         match &self.container {
             VfsContainer::InMemory { entries } => {
@@ -489,34 +488,58 @@ mod tests {
 
     #[cfg(not(target_family = "wasm"))]
     #[tokio::test]
-    async fn test_absolute_path_fallback() {
-        // Datasets sometimes reference images by absolute path. Those aren't
-        // in the VFS lookup, but should still be readable from disk natively.
-        let abs_path = std::env::temp_dir().join("brush_vfs_abs_path_test.txt");
-        tokio::fs::write(&abs_path, b"absolute content")
+    async fn test_absolute_path_resolves_within_directory() {
+        // Datasets sometimes reference files by absolute path (e.g. a
+        // NeRFStudio transforms.json). When the directory was loaded as a
+        // VFS, that absolute path should resolve to the file inside it.
+        let dir = std::env::temp_dir().join("brush_vfs_abs_test_dir");
+        tokio::fs::create_dir_all(dir.join("images"))
+            .await
+            .unwrap();
+        tokio::fs::write(dir.join("images/cam.png"), b"image content")
             .await
             .unwrap();
 
-        let vfs = BrushVfs::empty();
-        assert!(abs_path.is_absolute());
+        let vfs = BrushVfs::from_path(&dir).await.unwrap();
 
+        // Sanity: relative access works.
         let mut content = String::new();
-        vfs.reader_at_path(&abs_path)
+        vfs.reader_at_path(Path::new("images/cam.png"))
             .await
             .unwrap()
             .read_to_string(&mut content)
             .await
             .unwrap();
-        assert_eq!(content, "absolute content");
+        assert_eq!(content, "image content");
 
-        // A missing absolute path still errors with NotFound.
-        let missing = std::env::temp_dir().join("brush_vfs_does_not_exist.txt");
-        assert!(vfs.reader_at_path(&missing).await.is_err());
+        // The absolute path (dir is absolute) resolves to the same file by
+        // stripping the loaded-directory prefix.
+        let abs = dir.join("images/cam.png");
+        assert!(abs.is_absolute());
+        let mut content = String::new();
+        vfs.reader_at_path(&abs)
+            .await
+            .unwrap()
+            .read_to_string(&mut content)
+            .await
+            .unwrap();
+        assert_eq!(content, "image content");
 
-        // A non-existent relative path still errors rather than hitting disk.
-        assert!(vfs.reader_at_path(Path::new("relative.txt")).await.is_err());
+        // An absolute path outside the loaded directory is NOT read.
+        let outside = std::env::temp_dir().join("brush_vfs_outside_secret.txt");
+        tokio::fs::write(&outside, b"secret").await.unwrap();
+        assert!(vfs.reader_at_path(&outside).await.is_err());
 
-        tokio::fs::remove_file(&abs_path).await.unwrap();
+        // An empty VFS has no prefix, so absolute paths never resolve.
+        assert!(
+            BrushVfs::empty()
+                .reader_at_path(&abs)
+                .await
+                .is_err()
+        );
+
+        tokio::fs::remove_file(&outside).await.unwrap();
+        tokio::fs::remove_dir_all(&dir).await.unwrap();
     }
 
     #[wasm_bindgen_test(unsupported = tokio::test)]
