@@ -5,7 +5,10 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
-use super::helpers::{calc_cov2d, compensate_cov2d, get_quat_unorm, get_scale, is_finite_f32, sigmoid, world_to_cam, write_projected_splat};
+use super::helpers::{
+    calc_cov2d, compensate_cov2d, get_quat_unorm, get_scale, is_finite_f32, sigmoid, world_to_cam,
+    write_projected_splat,
+};
 use super::sh::{num_sh_coeffs, sh_coeffs_to_color};
 use super::types::{ProjectUniforms, Splat, Vec3A};
 

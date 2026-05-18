@@ -168,7 +168,7 @@ impl SplatOps<Self> for MainBackendBase {
                     max_radius.clone().into_tensor_arg(),
                     uniforms,
                     mip_splat,
-                    camera.camera_model_id
+                    camera.camera_model_id,
                 );
             }
             (

@@ -218,8 +218,11 @@ async fn load_dataset_inner(
                     )
                 }
                 CameraModel::Pinhole => Camera::new(translation, quat, fovx, fovy, center_uv),
-                _ =>{
-                    log::warn!("Unsupported camera model: {:?}! Falling back to pinhole camera", cam_data.model);
+                _ => {
+                    log::warn!(
+                        "Unsupported camera model: {:?}! Falling back to pinhole camera",
+                        cam_data.model
+                    );
                     Camera::new(translation, quat, fovx, fovy, center_uv)
                 }
             };

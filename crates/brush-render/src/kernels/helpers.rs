@@ -7,9 +7,7 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
-pub use brush_cube::{
-    calc_sigma, is_finite_f32, sigmoid,
-};
+pub use brush_cube::{calc_sigma, is_finite_f32, sigmoid};
 
 use super::types::{PixelRect, ProjectUniforms, Quat, Splat, Sym2, TileBbox, Vec3A};
 
@@ -110,9 +108,17 @@ pub fn get_tile_bbox(
 /// symmetric covariance as `Sym2`, with a post-scale clamp so huge-but-
 /// finite inputs don't overflow the `det` of the eventual conic.
 #[cube]
-pub fn calc_cov2d(scale: Vec3A, quat: Quat, mean_c: Vec3A, u: ProjectUniforms, #[comptime] camera_model_id: i32) -> Sym2 {
+pub fn calc_cov2d(
+    scale: Vec3A,
+    quat: Quat,
+    mean_c: Vec3A,
+    u: ProjectUniforms,
+    #[comptime] camera_model_id: i32,
+) -> Sym2 {
     let ns = u.view_rotation().mul_mat3(quat.to_mat3()).mul_diag(scale);
-    let cam_jac = u.camera.calc_jacobian(mean_c, u.img_w, u.img_h, camera_model_id);
+    let cam_jac = u
+        .camera
+        .calc_jacobian(mean_c, u.img_w, u.img_h, camera_model_id);
 
     // V = J * N_s (J is 2x3, N_s is 3x3, V is 2x3).
     let v = cam_jac.mul_mat3(ns);
@@ -274,7 +280,6 @@ pub fn write_projected_splat(projected: &mut Tensor<f32>, idx: u32, splat: Splat
 pub fn world_to_cam(mean: Vec3A, u: ProjectUniforms) -> Vec3A {
     u.view_rotation().mul_vec3(mean).add(u.view_translation())
 }
-
 
 #[cube]
 pub fn get_camera_mean(transforms: &Tensor<f32>, base: usize, u: ProjectUniforms) -> Vec3A {

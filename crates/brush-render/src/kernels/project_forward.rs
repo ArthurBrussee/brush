@@ -9,7 +9,10 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
-use super::helpers::{calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, get_camera_mean, get_quat_unorm, get_scale, get_tile_bbox, is_finite_f32, sigmoid};
+use super::helpers::{
+    calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, get_camera_mean,
+    get_quat_unorm, get_scale, get_tile_bbox, is_finite_f32, sigmoid,
+};
 use super::types::ProjectUniforms;
 
 pub const WG_SIZE: u32 = 256;

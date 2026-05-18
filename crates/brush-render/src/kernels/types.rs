@@ -7,7 +7,7 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
 
 use crate::kernels::camera_model::CameraParams;
-pub use brush_cube::{Mat3, Mat2x3, PixelRect, Quat, Sym2, TileBbox, Vec3A};
+pub use brush_cube::{Mat2x3, Mat3, PixelRect, Quat, Sym2, TileBbox, Vec3A};
 
 /// One projected splat as the kernel sees it. The on-device storage is
 /// a flat `Tensor<f32>` of `9 * num_visible` lanes (see
