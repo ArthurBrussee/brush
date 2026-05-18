@@ -9,11 +9,8 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
-use super::helpers::{
-    calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, get_tile_bbox,
-    inverse_sym2, is_finite_f32, is_finite_sym2, sigmoid, world_to_cam,
-};
-use super::types::{ProjectUniforms, Quat, Vec3A};
+use super::helpers::{calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, get_camera_mean, get_quat_unorm, get_scale, get_tile_bbox, is_finite_f32, sigmoid};
+use super::types::ProjectUniforms;
 
 pub const WG_SIZE: u32 = 256;
 
@@ -30,6 +27,7 @@ pub fn project_forward_kernel(
     max_radius: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
+    #[comptime] camera_model_id: i32,
 ) {
     let global_gid = ABSOLUTE_POS as u32;
     if global_gid >= u.total_splats {
@@ -38,29 +36,18 @@ pub fn project_forward_kernel(
 
     // means(3) + quats(4) + log_scales(3)
     let base = (global_gid * 10u32) as usize;
-    let mean = Vec3A::new(transforms[base], transforms[base + 1], transforms[base + 2]);
 
-    let mean_c = world_to_cam(mean, u);
-
+    let mean_c = get_camera_mean(transforms, base, u);
     if !(mean_c.is_finite() && mean_c.z() >= 0.01f32 && mean_c.z() <= 1.0e10f32) {
         terminate!();
     }
 
-    let scale = Vec3A::new(
-        f32::exp(transforms[base + 7]),
-        f32::exp(transforms[base + 8]),
-        f32::exp(transforms[base + 9]),
-    );
+    let scale = get_scale(transforms, base);
     if !scale.is_finite() {
         terminate!();
     }
 
-    let quat_unorm = Quat::new(
-        transforms[base + 3],
-        transforms[base + 4],
-        transforms[base + 5],
-        transforms[base + 6],
-    );
+    let quat_unorm = get_quat_unorm(transforms, base);
     let qnorm_sq = quat_unorm.dot(quat_unorm);
     if !(qnorm_sq >= 1.0e-6f32 && is_finite_f32(qnorm_sq)) {
         terminate!();
@@ -73,24 +60,22 @@ pub fn project_forward_kernel(
 
     let quat = quat_unorm.normalize();
 
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u);
+    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model_id);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     let opac = sigmoid(raw_opac) * filter_comp;
 
-    if !is_finite_sym2(cov) {
+    if !cov.is_finite() {
         terminate!();
     }
 
-    let inv_z = 1.0f32 / mean_c.z();
-    let mean2d_x = u.focal_x * mean_c.x() * inv_z + u.pixel_center_x;
-    let mean2d_y = u.focal_y * mean_c.y() * inv_z + u.pixel_center_y;
+    let (mean2d_x, mean2d_y) = u.camera.project(mean_c, camera_model_id);
 
     if !(opac >= 1.0f32 / 255.0f32) {
         terminate!();
     }
 
     let power_threshold = f32::ln(opac * 255.0f32);
-    let conic = inverse_sym2(cov);
+    let conic = cov.inverse();
     let (ex, ey) = compute_bbox_extent(conic, power_threshold);
     if !(ex >= 0.0f32 && ey >= 0.0f32) {
         terminate!();

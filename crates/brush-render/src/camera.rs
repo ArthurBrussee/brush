@@ -1,4 +1,8 @@
 use glam::Affine3A;
+use crate::kernels::camera_model::CameraParams;
+
+pub const PINHOLE: i32 = 0;
+pub const KANNALA_BRANDT_4: i32 = 1;
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Camera {
@@ -7,6 +11,8 @@ pub struct Camera {
     pub center_uv: glam::Vec2,
     pub position: glam::Vec3,
     pub rotation: glam::Quat,
+    pub distortion: [f32; 4],
+    pub camera_model_id: i32,
 }
 
 impl Camera {
@@ -23,6 +29,28 @@ impl Camera {
             center_uv,
             position,
             rotation,
+            distortion: [0.; 4],
+            camera_model_id: PINHOLE,
+        }
+    }
+
+    pub fn new_with_distortion(
+        position: glam::Vec3,
+        rotation: glam::Quat,
+        fov_x: f64,
+        fov_y: f64,
+        center_uv: glam::Vec2,
+        distortion: [f32; 4],
+        camera_model_id: i32,
+    ) -> Self {
+        Self {
+            fov_x,
+            fov_y,
+            center_uv,
+            position,
+            rotation,
+            distortion,
+            camera_model_id,
         }
     }
 
@@ -49,6 +77,21 @@ impl Camera {
         )
     }
 
+    pub fn to_params(&self, img_size: glam::UVec2) -> CameraParams {
+        let focal = self.focal(img_size);
+        let pixel_center = self.center(img_size);
+        CameraParams {
+            focal_x: focal.x,
+            focal_y: focal.y,
+            pixel_center_x: pixel_center.x,
+            pixel_center_y: pixel_center.y,
+            k1: self.distortion[0],
+            k2: self.distortion[1],
+            k3: self.distortion[2],
+            k4: self.distortion[3],
+        }
+    }
+
     pub fn local_to_world(&self) -> Affine3A {
         Affine3A::from_rotation_translation(self.rotation, self.position)
     }
@@ -57,6 +100,7 @@ impl Camera {
         self.local_to_world().inverse()
     }
 }
+
 // Converts field of view to focal length
 pub fn fov_to_focal(fov_rad: f64, pixels: u32) -> f64 {
     0.5 * (pixels as f64) / (fov_rad * 0.5).tan()

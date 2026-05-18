@@ -23,6 +23,7 @@ use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
 use glam::{Vec3, uvec2};
 
+use crate::kernels::camera_model::CameraParams;
 use kernels::types::{ProjectUniformsLaunch, RasterizeUniformsLaunch};
 
 #[doc(hidden)]
@@ -37,8 +38,7 @@ pub fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
 /// dims. Shared by the forward and backward projection passes.
 pub fn build_project_uniforms_launch(
     viewmat: &[[f32; 4]; 4],
-    focal: [f32; 2],
-    pixel_center: [f32; 2],
+    camera_params: CameraParams,
     camera_position: [f32; 4],
     img_size_arr: [u32; 2],
     tile_bounds_arr: [u32; 2],
@@ -59,10 +59,7 @@ pub fn build_project_uniforms_launch(
         viewmat[3][0],
         viewmat[3][1],
         viewmat[3][2],
-        focal[0],
-        focal[1],
-        pixel_center[0],
-        pixel_center[1],
+        camera_params.to_launch_object(),
         camera_position[0],
         camera_position[1],
         camera_position[2],
@@ -108,9 +105,9 @@ impl SplatOps<Self> for MainBackendBase {
 
         let mut project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
+            camera_params: camera.to_params(img_size),
+            camera_model_id: camera.camera_model_id,
             camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
-            focal: camera.focal(img_size).into(),
-            pixel_center: camera.center(img_size).into(),
             img_size: img_size.into(),
             tile_bounds: calc_tile_bounds(img_size).into(),
             sh_degree,
@@ -143,8 +140,7 @@ impl SplatOps<Self> for MainBackendBase {
 
             let uniforms = build_project_uniforms_launch(
                 &project_uniforms.viewmat,
-                project_uniforms.focal,
-                project_uniforms.pixel_center,
+                project_uniforms.camera_params,
                 project_uniforms.camera_position,
                 project_uniforms.img_size,
                 project_uniforms.tile_bounds,
@@ -172,6 +168,7 @@ impl SplatOps<Self> for MainBackendBase {
                     max_radius.clone().into_tensor_arg(),
                     uniforms,
                     mip_splat,
+                    camera.camera_model_id
                 );
             }
             (
@@ -235,8 +232,7 @@ impl SplatOps<Self> for MainBackendBase {
         tracing::trace_span!("ProjectVisible").in_scope(|| {
             let uniforms = build_project_uniforms_launch(
                 &project_uniforms.viewmat,
-                project_uniforms.focal,
-                project_uniforms.pixel_center,
+                project_uniforms.camera_params,
                 project_uniforms.camera_position,
                 project_uniforms.img_size,
                 project_uniforms.tile_bounds,
@@ -258,6 +254,7 @@ impl SplatOps<Self> for MainBackendBase {
                     uniforms,
                     mip_splat,
                     sh_degree,
+                    camera.camera_model_id,
                 );
             }
         });

@@ -147,8 +147,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let uniforms = build_project_uniforms_launch(
             &project_uniforms.viewmat,
-            project_uniforms.focal,
-            project_uniforms.pixel_center,
+            project_uniforms.camera_params,
             project_uniforms.camera_position,
             project_uniforms.img_size,
             project_uniforms.tile_bounds,
@@ -177,6 +176,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     uniforms,
                     mip_splat,
                     project_uniforms.sh_degree,
+                    project_uniforms.camera_model_id,
                 );
             }
         });

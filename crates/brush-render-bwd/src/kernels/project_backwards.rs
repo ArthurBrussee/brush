@@ -1,5 +1,12 @@
 //! Backward projection.
 
+use brush_cube::{Mat2x3, Sym3};
+use brush_render::camera::{KANNALA_BRANDT_4, PINHOLE};
+use brush_render::kernels::helpers::{
+    calc_cov2d, compensate_cov2d, get_quat_unorm, get_scale, sigmoid, world_to_cam,
+};
+use brush_render::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp};
+use brush_render::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
@@ -7,8 +14,6 @@ use burn_cubecl::cubecl::prelude::*;
 use brush_render::kernels::helpers::{
     calc_cam_j, calc_cov2d, compensate_cov2d, inverse_sym2, is_finite_f32, sigmoid, world_to_cam,
 };
-use brush_render::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp};
-use brush_render::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
 
 pub const WG_SIZE: u32 = 256;
 
@@ -100,76 +105,408 @@ fn inverse2x2_vjp(minv: Sym2, v_minv: Sym2) -> Sym2 {
 #[allow(clippy::too_many_arguments)]
 #[cube]
 fn persp_proj_vjp(
-    j00: f32,
-    j01: f32,
-    j10: f32,
-    j11: f32,
-    j20: f32,
-    j21: f32,
+    cam_jac: Mat2x3,
     mean_c: Vec3A,
-    cov_c: Mat3,
+    cov_c: Sym3,
     u: ProjectUniforms,
     v_cov2d: Sym2,
     v_mean2d_x: f32,
     v_mean2d_y: f32,
+    #[comptime] camera_model_id: i32,
 ) -> Vec3A {
-    let rz = 1.0f32 / mean_c.z();
-    let rz2 = rz * rz;
-    let rz3 = rz2 * rz;
+    if comptime![camera_model_id == PINHOLE] {
+        let inv_z = 1.0f32 / mean_c.z();
+        let inv_z2 = inv_z * inv_z;
+        let inv_z3 = inv_z2 * inv_z;
 
-    let mut v_mx = u.focal_x * rz * v_mean2d_x;
-    let mut v_my = u.focal_y * rz * v_mean2d_y;
-    let mut v_mz =
-        -(u.focal_x * mean_c.x() * v_mean2d_x + u.focal_y * mean_c.y() * v_mean2d_y) * rz2;
+        let mut v_mx = u.camera.focal_x * inv_z * v_mean2d_x;
+        let mut v_my = u.camera.focal_y * inv_z * v_mean2d_y;
+        let mut v_mz = -(u.camera.focal_x * mean_c.x() * v_mean2d_x
+            + u.camera.focal_y * mean_c.y() * v_mean2d_y)
+            * inv_z2;
 
-    // tmp = v_cov2d * J (2x3, col-major).
-    let t00 = v_cov2d.c00 * j00 + v_cov2d.c01 * j01;
-    let t01 = v_cov2d.c01 * j00 + v_cov2d.c11 * j01;
-    let t10 = v_cov2d.c00 * j10 + v_cov2d.c01 * j11;
-    let t11 = v_cov2d.c01 * j10 + v_cov2d.c11 * j11;
-    let t20 = v_cov2d.c00 * j20 + v_cov2d.c01 * j21;
-    let t21 = v_cov2d.c01 * j20 + v_cov2d.c11 * j21;
-    // v_J = 2 * tmp * cov3d (cov3d is symmetric, so cov3d == cov3d^T).
-    // Only the trailing column (vj20, vj21) and the diagonal-ish entries
-    // (vj00, vj11) feed the v_mean3d formula below; the off-diagonal
-    // entries are dropped.
-    let vj00 = 2.0f32 * (t00 * cov_c.c0_x + t10 * cov_c.c1_x + t20 * cov_c.c2_x);
-    let vj11 = 2.0f32 * (t01 * cov_c.c0_y + t11 * cov_c.c1_y + t21 * cov_c.c2_y);
-    let vj20 = 2.0f32 * (t00 * cov_c.c0_z + t10 * cov_c.c1_z + t20 * cov_c.c2_z);
-    let vj21 = 2.0f32 * (t01 * cov_c.c0_z + t11 * cov_c.c1_z + t21 * cov_c.c2_z);
+        // tmp = v_cov2d * J (2x3, col-major).
+        let tmp = v_cov2d.mul_mat2x3(cam_jac);
+        // v_J = 2 * tmp * cov_c (only the four entries that feed v_mean3d).
+        let vj00 = 2.0f32 * tmp.row0().dot(cov_c.row0());
+        let vj11 = 2.0f32 * tmp.row1().dot(cov_c.row1());
+        let vj20 = 2.0f32 * tmp.row0().dot(cov_c.row2());
+        let vj21 = 2.0f32 * tmp.row1().dot(cov_c.row2());
 
-    // FOV clipping limits — matches the forward `calc_cam_j`.
-    let img_w_f = u.img_w as f32;
-    let img_h_f = u.img_h as f32;
-    let tan_fov_x = 0.5f32 * img_w_f / u.focal_x;
-    let tan_fov_y = 0.5f32 * img_h_f / u.focal_y;
-    let lim_x_pos = (img_w_f - u.pixel_center_x) / u.focal_x + 0.3f32 * tan_fov_x;
-    let lim_x_neg = u.pixel_center_x / u.focal_x + 0.3f32 * tan_fov_x;
-    let lim_y_pos = (img_h_f - u.pixel_center_y) / u.focal_y + 0.3f32 * tan_fov_y;
-    let lim_y_neg = u.pixel_center_y / u.focal_y + 0.3f32 * tan_fov_y;
-    let mx_rz = mean_c.x() * rz;
-    let my_rz = mean_c.y() * rz;
-    let tx = mean_c.z() * clamp(mx_rz, -lim_x_neg, lim_x_pos);
-    let ty = mean_c.z() * clamp(my_rz, -lim_y_neg, lim_y_pos);
+        // FOV clipping limits — matches the forward `calc_cam_j`.
+        let img_w_f = u.img_w as f32;
+        let img_h_f = u.img_h as f32;
 
-    let in_x = mx_rz <= lim_x_pos && mx_rz >= -lim_x_neg;
-    let in_y = my_rz <= lim_y_pos && my_rz >= -lim_y_neg;
+        let lim_x_pos = (1.15f32 * img_w_f - u.camera.pixel_center_x) / u.camera.focal_x;
+        let lim_y_pos = (1.15f32 * img_h_f - u.camera.pixel_center_y) / u.camera.focal_y;
+        let lim_x_neg = (-0.15f32 * img_w_f - u.camera.pixel_center_x) / u.camera.focal_x;
+        let lim_y_neg = (-0.15f32 * img_h_f - u.camera.pixel_center_y) / u.camera.focal_y;
 
-    if in_x {
-        v_mx += -u.focal_x * rz2 * vj20;
+        let mx_rz = mean_c.x() * inv_z;
+        let my_rz = mean_c.y() * inv_z;
+        let tx = mean_c.z() * clamp(mx_rz, -lim_x_neg, lim_x_pos);
+        let ty = mean_c.z() * clamp(my_rz, -lim_y_neg, lim_y_pos);
+
+        let in_x = mx_rz <= lim_x_pos && mx_rz >= -lim_x_neg;
+        let in_y = my_rz <= lim_y_pos && my_rz >= -lim_y_neg;
+
+        if in_x {
+            v_mx += -u.camera.focal_x * inv_z2 * vj20;
+        } else {
+            v_mz += -u.camera.focal_x * inv_z3 * vj20 * tx;
+        }
+        if in_y {
+            v_my += -u.camera.focal_y * inv_z2 * vj21;
+        } else {
+            v_mz += -u.camera.focal_y * inv_z3 * vj21 * ty;
+        }
+        v_mz += -u.camera.focal_x * inv_z2 * vj00 - u.camera.focal_y * inv_z2 * vj11
+            + 2.0f32 * u.camera.focal_x * tx * inv_z3 * vj20
+            + 2.0f32 * u.camera.focal_y * ty * inv_z3 * vj21;
+
+        Vec3A::new(v_mx, v_my, v_mz)
+    } else if comptime![camera_model_id == KANNALA_BRANDT_4] {
+        /*let mx = mean_c.x();
+        let my = mean_c.y();
+        let mz = mean_c.z();
+        let inv_z = 1.0f32 / mz;
+
+        let fx = u.camera.focal_x;
+        let fy = u.camera.focal_y;
+        let k1 = u.camera.k1;
+        let k2 = u.camera.k2;
+        let k3 = u.camera.k3;
+        let k4 = u.camera.k4;
+
+        // --- Clamp the ray, same way the forward does ---
+        let img_w_f = u.img_w as f32;
+        let img_h_f = u.img_h as f32;
+        let lim_x_pos = (1.15f32 * img_w_f - u.camera.pixel_center_x) / fx;
+        let lim_y_pos = (1.15f32 * img_h_f - u.camera.pixel_center_y) / fy;
+        let lim_x_neg = (-0.15f32 * img_w_f - u.camera.pixel_center_x) / fx;
+        let lim_y_neg = (-0.15f32 * img_h_f - u.camera.pixel_center_y) / fy;
+
+        let mx_rz_raw = mx * inv_z;
+        let my_rz_raw = my * inv_z;
+        let in_x = mx_rz_raw <= lim_x_pos && mx_rz_raw >= lim_x_neg;
+        let in_y = my_rz_raw <= lim_y_pos && my_rz_raw >= lim_y_neg;
+        let mx_rz = f32::clamp(mx_rz_raw, lim_x_neg, lim_x_pos);
+        let my_rz = f32::clamp(my_rz_raw, lim_y_neg, lim_y_pos);
+        // Surrogate point (the point the forward J was evaluated at).
+        let xc = mx_rz * mz;
+        let yc = my_rz * mz;
+
+        // --- Forward intermediates at (xc, yc, mz) (mirrors calc_jacobian) ---
+        let r2 = xc * xc + yc * yc;
+        let r = r2.sqrt().max(1.0e-8f32);
+        let rho2 = r2 + mz * mz;
+
+        let theta = r.atan2(mz);
+        let th2 = theta * theta;
+        let th4 = th2 * th2;
+        let th6 = th4 * th2;
+        let th8 = th4 * th4;
+
+        let theta_d = theta * (1.0f32 + k1 * th2 + k2 * th4 + k3 * th6 + k4 * th8);
+        let p1 =
+            1.0f32 + 3.0f32 * k1 * th2 + 5.0f32 * k2 * th4 + 7.0f32 * k3 * th6 + 9.0f32 * k4 * th8;
+        let p2 = 6.0f32 * k1 * theta
+            + 20.0f32 * k2 * theta * th2
+            + 42.0f32 * k3 * theta * th4
+            + 72.0f32 * k4 * theta * th6;
+
+        let inv_r = 1.0f32 / r;
+        let inv_r3 = inv_r * inv_r * inv_r;
+        let inv_r5 = inv_r3 * inv_r * inv_r;
+        let inv_rho2 = 1.0f32 / rho2;
+        let inv_rho2_sq = inv_rho2 * inv_rho2;
+        let inv_rho2_r = inv_rho2 * inv_r;
+
+        // d theta / d {xc, yc, z}
+        let dth_xc = xc * mz * inv_rho2_r;
+        let dth_yc = yc * mz * inv_rho2_r;
+        let dth_z = -r * inv_rho2;
+
+        let xr = xc * inv_r;
+        let yr = yc * inv_r;
+        let dxr_xc = yc * yc * inv_r3;
+        let dxr_yc = -xc * yc * inv_r3;
+        let dyr_xc = dxr_yc;
+        let dyr_yc = xc * xc * inv_r3;
+
+        // dg/d {xc, yc, z} where g = theta_d
+        let dg_xc = p1 * dth_xc;
+        let dg_yc = p1 * dth_yc;
+        let dg_z = p1 * dth_z;
+
+        // J_surr entries (this is the J that calc_jacobian returns when
+        // called on the same surrogate point — equivalently cam_jac if you
+        // passed it in).
+        let js00 = fx * (dg_xc * xr + theta_d * dxr_xc);
+        let js01 = fx * (dg_yc * xr + theta_d * dxr_yc);
+        let js02 = fx * (dg_z * xr);
+        let js10 = fy * (dg_xc * yr + theta_d * dyr_xc);
+        let js11 = fy * (dg_yc * yr + theta_d * dyr_yc);
+        let js12 = fy * (dg_z * yr);
+
+        // --- Effective J_eff = J_surr * S  (2x3) ---
+        // S has structure:
+        //   col 0 of S = (in_x ? 1 : 0, 0, 0)         -> J_eff col 0 = (in_x ? js0* : 0)
+        //   col 1 of S = (0, in_y ? 1 : 0, 0)         -> J_eff col 1 = (in_y ? js1* : 0)
+        //   col 2 of S = (in_x ? 0 : mx_rz,           -> J_eff col 2 =
+        //                 in_y ? 0 : my_rz,                 (js0* if in_x else mx_rz*js0_)
+        //                 1)                                + ... + js2*
+        //
+        // Equivalently, J_eff = J_surr where the un-clamped axes go through,
+        // and where a clamp fires, that input column is rerouted into the
+        // z-column with weight (mx_rz or my_rz). We compute it explicitly:
+        let je00 = select(in_x, js00, 0.0f32);
+        let je10 = select(in_x, js10, 0.0f32);
+        let je01 = select(in_y, js01, 0.0f32);
+        let je11 = select(in_y, js11, 0.0f32);
+        let je02 = select(in_x, 0.0f32, mx_rz * js00)
+            + select(in_y, 0.0f32, my_rz * js01)
+            + js02;
+        let je12 = select(in_x, 0.0f32, mx_rz * js10)
+            + select(in_y, 0.0f32, my_rz * js11)
+            + js12;
+
+        // --- Path 1: v_mean_c = J_eff^T v_mean2d ---
+        let mut v_mx = je00 * v_mean2d_x + je10 * v_mean2d_y;
+        let mut v_my = je01 * v_mean2d_x + je11 * v_mean2d_y;
+        let mut v_mz = je02 * v_mean2d_x + je12 * v_mean2d_y;
+
+        // --- v_J_eff = 2 sym(v_cov2d) J_eff cov_c   (2x3) ---
+        let tmp = v_cov2d.mul_mat2x3(Mat2x3 {
+            c0_x: je00,
+            c0_y: je10,
+            c1_x: je01,
+            c1_y: je11,
+            c2_x: je02,
+            c2_y: je12,
+        });
+        let ve_u0 = 2.0f32 * tmp.row0().dot(cov_c.row0());
+        let ve_u1 = 2.0f32 * tmp.row0().dot(cov_c.row1());
+        let ve_u2 = 2.0f32 * tmp.row0().dot(cov_c.row2());
+        let ve_v0 = 2.0f32 * tmp.row1().dot(cov_c.row0());
+        let ve_v1 = 2.0f32 * tmp.row1().dot(cov_c.row1());
+        let ve_v2 = 2.0f32 * tmp.row1().dot(cov_c.row2());
+
+        // --- v_J_surr = v_J_eff * S^T  (still 2x3) ---
+        // S^T cols are S's rows. With S = block diag of two stop-grad routes:
+        //   v_J_surr[:, 0] = (in_x ? v_J_eff[:,0] : 0) + (in_x ? 0 : mx_rz * v_J_eff[:,2])
+        //   v_J_surr[:, 1] = (in_y ? v_J_eff[:,1] : 0) + (in_y ? 0 : my_rz * v_J_eff[:,2])
+        //   v_J_surr[:, 2] = v_J_eff[:, 2]
+        let vs_u0 = if in_x { ve_u0 } else { mx_rz * ve_u2 };
+        let vs_v0 = if in_x { ve_v0 } else { mx_rz * ve_v2 };
+        let vs_u1 = if in_y { ve_u1 } else { my_rz * ve_u2 };
+        let vs_v1 = if in_y { ve_v1 } else { my_rz * ve_v2 };
+        let vs_u2 = ve_u2;
+        let vs_v2 = ve_v2;
+
+        // --- Hessians of theta, x/r, y/r at the surrogate (xc, yc, mz) ---
+        let three_r2_z2 = 3.0f32 * r2 + mz * mz;
+        let r2_minus_z2 = r2 - mz * mz;
+        let h_th_00 = mz * (r2 * rho2 - xc * xc * three_r2_z2) * inv_r3 * inv_rho2_sq;
+        let h_th_11 = mz * (r2 * rho2 - yc * yc * three_r2_z2) * inv_r3 * inv_rho2_sq;
+        let h_th_01 = -xc * yc * mz * three_r2_z2 * inv_r3 * inv_rho2_sq;
+        let h_th_02 = xc * r2_minus_z2 * inv_r * inv_rho2_sq;
+        let h_th_12 = yc * r2_minus_z2 * inv_r * inv_rho2_sq;
+        let h_th_22 = 2.0f32 * mz * r * inv_rho2_sq;
+
+        let two_xc2_yc2 = 2.0f32 * xc * xc - yc * yc;
+        let two_yc2_xc2 = 2.0f32 * yc * yc - xc * xc;
+        let h_xr_00 = -3.0f32 * xc * yc * yc * inv_r5;
+        let h_xr_01 = yc * two_xc2_yc2 * inv_r5;
+        let h_xr_11 = xc * two_yc2_xc2 * inv_r5;
+        let h_yr_00 = yc * two_xc2_yc2 * inv_r5;
+        let h_yr_01 = xc * two_yc2_xc2 * inv_r5;
+        let h_yr_11 = -3.0f32 * xc * xc * yc * inv_r5;
+
+        // --- Path 2 contraction in SURROGATE coords: c_k = sum_{i,j} v_J_surr[i,j] * dJ_surr[i,j]/d (xc,yc,z)_k
+        //   dJ_surr[i,j]/d xk = f_i * ( d2g[j,k]*h_i + dg[j]*dh_i[k]
+        //                              + dg[k]*dh_i[j] + g * H_h_i[j,k] )
+        //   d2g[j,k] = P2*dth[j]*dth[k] + P1*H_theta[j,k]
+        //
+        // Unrolled for the 3 surrogate output coords; dh_*[2] = 0, H_h_*[*,2] = 0.
+
+        // c_xc (k = 0)
+        let c_xc = {
+            let d2g00 = p2 * dth_xc * dth_xc + p1 * h_th_00;
+            let d2g10 = p2 * dth_yc * dth_xc + p1 * h_th_01;
+            let d2g20 = p2 * dth_z * dth_xc + p1 * h_th_02;
+            // j = 0
+            let dJu0 = fx * (d2g00 * xr + 2.0f32 * dg_xc * dxr_xc + theta_d * h_xr_00);
+            let dJv0 = fy * (d2g00 * yr + 2.0f32 * dg_xc * dyr_xc + theta_d * h_yr_00);
+            // j = 1
+            let dJu1 = fx * (d2g10 * xr + dg_yc * dxr_xc + dg_xc * dxr_yc + theta_d * h_xr_01);
+            let dJv1 = fy * (d2g10 * yr + dg_yc * dyr_xc + dg_xc * dyr_yc + theta_d * h_yr_01);
+            // j = 2  (dh_*[2] = 0, H_h_*[2,0] = 0)
+            let dJu2 = fx * (d2g20 * xr + dg_z * dxr_xc);
+            let dJv2 = fy * (d2g20 * yr + dg_z * dyr_xc);
+            vs_u0 * dJu0 + vs_v0 * dJv0 + vs_u1 * dJu1 + vs_v1 * dJv1 + vs_u2 * dJu2 + vs_v2 * dJv2
+        };
+
+        // c_yc (k = 1)
+        let c_yc = {
+            let d2g01 = p2 * dth_xc * dth_yc + p1 * h_th_01;
+            let d2g11 = p2 * dth_yc * dth_yc + p1 * h_th_11;
+            let d2g21 = p2 * dth_z * dth_yc + p1 * h_th_12;
+            let dJu0 = fx * (d2g01 * xr + dg_xc * dxr_yc + dg_yc * dxr_xc + theta_d * h_xr_01);
+            let dJv0 = fy * (d2g01 * yr + dg_xc * dyr_yc + dg_yc * dyr_xc + theta_d * h_yr_01);
+            let dJu1 = fx * (d2g11 * xr + 2.0f32 * dg_yc * dxr_yc + theta_d * h_xr_11);
+            let dJv1 = fy * (d2g11 * yr + 2.0f32 * dg_yc * dyr_yc + theta_d * h_yr_11);
+            let dJu2 = fx * (d2g21 * xr + dg_z * dxr_yc);
+            let dJv2 = fy * (d2g21 * yr + dg_z * dyr_yc);
+            vs_u0 * dJu0 + vs_v0 * dJv0 + vs_u1 * dJu1 + vs_v1 * dJv1 + vs_u2 * dJu2 + vs_v2 * dJv2
+        };
+
+        // c_z (k = 2)
+        let c_z = {
+            let d2g02 = p2 * dth_xc * dth_z + p1 * h_th_02;
+            let d2g12 = p2 * dth_yc * dth_z + p1 * h_th_12;
+            let d2g22 = p2 * dth_z * dth_z + p1 * h_th_22;
+            // dh_*[2] = 0, H_h_*[j,2] = 0 for all j -> several terms drop.
+            let dJu0 = fx * (d2g02 * xr + dg_z * dxr_xc);
+            let dJv0 = fy * (d2g02 * yr + dg_z * dyr_xc);
+            let dJu1 = fx * (d2g12 * xr + dg_z * dxr_yc);
+            let dJv1 = fy * (d2g12 * yr + dg_z * dyr_yc);
+            let dJu2 = fx * (d2g22 * xr);
+            let dJv2 = fy * (d2g22 * yr);
+            vs_u0 * dJu0 + vs_v0 * dJv0 + vs_u1 * dJu1 + vs_v1 * dJv1 + vs_u2 * dJu2 + vs_v2 * dJv2
+        };
+
+        // --- Pull contraction back: v_mean_c += S^T * (c_xc, c_yc, c_z) ---
+        // S^T col 0 picks c_xc if in_x else 0.
+        // S^T col 1 picks c_yc if in_y else 0.
+        // S^T col 2 = (in_x ? 0 : mx_rz, in_y ? 0 : my_rz, 1).
+        if in_x {
+            v_mx += c_xc;
+        }
+        if in_y {
+            v_my += c_yc;
+        }
+        v_mz += c_z;
+        if !in_x {
+            v_mz += mx_rz * c_xc;
+        }
+        if !in_y {
+            v_mz += my_rz * c_yc;
+        }
+
+        Vec3A::new(v_mx, v_my, v_mz)*/
+        // tmp = v_cov2d * J (2x3, col-major). Same for all projection models.
+        let Mat2x3 {
+            c0_x: j00, c0_y: j01, c1_x: j10, c1_y: j11, c2_x: j20, c2_y: j21
+        } = cam_jac;
+
+        let t00 = v_cov2d.c00 * j00 + v_cov2d.c01 * j01;
+        let t01 = v_cov2d.c01 * j00 + v_cov2d.c11 * j01;
+        let t10 = v_cov2d.c00 * j10 + v_cov2d.c01 * j11;
+        let t11 = v_cov2d.c01 * j10 + v_cov2d.c11 * j11;
+        let t20 = v_cov2d.c00 * j20 + v_cov2d.c01 * j21;
+        let t21 = v_cov2d.c01 * j20 + v_cov2d.c11 * j21;
+
+        let mut v_mx = j00 * v_mean2d_x + j01 * v_mean2d_y;
+        let mut v_my = j10 * v_mean2d_x + j11 * v_mean2d_y;
+        let mut v_mz = j20 * v_mean2d_x + j21 * v_mean2d_y;
+
+        // v_J = 2 * tmp * cov3d — all 6 entries needed for fisheye.
+        let vj00 = 2.0f32 * (t00 * cov_c.c00 + t10 * cov_c.c01 + t20 * cov_c.c02);
+        let vj10 = 2.0f32 * (t00 * cov_c.c01 + t10 * cov_c.c11 + t20 * cov_c.c12);
+        let vj20 = 2.0f32 * (t00 * cov_c.c02 + t10 * cov_c.c12 + t20 * cov_c.c22);
+        let vj01 = 2.0f32 * (t01 * cov_c.c00 + t11 * cov_c.c01 + t21 * cov_c.c02);
+        let vj11 = 2.0f32 * (t01 * cov_c.c01 + t11 * cov_c.c11 + t21 * cov_c.c12);
+        let vj21 = 2.0f32 * (t01 * cov_c.c02 + t11 * cov_c.c12 + t21 * cov_c.c22);
+
+        let x = mean_c.x();
+        let y = mean_c.y();
+        let z = mean_c.z();
+        let r2 = x * x + y * y;
+        let r = f32::sqrt(r2);
+        let near_axis = r < 1e-6f32;
+        let rz = 1.0f32 / z;
+        let rz2 = rz * rz;
+        let rz3 = rz2 * rz;
+
+        // Pinhole fallback for d(J)/d(mean_c) used when r ≈ 0.
+        let pin_v_mx_c = -u.camera.focal_x * rz2 * vj20;
+        let pin_v_my_c = -u.camera.focal_y * rz2 * vj21;
+        let pin_v_mz_c = -u.camera.focal_x * rz2 * vj00 - u.camera.focal_y * rz2 * vj11
+            + 2.0f32 * u.camera.focal_x * x * rz3 * vj20
+            + 2.0f32 * u.camera.focal_y * y * rz3 * vj21;
+
+        // KB4 parameters.
+        let d2 = r2 + z * z;
+        let theta = f32::atan2(r, z);
+        let theta2 = theta * theta;
+        let theta4 = theta2 * theta2;
+        let theta6 = theta4 * theta2;
+        let theta8 = theta4 * theta4;
+        let poly =
+            1.0f32 + u.camera.k1 * theta2 + u.camera.k2 * theta4 + u.camera.k3 * theta6 + u.camera.k4 * theta8;
+        let dpoly = 2.0f32 * u.camera.k1 * theta
+            + 4.0f32 * u.camera.k2 * theta2 * theta
+            + 6.0f32 * u.camera.k3 * theta4 * theta
+            + 8.0f32 * u.camera.k4 * theta6 * theta;
+        let theta_d = theta * poly;
+        let dtheta_d = poly + theta * dpoly;
+        let ddtheta_d = 6.0f32 * u.camera.k1 * theta
+            + 20.0f32 * u.camera.k2 * theta2 * theta
+            + 42.0f32 * u.camera.k3 * theta4 * theta
+            + 72.0f32 * u.camera.k4 * theta6 * theta;
+
+        // A = dtheta_d * z / (r² * d2)
+        // B = theta_d / r³
+        // C = dtheta_d / d2
+        let r3 = r2 * r;
+        let r4 = r2 * r2;
+        let d22 = d2 * d2;
+        let a_val = dtheta_d * z / (r2 * d2);
+        let b_val = theta_d / r3;
+        let c_val = dtheta_d / d2;
+        let fx = u.camera.focal_x;
+        let fy = u.camera.focal_y;
+
+        // Derivative scale factors: dA/dx = EA*x, dB/dx = EB*x, dC/dx = EC*x.
+        let ea = z / (r2 * d22)
+            * (ddtheta_d * z / r - 2.0f32 * dtheta_d * (2.0f32 * r2 + z * z) / r2);
+        let eb = dtheta_d * z / (r4 * d2) - 3.0f32 * theta_d / (r4 * r);
+        let ec = ddtheta_d * z / (r * d22) - 2.0f32 * dtheta_d / d22;
+        // z-derivatives of A, B, C.
+        let ea_z = (dtheta_d * (r2 - z * z) / r2 - ddtheta_d * z / r) / d22;
+        let eb_z = -dtheta_d / (r2 * d2);
+        let ec_z = (-ddtheta_d * r - 2.0f32 * dtheta_d * z) / d22;
+
+        // Weighted sums.
+        let vja = vj00 * fx * x * x + vj11 * fy * y * y;
+        let vjb = vj00 * fx * y * y + vj11 * fy * x * x;
+        let vjab = (vj10 * fx + vj01 * fy) * x * y;
+        let vjc = vj20 * fx * x + vj21 * fy * y;
+
+        let scale = ea * vja + eb * vjb + (ea - eb) * vjab - ec * vjc;
+
+        let dir_x = 2.0f32 * a_val * x * vj00 * fx
+            + (a_val - b_val) * y * (vj10 * fx + vj01 * fy)
+            - c_val * vj20 * fx
+            + 2.0f32 * b_val * x * vj11 * fy;
+        let dir_y = 2.0f32 * a_val * y * vj11 * fy
+            + (a_val - b_val) * x * (vj10 * fx + vj01 * fy)
+            - c_val * vj21 * fy
+            + 2.0f32 * b_val * y * vj00 * fx;
+
+        let kb4_v_mx_c = x * scale + dir_x;
+        let kb4_v_my_c = y * scale + dir_y;
+        let kb4_v_mz_c = ea_z * vja + eb_z * vjb + (ea_z - eb_z) * vjab - ec_z * vjc;
+
+        v_mx += select(near_axis, pin_v_mx_c, kb4_v_mx_c);
+        v_my += select(near_axis, pin_v_my_c, kb4_v_my_c);
+        v_mz += select(near_axis, pin_v_mz_c, kb4_v_mz_c);
+
+        Vec3A::new(v_mx, v_my, v_mz)
     } else {
-        v_mz += -u.focal_x * rz3 * vj20 * tx;
+        todo!()
     }
-    if in_y {
-        v_my += -u.focal_y * rz2 * vj21;
-    } else {
-        v_mz += -u.focal_y * rz3 * vj21 * ty;
-    }
-    v_mz += -u.focal_x * rz2 * vj00 - u.focal_y * rz2 * vj11
-        + 2.0f32 * u.focal_x * tx * rz3 * vj20
-        + 2.0f32 * u.focal_y * ty * rz3 * vj21;
-
-    Vec3A::new(v_mx, v_my, v_mz)
 }
 
 #[cube(launch_unchecked)]
@@ -186,6 +523,7 @@ pub fn project_backwards_kernel(
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
     #[comptime] sh_degree: u32,
+    #[comptime] camera_model_id: i32,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
     if compact_gid >= u.num_visible {
@@ -230,17 +568,8 @@ pub fn project_backwards_kernel(
         transforms[tbase + 1],
         transforms[tbase + 2],
     );
-    let scale = Vec3A::new(
-        f32::exp(transforms[tbase + 7]),
-        f32::exp(transforms[tbase + 8]),
-        f32::exp(transforms[tbase + 9]),
-    );
-    let quat_unorm = Quat::new(
-        transforms[tbase + 3],
-        transforms[tbase + 4],
-        transforms[tbase + 5],
-        transforms[tbase + 6],
-    );
+    let scale = get_scale(transforms, tbase);
+    let quat_unorm = get_quat_unorm(transforms, tbase);
     let quat = quat_unorm.normalize();
 
     // viewdir + SH VJP
@@ -254,7 +583,7 @@ pub fn project_backwards_kernel(
     let r = quat.to_mat3();
     let m = r.mul_diag(scale);
 
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u);
+    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model_id);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     let opac_sig = sigmoid(raw_opac[global_gid as usize]);
     v_raw_opac[global_gid as usize] = filter_comp * v_alpha_in * opac_sig * (1.0f32 - opac_sig);
@@ -264,7 +593,7 @@ pub fn project_backwards_kernel(
     let refine_clean = select(is_finite_f32(v_refine_in), v_refine_in, 0.0f32);
     v_refine_weight[global_gid as usize] = clamp(refine_clean, 0.0f32, 1.0e32f32);
 
-    let conic_inv = inverse_sym2(cov);
+    let conic_inv = cov.inverse();
     let v_inv = Sym2 {
         c00: v_conics_x,
         c01: v_conics_y * 0.5f32,
@@ -272,95 +601,36 @@ pub fn project_backwards_kernel(
     };
     let v_cov2d = inverse2x2_vjp(conic_inv, v_inv);
 
-    // covar = M * M^T (3x3 col-major).
-    let cov_00 = m.c0_x * m.c0_x + m.c1_x * m.c1_x + m.c2_x * m.c2_x;
-    let cov_01 = m.c0_x * m.c0_y + m.c1_x * m.c1_y + m.c2_x * m.c2_y;
-    let cov_02 = m.c0_x * m.c0_z + m.c1_x * m.c1_z + m.c2_x * m.c2_z;
-    let cov_11 = m.c0_y * m.c0_y + m.c1_y * m.c1_y + m.c2_y * m.c2_y;
-    let cov_12 = m.c0_y * m.c0_z + m.c1_y * m.c1_z + m.c2_y * m.c2_z;
-    let cov_22 = m.c0_z * m.c0_z + m.c1_z * m.c1_z + m.c2_z * m.c2_z;
+    // covar = M * M^T (symmetric).
+    let covar = m.outer_product_self();
 
-    // covar_c = R_cam * covar * R_cam^T. R_cam is the top-left 3x3 of
-    // the viewmat (column-major). covar is symmetric (cov_10 == cov_01,
-    // cov_20 == cov_02, cov_21 == cov_12).
-    let tmp00 = u.vm0_x * cov_00 + u.vm1_x * cov_01 + u.vm2_x * cov_02;
-    let tmp01 = u.vm0_y * cov_00 + u.vm1_y * cov_01 + u.vm2_y * cov_02;
-    let tmp02 = u.vm0_z * cov_00 + u.vm1_z * cov_01 + u.vm2_z * cov_02;
-    let tmp10 = u.vm0_x * cov_01 + u.vm1_x * cov_11 + u.vm2_x * cov_12;
-    let tmp11 = u.vm0_y * cov_01 + u.vm1_y * cov_11 + u.vm2_y * cov_12;
-    let tmp12 = u.vm0_z * cov_01 + u.vm1_z * cov_11 + u.vm2_z * cov_12;
-    let tmp20 = u.vm0_x * cov_02 + u.vm1_x * cov_12 + u.vm2_x * cov_22;
-    let tmp21 = u.vm0_y * cov_02 + u.vm1_y * cov_12 + u.vm2_y * cov_22;
-    let tmp22 = u.vm0_z * cov_02 + u.vm1_z * cov_12 + u.vm2_z * cov_22;
-    let cov_c = Mat3 {
-        c0_x: tmp00 * u.vm0_x + tmp10 * u.vm1_x + tmp20 * u.vm2_x,
-        c0_y: tmp01 * u.vm0_x + tmp11 * u.vm1_x + tmp21 * u.vm2_x,
-        c0_z: tmp02 * u.vm0_x + tmp12 * u.vm1_x + tmp22 * u.vm2_x,
-        c1_x: tmp00 * u.vm0_y + tmp10 * u.vm1_y + tmp20 * u.vm2_y,
-        c1_y: tmp01 * u.vm0_y + tmp11 * u.vm1_y + tmp21 * u.vm2_y,
-        c1_z: tmp02 * u.vm0_y + tmp12 * u.vm1_y + tmp22 * u.vm2_y,
-        c2_x: tmp00 * u.vm0_z + tmp10 * u.vm1_z + tmp20 * u.vm2_z,
-        c2_y: tmp01 * u.vm0_z + tmp11 * u.vm1_z + tmp21 * u.vm2_z,
-        c2_z: tmp02 * u.vm0_z + tmp12 * u.vm1_z + tmp22 * u.vm2_z,
-    };
+    // covar_c = R_cam * covar * R_cam^T (symmetric).
+    let view_rot = u.view_rotation();
+    let cov_c = covar.congruence(view_rot);
 
-    let (j00, j01, j10, j11, j20, j21) = calc_cam_j(mean_c, u);
-    let v_mc = persp_proj_vjp(
-        j00, j01, j10, j11, j20, j21, mean_c, cov_c, u, v_cov2d, v_mean2d_x, v_mean2d_y,
+    let cam_jac = u
+        .camera
+        .calc_jacobian(mean_c, u.img_w, u.img_h, camera_model_id);
+    let v_mean_c = persp_proj_vjp(
+        cam_jac,
+        mean_c,
+        cov_c,
+        u,
+        v_cov2d,
+        v_mean2d_x,
+        v_mean2d_y,
+        camera_model_id,
     );
 
-    // v_covar_c = J^T * v_covar2d * J (2x2 sym -> 3x3 sym).
-    let a00 = v_cov2d.c00 * j00 + v_cov2d.c01 * j01;
-    let a01 = v_cov2d.c01 * j00 + v_cov2d.c11 * j01;
-    let a10 = v_cov2d.c00 * j10 + v_cov2d.c01 * j11;
-    let a11 = v_cov2d.c01 * j10 + v_cov2d.c11 * j11;
-    let a20 = v_cov2d.c00 * j20 + v_cov2d.c01 * j21;
-    let a21 = v_cov2d.c01 * j20 + v_cov2d.c11 * j21;
-    let vcc_00 = j00 * a00 + j01 * a01;
-    let vcc_01 = j00 * a10 + j01 * a11;
-    let vcc_02 = j00 * a20 + j01 * a21;
-    let vcc_10 = j10 * a00 + j11 * a01;
-    let vcc_11 = j10 * a10 + j11 * a11;
-    let vcc_12 = j10 * a20 + j11 * a21;
-    let vcc_20 = j20 * a00 + j21 * a01;
-    let vcc_21 = j20 * a10 + j21 * a11;
-    let vcc_22 = j20 * a20 + j21 * a21;
+    // v_covar_c = J^T * v_cov2d * J (2x2 sym → 3x3 sym).
+    let vcc = cam_jac.transpose_congruence_sym2(v_cov2d);
 
     // v_mean = R^T * v_mean_c.
-    let v_mean_world = u.view_rotation().transpose_mul_vec3(v_mc);
+    let v_mean = view_rot.transpose_mul_vec3(v_mean_c);
 
-    // v_covar = R^T * v_covar_c * R.
-    let vt00 = vcc_00 * u.vm0_x + vcc_10 * u.vm0_y + vcc_20 * u.vm0_z;
-    let vt01 = vcc_01 * u.vm0_x + vcc_11 * u.vm0_y + vcc_21 * u.vm0_z;
-    let vt02 = vcc_02 * u.vm0_x + vcc_12 * u.vm0_y + vcc_22 * u.vm0_z;
-    let vt10 = vcc_00 * u.vm1_x + vcc_10 * u.vm1_y + vcc_20 * u.vm1_z;
-    let vt11 = vcc_01 * u.vm1_x + vcc_11 * u.vm1_y + vcc_21 * u.vm1_z;
-    let vt12 = vcc_02 * u.vm1_x + vcc_12 * u.vm1_y + vcc_22 * u.vm1_z;
-    let vt20 = vcc_00 * u.vm2_x + vcc_10 * u.vm2_y + vcc_20 * u.vm2_z;
-    let vt21 = vcc_01 * u.vm2_x + vcc_11 * u.vm2_y + vcc_21 * u.vm2_z;
-    let vt22 = vcc_02 * u.vm2_x + vcc_12 * u.vm2_y + vcc_22 * u.vm2_z;
-    // v_M = (v_covar + v_covar^T) * M = 2 * v_covar * M (symmetric).
-    let vc00 = 2.0f32 * (u.vm0_x * vt00 + u.vm0_y * vt01 + u.vm0_z * vt02);
-    let vc01 = 2.0f32 * (u.vm0_x * vt10 + u.vm0_y * vt11 + u.vm0_z * vt12);
-    let vc02 = 2.0f32 * (u.vm0_x * vt20 + u.vm0_y * vt21 + u.vm0_z * vt22);
-    let vc10 = 2.0f32 * (u.vm1_x * vt00 + u.vm1_y * vt01 + u.vm1_z * vt02);
-    let vc11 = 2.0f32 * (u.vm1_x * vt10 + u.vm1_y * vt11 + u.vm1_z * vt12);
-    let vc12 = 2.0f32 * (u.vm1_x * vt20 + u.vm1_y * vt21 + u.vm1_z * vt22);
-    let vc20 = 2.0f32 * (u.vm2_x * vt00 + u.vm2_y * vt01 + u.vm2_z * vt02);
-    let vc21 = 2.0f32 * (u.vm2_x * vt10 + u.vm2_y * vt11 + u.vm2_z * vt12);
-    let vc22 = 2.0f32 * (u.vm2_x * vt20 + u.vm2_y * vt21 + u.vm2_z * vt22);
-
-    let v_m = Mat3 {
-        c0_x: vc00 * m.c0_x + vc10 * m.c0_y + vc20 * m.c0_z,
-        c0_y: vc01 * m.c0_x + vc11 * m.c0_y + vc21 * m.c0_z,
-        c0_z: vc02 * m.c0_x + vc12 * m.c0_y + vc22 * m.c0_z,
-        c1_x: vc00 * m.c1_x + vc10 * m.c1_y + vc20 * m.c1_z,
-        c1_y: vc01 * m.c1_x + vc11 * m.c1_y + vc21 * m.c1_z,
-        c1_z: vc02 * m.c1_x + vc12 * m.c1_y + vc22 * m.c1_z,
-        c2_x: vc00 * m.c2_x + vc10 * m.c2_y + vc20 * m.c2_z,
-        c2_y: vc01 * m.c2_x + vc11 * m.c2_y + vc21 * m.c2_z,
-        c2_z: vc02 * m.c2_x + vc12 * m.c2_y + vc22 * m.c2_z,
-    };
+    // v_covar = R^T * v_covar_c * R (symmetric).
+    // v_M = (v_covar + v_covar^T) * M = 2 * v_covar * M.
+    let v_m = vcc.transpose_congruence(view_rot).scale(2.0f32).mul_mat3(m);
 
     // v_scale = (R[i] dot v_M[i]) * exp(log_scale).
     let v_scale_exp = Vec3A::new(
@@ -376,9 +646,9 @@ pub fn project_backwards_kernel(
 
     // Write gradients to dense v_transforms.
     let vbase = (global_gid * 10u32) as usize;
-    v_transforms[vbase] = v_mean_world.x();
-    v_transforms[vbase + 1] = v_mean_world.y();
-    v_transforms[vbase + 2] = v_mean_world.z();
+    v_transforms[vbase] = v_mean.x();
+    v_transforms[vbase + 1] = v_mean.y();
+    v_transforms[vbase + 2] = v_mean.z();
     v_transforms[vbase + 3] = v_q.w();
     v_transforms[vbase + 4] = v_q.x();
     v_transforms[vbase + 5] = v_q.y();

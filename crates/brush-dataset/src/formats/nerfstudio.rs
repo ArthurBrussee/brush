@@ -188,10 +188,11 @@ async fn read_transforms_file(
         let cy = frame.cy.or(scene.cy);
 
         let cuv = glam::vec2(
-            (cx.map_or(0.5, |v| v / w as f64)) as f32,
-            (cy.map_or(0.5, |v| v / h as f64)) as f32,
+            cx.map_or(0.5, |v| v / w as f64) as f32,
+            cy.map_or(0.5, |v| v / h as f64) as f32,
         );
 
+        // TODO only pinhole model
         let camera = Camera::new(translation, rotation, fovx, fovy, cuv);
 
         if !camera.is_valid() {

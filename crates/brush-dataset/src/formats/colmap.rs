@@ -11,12 +11,14 @@ use crate::{
     formats::find_mask_path,
     scene::{LoadImage, SceneView},
 };
+use brush_render::camera::KANNALA_BRANDT_4;
 use brush_render::{
     camera::{self, Camera},
     sh::rgb_to_sh,
 };
 use brush_serde::{ParseMetadata, SplatData, SplatMessage};
 use brush_vfs::BrushVfs;
+use colmap_reader::CameraModel;
 use itertools::Itertools;
 
 fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
@@ -201,7 +203,26 @@ async fn load_dataset_inner(
             let cam_to_world = world_to_cam.inverse();
             let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
 
-            let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
+            let camera = match cam_data.model {
+                CameraModel::OpenCvFishEye => {
+                    let p = &cam_data.params;
+                    let distortion = [p[4] as f32, p[5] as f32, p[6] as f32, p[7] as f32];
+                    Camera::new_with_distortion(
+                        translation,
+                        quat,
+                        fovx,
+                        fovy,
+                        center_uv,
+                        distortion,
+                        KANNALA_BRANDT_4,
+                    )
+                }
+                CameraModel::Pinhole => Camera::new(translation, quat, fovx, fovy, center_uv),
+                _ =>{
+                    log::warn!("Unsupported camera model: {:?}! Falling back to pinhole camera", cam_data.model);
+                    Camera::new(translation, quat, fovx, fovy, center_uv)
+                }
+            };
 
             if !camera.is_valid() {
                 warnings.push(format!(
