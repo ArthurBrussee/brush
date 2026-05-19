@@ -166,119 +166,198 @@ fn persp_proj_vjp(
 
         Vec3A::new(v_mx, v_my, v_mz)
     } else if comptime![camera_model_id == KANNALA_BRANDT_4] {
-        let Mat2x3 {
-            c0_x: j00,
-            c0_y: j01,
-            c1_x: j10,
-            c1_y: j11,
-            c2_x: j20,
-            c2_y: j21,
-        } = cam_jac;
+        let mx = mean_c.x();
+        let my = mean_c.y();
+        let mz = mean_c.z();
 
-        // tmp = v_cov2d * J (2x3, col-major).
-        let t00 = v_cov2d.c00 * j00 + v_cov2d.c01 * j01;
-        let t01 = v_cov2d.c01 * j00 + v_cov2d.c11 * j01;
-        let t10 = v_cov2d.c00 * j10 + v_cov2d.c01 * j11;
-        let t11 = v_cov2d.c01 * j10 + v_cov2d.c11 * j11;
-        let t20 = v_cov2d.c00 * j20 + v_cov2d.c01 * j21;
-        let t21 = v_cov2d.c01 * j20 + v_cov2d.c11 * j21;
-
-        let mut v_mx = j00 * v_mean2d_x + j01 * v_mean2d_y;
-        let mut v_my = j10 * v_mean2d_x + j11 * v_mean2d_y;
-        let mut v_mz = j20 * v_mean2d_x + j21 * v_mean2d_y;
-
-        // v_J = 2 * tmp * cov3d — all 6 entries needed for fisheye.
-        let vj00 = 2.0f32 * (t00 * cov_c.c00 + t10 * cov_c.c01 + t20 * cov_c.c02);
-        let vj10 = 2.0f32 * (t00 * cov_c.c01 + t10 * cov_c.c11 + t20 * cov_c.c12);
-        let vj20 = 2.0f32 * (t00 * cov_c.c02 + t10 * cov_c.c12 + t20 * cov_c.c22);
-        let vj01 = 2.0f32 * (t01 * cov_c.c00 + t11 * cov_c.c01 + t21 * cov_c.c02);
-        let vj11 = 2.0f32 * (t01 * cov_c.c01 + t11 * cov_c.c11 + t21 * cov_c.c12);
-        let vj21 = 2.0f32 * (t01 * cov_c.c02 + t11 * cov_c.c12 + t21 * cov_c.c22);
-
-        let x = mean_c.x();
-        let y = mean_c.y();
-        let z = mean_c.z();
-        let r2 = x * x + y * y;
-        let r = f32::sqrt(r2);
-        let near_axis = r < 1e-6f32;
-        let rz = 1.0f32 / z;
-        let rz2 = rz * rz;
-        let rz3 = rz2 * rz;
-
-        // Pinhole fallback for d(J)/d(mean_c) used when r ≈ 0.
-        let pin_v_mx_c = -u.camera.focal_x * rz2 * vj20;
-        let pin_v_my_c = -u.camera.focal_y * rz2 * vj21;
-        let pin_v_mz_c = -u.camera.focal_x * rz2 * vj00 - u.camera.focal_y * rz2 * vj11
-            + 2.0f32 * u.camera.focal_x * x * rz3 * vj20
-            + 2.0f32 * u.camera.focal_y * y * rz3 * vj21;
-
-        // KB4 parameters.
-        let d2 = r2 + z * z;
-        let theta = f32::atan2(r, z);
-        let theta2 = theta * theta;
-        let theta4 = theta2 * theta2;
-        let theta6 = theta4 * theta2;
-        let theta8 = theta4 * theta4;
-        let poly = 1.0f32
-            + u.camera.k1 * theta2
-            + u.camera.k2 * theta4
-            + u.camera.k3 * theta6
-            + u.camera.k4 * theta8;
-        let dpoly = 2.0f32 * u.camera.k1 * theta
-            + 4.0f32 * u.camera.k2 * theta2 * theta
-            + 6.0f32 * u.camera.k3 * theta4 * theta
-            + 8.0f32 * u.camera.k4 * theta6 * theta;
-        let theta_d = theta * poly;
-        let dtheta_d = poly + theta * dpoly;
-        let ddtheta_d = 6.0f32 * u.camera.k1 * theta
-            + 20.0f32 * u.camera.k2 * theta2 * theta
-            + 42.0f32 * u.camera.k3 * theta4 * theta
-            + 72.0f32 * u.camera.k4 * theta6 * theta;
-
-        // A = dtheta_d * z / (r² * d2)
-        // B = theta_d / r³
-        // C = dtheta_d / d2
-        let r3 = r2 * r;
-        let r4 = r2 * r2;
-        let d22 = d2 * d2;
-        let a_val = dtheta_d * z / (r2 * d2);
-        let b_val = theta_d / r3;
-        let c_val = dtheta_d / d2;
         let fx = u.camera.focal_x;
         let fy = u.camera.focal_y;
+        let k1 = u.camera.k1;
+        let k2 = u.camera.k2;
+        let k3 = u.camera.k3;
+        let k4 = u.camera.k4;
 
-        // Derivative scale factors: dA/dx = EA*x, dB/dx = EB*x, dC/dx = EC*x.
-        let ea =
-            z / (r2 * d22) * (ddtheta_d * z / r - 2.0f32 * dtheta_d * (2.0f32 * r2 + z * z) / r2);
-        let eb = dtheta_d * z / (r4 * d2) - 3.0f32 * theta_d / (r4 * r);
-        let ec = ddtheta_d * z / (r * d22) - 2.0f32 * dtheta_d / d22;
-        // z-derivatives of A, B, C.
-        let ea_z = (dtheta_d * (r2 - z * z) / r2 - ddtheta_d * z / r) / d22;
-        let eb_z = -dtheta_d / (r2 * d2);
-        let ec_z = (-ddtheta_d * r - 2.0f32 * dtheta_d * z) / d22;
+        // --- Forward intermediates (identical to calc_jacobian) ---
+        let r2 = mx * mx + my * my;
+        let r = r2.sqrt().max(1.0e-8f32);
+        let rho2 = r2 + mz * mz;
 
-        // Weighted sums.
-        let vja = vj00 * fx * x * x + vj11 * fy * y * y;
-        let vjb = vj00 * fx * y * y + vj11 * fy * x * x;
-        let vjab = (vj10 * fx + vj01 * fy) * x * y;
-        let vjc = vj20 * fx * x + vj21 * fy * y;
+        let theta = r.atan2(mz);
+        let th2 = theta * theta;
+        let th4 = th2 * th2;
+        let th6 = th4 * th2;
+        let th8 = th4 * th4;
 
-        let scale = ea * vja + eb * vjb + (ea - eb) * vjab - ec * vjc;
+        let theta_d = theta * (1.0f32 + k1 * th2 + k2 * th4 + k3 * th6 + k4 * th8);
+        // P1 = d theta_d / d theta
+        let p1 =
+            1.0f32 + 3.0f32 * k1 * th2 + 5.0f32 * k2 * th4 + 7.0f32 * k3 * th6 + 9.0f32 * k4 * th8;
+        // P2 = d^2 theta_d / d theta^2
+        let p2 = 6.0f32 * k1 * theta
+            + 20.0f32 * k2 * theta * th2
+            + 42.0f32 * k3 * theta * th4
+            + 72.0f32 * k4 * theta * th6;
 
-        let dir_x = 2.0f32 * a_val * x * vj00 * fx + (a_val - b_val) * y * (vj10 * fx + vj01 * fy)
-            - c_val * vj20 * fx
-            + 2.0f32 * b_val * x * vj11 * fy;
-        let dir_y = 2.0f32 * a_val * y * vj11 * fy + (a_val - b_val) * x * (vj10 * fx + vj01 * fy)
-            - c_val * vj21 * fy
-            + 2.0f32 * b_val * y * vj00 * fx;
+        let inv_r = 1.0f32 / r;
+        let inv_r3 = inv_r * inv_r * inv_r;
+        let inv_r5 = inv_r3 * inv_r * inv_r;
+        let inv_rho2 = 1.0f32 / rho2;
+        let inv_rho2_sq = inv_rho2 * inv_rho2;
+        let inv_rho2_r = inv_rho2 * inv_r;
 
-        let kb4_v_mx_c = x * scale + dir_x;
-        let kb4_v_my_c = y * scale + dir_y;
-        let kb4_v_mz_c = ea_z * vja + eb_z * vjb + (ea_z - eb_z) * vjab - ec_z * vjc;
+        // d theta / d {x, y, z}
+        let dth_x = mx * mz * inv_rho2_r;
+        let dth_y = my * mz * inv_rho2_r;
+        let dth_z = -r * inv_rho2;
 
-        v_mx += select(near_axis, pin_v_mx_c, kb4_v_mx_c);
-        v_my += select(near_axis, pin_v_my_c, kb4_v_my_c);
-        v_mz += select(near_axis, pin_v_mz_c, kb4_v_mz_c);
+        // x/r, y/r and their first derivatives (z-derivatives are zero)
+        let xr = mx * inv_r;
+        let yr = my * inv_r;
+        let dxr_x = my * my * inv_r3;
+        let dxr_y = -mx * my * inv_r3;
+        let dyr_x = dxr_y;
+        let dyr_y = mx * mx * inv_r3;
+
+        // dg/d {x, y, z} where g = theta_d
+        let dg_x = p1 * dth_x;
+        let dg_y = p1 * dth_y;
+        let dg_z = p1 * dth_z;
+
+        // J entries (same as calc_jacobian; we could pass cam_jac through
+        // instead but recomputing is cheap and keeps this self-contained).
+        let j00 = fx * (dg_x * xr + theta_d * dxr_x);
+        let j01 = fx * (dg_y * xr + theta_d * dxr_y);
+        let j02 = fx * (dg_z * xr);
+        let j10 = fy * (dg_x * yr + theta_d * dyr_x);
+        let j11 = fy * (dg_y * yr + theta_d * dyr_y);
+        let j12 = fy * (dg_z * yr);
+
+        // --- Path 1: v_mean_c = J^T v_mean2d ---
+        let mut v_mx = j00 * v_mean2d_x + j10 * v_mean2d_y;
+        let mut v_my = j01 * v_mean2d_x + j11 * v_mean2d_y;
+        let mut v_mz = j02 * v_mean2d_x + j12 * v_mean2d_y;
+
+        // --- v_J = 2 * sym(v_cov2d) * J * cov_c   (2x3) ---
+        // tmp = v_cov2d * J  (works because Sym2.mul_mat2x3 already does
+        //   the symmetric multiply; v_J = 2 * tmp * cov_c).
+        let tmp = v_cov2d.mul_mat2x3(Mat2x3 {
+            c0_x: j00,
+            c0_y: j10,
+            c1_x: j01,
+            c1_y: j11,
+            c2_x: j02,
+            c2_y: j12,
+        });
+        // Rows of (tmp * cov_c) — same trick as in the pinhole branch.
+        let vj_u0 = 2.0f32 * tmp.row0().dot(cov_c.row0());
+        let vj_u1 = 2.0f32 * tmp.row0().dot(cov_c.row1());
+        let vj_u2 = 2.0f32 * tmp.row0().dot(cov_c.row2());
+        let vj_v0 = 2.0f32 * tmp.row1().dot(cov_c.row0());
+        let vj_v1 = 2.0f32 * tmp.row1().dot(cov_c.row1());
+        let vj_v2 = 2.0f32 * tmp.row1().dot(cov_c.row2());
+
+        // --- Hessian of theta (symmetric 3x3, all 6 entries used) ---
+        // d2 theta / dxx = z * (r2*rho2 - x^2 (3 r2 + z^2)) / (r^3 rho2^2)
+        // d2 theta / dyy = z * (r2*rho2 - y^2 (3 r2 + z^2)) / (r^3 rho2^2)
+        // d2 theta / dxy = -x y z (3 r2 + z^2) / (r^3 rho2^2)
+        // d2 theta / dxz = x (r2 - z^2) / (r rho2^2)
+        // d2 theta / dyz = y (r2 - z^2) / (r rho2^2)
+        // d2 theta / dzz = 2 z r / rho2^2
+        let three_r2_z2 = 3.0f32 * r2 + mz * mz;
+        let r2_minus_z2 = r2 - mz * mz;
+        let h_th_00 = mz * (r2 * rho2 - mx * mx * three_r2_z2) * inv_r3 * inv_rho2_sq;
+        let h_th_11 = mz * (r2 * rho2 - my * my * three_r2_z2) * inv_r3 * inv_rho2_sq;
+        let h_th_01 = -mx * my * mz * three_r2_z2 * inv_r3 * inv_rho2_sq;
+        let h_th_02 = mx * r2_minus_z2 * inv_r * inv_rho2_sq;
+        let h_th_12 = my * r2_minus_z2 * inv_r * inv_rho2_sq;
+        let h_th_22 = 2.0f32 * mz * r * inv_rho2_sq;
+
+        // --- Hessian of x/r and y/r (only xy-block is nonzero) ---
+        // d2(x/r)/dxx = -3 x y^2 / r^5
+        // d2(x/r)/dxy =  y (2 x^2 - y^2) / r^5
+        // d2(x/r)/dyy =  x (2 y^2 - x^2) / r^5
+        // d2(y/r)/dxx =  y (2 x^2 - y^2) / r^5
+        // d2(y/r)/dxy =  x (2 y^2 - x^2) / r^5
+        // d2(y/r)/dyy = -3 x^2 y / r^5
+        let two_x2_my2 = 2.0f32 * mx * mx - my * my;
+        let two_y2_mx2 = 2.0f32 * my * my - mx * mx;
+        let h_xr_00 = -3.0f32 * mx * my * my * inv_r5;
+        let h_xr_01 = my * two_x2_my2 * inv_r5;
+        let h_xr_11 = mx * two_y2_mx2 * inv_r5;
+        let h_yr_00 = my * two_x2_my2 * inv_r5;
+        let h_yr_01 = mx * two_y2_mx2 * inv_r5;
+        let h_yr_11 = -3.0f32 * mx * mx * my * inv_r5;
+        // h_xr_02, h_xr_12, h_xr_22, h_yr_02, h_yr_12, h_yr_22 are all zero.
+
+        // --- Path 2 contraction ---
+        // === k = 0 (d/dx) ===
+        {
+            // (j, k) = (0, 0)
+            let d2g = p2 * dth_x * dth_x + p1 * h_th_00;
+            let d_ju = fx * (d2g * xr + dg_x * dxr_x + dg_x * dxr_x + theta_d * h_xr_00);
+            let d_jv = fy * (d2g * yr + dg_x * dyr_x + dg_x * dyr_x + theta_d * h_yr_00);
+            v_mx += vj_u0 * d_ju + vj_v0 * d_jv;
+        }
+        {
+            // (j, k) = (1, 0)
+            let d2g = p2 * dth_y * dth_x + p1 * h_th_01;
+            let d_ju = fx * (d2g * xr + dg_y * dxr_x + dg_x * dxr_y + theta_d * h_xr_01);
+            let d_jv = fy * (d2g * yr + dg_y * dyr_x + dg_x * dyr_y + theta_d * h_yr_01);
+            v_mx += vj_u1 * d_ju + vj_v1 * d_jv;
+        }
+        {
+            // (j, k) = (2, 0)  -- dh_*[2]=0, H_h_*[2,0]=0
+            let d2g = p2 * dth_z * dth_x + p1 * h_th_02;
+            let d_ju = fx * (d2g * xr + dg_x * 0.0f32 + dg_z * dxr_x);
+            let d_jv = fy * (d2g * yr + dg_x * 0.0f32 + dg_z * dyr_x);
+            v_mx += vj_u2 * d_ju + vj_v2 * d_jv;
+        }
+
+        // === k = 1 (d/dy) ===
+        {
+            // (j, k) = (0, 1)
+            let d2g = p2 * dth_x * dth_y + p1 * h_th_01;
+            let d_ju = fx * (d2g * xr + dg_x * dxr_y + dg_y * dxr_x + theta_d * h_xr_01);
+            let d_jv = fy * (d2g * yr + dg_x * dyr_y + dg_y * dyr_x + theta_d * h_yr_01);
+            v_my += vj_u0 * d_ju + vj_v0 * d_jv;
+        }
+        {
+            // (j, k) = (1, 1)
+            let d2g = p2 * dth_y * dth_y + p1 * h_th_11;
+            let d_ju = fx * (d2g * xr + dg_y * dxr_y + dg_y * dxr_y + theta_d * h_xr_11);
+            let d_jv = fy * (d2g * yr + dg_y * dyr_y + dg_y * dyr_y + theta_d * h_yr_11);
+            v_my += vj_u1 * d_ju + vj_v1 * d_jv;
+        }
+        {
+            // (j, k) = (2, 1)
+            let d2g = p2 * dth_z * dth_y + p1 * h_th_12;
+            let d_ju = fx * (d2g * xr + dg_y * 0.0f32 + dg_z * dxr_y);
+            let d_jv = fy * (d2g * yr + dg_y * 0.0f32 + dg_z * dyr_y);
+            v_my += vj_u2 * d_ju + vj_v2 * d_jv;
+        }
+
+        // === k = 2 (d/dz) ===
+        {
+            // (j, k) = (0, 2)  -- dh_*[2]=0, H_h_*[0,2]=0
+            let d2g = p2 * dth_x * dth_z + p1 * h_th_02;
+            let d_ju = fx * (d2g * xr + dg_z * dxr_x + dg_x * 0.0f32);
+            let d_jv = fy * (d2g * yr + dg_z * dyr_x + dg_x * 0.0f32);
+            v_mz += vj_u0 * d_ju + vj_v0 * d_jv;
+        }
+        {
+            // (j, k) = (1, 2)
+            let d2g = p2 * dth_y * dth_z + p1 * h_th_12;
+            let d_ju = fx * (d2g * xr + dg_z * dxr_y + dg_y * 0.0f32);
+            let d_jv = fy * (d2g * yr + dg_z * dyr_y + dg_y * 0.0f32);
+            v_mz += vj_u1 * d_ju + vj_v1 * d_jv;
+        }
+        {
+            // (j, k) = (2, 2)  -- all h_* and dh_* z-parts are zero
+            let d2g = p2 * dth_z * dth_z + p1 * h_th_22;
+            let d_ju = fx * (d2g * xr);
+            let d_jv = fy * (d2g * yr);
+            v_mz += vj_u2 * d_ju + vj_v2 * d_jv;
+        }
 
         Vec3A::new(v_mx, v_my, v_mz)
     } else {

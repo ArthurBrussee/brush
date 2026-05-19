@@ -73,27 +73,24 @@ impl CameraParams {
         let dx = self.focal_x * inv_z;
         let dy = self.focal_y * inv_z;
 
-        let pinhole_u = x * inv_z;
-        let pinhole_v = y * inv_z;
+        let img_w_f = img_w as f32;
+        let img_h_f = img_h as f32;
+        let lim_pos_x = (1.15f32 * img_w_f - self.pixel_center_x) / self.focal_x;
+        let lim_pos_y = (1.15f32 * img_h_f - self.pixel_center_y) / self.focal_y;
+        let lim_neg_x = (-0.15f32 * img_w_f - self.pixel_center_x) / self.focal_x;
+        let lim_neg_y = (-0.15f32 * img_h_f - self.pixel_center_y) / self.focal_y;
+
+        let pinhole_u = clamp(x * inv_z, lim_neg_x, lim_pos_x);
+        let pinhole_v = clamp(y * inv_z, lim_neg_y, lim_pos_y);
 
         if comptime![camera_model_id == PINHOLE] {
-            let img_w_f = img_w as f32;
-            let img_h_f = img_h as f32;
-            let lim_pos_x = (1.15f32 * img_w_f - self.pixel_center_x) / self.focal_x;
-            let lim_pos_y = (1.15f32 * img_h_f - self.pixel_center_y) / self.focal_y;
-            let lim_neg_x = (-0.15f32 * img_w_f - self.pixel_center_x) / self.focal_x;
-            let lim_neg_y = (-0.15f32 * img_h_f - self.pixel_center_y) / self.focal_y;
-
-            let u = clamp(pinhole_u, lim_neg_x, lim_pos_x);
-            let v = clamp(pinhole_v, lim_neg_y, lim_pos_y);
-
             Mat2x3 {
                 c0_x: dx,
                 c0_y: 0.0,
                 c1_x: 0.0,
                 c1_y: dy,
-                c2_x: -dx * u,
-                c2_y: -dy * v,
+                c2_x: -dx * pinhole_u,
+                c2_y: -dy * pinhole_v,
             }
         } else if comptime![camera_model_id == KANNALA_BRANDT_4] {
             let x2 = x * x;
