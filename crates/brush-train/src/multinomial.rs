@@ -3,7 +3,13 @@ pub(crate) fn multinomial_sample(weights: &[f32], n: u32) -> Vec<i32> {
     rand::seq::index::sample_weighted(
         &mut rng,
         weights.len(),
-        |i| if weights[i].is_nan() { 0.0 } else { weights[i] },
+        |i| {
+            if weights[i].is_finite() && weights[i] >= 0.0 {
+                weights[i]
+            } else {
+                0.0
+            }
+        },
         n as usize,
     )
     .unwrap_or_else(|_| {
