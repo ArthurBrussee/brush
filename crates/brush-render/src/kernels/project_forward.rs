@@ -5,15 +5,16 @@
 //! Finite out-of-distribution values pass; calc_cov2d clamps overflow
 //! internally.
 
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::prelude::*;
-
 use super::helpers::{
     calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, get_camera_mean,
     get_quat_unorm, get_scale, get_tile_bbox, is_finite_f32, sigmoid,
 };
 use super::types::ProjectUniforms;
+use crate::camera::CameraModelId;
+use crate::kernels::camera_model::project;
+use burn_cubecl::cubecl;
+use burn_cubecl::cubecl::cube;
+use burn_cubecl::cubecl::prelude::*;
 
 pub const WG_SIZE: u32 = 256;
 
@@ -30,7 +31,7 @@ pub fn project_forward_kernel(
     max_radius: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
-    #[comptime] camera_model_id: i32,
+    #[comptime] camera_model_id: CameraModelId,
 ) {
     let global_gid = ABSOLUTE_POS as u32;
     if global_gid >= u.total_splats {
@@ -71,7 +72,7 @@ pub fn project_forward_kernel(
         terminate!();
     }
 
-    let (mean2d_x, mean2d_y) = u.camera.project(mean_c, camera_model_id);
+    let (mean2d_x, mean2d_y) = project(mean_c, u.camera_params, camera_model_id);
 
     if !(opac >= 1.0f32 / 255.0f32) {
         terminate!();

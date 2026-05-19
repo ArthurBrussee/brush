@@ -1,16 +1,17 @@
 //! Compute projected splat data for visible gaussians. PF already
 //! culled non-finite-cov2d splats so this kernel trusts `calc_cov2d`.
 
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::prelude::*;
-
 use super::helpers::{
     calc_cov2d, compensate_cov2d, get_quat_unorm, get_scale, is_finite_f32, sigmoid, world_to_cam,
     write_projected_splat,
 };
 use super::sh::{num_sh_coeffs, sh_coeffs_to_color};
 use super::types::{ProjectUniforms, Splat, Vec3A};
+use crate::camera::CameraModelId;
+use crate::kernels::camera_model::project;
+use burn_cubecl::cubecl;
+use burn_cubecl::cubecl::cube;
+use burn_cubecl::cubecl::prelude::*;
 
 pub const WG_SIZE: u32 = 256;
 
@@ -24,7 +25,7 @@ pub fn project_visible_kernel(
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
     #[comptime] sh_degree: u32,
-    #[comptime] camera_model_id: i32,
+    #[comptime] camera_model_id: CameraModelId,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
     if compact_gid >= u.num_visible {
@@ -46,7 +47,7 @@ pub fn project_visible_kernel(
     let opac = sigmoid(raw_opacities[global_gid as usize]) * filter_comp;
     let conic = cov.inverse();
 
-    let (mean2d_x, mean2d_y) = u.camera.project(mean_c, camera_model_id);
+    let (mean2d_x, mean2d_y) = project(mean_c, u.camera_params, camera_model_id);
 
     // Viewdir. Safe to normalize: splats with length(mean - cam) == 0
     // would already be culled in PF.

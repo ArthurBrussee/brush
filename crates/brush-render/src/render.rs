@@ -23,53 +23,14 @@ use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
 use glam::{Vec3, uvec2};
 
-use crate::kernels::camera_model::CameraParams;
-use kernels::types::{ProjectUniformsLaunch, RasterizeUniformsLaunch};
+use crate::camera::calculate_jacobian_clamp_limits;
+use kernels::types::RasterizeUniformsLaunch;
 
 #[doc(hidden)]
 pub fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
     uvec2(
         img_size.x.div_ceil(shaders::helpers::TILE_WIDTH),
         img_size.y.div_ceil(shaders::helpers::TILE_WIDTH),
-    )
-}
-
-/// Build the cube-side `ProjectUniforms` launch arg from the camera + img
-/// dims. Shared by the forward and backward projection passes.
-pub fn build_project_uniforms_launch(
-    viewmat: &[[f32; 4]; 4],
-    camera_params: CameraParams,
-    camera_position: [f32; 4],
-    img_size_arr: [u32; 2],
-    tile_bounds_arr: [u32; 2],
-    sh_degree: u32,
-    total_splats: u32,
-    num_visible: u32,
-) -> ProjectUniformsLaunch<WgpuRuntime> {
-    ProjectUniformsLaunch::new(
-        viewmat[0][0],
-        viewmat[0][1],
-        viewmat[0][2],
-        viewmat[1][0],
-        viewmat[1][1],
-        viewmat[1][2],
-        viewmat[2][0],
-        viewmat[2][1],
-        viewmat[2][2],
-        viewmat[3][0],
-        viewmat[3][1],
-        viewmat[3][2],
-        camera_params.to_launch_object(),
-        camera_position[0],
-        camera_position[1],
-        camera_position[2],
-        img_size_arr[0],
-        img_size_arr[1],
-        tile_bounds_arr[0],
-        tile_bounds_arr[1],
-        sh_degree,
-        total_splats,
-        num_visible,
     )
 }
 
@@ -103,16 +64,23 @@ impl SplatOps<Self> for MainBackendBase {
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
+        let camera_params = camera.to_params(img_size);
+
         let mut project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
-            camera_params: camera.to_params(img_size),
+            camera_params,
             camera_model_id: camera.camera_model_id,
             camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
             img_size: img_size.into(),
             tile_bounds: calc_tile_bounds(img_size).into(),
             sh_degree,
             total_splats,
-            num_visible: 0,
+            num_visible: 0, // num_visible — not yet known.
+            jacobian_clamp_limits: calculate_jacobian_clamp_limits(
+                img_size,
+                camera_params,
+                camera.camera_model_id,
+            ),
         };
 
         let device = transforms.device.clone();
@@ -138,16 +106,7 @@ impl SplatOps<Self> for MainBackendBase {
             let global_from_presort_gid = create_tensor([total_splats], &device, DType::U32);
             let depths = create_tensor([total_splats], &device, DType::F32);
 
-            let uniforms = build_project_uniforms_launch(
-                &project_uniforms.viewmat,
-                project_uniforms.camera_params,
-                project_uniforms.camera_position,
-                project_uniforms.img_size,
-                project_uniforms.tile_bounds,
-                project_uniforms.sh_degree,
-                project_uniforms.total_splats,
-                0, // num_visible — not yet known.
-            );
+            let uniforms = project_uniforms.to_launch_object();
 
             // SAFETY: Kernel checked for OOB and loops.
             unsafe {
@@ -208,7 +167,6 @@ impl SplatOps<Self> for MainBackendBase {
         project_uniforms.num_visible = num_visible;
 
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
-        let sh_degree = project_uniforms.sh_degree;
         let img_size: glam::UVec2 = project_uniforms.img_size.into();
         let tile_bounds: glam::UVec2 = project_uniforms.tile_bounds.into();
         let num_visible_sz = (num_visible as usize).max(1);
@@ -230,16 +188,7 @@ impl SplatOps<Self> for MainBackendBase {
             DType::F32,
         );
         tracing::trace_span!("ProjectVisible").in_scope(|| {
-            let uniforms = build_project_uniforms_launch(
-                &project_uniforms.viewmat,
-                project_uniforms.camera_params,
-                project_uniforms.camera_position,
-                project_uniforms.img_size,
-                project_uniforms.tile_bounds,
-                sh_degree,
-                project_uniforms.total_splats,
-                num_visible,
-            );
+            let uniforms = project_uniforms.to_launch_object();
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
                 kernels::project_visible::project_visible_kernel::launch_unchecked::<WgpuRuntime>(

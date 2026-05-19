@@ -7,9 +7,10 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
-pub use brush_cube::{calc_sigma, is_finite_f32, sigmoid};
-
 use super::types::{PixelRect, ProjectUniforms, Quat, Splat, Sym2, TileBbox, Vec3A};
+use crate::camera::CameraModelId;
+use crate::kernels::camera_model::calculate_project_jacobian;
+pub use brush_cube::{calc_sigma, is_finite_f32, sigmoid};
 
 pub const TILE_WIDTH: u32 = 16;
 pub const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
@@ -113,12 +114,15 @@ pub fn calc_cov2d(
     quat: Quat,
     mean_c: Vec3A,
     u: ProjectUniforms,
-    #[comptime] camera_model_id: i32,
+    #[comptime] camera_model_id: CameraModelId,
 ) -> Sym2 {
     let ns = u.view_rotation().mul_mat3(quat.to_mat3()).mul_diag(scale);
-    let cam_jac = u
-        .camera
-        .calc_jacobian(mean_c, u.img_w, u.img_h, camera_model_id);
+    let cam_jac = calculate_project_jacobian(
+        mean_c,
+        u.jacobian_clamp_limits,
+        u.camera_params,
+        camera_model_id,
+    );
 
     // V = J * N_s (J is 2x3, N_s is 3x3, V is 2x3).
     let v = cam_jac.mul_mat3(ns);
