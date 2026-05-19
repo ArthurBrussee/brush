@@ -6,8 +6,8 @@
 //! internally.
 
 use super::helpers::{
-    calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, read_mean_viewspace,
-    read_quat_unorm, read_scale, get_tile_bbox, is_finite_f32, sigmoid,
+    calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, get_tile_bbox,
+    is_finite_f32, read_mean_viewspace, read_quat_unorm, read_scale, sigmoid,
 };
 use super::types::ProjectUniforms;
 use crate::kernels::camera_model::{CameraModel, project};

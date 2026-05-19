@@ -2,8 +2,8 @@
 //! culled non-finite-cov2d splats so this kernel trusts `calc_cov2d`.
 
 use super::helpers::{
-    calc_cov2d, compensate_cov2d, read_quat_unorm, read_scale, is_finite_f32, sigmoid, world_to_cam,
-    write_projected_splat,
+    calc_cov2d, compensate_cov2d, is_finite_f32, read_quat_unorm, read_scale, sigmoid,
+    world_to_cam, write_projected_splat,
 };
 use super::sh::{num_sh_coeffs, sh_coeffs_to_color};
 use super::types::{ProjectUniforms, Splat, Vec3A};
