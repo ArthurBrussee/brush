@@ -4,7 +4,7 @@ use brush_cube::{is_finite_f32, sigmoid};
 use brush_render::kernels::camera_model::CameraModel;
 use brush_render::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
 use brush_render::kernels::helpers::{
-    calc_cov2d, compensate_cov2d, get_quat_unorm, get_scale, world_to_cam,
+    calc_cov2d, compensate_cov2d, read_quat_unorm, read_scale, world_to_cam,
 };
 use brush_render::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp};
 use brush_render::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
@@ -155,8 +155,8 @@ pub fn project_backwards_kernel(
         transforms[tbase + 1],
         transforms[tbase + 2],
     );
-    let scale = get_scale(transforms, tbase);
-    let quat_unorm = get_quat_unorm(transforms, tbase);
+    let scale = read_scale(transforms, tbase);
+    let quat_unorm = read_quat_unorm(transforms, tbase);
     let quat = quat_unorm.normalize();
 
     // viewdir + SH VJP

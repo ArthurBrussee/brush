@@ -6,8 +6,8 @@
 //! internally.
 
 use super::helpers::{
-    calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, get_camera_mean,
-    get_quat_unorm, get_scale, get_tile_bbox, is_finite_f32, sigmoid,
+    calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, read_mean_viewspace,
+    read_quat_unorm, read_scale, get_tile_bbox, is_finite_f32, sigmoid,
 };
 use super::types::ProjectUniforms;
 use crate::kernels::camera_model::{CameraModel, project};
@@ -40,17 +40,17 @@ pub fn project_forward_kernel(
     // means(3) + quats(4) + log_scales(3)
     let base = (global_gid * 10u32) as usize;
 
-    let mean_c = get_camera_mean(transforms, base, u);
+    let mean_c = read_mean_viewspace(transforms, base, u);
     if !(mean_c.is_finite() && mean_c.z() >= 0.01f32 && mean_c.z() <= 1.0e10f32) {
         terminate!();
     }
 
-    let scale = get_scale(transforms, base);
+    let scale = read_scale(transforms, base);
     if !scale.is_finite() {
         terminate!();
     }
 
-    let quat_unorm = get_quat_unorm(transforms, base);
+    let quat_unorm = read_quat_unorm(transforms, base);
     let qnorm_sq = quat_unorm.dot(quat_unorm);
     if !(qnorm_sq >= 1.0e-6f32 && is_finite_f32(qnorm_sq)) {
         terminate!();

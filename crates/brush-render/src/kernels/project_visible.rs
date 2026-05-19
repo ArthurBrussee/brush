@@ -2,7 +2,7 @@
 //! culled non-finite-cov2d splats so this kernel trusts `calc_cov2d`.
 
 use super::helpers::{
-    calc_cov2d, compensate_cov2d, get_quat_unorm, get_scale, is_finite_f32, sigmoid, world_to_cam,
+    calc_cov2d, compensate_cov2d, read_quat_unorm, read_scale, is_finite_f32, sigmoid, world_to_cam,
     write_projected_splat,
 };
 use super::sh::{num_sh_coeffs, sh_coeffs_to_color};
@@ -36,8 +36,8 @@ pub fn project_visible_kernel(
     // means(3) + quats(4) + log_scales(3)
     let base = (global_gid * 10u32) as usize;
     let mean = Vec3A::new(transforms[base], transforms[base + 1], transforms[base + 2]);
-    let scale = get_scale(transforms, base);
-    let quat_unorm = get_quat_unorm(transforms, base);
+    let scale = read_scale(transforms, base);
+    let quat_unorm = read_quat_unorm(transforms, base);
     let quat = quat_unorm.normalize();
 
     let mean_c = world_to_cam(mean, u);
