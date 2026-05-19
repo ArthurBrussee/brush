@@ -1,19 +1,16 @@
 //! Backward projection.
 
+use brush_cube::{is_finite_f32, sigmoid};
 use brush_render::camera::CameraModelId;
 use brush_render::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
 use brush_render::kernels::helpers::{
-    calc_cov2d, compensate_cov2d, get_quat_unorm, get_scale, sigmoid, world_to_cam,
+    calc_cov2d, compensate_cov2d, get_quat_unorm, get_scale, world_to_cam,
 };
 use brush_render::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp};
 use brush_render::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
-
-use brush_render::kernels::helpers::{
-    calc_cam_j, calc_cov2d, compensate_cov2d, inverse_sym2, is_finite_f32, sigmoid, world_to_cam,
-};
 
 pub const WG_SIZE: u32 = 256;
 
