@@ -6,8 +6,8 @@
 pub const SH_C0: f32 = 0.282_094_8;
 
 pub mod helpers {
-    use crate::camera::CameraModelId;
-    use crate::kernels::camera_model::{CameraParams, JacobianClampLimits};
+    use crate::kernels::camera_model::pinhole::PinholeParams;
+    use crate::kernels::camera_model::{CameraModel, JacobianClampLimits};
     use crate::kernels::types::ProjectUniformsLaunch;
     use burn_cubecl::cubecl::wgpu::WgpuRuntime;
 
@@ -17,8 +17,8 @@ pub mod helpers {
     #[derive(Debug, Clone, Copy)]
     pub struct ProjectUniforms {
         pub viewmat: [[f32; 4]; 4],
-        pub camera_params: CameraParams,
-        pub camera_model_id: CameraModelId,
+        pub camera_model: CameraModel,
+        pub pinhole_params: PinholeParams,
         pub img_size: [u32; 2],
         pub tile_bounds: [u32; 2],
         pub camera_position: [f32; 4],
@@ -47,7 +47,7 @@ pub mod helpers {
                 self.viewmat[3][0],
                 self.viewmat[3][1],
                 self.viewmat[3][2],
-                self.camera_params.to_launch_object(),
+                self.pinhole_params.to_launch_object(),
                 self.jacobian_clamp_limits.to_launch_object(),
                 self.camera_position[0],
                 self.camera_position[1],

@@ -165,7 +165,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     uniforms,
                     mip_splat,
                     project_uniforms.sh_degree,
-                    project_uniforms.camera_model_id,
+                    project_uniforms.camera_model,
                 );
             }
         });

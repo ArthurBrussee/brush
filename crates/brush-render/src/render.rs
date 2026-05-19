@@ -64,12 +64,11 @@ impl SplatOps<Self> for MainBackendBase {
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
-        let camera_params = camera.to_params(img_size);
-
+        let pinhole_params = camera.build_pinhole_params(img_size);
         let mut project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
-            camera_params,
-            camera_model_id: camera.camera_model_id,
+            camera_model: camera.camera_model,
+            pinhole_params,
             camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
             img_size: img_size.into(),
             tile_bounds: calc_tile_bounds(img_size).into(),
@@ -78,8 +77,8 @@ impl SplatOps<Self> for MainBackendBase {
             num_visible: 0, // num_visible — not yet known.
             jacobian_clamp_limits: calculate_jacobian_clamp_limits(
                 img_size,
-                camera_params,
-                camera.camera_model_id,
+                pinhole_params,
+                camera.camera_model,
             ),
         };
 
@@ -127,7 +126,7 @@ impl SplatOps<Self> for MainBackendBase {
                     max_radius.clone().into_tensor_arg(),
                     uniforms,
                     mip_splat,
-                    camera.camera_model_id,
+                    camera.camera_model,
                 );
             }
             (
@@ -203,7 +202,7 @@ impl SplatOps<Self> for MainBackendBase {
                     uniforms,
                     mip_splat,
                     sh_degree,
-                    camera.camera_model_id,
+                    camera.camera_model,
                 );
             }
         });

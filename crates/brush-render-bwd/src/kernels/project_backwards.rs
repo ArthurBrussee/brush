@@ -1,7 +1,7 @@
 //! Backward projection.
 
 use brush_cube::{is_finite_f32, sigmoid};
-use brush_render::camera::CameraModelId;
+use brush_render::kernels::camera_model::CameraModel;
 use brush_render::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
 use brush_render::kernels::helpers::{
     calc_cov2d, compensate_cov2d, get_quat_unorm, get_scale, world_to_cam,
@@ -110,7 +110,7 @@ pub fn project_backwards_kernel(
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
     #[comptime] sh_degree: u32,
-    #[comptime] camera_model_id: CameraModelId,
+    #[comptime] camera_model: CameraModel,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
     if compact_gid >= u.num_visible {
@@ -170,7 +170,7 @@ pub fn project_backwards_kernel(
     let r = quat.to_mat3();
     let m = r.mul_diag(scale);
 
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model_id);
+    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     let opac_sig = sigmoid(raw_opac[global_gid as usize]);
     v_raw_opac[global_gid as usize] = filter_comp * v_alpha_in * opac_sig * (1.0f32 - opac_sig);
@@ -198,8 +198,8 @@ pub fn project_backwards_kernel(
     let cam_jac = calculate_project_jacobian(
         mean_c,
         u.jacobian_clamp_limits,
-        u.camera_params,
-        camera_model_id,
+        u.pinhole_params,
+        camera_model,
     );
     let v_mean_c = calculate_projection_vjp(
         cam_jac,
@@ -209,7 +209,7 @@ pub fn project_backwards_kernel(
         v_cov2d,
         v_mean2d_x,
         v_mean2d_y,
-        camera_model_id,
+        camera_model,
     );
 
     // v_covar_c = J^T * v_cov2d * J (2x2 sym → 3x3 sym).

@@ -6,7 +6,7 @@ use tokio::io::{AsyncBufRead, AsyncRead};
 // TODO: Really these should each hold their respective params but bit of an annoying refactor. We just need
 // basic params.
 #[derive(Debug, Clone)]
-pub enum CameraModel {
+pub enum ColmapCameraModel {
     SimplePinhole,
     Pinhole,
     SimpleRadial,
@@ -20,7 +20,7 @@ pub enum CameraModel {
     ThinPrismFisheye,
 }
 
-impl CameraModel {
+impl ColmapCameraModel {
     fn from_id(id: i32) -> Option<Self> {
         match id {
             0 => Some(Self::SimplePinhole),
@@ -75,7 +75,7 @@ impl CameraModel {
 #[derive(Debug, Clone)]
 pub struct Camera {
     pub id: i32,
-    pub model: CameraModel,
+    pub model: ColmapCameraModel,
     pub width: u64,
     pub height: u64,
     pub params: Vec<f64>,
@@ -117,47 +117,47 @@ impl Camera {
     pub fn focal(&self) -> (f64, f64) {
         let x = self.params[0];
         let y = self.params[match self.model {
-            CameraModel::SimplePinhole => 0,
-            CameraModel::Pinhole => 1,
-            CameraModel::SimpleRadial => 0,
-            CameraModel::Radial => 0,
-            CameraModel::OpenCV => 1,
-            CameraModel::OpenCvFishEye => 1,
-            CameraModel::FullOpenCV => 1,
-            CameraModel::Fov => 1,
-            CameraModel::SimpleRadialFisheye => 0,
-            CameraModel::RadialFisheye => 0,
-            CameraModel::ThinPrismFisheye => 1,
+            ColmapCameraModel::SimplePinhole => 0,
+            ColmapCameraModel::Pinhole => 1,
+            ColmapCameraModel::SimpleRadial => 0,
+            ColmapCameraModel::Radial => 0,
+            ColmapCameraModel::OpenCV => 1,
+            ColmapCameraModel::OpenCvFishEye => 1,
+            ColmapCameraModel::FullOpenCV => 1,
+            ColmapCameraModel::Fov => 1,
+            ColmapCameraModel::SimpleRadialFisheye => 0,
+            ColmapCameraModel::RadialFisheye => 0,
+            ColmapCameraModel::ThinPrismFisheye => 1,
         }];
         (x, y)
     }
 
     pub fn principal_point(&self) -> glam::Vec2 {
         let x = self.params[match self.model {
-            CameraModel::SimplePinhole => 1,
-            CameraModel::Pinhole => 2,
-            CameraModel::SimpleRadial => 1,
-            CameraModel::Radial => 1,
-            CameraModel::OpenCV => 2,
-            CameraModel::OpenCvFishEye => 2,
-            CameraModel::FullOpenCV => 2,
-            CameraModel::Fov => 2,
-            CameraModel::SimpleRadialFisheye => 1,
-            CameraModel::RadialFisheye => 1,
-            CameraModel::ThinPrismFisheye => 2,
+            ColmapCameraModel::SimplePinhole => 1,
+            ColmapCameraModel::Pinhole => 2,
+            ColmapCameraModel::SimpleRadial => 1,
+            ColmapCameraModel::Radial => 1,
+            ColmapCameraModel::OpenCV => 2,
+            ColmapCameraModel::OpenCvFishEye => 2,
+            ColmapCameraModel::FullOpenCV => 2,
+            ColmapCameraModel::Fov => 2,
+            ColmapCameraModel::SimpleRadialFisheye => 1,
+            ColmapCameraModel::RadialFisheye => 1,
+            ColmapCameraModel::ThinPrismFisheye => 2,
         }] as f32;
         let y = self.params[match self.model {
-            CameraModel::SimplePinhole => 2,
-            CameraModel::Pinhole => 3,
-            CameraModel::SimpleRadial => 2,
-            CameraModel::Radial => 2,
-            CameraModel::OpenCV => 3,
-            CameraModel::OpenCvFishEye => 3,
-            CameraModel::FullOpenCV => 3,
-            CameraModel::Fov => 3,
-            CameraModel::SimpleRadialFisheye => 2,
-            CameraModel::RadialFisheye => 2,
-            CameraModel::ThinPrismFisheye => 3,
+            ColmapCameraModel::SimplePinhole => 2,
+            ColmapCameraModel::Pinhole => 3,
+            ColmapCameraModel::SimpleRadial => 2,
+            ColmapCameraModel::Radial => 2,
+            ColmapCameraModel::OpenCV => 3,
+            ColmapCameraModel::OpenCvFishEye => 3,
+            ColmapCameraModel::FullOpenCV => 3,
+            ColmapCameraModel::Fov => 3,
+            ColmapCameraModel::SimpleRadialFisheye => 2,
+            ColmapCameraModel::RadialFisheye => 2,
+            ColmapCameraModel::ThinPrismFisheye => 3,
         }] as f32;
         glam::vec2(x, y)
     }
@@ -223,7 +223,7 @@ async fn read_cameras_text<R: AsyncBufRead + Unpin>(mut reader: R) -> io::Result
             |e: io::Error| io::Error::new(e.kind(), format!("cameras.txt line {line_no}: {e}"));
 
         let id: i32 = parse(parts[0]).map_err(ctx)?;
-        let model = CameraModel::from_name(parts[1]).ok_or_else(|| {
+        let model = ColmapCameraModel::from_name(parts[1]).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -283,7 +283,7 @@ async fn read_cameras_binary<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<
         let width = reader.read_u64_le().await?;
         let height = reader.read_u64_le().await?;
 
-        let model = CameraModel::from_id(model_id)
+        let model = ColmapCameraModel::from_id(model_id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid camera model"))?;
 
         let num_params = model.num_params();
@@ -640,22 +640,22 @@ mod tests {
         ];
 
         for (id, name, expected_params) in models {
-            let from_id = CameraModel::from_id(id).unwrap();
-            let from_name = CameraModel::from_name(name).unwrap();
+            let from_id = ColmapCameraModel::from_id(id).unwrap();
+            let from_name = ColmapCameraModel::from_name(name).unwrap();
             assert_eq!(from_id.num_params(), expected_params);
             assert_eq!(from_name.num_params(), expected_params);
         }
 
         // Test invalid cases
-        assert!(CameraModel::from_id(99).is_none());
-        assert!(CameraModel::from_name("INVALID").is_none());
+        assert!(ColmapCameraModel::from_id(99).is_none());
+        assert!(ColmapCameraModel::from_name("INVALID").is_none());
     }
 
     #[wasm_bindgen_test(unsupported = test)]
     fn test_camera_intrinsics() {
         let pinhole_camera = Camera {
             id: 1,
-            model: CameraModel::Pinhole,
+            model: ColmapCameraModel::Pinhole,
             width: 640,
             height: 480,
             params: vec![500.0, 501.0, 320.0, 240.0],
@@ -668,7 +668,7 @@ mod tests {
 
         let simple_camera = Camera {
             id: 2,
-            model: CameraModel::SimplePinhole,
+            model: ColmapCameraModel::SimplePinhole,
             width: 640,
             height: 480,
             params: vec![500.0, 320.0, 240.0],
@@ -694,7 +694,7 @@ mod tests {
 
         let cam2 = &cameras[1];
         assert_eq!(cam2.params.len(), 8);
-        assert!(matches!(cam2.model, CameraModel::OpenCV));
+        assert!(matches!(cam2.model, ColmapCameraModel::OpenCV));
 
         // Test error cases - should fail
         let invalid_model = "1 INVALID_MODEL 800 600 500.0 500.0 400.0 300.0\n";

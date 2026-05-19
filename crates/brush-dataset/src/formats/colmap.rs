@@ -11,14 +11,18 @@ use crate::{
     formats::find_mask_path,
     scene::{LoadImage, SceneView},
 };
-use brush_render::camera::{KANNALA_BRANDT_4, PINHOLE, RADIAL_TANGENTIAL_8};
+use brush_render::kernels::camera_model::CameraModel::{
+    KannalaBrandt4, Pinhole, RadialTangential8,
+};
+use brush_render::kernels::camera_model::kannala_brandt_4::KannalaBrandt4Params;
+use brush_render::kernels::camera_model::radial_tangential_8::RadianTangential8Params;
 use brush_render::{
     camera::{self, Camera},
     sh::rgb_to_sh,
 };
 use brush_serde::{ParseMetadata, SplatData, SplatMessage};
 use brush_vfs::BrushVfs;
-use colmap_reader::CameraModel;
+use colmap_reader::ColmapCameraModel;
 use itertools::Itertools;
 
 fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
@@ -203,38 +207,58 @@ async fn load_dataset_inner(
             let cam_to_world = world_to_cam.inverse();
             let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
 
-            let mut params = [0.; 8];
-            let mut camera_model_id = PINHOLE;
-            match cam_data.model {
-                CameraModel::OpenCvFishEye => {
-                    for i in 0..4 {
-                        params[i] = cam_data.params[i + 4] as f32;
-                    }
-                    camera_model_id = KANNALA_BRANDT_4;
+            let camera_model = match cam_data.model {
+                ColmapCameraModel::SimpleRadialFisheye => {
+                    let p = &cam_data.params;
+                    KannalaBrandt4(KannalaBrandt4Params {
+                        k1: p[3] as f32,
+                        k2: 0.0,
+                        k3: 0.0,
+                        k4: 0.0,
+                    })
                 }
-                CameraModel::FullOpenCV => {
-                    for i in 0..8 {
-                        params[i] = cam_data.params[i + 4] as f32;
-                    }
-                    camera_model_id = RADIAL_TANGENTIAL_8;
+                ColmapCameraModel::RadialFisheye => {
+                    let p = &cam_data.params;
+                    KannalaBrandt4(KannalaBrandt4Params {
+                        k1: p[3] as f32,
+                        k2: p[4] as f32,
+                        k3: 0.0,
+                        k4: 0.0,
+                    })
                 }
-                CameraModel::Pinhole => {}
+                ColmapCameraModel::OpenCvFishEye => {
+                    let p = &cam_data.params;
+                    KannalaBrandt4(KannalaBrandt4Params {
+                        k1: p[4] as f32,
+                        k2: p[5] as f32,
+                        k3: p[6] as f32,
+                        k4: p[7] as f32,
+                    })
+                }
+                ColmapCameraModel::FullOpenCV => {
+                    let p = &cam_data.params;
+                    RadialTangential8(RadianTangential8Params {
+                        k1: p[4] as f32,
+                        k2: p[5] as f32,
+                        k3: p[8] as f32,
+                        k4: p[9] as f32,
+                        k5: p[10] as f32,
+                        k6: p[11] as f32,
+                        p1: p[6] as f32,
+                        p2: p[7] as f32,
+                    })
+                }
+                ColmapCameraModel::Pinhole => Pinhole,
                 _ => {
                     log::warn!(
                         "Unsupported camera model: {:?}! Falling back to pinhole camera",
                         cam_data.model
                     );
+                    Pinhole
                 }
             };
-            let camera = Camera::new_with_distortion(
-                translation,
-                quat,
-                fovx,
-                fovy,
-                center_uv,
-                params,
-                camera_model_id,
-            );
+            let camera =
+                Camera::new_with_distortion(translation, quat, fovx, fovy, center_uv, camera_model);
 
             if !camera.is_valid() {
                 warnings.push(format!(

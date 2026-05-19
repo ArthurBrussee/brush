@@ -1,22 +1,35 @@
-use crate::kernels::camera_model::{CameraParams, JacobianClampLimits};
+use crate::kernels::camera_model::pinhole::PinholeParams;
 use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
+use bytemuck::{ByteHash, NoUninit};
+
+#[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug)]
+#[repr(C)]
+pub struct KannalaBrandt4Params {
+    pub k1: f32,
+    pub k2: f32,
+    pub k3: f32,
+    pub k4: f32,
+}
 
 #[cube]
-pub fn project_kb4(point: Vec3A, camera_params: CameraParams) -> (f32, f32) {
+pub fn project_kb4(
+    point: Vec3A,
+    pinhole_params: PinholeParams,
+    #[comptime] params: KannalaBrandt4Params,
+) -> (f32, f32) {
     let x = point.x();
     let y = point.y();
     let z = point.z();
-    let k1 = camera_params.param0;
-    let k2 = camera_params.param1;
-    let k3 = camera_params.param2;
-    let k4 = camera_params.param3;
+
+    let PinholeParams { fx, fy, cx, cy } = pinhole_params;
+    let KannalaBrandt4Params { k1, k2, k3, k4 } = params;
 
     let inv_z = 1.0f32 / z;
-    let pinhole_u = camera_params.focal_x * x * inv_z + camera_params.pixel_center_x;
-    let pinhole_v = camera_params.focal_y * y * inv_z + camera_params.pixel_center_y;
+    let pinhole_u = fx * x * inv_z + cx;
+    let pinhole_v = fy * y * inv_z + cy;
 
     let r = f32::sqrt(x * x + y * y);
 
@@ -28,8 +41,8 @@ pub fn project_kb4(point: Vec3A, camera_params: CameraParams) -> (f32, f32) {
     let d = theta * (1.0f32 + k1 * theta2 + k2 * theta4 + k3 * theta6 + k4 * theta8);
 
     let inv_r = 1.0f32 / r;
-    let fisheye_u = camera_params.focal_x * (d * x * inv_r) + camera_params.pixel_center_x;
-    let fisheye_v = camera_params.focal_y * (d * y * inv_r) + camera_params.pixel_center_y;
+    let fisheye_u = fx * (d * x * inv_r) + cx;
+    let fisheye_v = fy * (d * y * inv_r) + cy;
 
     let near_axis = r < 1e-6f32;
     (
@@ -38,20 +51,16 @@ pub fn project_kb4(point: Vec3A, camera_params: CameraParams) -> (f32, f32) {
     )
 }
 
+// This Jacobian calculation does not clamp the Jacobian,
+// since the values do not blow up when theta increases
 #[cube]
 pub fn calculate_project_jacobian_kb4(
     point: Vec3A,
-    // clamping the Jacobian should not be required,
-    // since the values do not blow up when theta increases
-    _: JacobianClampLimits,
-    camera_params: CameraParams,
+    pinhole_params: PinholeParams,
+    #[comptime] params: KannalaBrandt4Params,
 ) -> Mat2x3 {
-    let fx = camera_params.focal_x;
-    let fy = camera_params.focal_y;
-    let k1 = camera_params.param0;
-    let k2 = camera_params.param1;
-    let k3 = camera_params.param2;
-    let k4 = camera_params.param3;
+    let PinholeParams { fx, fy, .. } = pinhole_params;
+    let KannalaBrandt4Params { k1, k2, k3, k4 } = params;
 
     let x = point.x();
     let y = point.y();
@@ -143,13 +152,10 @@ pub fn calculate_projection_vjp_kb4(
     v_cov2d: Sym2,
     v_mean2d_x: f32,
     v_mean2d_y: f32,
+    #[comptime] params: KannalaBrandt4Params,
 ) -> Vec3A {
-    let fx = u.camera_params.focal_x;
-    let fy = u.camera_params.focal_y;
-    let k1 = u.camera_params.param0;
-    let k2 = u.camera_params.param1;
-    let k3 = u.camera_params.param2;
-    let k4 = u.camera_params.param3;
+    let PinholeParams { fx, fy, .. } = u.pinhole_params;
+    let KannalaBrandt4Params { k1, k2, k3, k4 } = params;
 
     let mx = mean_c.x();
     let my = mean_c.y();

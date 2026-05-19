@@ -1,22 +1,45 @@
-use crate::kernels::camera_model::{CameraParams, JacobianClampLimits};
+use crate::kernels::camera_model::JacobianClampLimits;
+use crate::kernels::camera_model::pinhole::PinholeParams;
 use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
+use bytemuck::{ByteHash, NoUninit};
+
+#[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug)]
+#[repr(C)]
+pub struct RadianTangential8Params {
+    pub k1: f32,
+    pub k2: f32,
+    pub k3: f32,
+    pub k4: f32,
+    pub k5: f32,
+    pub k6: f32,
+    pub p1: f32,
+    pub p2: f32,
+}
 
 #[cube]
-pub fn project_rt8(point: Vec3A, camera_params: CameraParams) -> (f32, f32) {
+pub fn project_rt8(
+    point: Vec3A,
+    pinhole_params: PinholeParams,
+    #[comptime] params: RadianTangential8Params,
+) -> (f32, f32) {
+    let PinholeParams { fx, fy, cx, cy } = pinhole_params;
+    let RadianTangential8Params {
+        k1,
+        k2,
+        k3,
+        k4,
+        k5,
+        k6,
+        p1,
+        p2,
+    } = params;
+
     let x = point.x();
     let y = point.y();
     let z = point.z();
-    let k1 = camera_params.param0;
-    let k2 = camera_params.param1;
-    let p1 = camera_params.param2;
-    let p2 = camera_params.param3;
-    let k3 = camera_params.param4;
-    let k4 = camera_params.param5;
-    let k5 = camera_params.param6;
-    let k6 = camera_params.param7;
 
     let x_ = x / z;
     let y_ = y / z;
@@ -33,8 +56,8 @@ pub fn project_rt8(point: Vec3A, camera_params: CameraParams) -> (f32, f32) {
     let x__ = x_ * d + 2.0f32 * p1 * x_y_ + p2 * (r2 + 2.0f32 * x_2);
     let y__ = y_ * d + 2.0f32 * p2 * x_y_ + p1 * (r2 + 2.0f32 * y_2);
 
-    let u = camera_params.focal_x * x__ + camera_params.pixel_center_x;
-    let v = camera_params.focal_y * y__ + camera_params.pixel_center_y;
+    let u = fx * x__ + cx;
+    let v = fy * y__ + cy;
 
     (u, v)
 }
@@ -43,16 +66,20 @@ pub fn project_rt8(point: Vec3A, camera_params: CameraParams) -> (f32, f32) {
 pub fn calculate_project_jacobian_rt8(
     point: Vec3A,
     limits: JacobianClampLimits,
-    camera_params: CameraParams,
+    pinhole_params: PinholeParams,
+    #[comptime] params: RadianTangential8Params,
 ) -> Mat2x3 {
-    let k1 = camera_params.param0;
-    let k2 = camera_params.param1;
-    let p1 = camera_params.param2;
-    let p2 = camera_params.param3;
-    let k3 = camera_params.param4;
-    let k4 = camera_params.param5;
-    let k5 = camera_params.param6;
-    let k6 = camera_params.param7;
+    let PinholeParams { fx, fy, .. } = pinhole_params;
+    let RadianTangential8Params {
+        k1,
+        k2,
+        k3,
+        k4,
+        k5,
+        k6,
+        p1,
+        p2,
+    } = params;
 
     let x = point.x();
     let y = point.y();
@@ -99,8 +126,6 @@ pub fn calculate_project_jacobian_rt8(
     //   J[1,0] = fy * D10 / Z
     //   J[1,1] = fy * D11 / Z
     //   J[1,2] = -fy * (D10 * xc + D11 * yc) / Z²
-    let fx = camera_params.focal_x;
-    let fy = camera_params.focal_y;
     let du_dx = fx * d00 * inv_z;
     let du_dy = fx * d01 * inv_z;
     let du_dz = -fx * (d00 * xc + d01 * yc) * inv_z2;
@@ -120,24 +145,26 @@ pub fn calculate_project_jacobian_rt8(
 
 #[cube]
 pub fn calculate_projection_vjp_rt8(
-    _: Mat2x3,
     mean_c: Vec3A,
     cov_c: Sym3,
     u: ProjectUniforms,
     v_cov2d: Sym2,
     v_mean2d_x: f32,
     v_mean2d_y: f32,
+    #[comptime] params: RadianTangential8Params,
 ) -> Vec3A {
-    let fx = u.camera_params.focal_x;
-    let fy = u.camera_params.focal_y;
-    let k1 = u.camera_params.param0;
-    let k2 = u.camera_params.param1;
-    let p1 = u.camera_params.param2;
-    let p2 = u.camera_params.param3;
-    let k3 = u.camera_params.param4;
-    let k4 = u.camera_params.param5;
-    let k5 = u.camera_params.param6;
-    let k6 = u.camera_params.param7;
+    let PinholeParams { fx, fy, .. } = u.pinhole_params;
+    let RadianTangential8Params {
+        k1,
+        k2,
+        k3,
+        k4,
+        k5,
+        k6,
+        p1,
+        p2,
+    } = params;
+
     let JacobianClampLimits {
         lim_pos_x,
         lim_pos_y,

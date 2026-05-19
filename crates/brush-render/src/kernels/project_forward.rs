@@ -10,8 +10,7 @@ use super::helpers::{
     get_quat_unorm, get_scale, get_tile_bbox, is_finite_f32, sigmoid,
 };
 use super::types::ProjectUniforms;
-use crate::camera::CameraModelId;
-use crate::kernels::camera_model::project;
+use crate::kernels::camera_model::{CameraModel, project};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
@@ -31,7 +30,7 @@ pub fn project_forward_kernel(
     max_radius: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
-    #[comptime] camera_model_id: CameraModelId,
+    #[comptime] camera_model: CameraModel,
 ) {
     let global_gid = ABSOLUTE_POS as u32;
     if global_gid >= u.total_splats {
@@ -64,7 +63,7 @@ pub fn project_forward_kernel(
 
     let quat = quat_unorm.normalize();
 
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model_id);
+    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     let opac = sigmoid(raw_opac) * filter_comp;
 
@@ -72,7 +71,7 @@ pub fn project_forward_kernel(
         terminate!();
     }
 
-    let (mean2d_x, mean2d_y) = project(mean_c, u.camera_params, camera_model_id);
+    let (mean2d_x, mean2d_y) = project(mean_c, u.pinhole_params, camera_model);
 
     if !(opac >= 1.0f32 / 255.0f32) {
         terminate!();

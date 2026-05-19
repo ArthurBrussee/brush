@@ -1,14 +1,30 @@
-use crate::kernels::camera_model::{CameraParams, JacobianClampLimits};
+use crate::kernels::camera_model::JacobianClampLimits;
 use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
+use bytemuck::{ByteHash, NoUninit};
+
+#[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug)]
+#[repr(C)]
+pub struct PinholeParams {
+    pub fx: f32,
+    pub fy: f32,
+    pub cx: f32,
+    pub cy: f32,
+}
+
+impl PinholeParams {
+    pub fn to_launch_object<R: Runtime>(&self) -> PinholeParamsLaunch<R> {
+        PinholeParamsLaunch::new(self.fx, self.fy, self.cx, self.cy)
+    }
+}
 
 #[cube]
-pub fn project_pinhole(point: Vec3A, camera_params: CameraParams) -> (f32, f32) {
+pub fn project_pinhole(point: Vec3A, params: PinholeParams) -> (f32, f32) {
     let inv_z = 1.0f32 / point.z();
-    let u = camera_params.focal_x * point.x() * inv_z + camera_params.pixel_center_x;
-    let v = camera_params.focal_y * point.y() * inv_z + camera_params.pixel_center_y;
+    let u = params.fx * point.x() * inv_z + params.cx;
+    let v = params.fy * point.y() * inv_z + params.cy;
     (u, v)
 }
 
@@ -16,15 +32,21 @@ pub fn project_pinhole(point: Vec3A, camera_params: CameraParams) -> (f32, f32) 
 pub fn calculate_project_jacobian_pinhole(
     point: Vec3A,
     limits: JacobianClampLimits,
-    camera_params: CameraParams,
+    params: PinholeParams,
 ) -> Mat2x3 {
+    let PinholeParams {
+        fx: focal_x,
+        fy: focal_y,
+        ..
+    } = params;
+
     let x = point.x();
     let y = point.y();
     let z = point.z();
 
     let inv_z = 1.0f32 / z;
-    let dx = camera_params.focal_x * inv_z;
-    let dy = camera_params.focal_y * inv_z;
+    let dx = focal_x * inv_z;
+    let dy = focal_y * inv_z;
 
     let clamped_x = clamp(x * inv_z, limits.lim_neg_x, limits.lim_pos_x);
     let clamped_y = clamp(y * inv_z, limits.lim_neg_y, limits.lim_pos_y);
@@ -49,8 +71,7 @@ pub fn calculate_projection_vjp_pinhole(
     v_mean2d_x: f32,
     v_mean2d_y: f32,
 ) -> Vec3A {
-    let fx = u.camera_params.focal_x;
-    let fy = u.camera_params.focal_y;
+    let PinholeParams { fx, fy, .. } = u.pinhole_params;
     let JacobianClampLimits {
         lim_pos_x,
         lim_pos_y,
