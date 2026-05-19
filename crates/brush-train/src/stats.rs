@@ -42,6 +42,21 @@ impl RefineRecord {
         screen_radius: Tensor<1>,
     ) {
         let _span = trace_span!("Gather stats").entered();
+        // `refine_weight` is the densification gradient proxy from the
+        // rasterize backward (`grad.refine`). It is a non-negative
+        // magnitude by construction but is never clamped or finite-checked
+        // upstream (project_backwards passes it raw; bwd_validate ignores
+        // it), so a divergent splat can hand us a NaN/±Inf or an
+        // astronomically large value. Because the line below latches the
+        // running maximum, a single bad iteration would poison this
+        // splat's growth weight *forever* — feeding multinomial_sample a
+        // non-finite weight (the "Failed to sample from weights" crash,
+        // issue #128) or letting one splat monopolize the growth budget.
+        // Scrub to a finite, non-negative value before latching.
+        let finite = refine_weight.clone().is_finite();
+        let refine_weight = refine_weight
+            .mask_fill(finite.bool_not(), 0.0)
+            .clamp_min(0.0);
         self.refine_weight_norm = refine_weight.max_pair(self.refine_weight_norm.clone());
         self.vis_weight = self.vis_weight.clone() + visible;
         self.max_screen_size = screen_radius.max_pair(self.max_screen_size.clone());

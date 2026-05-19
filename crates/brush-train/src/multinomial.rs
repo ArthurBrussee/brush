@@ -1,9 +1,22 @@
 pub(crate) fn multinomial_sample(weights: &[f32], n: u32) -> Vec<i32> {
     let mut rng = rand::rng();
+    // Sanitize: only finite, non-negative weights are valid sampling
+    // mass. A non-finite (NaN/±Inf) or negative weight here is a
+    // poisoned densification weight latched by `RefineRecord::gather_stats`
+    // — historically the source of the "Failed to sample from weights"
+    // crash (issue #128 / commit a1f02c65, which only scrubbed NaN). A
+    // negative makes `rand`'s `sample_weighted` return `InvalidWeight`
+    // (hard panic); a +Inf makes it always-pick that index (silent
+    // densification collapse) and occasionally panic on a NaN sort key.
+    // Mapping all of these to 0.0 makes a blown-up splat simply
+    // ineligible for growth instead of crashing or monopolizing it.
     rand::seq::index::sample_weighted(
         &mut rng,
         weights.len(),
-        |i| if weights[i].is_nan() { 0.0 } else { weights[i] },
+        |i| {
+            let w = weights[i];
+            if w.is_finite() && w > 0.0 { w } else { 0.0 }
+        },
         n as usize,
     )
     .unwrap_or_else(|_| {
@@ -70,5 +83,45 @@ mod tests {
 
         // Function returns empty vector when it cannot sample any valid indices
         assert_eq!(result.len(), 0);
+    }
+
+    // Regression: a poisoned densification weight (latched +Inf from
+    // gather_stats, or a negative) must NOT crash and must NOT be
+    // selected — it should be treated as zero mass. Before the guard was
+    // widened, the negative case hit `WeightError::InvalidWeight` →
+    // `panic!("Failed to sample from weights …")` (issue #128) and the
+    // +Inf case made that index win every draw (densification collapse).
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn inf_weight_is_treated_as_zero_not_a_crash() {
+        let weights = vec![1.0, f32::INFINITY, 2.0, 0.5];
+        let samples = multinomial_sample(&weights, 3);
+        assert_eq!(samples.len(), 3);
+        assert!(
+            !samples.contains(&1),
+            "index 1 had +Inf weight and must be ineligible, got {samples:?}"
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn negative_weight_is_treated_as_zero_not_a_crash() {
+        let weights = vec![1.0, -1.0, 2.0, 0.5];
+        let samples = multinomial_sample(&weights, 3);
+        assert_eq!(samples.len(), 3);
+        assert!(
+            !samples.contains(&1),
+            "index 1 had a negative weight and must be ineligible, got {samples:?}"
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn mixed_nan_inf_negative_all_scrubbed() {
+        // All the poison kinds at once: only indices 0 and 4 are valid.
+        let weights = vec![3.0, f32::NAN, f32::INFINITY, -5.0, 1.0];
+        let samples = multinomial_sample(&weights, 2);
+        assert_eq!(samples.len(), 2);
+        for s in samples {
+            assert!(s == 0 || s == 4, "sampled poisoned index {s}");
+        }
     }
 }

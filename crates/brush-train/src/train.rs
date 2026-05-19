@@ -618,9 +618,15 @@ impl SplatTrainer {
             inv_sigmoid(new_opac.clamp(1e-12, 1.0 - 1e-12))
         });
 
-        // Decay log_scales (cols 7..10) within transforms
+        // Decay log_scales (cols 7..10) within transforms.
+        // `log(exp(ls) * k) == ls + ln(k)` for k > 0, but the exp/log
+        // round-trip overflows to +Inf for ls ≳ 88 (and underflows to
+        // -Inf for ls ≲ -88) even though `ls + ln(k)` is perfectly
+        // finite — a latent way for a large-but-valid log_scale to be
+        // turned into a non-finite scale. Add the constant directly.
+        let log_scale_shift = scale_scaling.max(1e-30).ln();
         splats.transforms = splats.transforms.map(|t| {
-            let new_log_scales = (t.clone().slice(s![.., 7..10]).exp() * scale_scaling).log();
+            let new_log_scales = t.clone().slice(s![.., 7..10]) + log_scale_shift;
             t.slice_assign(s![.., 7..10], new_log_scales)
         });
 
