@@ -620,7 +620,8 @@ impl SplatTrainer {
 
         // Decay log_scales (cols 7..10) within transforms
         splats.transforms = splats.transforms.map(|t| {
-            let new_log_scales = (t.clone().slice(s![.., 7..10]).exp() * scale_scaling).log();
+            let log_scale_shift = scale_scaling.max(1e-30).ln();
+            let new_log_scales = t.clone().slice(s![.., 7..10]) + log_scale_shift;
             t.slice_assign(s![.., 7..10], new_log_scales)
         });
 

@@ -5,7 +5,7 @@ use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
 use brush_render::kernels::helpers::{
-    calc_cam_j, calc_cov2d, compensate_cov2d, inverse_sym2, sigmoid, world_to_cam,
+    calc_cam_j, calc_cov2d, compensate_cov2d, inverse_sym2, is_finite_f32, sigmoid, world_to_cam,
 };
 use brush_render::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp};
 use brush_render::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
@@ -258,7 +258,11 @@ pub fn project_backwards_kernel(
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     let opac_sig = sigmoid(raw_opac[global_gid as usize]);
     v_raw_opac[global_gid as usize] = filter_comp * v_alpha_in * opac_sig * (1.0f32 - opac_sig);
-    v_refine_weight[global_gid as usize] = v_refine_in;
+
+    // Make sure to keep refine weight >= 0 and finite. Helps with super large degenerate splats
+    // that sum up their refine weight to some massive value.
+    let refine_clean = select(is_finite_f32(v_refine_in), v_refine_in, 0.0f32);
+    v_refine_weight[global_gid as usize] = clamp(refine_clean, 0.0f32, 1.0e32f32);
 
     let conic_inv = inverse_sym2(cov);
     let v_inv = Sym2 {
