@@ -14,7 +14,7 @@ use crate::kernels::camera_model::pinhole::{
     project_pinhole,
 };
 use crate::kernels::camera_model::radial_tangential_8::{
-    RadianTangential8Params, calculate_project_jacobian_rt8, calculate_projection_vjp_rt8,
+    RadialTangential8Params, calculate_project_jacobian_rt8, calculate_projection_vjp_rt8,
     project_rt8,
 };
 use crate::kernels::types::ProjectUniforms;
@@ -25,7 +25,7 @@ pub enum CameraModel {
     #[default]
     Pinhole,
     KannalaBrandt4(KannalaBrandt4Params),
-    RadialTangential8(RadianTangential8Params),
+    RadialTangential8(RadialTangential8Params),
 }
 
 #[derive(CubeLaunch, CubeType, Debug, Clone, Copy)]

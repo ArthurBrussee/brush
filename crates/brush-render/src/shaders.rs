@@ -18,6 +18,7 @@ pub mod helpers {
     pub struct ProjectUniforms {
         pub viewmat: [[f32; 4]; 4],
         pub camera_model: CameraModel,
+        pub half_max_render_fov: f32,
         pub pinhole_params: PinholeParams,
         pub img_size: [u32; 2],
         pub tile_bounds: [u32; 2],
@@ -47,6 +48,7 @@ pub mod helpers {
                 self.viewmat[3][0],
                 self.viewmat[3][1],
                 self.viewmat[3][2],
+                self.half_max_render_fov,
                 self.pinhole_params.to_launch_object(),
                 self.jacobian_clamp_limits.to_launch_object(),
                 self.camera_position[0],

@@ -404,12 +404,14 @@ impl ScenePanel {
             return;
         }
 
-        let cur_x = (camera.fov_x * 0.5).tan() as f32;
-        let cur_y = (camera.fov_y * 0.5).tan() as f32;
-        let ref_x = (view.camera.fov_x * 0.5).tan() as f32;
-        let ref_y = (view.camera.fov_y * 0.5).tan() as f32;
-        let frac_x = (ref_x / cur_x.max(1e-6)).clamp(0.0, 1.0);
-        let frac_y = (ref_y / cur_y.max(1e-6)).clamp(0.0, 1.0);
+        // fov_to_focal(fov, 1, model) = 0.5 / projection(half_fov), so
+        // ref_projected / cur_projected = fov_to_focal(cur) / fov_to_focal(ref).
+        let cur_x = fov_to_focal(camera.fov_x, 1, &camera.camera_model) as f32;
+        let cur_y = fov_to_focal(camera.fov_y, 1, &camera.camera_model) as f32;
+        let ref_x = fov_to_focal(view.camera.fov_x, 1, &camera.camera_model) as f32;
+        let ref_y = fov_to_focal(view.camera.fov_y, 1, &camera.camera_model) as f32;
+        let frac_x = (cur_x / ref_x.max(1e-6)).clamp(0.0, 1.0);
+        let frac_y = (cur_y / ref_y.max(1e-6)).clamp(0.0, 1.0);
 
         let bar = Color32::from_rgba_unmultiplied(0, 0, 0, alpha);
         let painter = ui.painter_at(rect);
@@ -1024,15 +1026,17 @@ impl AppPane for ScenePanel {
             let settings = process.get_cam_settings();
 
             // Adjust FOV so that the scene view shows at least what's visible in the dataset view.
-            let camera_aspect = (camera.fov_x / 2.0).tan() / (camera.fov_y / 2.0).tan();
+            // fov_to_focal(fov, 2, model) = 1 / projection(half_fov), so the ratio gives projected_x / projected_y.
+            let camera_aspect = fov_to_focal(camera.fov_y, 2, &camera.camera_model)
+                / fov_to_focal(camera.fov_x, 2, &camera.camera_model);
             let viewport_aspect = size.x as f64 / size.y as f64;
 
             if viewport_aspect > camera_aspect {
-                let focal_y = fov_to_focal(camera.fov_y, size.y);
-                camera.fov_x = focal_to_fov(focal_y, size.x);
+                let focal_y = fov_to_focal(camera.fov_y, size.y, &camera.camera_model);
+                camera.fov_x = focal_to_fov(focal_y, size.x, &camera.camera_model);
             } else {
-                let focal_x = fov_to_focal(camera.fov_x, size.x);
-                camera.fov_y = focal_to_fov(focal_x, size.y);
+                let focal_x = fov_to_focal(camera.fov_x, size.x, &camera.camera_model);
+                camera.fov_y = focal_to_fov(focal_x, size.y, &camera.camera_model);
             }
 
             // Render the splats and grid

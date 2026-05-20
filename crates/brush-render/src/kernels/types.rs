@@ -63,6 +63,7 @@ pub struct ProjectUniforms {
     pub vm3_x: f32,
     pub vm3_y: f32,
     pub vm3_z: f32,
+    pub half_max_render_fov: f32,
     pub pinhole_params: PinholeParams,
     pub jacobian_clamp_limits: JacobianClampLimits,
     pub camera_x: f32,

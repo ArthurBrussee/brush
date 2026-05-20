@@ -1,3 +1,7 @@
+use crate::camera::{focal_to_fov, fov_to_focal};
+use crate::kernels::camera_model::CameraModel;
+use crate::kernels::camera_model::kannala_brandt_4::KannalaBrandt4Params;
+use crate::kernels::camera_model::radial_tangential_8::RadialTangential8Params;
 use crate::{
     TextureMode,
     camera::Camera,
@@ -689,4 +693,61 @@ async fn zero_quaternion_splats_dont_poison_render() {
         max_abs_diff(&clean, &with_zeros_px) < 1e-5,
         "zero-quaternion splats perturbed the render (they should have been culled)"
     );
+}
+
+#[test]
+fn pinhole_focal_to_fov_and_back() {
+    let model = CameraModel::Pinhole;
+    let f = 800.0;
+    let pixels = 1920;
+    let fov = focal_to_fov(f, pixels, &model);
+    let f_back = fov_to_focal(fov, pixels, &model);
+    assert!((f - f_back).abs() < 1e-9);
+}
+
+#[test]
+fn kb4_focal_to_fov_and_back_no_distortion() {
+    let model = CameraModel::KannalaBrandt4(KannalaBrandt4Params::default());
+    let f = 300.0;
+    let pixels = 1024;
+    let fov = focal_to_fov(f, pixels, &model);
+    // Zero-distortion KB4: r_pix = f · θ, so total FOV = pixels / f
+    let expected = (pixels as f64) / f;
+    assert!((fov - expected).abs() < 1e-9);
+    let f_back = fov_to_focal(fov, pixels, &model);
+    assert!((f - f_back).abs() < 1e-9);
+}
+
+#[test]
+fn kb4_focal_to_fov_and_back_with_distortion() {
+    let model = CameraModel::KannalaBrandt4(KannalaBrandt4Params {
+        k1: -0.01,
+        k2: 0.003,
+        k3: -0.0005,
+        k4: 0.00002,
+    });
+    let f = 280.0;
+    let pixels = 1024;
+    let fov = focal_to_fov(f, pixels, &model);
+    let f_back = fov_to_focal(fov, pixels, &model);
+    assert!((f - f_back).abs() < 1e-6);
+}
+
+#[test]
+fn rt8_focal_to_fov_and_back() {
+    let model = CameraModel::RadialTangential8(RadialTangential8Params {
+        k1: -0.2,
+        k2: 0.05,
+        p1: 0.0,
+        p2: 0.0,
+        k3: -0.001,
+        k4: 0.0,
+        k5: 0.0,
+        k6: 0.0,
+    });
+    let f = 900.0;
+    let pixels = 1920;
+    let fov = focal_to_fov(f, pixels, &model);
+    let f_back = fov_to_focal(fov, pixels, &model);
+    assert!((f - f_back).abs() < 1e-6);
 }

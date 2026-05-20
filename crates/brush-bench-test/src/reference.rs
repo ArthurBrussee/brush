@@ -5,6 +5,7 @@ use brush_render::{
 use burn::{Tensor, tensor::s};
 
 use anyhow::{Context, Result};
+use brush_render::kernels::camera_model::CameraModel::Pinhole;
 use glam::Vec3;
 use safetensors::SafeTensors;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -131,9 +132,9 @@ async fn test_reference() -> Result<()> {
 
         let fov = std::f64::consts::PI * 0.5;
 
-        let focal = fov_to_focal(fov, w as u32);
-        let fov_x = focal_to_fov(focal, w as u32);
-        let fov_y = focal_to_fov(focal, h as u32);
+        let focal = fov_to_focal(fov, w as u32, &Pinhole);
+        let fov_x = focal_to_fov(focal, w as u32, &Pinhole);
+        let fov_y = focal_to_fov(focal, h as u32, &Pinhole);
 
         let cam = Camera::new(
             glam::vec3(0.123, 0.456, -8.0),

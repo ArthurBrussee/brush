@@ -5,7 +5,7 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
 use bytemuck::{ByteHash, NoUninit};
 
-#[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug)]
+#[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug, Default)]
 #[repr(C)]
 pub struct KannalaBrandt4Params {
     pub k1: f32,

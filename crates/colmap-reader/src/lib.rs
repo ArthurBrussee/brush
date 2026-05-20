@@ -73,7 +73,7 @@ impl ColmapCameraModel {
 }
 
 #[derive(Debug, Clone)]
-pub struct Camera {
+pub struct ColmapCamera {
     pub id: i32,
     pub model: ColmapCameraModel,
     pub width: u64,
@@ -113,7 +113,7 @@ pub struct Point3DAux {
     pub point2d_idxs: Vec<i32>,
 }
 
-impl Camera {
+impl ColmapCamera {
     pub fn focal(&self) -> (f64, f64) {
         let x = self.params[0];
         let y = self.params[match self.model {
@@ -192,7 +192,9 @@ fn parse_float(s: &str) -> io::Result<f64> {
     ))
 }
 
-async fn read_cameras_text<R: AsyncBufRead + Unpin>(mut reader: R) -> io::Result<Vec<Camera>> {
+async fn read_cameras_text<R: AsyncBufRead + Unpin>(
+    mut reader: R,
+) -> io::Result<Vec<ColmapCamera>> {
     let mut cameras = Vec::new();
     let mut line = String::new();
     let mut line_no = 0usize;
@@ -258,7 +260,7 @@ async fn read_cameras_text<R: AsyncBufRead + Unpin>(mut reader: R) -> io::Result
             ));
         }
 
-        cameras.push(Camera {
+        cameras.push(ColmapCamera {
             id,
             model,
             width,
@@ -273,7 +275,7 @@ async fn read_cameras_text<R: AsyncBufRead + Unpin>(mut reader: R) -> io::Result
     Ok(cameras)
 }
 
-async fn read_cameras_binary<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<Vec<Camera>> {
+async fn read_cameras_binary<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<Vec<ColmapCamera>> {
     let mut cameras = Vec::new();
     let num_cameras = reader.read_u64_le().await?;
 
@@ -292,7 +294,7 @@ async fn read_cameras_binary<R: AsyncRead + Unpin>(mut reader: R) -> io::Result<
             params.push(reader.read_f64_le().await?);
         }
 
-        cameras.push(Camera {
+        cameras.push(ColmapCamera {
             id: camera_id,
             model,
             width,
@@ -590,7 +592,7 @@ async fn read_points3d_binary<R: AsyncRead + Unpin>(
 pub async fn read_cameras<R: AsyncBufRead + Unpin>(
     reader: R,
     binary: bool,
-) -> io::Result<Vec<Camera>> {
+) -> io::Result<Vec<ColmapCamera>> {
     if binary {
         read_cameras_binary(reader).await
     } else {
@@ -653,7 +655,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = test)]
     fn test_camera_intrinsics() {
-        let pinhole_camera = Camera {
+        let pinhole_camera = ColmapCamera {
             id: 1,
             model: ColmapCameraModel::Pinhole,
             width: 640,
@@ -666,7 +668,7 @@ mod tests {
         assert_eq!(pp.x, 320.0);
         assert_eq!(pp.y, 240.0);
 
-        let simple_camera = Camera {
+        let simple_camera = ColmapCamera {
             id: 2,
             model: ColmapCameraModel::SimplePinhole,
             width: 640,

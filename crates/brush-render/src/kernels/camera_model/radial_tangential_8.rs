@@ -8,7 +8,7 @@ use bytemuck::{ByteHash, NoUninit};
 
 #[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug)]
 #[repr(C)]
-pub struct RadianTangential8Params {
+pub struct RadialTangential8Params {
     pub k1: f32,
     pub k2: f32,
     pub k3: f32,
@@ -23,10 +23,10 @@ pub struct RadianTangential8Params {
 pub fn project_rt8(
     point: Vec3A,
     pinhole_params: PinholeParams,
-    #[comptime] params: RadianTangential8Params,
+    #[comptime] params: RadialTangential8Params,
 ) -> (f32, f32) {
     let PinholeParams { fx, fy, cx, cy } = pinhole_params;
-    let RadianTangential8Params {
+    let RadialTangential8Params {
         k1,
         k2,
         k3,
@@ -67,10 +67,10 @@ pub fn calculate_project_jacobian_rt8(
     point: Vec3A,
     limits: JacobianClampLimits,
     pinhole_params: PinholeParams,
-    #[comptime] params: RadianTangential8Params,
+    #[comptime] params: RadialTangential8Params,
 ) -> Mat2x3 {
     let PinholeParams { fx, fy, .. } = pinhole_params;
-    let RadianTangential8Params {
+    let RadialTangential8Params {
         k1,
         k2,
         k3,
@@ -147,10 +147,10 @@ pub fn calculate_projection_vjp_rt8(
     u: ProjectUniforms,
     v_cov2d: Sym2,
     v_mean2d: Vec2,
-    #[comptime] params: RadianTangential8Params,
+    #[comptime] params: RadialTangential8Params,
 ) -> Vec3A {
     let PinholeParams { fx, fy, .. } = u.pinhole_params;
-    let RadianTangential8Params {
+    let RadialTangential8Params {
         k1,
         k2,
         k3,

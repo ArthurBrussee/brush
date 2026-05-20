@@ -41,8 +41,22 @@ pub fn project_forward_kernel(
     let base = (global_gid * 10u32) as usize;
 
     let mean_c = read_mean_viewspace(transforms, base, u);
-    if !(mean_c.is_finite() && mean_c.z() >= 0.01f32 && mean_c.z() <= 1.0e10f32) {
+    if !(mean_c.is_finite() && mean_c.z() <= 1.0e10f32) {
         terminate!();
+    }
+    match camera_model {
+        CameraModel::Pinhole => {
+            if mean_c.z() < 0.01f32 {
+                terminate!();
+            }
+        }
+        CameraModel::KannalaBrandt4(_) | CameraModel::RadialTangential8(_) => {
+            let r = f32::sqrt(mean_c.x() * mean_c.x() + mean_c.y() * mean_c.y());
+            let theta = r.atan2(mean_c.z());
+            if theta > u.half_max_render_fov {
+                terminate!();
+            }
+        }
     }
 
     let scale = read_scale(transforms, base);

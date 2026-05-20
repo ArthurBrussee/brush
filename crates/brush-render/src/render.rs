@@ -1,3 +1,4 @@
+use crate::camera::calculate_jacobian_clamp_limits;
 use crate::{
     MainBackendBase, RenderAuxInner, SplatOps,
     camera::Camera,
@@ -22,9 +23,8 @@ use burn_cubecl::cubecl::CubeDim;
 use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
 use glam::{Vec3, uvec2};
-
-use crate::camera::calculate_jacobian_clamp_limits;
 use kernels::types::RasterizeUniformsLaunch;
+use std::f32::consts::PI;
 
 #[doc(hidden)]
 pub fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
@@ -64,10 +64,14 @@ impl SplatOps<Self> for MainBackendBase {
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
+        let half_max_render_fov =
+            ((camera.fov_x as f32).hypot(camera.fov_y as f32) * 1.05).min(2.0 * PI - 1e-6) * 0.5;
         let pinhole_params = camera.build_pinhole_params(img_size);
+
         let mut project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
             camera_model: camera.camera_model,
+            half_max_render_fov,
             pinhole_params,
             camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
             img_size: img_size.into(),
