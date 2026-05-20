@@ -223,7 +223,7 @@ mod forward_rendering {
 
     #[divan::bench(args = SPLAT_COUNTS)]
     fn render_1080p(bencher: divan::Bencher, splat_count: usize) {
-        let device: Device = WgpuDevice::default().into();
+        let device = Device::from(WgpuDevice::default()).autodiff();
         bencher.bench_local(move || {
             block_on(async {
                 run_forward_render(&device, splat_count, (1920, 1080), ITERS_PER_SYNC).await;
@@ -234,7 +234,7 @@ mod forward_rendering {
 
     #[divan::bench(args = RESOLUTIONS)]
     fn render_2m_splats(bencher: divan::Bencher, (width, height): (u32, u32)) {
-        let device: Device = WgpuDevice::default().into();
+        let device = Device::from(WgpuDevice::default()).autodiff();
         bencher.bench_local(move || {
             block_on(async {
                 run_forward_render(&device, 2_000_000, (width, height), ITERS_PER_SYNC).await;
