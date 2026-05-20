@@ -94,6 +94,7 @@ serde-ply = "0.2.1"
 burn = { git = "https://github.com/tracel-ai/burn", branch = "fix/shared-tensor", features = [
     'webgpu',
     "metal",
+    'vulkan',
     'extension',
 ] }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn", branch = "fix/shared-tensor" }
