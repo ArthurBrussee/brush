@@ -10,6 +10,7 @@
     clippy::similar_names
 )]
 
+pub mod camera_model;
 pub mod helpers;
 pub mod map_gaussians;
 pub mod project_forward;

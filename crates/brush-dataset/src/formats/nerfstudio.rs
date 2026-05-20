@@ -7,6 +7,7 @@ use crate::{
 };
 use brush_render::camera::fov_to_focal;
 use brush_render::camera::{Camera, focal_to_fov};
+use brush_render::kernels::camera_model::CameraModel::Pinhole;
 use brush_serde::load_splat_from_ply;
 use brush_vfs::BrushVfs;
 use image::GenericImageView;
@@ -159,26 +160,26 @@ async fn read_transforms_file(
 
         let fovx = frame
             .camera_angle_x
-            .or(frame.fl_x.map(|fx| focal_to_fov(fx, w)))
+            .or(frame.fl_x.map(|fx| focal_to_fov(fx, w, &Pinhole)))
             .or(scene.camera_angle_x)
-            .or(scene.fl_x.map(|fx| focal_to_fov(fx, w)));
+            .or(scene.fl_x.map(|fx| focal_to_fov(fx, w, &Pinhole)));
 
         let fovy = frame
             .camera_angle_y
-            .or(frame.fl_y.map(|fy| focal_to_fov(fy, h)))
+            .or(frame.fl_y.map(|fy| focal_to_fov(fy, h, &Pinhole)))
             .or(scene.camera_angle_y)
-            .or(scene.fl_y.map(|fy| focal_to_fov(fy, h)));
+            .or(scene.fl_y.map(|fy| focal_to_fov(fy, h, &Pinhole)));
 
         let (fovx, fovy) = match (fovx, fovy) {
             (None, None) => Err(FormatError::InvalidCamera(
                 "Must have some kind of focal length".to_owned(),
             ))?,
             (None, Some(fovy)) => {
-                let fovx = focal_to_fov(fov_to_focal(fovy, h), w);
+                let fovx = focal_to_fov(fov_to_focal(fovy, h, &Pinhole), w, &Pinhole);
                 (fovx, fovy)
             }
             (Some(fovx), None) => {
-                let fovy = focal_to_fov(fov_to_focal(fovx, w), h);
+                let fovy = focal_to_fov(fov_to_focal(fovx, w, &Pinhole), h, &Pinhole);
                 (fovx, fovy)
             }
             (Some(fovx), Some(fovy)) => (fovx, fovy),
@@ -188,10 +189,11 @@ async fn read_transforms_file(
         let cy = frame.cy.or(scene.cy);
 
         let cuv = glam::vec2(
-            (cx.map_or(0.5, |v| v / w as f64)) as f32,
-            (cy.map_or(0.5, |v| v / h as f64)) as f32,
+            cx.map_or(0.5, |v| v / w as f64) as f32,
+            cy.map_or(0.5, |v| v / h as f64) as f32,
         );
 
+        // TODO only pinhole model
         let camera = Camera::new(translation, rotation, fovx, fovy, cuv);
 
         if !camera.is_valid() {

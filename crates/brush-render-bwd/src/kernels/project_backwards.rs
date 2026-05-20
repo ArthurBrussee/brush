@@ -1,14 +1,16 @@
 //! Backward projection.
 
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::prelude::*;
-
+use brush_cube::{Vec2, is_finite_f32, sigmoid};
+use brush_render::kernels::camera_model::CameraModel;
+use brush_render::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
 use brush_render::kernels::helpers::{
-    calc_cam_j, calc_cov2d, compensate_cov2d, inverse_sym2, is_finite_f32, sigmoid, world_to_cam,
+    calc_cov2d, compensate_cov2d, read_quat_unorm, read_scale, world_to_cam,
 };
 use brush_render::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp};
 use brush_render::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
+use burn_cubecl::cubecl;
+use burn_cubecl::cubecl::cube;
+use burn_cubecl::cubecl::prelude::*;
 
 pub const WG_SIZE: u32 = 256;
 
@@ -94,84 +96,6 @@ fn inverse2x2_vjp(minv: Sym2, v_minv: Sym2) -> Sym2 {
     }
 }
 
-/// VJP of the J-stage (calc_cam_j + persp). Returns gradient w.r.t.
-/// `mean3d` given grads w.r.t. cov2d (`v_cov2d`) and mean2d (`v_mean2d`).
-/// `cov_c` is the 3D covariance in camera space.
-#[allow(clippy::too_many_arguments)]
-#[cube]
-fn persp_proj_vjp(
-    j00: f32,
-    j01: f32,
-    j10: f32,
-    j11: f32,
-    j20: f32,
-    j21: f32,
-    mean_c: Vec3A,
-    cov_c: Mat3,
-    u: ProjectUniforms,
-    v_cov2d: Sym2,
-    v_mean2d_x: f32,
-    v_mean2d_y: f32,
-) -> Vec3A {
-    let rz = 1.0f32 / mean_c.z();
-    let rz2 = rz * rz;
-    let rz3 = rz2 * rz;
-
-    let mut v_mx = u.focal_x * rz * v_mean2d_x;
-    let mut v_my = u.focal_y * rz * v_mean2d_y;
-    let mut v_mz =
-        -(u.focal_x * mean_c.x() * v_mean2d_x + u.focal_y * mean_c.y() * v_mean2d_y) * rz2;
-
-    // tmp = v_cov2d * J (2x3, col-major).
-    let t00 = v_cov2d.c00 * j00 + v_cov2d.c01 * j01;
-    let t01 = v_cov2d.c01 * j00 + v_cov2d.c11 * j01;
-    let t10 = v_cov2d.c00 * j10 + v_cov2d.c01 * j11;
-    let t11 = v_cov2d.c01 * j10 + v_cov2d.c11 * j11;
-    let t20 = v_cov2d.c00 * j20 + v_cov2d.c01 * j21;
-    let t21 = v_cov2d.c01 * j20 + v_cov2d.c11 * j21;
-    // v_J = 2 * tmp * cov3d (cov3d is symmetric, so cov3d == cov3d^T).
-    // Only the trailing column (vj20, vj21) and the diagonal-ish entries
-    // (vj00, vj11) feed the v_mean3d formula below; the off-diagonal
-    // entries are dropped.
-    let vj00 = 2.0f32 * (t00 * cov_c.c0_x + t10 * cov_c.c1_x + t20 * cov_c.c2_x);
-    let vj11 = 2.0f32 * (t01 * cov_c.c0_y + t11 * cov_c.c1_y + t21 * cov_c.c2_y);
-    let vj20 = 2.0f32 * (t00 * cov_c.c0_z + t10 * cov_c.c1_z + t20 * cov_c.c2_z);
-    let vj21 = 2.0f32 * (t01 * cov_c.c0_z + t11 * cov_c.c1_z + t21 * cov_c.c2_z);
-
-    // FOV clipping limits — matches the forward `calc_cam_j`.
-    let img_w_f = u.img_w as f32;
-    let img_h_f = u.img_h as f32;
-    let tan_fov_x = 0.5f32 * img_w_f / u.focal_x;
-    let tan_fov_y = 0.5f32 * img_h_f / u.focal_y;
-    let lim_x_pos = (img_w_f - u.pixel_center_x) / u.focal_x + 0.3f32 * tan_fov_x;
-    let lim_x_neg = u.pixel_center_x / u.focal_x + 0.3f32 * tan_fov_x;
-    let lim_y_pos = (img_h_f - u.pixel_center_y) / u.focal_y + 0.3f32 * tan_fov_y;
-    let lim_y_neg = u.pixel_center_y / u.focal_y + 0.3f32 * tan_fov_y;
-    let mx_rz = mean_c.x() * rz;
-    let my_rz = mean_c.y() * rz;
-    let tx = mean_c.z() * clamp(mx_rz, -lim_x_neg, lim_x_pos);
-    let ty = mean_c.z() * clamp(my_rz, -lim_y_neg, lim_y_pos);
-
-    let in_x = mx_rz <= lim_x_pos && mx_rz >= -lim_x_neg;
-    let in_y = my_rz <= lim_y_pos && my_rz >= -lim_y_neg;
-
-    if in_x {
-        v_mx += -u.focal_x * rz2 * vj20;
-    } else {
-        v_mz += -u.focal_x * rz3 * vj20 * tx;
-    }
-    if in_y {
-        v_my += -u.focal_y * rz2 * vj21;
-    } else {
-        v_mz += -u.focal_y * rz3 * vj21 * ty;
-    }
-    v_mz += -u.focal_x * rz2 * vj00 - u.focal_y * rz2 * vj11
-        + 2.0f32 * u.focal_x * tx * rz3 * vj20
-        + 2.0f32 * u.focal_y * ty * rz3 * vj21;
-
-    Vec3A::new(v_mx, v_my, v_mz)
-}
-
 #[cube(launch_unchecked)]
 #[allow(clippy::too_many_arguments)]
 pub fn project_backwards_kernel(
@@ -186,6 +110,7 @@ pub fn project_backwards_kernel(
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
     #[comptime] sh_degree: u32,
+    #[comptime] camera_model: CameraModel,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
     if compact_gid >= u.num_visible {
@@ -230,17 +155,8 @@ pub fn project_backwards_kernel(
         transforms[tbase + 1],
         transforms[tbase + 2],
     );
-    let scale = Vec3A::new(
-        f32::exp(transforms[tbase + 7]),
-        f32::exp(transforms[tbase + 8]),
-        f32::exp(transforms[tbase + 9]),
-    );
-    let quat_unorm = Quat::new(
-        transforms[tbase + 3],
-        transforms[tbase + 4],
-        transforms[tbase + 5],
-        transforms[tbase + 6],
-    );
+    let scale = read_scale(transforms, tbase);
+    let quat_unorm = read_quat_unorm(transforms, tbase);
     let quat = quat_unorm.normalize();
 
     // viewdir + SH VJP
@@ -254,7 +170,7 @@ pub fn project_backwards_kernel(
     let r = quat.to_mat3();
     let m = r.mul_diag(scale);
 
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u);
+    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     let opac_sig = sigmoid(raw_opac[global_gid as usize]);
     v_raw_opac[global_gid as usize] = filter_comp * v_alpha_in * opac_sig * (1.0f32 - opac_sig);
@@ -264,7 +180,7 @@ pub fn project_backwards_kernel(
     let refine_clean = select(is_finite_f32(v_refine_in), v_refine_in, 0.0f32);
     v_refine_weight[global_gid as usize] = clamp(refine_clean, 0.0f32, 1.0e32f32);
 
-    let conic_inv = inverse_sym2(cov);
+    let conic_inv = cov.inverse();
     let v_inv = Sym2 {
         c00: v_conics_x,
         c01: v_conics_y * 0.5f32,
@@ -272,95 +188,38 @@ pub fn project_backwards_kernel(
     };
     let v_cov2d = inverse2x2_vjp(conic_inv, v_inv);
 
-    // covar = M * M^T (3x3 col-major).
-    let cov_00 = m.c0_x * m.c0_x + m.c1_x * m.c1_x + m.c2_x * m.c2_x;
-    let cov_01 = m.c0_x * m.c0_y + m.c1_x * m.c1_y + m.c2_x * m.c2_y;
-    let cov_02 = m.c0_x * m.c0_z + m.c1_x * m.c1_z + m.c2_x * m.c2_z;
-    let cov_11 = m.c0_y * m.c0_y + m.c1_y * m.c1_y + m.c2_y * m.c2_y;
-    let cov_12 = m.c0_y * m.c0_z + m.c1_y * m.c1_z + m.c2_y * m.c2_z;
-    let cov_22 = m.c0_z * m.c0_z + m.c1_z * m.c1_z + m.c2_z * m.c2_z;
+    // covar = M * M^T (symmetric).
+    let covar = m.outer_product_self();
 
-    // covar_c = R_cam * covar * R_cam^T. R_cam is the top-left 3x3 of
-    // the viewmat (column-major). covar is symmetric (cov_10 == cov_01,
-    // cov_20 == cov_02, cov_21 == cov_12).
-    let tmp00 = u.vm0_x * cov_00 + u.vm1_x * cov_01 + u.vm2_x * cov_02;
-    let tmp01 = u.vm0_y * cov_00 + u.vm1_y * cov_01 + u.vm2_y * cov_02;
-    let tmp02 = u.vm0_z * cov_00 + u.vm1_z * cov_01 + u.vm2_z * cov_02;
-    let tmp10 = u.vm0_x * cov_01 + u.vm1_x * cov_11 + u.vm2_x * cov_12;
-    let tmp11 = u.vm0_y * cov_01 + u.vm1_y * cov_11 + u.vm2_y * cov_12;
-    let tmp12 = u.vm0_z * cov_01 + u.vm1_z * cov_11 + u.vm2_z * cov_12;
-    let tmp20 = u.vm0_x * cov_02 + u.vm1_x * cov_12 + u.vm2_x * cov_22;
-    let tmp21 = u.vm0_y * cov_02 + u.vm1_y * cov_12 + u.vm2_y * cov_22;
-    let tmp22 = u.vm0_z * cov_02 + u.vm1_z * cov_12 + u.vm2_z * cov_22;
-    let cov_c = Mat3 {
-        c0_x: tmp00 * u.vm0_x + tmp10 * u.vm1_x + tmp20 * u.vm2_x,
-        c0_y: tmp01 * u.vm0_x + tmp11 * u.vm1_x + tmp21 * u.vm2_x,
-        c0_z: tmp02 * u.vm0_x + tmp12 * u.vm1_x + tmp22 * u.vm2_x,
-        c1_x: tmp00 * u.vm0_y + tmp10 * u.vm1_y + tmp20 * u.vm2_y,
-        c1_y: tmp01 * u.vm0_y + tmp11 * u.vm1_y + tmp21 * u.vm2_y,
-        c1_z: tmp02 * u.vm0_y + tmp12 * u.vm1_y + tmp22 * u.vm2_y,
-        c2_x: tmp00 * u.vm0_z + tmp10 * u.vm1_z + tmp20 * u.vm2_z,
-        c2_y: tmp01 * u.vm0_z + tmp11 * u.vm1_z + tmp21 * u.vm2_z,
-        c2_z: tmp02 * u.vm0_z + tmp12 * u.vm1_z + tmp22 * u.vm2_z,
-    };
+    // covar_c = R_cam * covar * R_cam^T (symmetric).
+    let view_rot = u.view_rotation();
+    let cov_c = covar.congruence(view_rot);
 
-    let (j00, j01, j10, j11, j20, j21) = calc_cam_j(mean_c, u);
-    let v_mc = persp_proj_vjp(
-        j00, j01, j10, j11, j20, j21, mean_c, cov_c, u, v_cov2d, v_mean2d_x, v_mean2d_y,
+    let cam_jac = calculate_project_jacobian(
+        mean_c,
+        u.jacobian_clamp_limits,
+        u.pinhole_params,
+        camera_model,
+    );
+    let v_mean_c = calculate_projection_vjp(
+        cam_jac,
+        mean_c,
+        cov_c,
+        u,
+        v_cov2d,
+        Vec2::new(v_mean2d_x, v_mean2d_y),
+        camera_model,
     );
 
-    // v_covar_c = J^T * v_covar2d * J (2x2 sym -> 3x3 sym).
-    let a00 = v_cov2d.c00 * j00 + v_cov2d.c01 * j01;
-    let a01 = v_cov2d.c01 * j00 + v_cov2d.c11 * j01;
-    let a10 = v_cov2d.c00 * j10 + v_cov2d.c01 * j11;
-    let a11 = v_cov2d.c01 * j10 + v_cov2d.c11 * j11;
-    let a20 = v_cov2d.c00 * j20 + v_cov2d.c01 * j21;
-    let a21 = v_cov2d.c01 * j20 + v_cov2d.c11 * j21;
-    let vcc_00 = j00 * a00 + j01 * a01;
-    let vcc_01 = j00 * a10 + j01 * a11;
-    let vcc_02 = j00 * a20 + j01 * a21;
-    let vcc_10 = j10 * a00 + j11 * a01;
-    let vcc_11 = j10 * a10 + j11 * a11;
-    let vcc_12 = j10 * a20 + j11 * a21;
-    let vcc_20 = j20 * a00 + j21 * a01;
-    let vcc_21 = j20 * a10 + j21 * a11;
-    let vcc_22 = j20 * a20 + j21 * a21;
+    // v_covar_c = J^T * v_cov2d * J (2x2 sym → 3x3 sym).
+    let vcc = cam_jac.transpose_congruence_sym2(v_cov2d);
 
     // v_mean = R^T * v_mean_c.
-    let v_mean_world = u.view_rotation().transpose_mul_vec3(v_mc);
+    let v_mean = view_rot.transpose_mul_vec3(v_mean_c);
 
-    // v_covar = R^T * v_covar_c * R.
-    let vt00 = vcc_00 * u.vm0_x + vcc_10 * u.vm0_y + vcc_20 * u.vm0_z;
-    let vt01 = vcc_01 * u.vm0_x + vcc_11 * u.vm0_y + vcc_21 * u.vm0_z;
-    let vt02 = vcc_02 * u.vm0_x + vcc_12 * u.vm0_y + vcc_22 * u.vm0_z;
-    let vt10 = vcc_00 * u.vm1_x + vcc_10 * u.vm1_y + vcc_20 * u.vm1_z;
-    let vt11 = vcc_01 * u.vm1_x + vcc_11 * u.vm1_y + vcc_21 * u.vm1_z;
-    let vt12 = vcc_02 * u.vm1_x + vcc_12 * u.vm1_y + vcc_22 * u.vm1_z;
-    let vt20 = vcc_00 * u.vm2_x + vcc_10 * u.vm2_y + vcc_20 * u.vm2_z;
-    let vt21 = vcc_01 * u.vm2_x + vcc_11 * u.vm2_y + vcc_21 * u.vm2_z;
-    let vt22 = vcc_02 * u.vm2_x + vcc_12 * u.vm2_y + vcc_22 * u.vm2_z;
-    // v_M = (v_covar + v_covar^T) * M = 2 * v_covar * M (symmetric).
-    let vc00 = 2.0f32 * (u.vm0_x * vt00 + u.vm0_y * vt01 + u.vm0_z * vt02);
-    let vc01 = 2.0f32 * (u.vm0_x * vt10 + u.vm0_y * vt11 + u.vm0_z * vt12);
-    let vc02 = 2.0f32 * (u.vm0_x * vt20 + u.vm0_y * vt21 + u.vm0_z * vt22);
-    let vc10 = 2.0f32 * (u.vm1_x * vt00 + u.vm1_y * vt01 + u.vm1_z * vt02);
-    let vc11 = 2.0f32 * (u.vm1_x * vt10 + u.vm1_y * vt11 + u.vm1_z * vt12);
-    let vc12 = 2.0f32 * (u.vm1_x * vt20 + u.vm1_y * vt21 + u.vm1_z * vt22);
-    let vc20 = 2.0f32 * (u.vm2_x * vt00 + u.vm2_y * vt01 + u.vm2_z * vt02);
-    let vc21 = 2.0f32 * (u.vm2_x * vt10 + u.vm2_y * vt11 + u.vm2_z * vt12);
-    let vc22 = 2.0f32 * (u.vm2_x * vt20 + u.vm2_y * vt21 + u.vm2_z * vt22);
-
-    let v_m = Mat3 {
-        c0_x: vc00 * m.c0_x + vc10 * m.c0_y + vc20 * m.c0_z,
-        c0_y: vc01 * m.c0_x + vc11 * m.c0_y + vc21 * m.c0_z,
-        c0_z: vc02 * m.c0_x + vc12 * m.c0_y + vc22 * m.c0_z,
-        c1_x: vc00 * m.c1_x + vc10 * m.c1_y + vc20 * m.c1_z,
-        c1_y: vc01 * m.c1_x + vc11 * m.c1_y + vc21 * m.c1_z,
-        c1_z: vc02 * m.c1_x + vc12 * m.c1_y + vc22 * m.c1_z,
-        c2_x: vc00 * m.c2_x + vc10 * m.c2_y + vc20 * m.c2_z,
-        c2_y: vc01 * m.c2_x + vc11 * m.c2_y + vc21 * m.c2_z,
-        c2_z: vc02 * m.c2_x + vc12 * m.c2_y + vc22 * m.c2_z,
-    };
+    // v_covar = R^T * v_covar_c * R (symmetric).
+    // v_M = (v_covar + v_covar^T) * M = 2 * v_covar * M.
+    let v_m = vcc.transpose_congruence(view_rot).scale(2.0f32).mul_mat3(m);
 
     // v_scale = (R[i] dot v_M[i]) * exp(log_scale).
     let v_scale_exp = Vec3A::new(
@@ -376,9 +235,9 @@ pub fn project_backwards_kernel(
 
     // Write gradients to dense v_transforms.
     let vbase = (global_gid * 10u32) as usize;
-    v_transforms[vbase] = v_mean_world.x();
-    v_transforms[vbase + 1] = v_mean_world.y();
-    v_transforms[vbase + 2] = v_mean_world.z();
+    v_transforms[vbase] = v_mean.x();
+    v_transforms[vbase + 1] = v_mean.y();
+    v_transforms[vbase + 2] = v_mean.z();
     v_transforms[vbase + 3] = v_q.w();
     v_transforms[vbase + 4] = v_q.x();
     v_transforms[vbase + 5] = v_q.y();

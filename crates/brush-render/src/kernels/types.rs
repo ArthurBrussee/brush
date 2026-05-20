@@ -6,7 +6,9 @@
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
 
-pub use brush_cube::{Mat3, PixelRect, Quat, Sym2, TileBbox, Vec3A};
+use crate::kernels::camera_model::JacobianClampLimits;
+use crate::kernels::camera_model::pinhole::PinholeParams;
+pub use brush_cube::{Mat2x3, Mat3, PixelRect, Quat, Sym2, TileBbox, Vec3A};
 
 /// One projected splat as the kernel sees it. The on-device storage is
 /// a flat `Tensor<f32>` of `9 * num_visible` lanes (see
@@ -61,10 +63,9 @@ pub struct ProjectUniforms {
     pub vm3_x: f32,
     pub vm3_y: f32,
     pub vm3_z: f32,
-    pub focal_x: f32,
-    pub focal_y: f32,
-    pub pixel_center_x: f32,
-    pub pixel_center_y: f32,
+    pub half_max_render_fov: f32,
+    pub pinhole_params: PinholeParams,
+    pub jacobian_clamp_limits: JacobianClampLimits,
     pub camera_x: f32,
     pub camera_y: f32,
     pub camera_z: f32,

@@ -2,7 +2,6 @@ use brush_cube::calc_cube_count_1d;
 use brush_render::MainBackendBase;
 use brush_render::gaussian_splats::SplatRenderMode;
 use brush_render::kernels::types::RasterizeUniformsLaunch;
-use brush_render::render::build_project_uniforms_launch;
 use brush_render::sh::sh_coeffs_for_degree;
 use burn::backend::TensorMetadata;
 use burn::backend::ops::FloatTensorOps;
@@ -143,19 +142,8 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
         let num_visible = project_uniforms.num_visible;
-        let total_splats = project_uniforms.total_splats;
 
-        let uniforms = build_project_uniforms_launch(
-            &project_uniforms.viewmat,
-            project_uniforms.focal,
-            project_uniforms.pixel_center,
-            project_uniforms.camera_position,
-            project_uniforms.img_size,
-            project_uniforms.tile_bounds,
-            project_uniforms.sh_degree,
-            total_splats,
-            num_visible,
-        );
+        let uniforms = project_uniforms.to_launch_object();
 
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
@@ -177,6 +165,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     uniforms,
                     mip_splat,
                     project_uniforms.sh_degree,
+                    project_uniforms.camera_model,
                 );
             }
         });

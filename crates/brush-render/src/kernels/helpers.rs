@@ -7,11 +7,9 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
-pub use brush_cube::{
-    calc_sigma, det2_strict, inverse_sym2, is_finite_f32, is_finite_sym2, sigmoid,
-};
-
 use super::types::{PixelRect, ProjectUniforms, Quat, Splat, Sym2, TileBbox, Vec3A};
+use crate::kernels::camera_model::{CameraModel, calculate_project_jacobian};
+pub use brush_cube::{calc_sigma, is_finite_f32, sigmoid};
 
 pub const TILE_WIDTH: u32 = 16;
 pub const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
@@ -106,58 +104,39 @@ pub fn get_tile_bbox(
     )
 }
 
-/// `J = (3x2)`, returned column-major as `(j00, j01, j10, j11, j20, j21)`.
-/// Caller can drop the first half if they only need the trailing column
-/// for the perspective vjp.
-#[allow(clippy::type_complexity)]
-#[cube]
-pub fn calc_cam_j(mean_c: Vec3A, u: ProjectUniforms) -> (f32, f32, f32, f32, f32, f32) {
-    let img_w_f = u.img_w as f32;
-    let img_h_f = u.img_h as f32;
-    let lim_pos_x = (1.15f32 * img_w_f - u.pixel_center_x) / u.focal_x;
-    let lim_pos_y = (1.15f32 * img_h_f - u.pixel_center_y) / u.focal_y;
-    let lim_neg_x = (-0.15f32 * img_w_f - u.pixel_center_x) / u.focal_x;
-    let lim_neg_y = (-0.15f32 * img_h_f - u.pixel_center_y) / u.focal_y;
-    let rz = 1.0f32 / mean_c.z();
-
-    let uv_x = clamp(mean_c.x() * rz, lim_neg_x, lim_pos_x);
-    let uv_y = clamp(mean_c.y() * rz, lim_neg_y, lim_pos_y);
-
-    let dx = u.focal_x * rz;
-    let dy = u.focal_y * rz;
-    (dx, 0.0f32, 0.0f32, dy, -dx * uv_x, -dy * uv_y)
-}
-
 /// 2D covariance from scale, quat, mean_c and view params. Returns the
 /// symmetric covariance as `Sym2`, with a post-scale clamp so huge-but-
 /// finite inputs don't overflow the `det` of the eventual conic.
 #[cube]
-pub fn calc_cov2d(scale: Vec3A, quat: Quat, mean_c: Vec3A, u: ProjectUniforms) -> Sym2 {
+pub fn calc_cov2d(
+    scale: Vec3A,
+    quat: Quat,
+    mean_c: Vec3A,
+    u: ProjectUniforms,
+    #[comptime] camera_model: CameraModel,
+) -> Sym2 {
     let ns = u.view_rotation().mul_mat3(quat.to_mat3()).mul_diag(scale);
-    let (j00, j01, j10, j11, j20, j21) = calc_cam_j(mean_c, u);
+    let cam_jac = calculate_project_jacobian(
+        mean_c,
+        u.jacobian_clamp_limits,
+        u.pinhole_params,
+        camera_model,
+    );
+
     // V = J * N_s (J is 2x3, N_s is 3x3, V is 2x3).
-    let v0x = j00 * ns.c0_x + j10 * ns.c0_y + j20 * ns.c0_z;
-    let v0y = j01 * ns.c0_x + j11 * ns.c0_y + j21 * ns.c0_z;
-    let v1x = j00 * ns.c1_x + j10 * ns.c1_y + j20 * ns.c1_z;
-    let v1y = j01 * ns.c1_x + j11 * ns.c1_y + j21 * ns.c1_z;
-    let v2x = j00 * ns.c2_x + j10 * ns.c2_y + j20 * ns.c2_z;
-    let v2y = j01 * ns.c2_x + j11 * ns.c2_y + j21 * ns.c2_z;
+    let v = cam_jac.mul_mat3(ns);
+
     // raw = V * V^T (2x2 symmetric).
-    let r00 = v0x * v0x + v1x * v1x + v2x * v2x;
-    let r01 = v0x * v0y + v1x * v1y + v2x * v2y;
-    let r11 = v0y * v0y + v1y * v1y + v2y * v2y;
+    let raw = v.gram_matrix();
 
     // Clamp so max |entry| <= 1e18 — keeps det inside f32 range and
     // preserves PSD / off-diagonal-to-diagonal ratio for huge log_scale
     // training states.
     let lim = 1.0e18f32;
-    let max_abs = max(max(f32::abs(r00), f32::abs(r11)), f32::abs(r01));
+    let max_abs = raw.max_abs();
     let scale_down = select(max_abs > lim, lim / max_abs, 1.0f32);
-    Sym2 {
-        c00: r00 * scale_down,
-        c01: r01 * scale_down,
-        c11: r11 * scale_down,
-    }
+
+    raw.scale(scale_down)
 }
 
 /// MIP-aware blur compensation. Adds `cov_blur` to the diagonal of the
@@ -173,8 +152,8 @@ pub fn compensate_cov2d(c: Sym2, #[comptime] mip_splatting: bool) -> (Sym2, f32)
     };
     let mut filter_comp = f32::cast_from(1.0f32);
     if comptime![mip_splatting] {
-        let det_raw = max(det2_strict(c), 0.0f32);
-        let det_blurred = det2_strict(blurred);
+        let det_raw = max(c.det2_strict(), 0.0f32);
+        let det_blurred = blurred.det2_strict();
         filter_comp = f32::sqrt(det_raw / det_blurred);
     }
     (blurred, filter_comp)
@@ -303,4 +282,29 @@ pub fn write_projected_splat(projected: &mut Tensor<f32>, idx: u32, splat: Splat
 #[cube]
 pub fn world_to_cam(mean: Vec3A, u: ProjectUniforms) -> Vec3A {
     u.view_rotation().mul_vec3(mean).add(u.view_translation())
+}
+
+#[cube]
+pub fn read_mean_viewspace(transforms: &Tensor<f32>, base: usize, u: ProjectUniforms) -> Vec3A {
+    let mean = Vec3A::new(transforms[base], transforms[base + 1], transforms[base + 2]);
+    world_to_cam(mean, u)
+}
+
+#[cube]
+pub fn read_scale(transforms: &Tensor<f32>, base: usize) -> Vec3A {
+    Vec3A::new(
+        f32::exp(transforms[base + 7]),
+        f32::exp(transforms[base + 8]),
+        f32::exp(transforms[base + 9]),
+    )
+}
+
+#[cube]
+pub fn read_quat_unorm(transforms: &Tensor<f32>, base: usize) -> Quat {
+    Quat::new(
+        transforms[base + 3],
+        transforms[base + 4],
+        transforms[base + 5],
+        transforms[base + 6],
+    )
 }

@@ -11,12 +11,19 @@ use crate::{
     formats::find_mask_path,
     scene::{LoadImage, SceneView},
 };
+use brush_render::kernels::camera_model::CameraModel;
+use brush_render::kernels::camera_model::CameraModel::{
+    KannalaBrandt4, Pinhole, RadialTangential8,
+};
+use brush_render::kernels::camera_model::kannala_brandt_4::KannalaBrandt4Params;
+use brush_render::kernels::camera_model::radial_tangential_8::RadialTangential8Params;
 use brush_render::{
     camera::{self, Camera},
     sh::rgb_to_sh,
 };
 use brush_serde::{ParseMetadata, SplatData, SplatMessage};
 use brush_vfs::BrushVfs;
+use colmap_reader::{ColmapCamera, ColmapCameraModel};
 use itertools::Itertools;
 
 fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
@@ -171,7 +178,7 @@ async fn load_dataset_inner(
             .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
             .take(load_args.max_frames.unwrap_or(usize::MAX))
         {
-            let cam_data = cam_model_data
+            let colmap_camera = cam_model_data
                 .get(&img_info.camera_id)
                 .ok_or_else(|| {
                     FormatError::InvalidFormat(format!(
@@ -182,11 +189,13 @@ async fn load_dataset_inner(
                 .clone();
 
             // Create a future to handle loading the image.
-            let focal = cam_data.focal();
-            let fovx = camera::focal_to_fov(focal.0, cam_data.width as u32);
-            let fovy = camera::focal_to_fov(focal.1, cam_data.height as u32);
-            let center = cam_data.principal_point();
-            let center_uv = center / glam::vec2(cam_data.width as f32, cam_data.height as f32);
+            let camera_model = build_camera_model(&colmap_camera);
+            let focal = colmap_camera.focal();
+            let fovx = camera::focal_to_fov(focal.0, colmap_camera.width as u32, &camera_model);
+            let fovy = camera::focal_to_fov(focal.1, colmap_camera.height as u32, &camera_model);
+            let center = colmap_camera.principal_point();
+            let center_uv =
+                center / glam::vec2(colmap_camera.width as f32, colmap_camera.height as f32);
 
             let Some(path) = find_img(&vfs, &img_info.name) else {
                 warnings.push(format!("Skipped '{}': image file not found", img_info.name));
@@ -201,7 +210,14 @@ async fn load_dataset_inner(
             let cam_to_world = world_to_cam.inverse();
             let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
 
-            let camera = Camera::new(translation, quat, fovx, fovy, center_uv);
+            let camera = Camera::new_with_calibration(
+                translation,
+                quat,
+                fovx,
+                fovy,
+                center_uv,
+                camera_model,
+            );
 
             if !camera.is_valid() {
                 warnings.push(format!(
@@ -309,4 +325,46 @@ async fn load_dataset_inner(
         dataset,
         warnings,
     })
+}
+
+fn build_camera_model(colmap_camera: &ColmapCamera) -> CameraModel {
+    let p = &colmap_camera.params;
+    match colmap_camera.model {
+        ColmapCameraModel::SimpleRadialFisheye => KannalaBrandt4(KannalaBrandt4Params {
+            k1: p[3] as f32,
+            k2: 0.0,
+            k3: 0.0,
+            k4: 0.0,
+        }),
+        ColmapCameraModel::RadialFisheye => KannalaBrandt4(KannalaBrandt4Params {
+            k1: p[3] as f32,
+            k2: p[4] as f32,
+            k3: 0.0,
+            k4: 0.0,
+        }),
+        ColmapCameraModel::OpenCvFishEye => KannalaBrandt4(KannalaBrandt4Params {
+            k1: p[4] as f32,
+            k2: p[5] as f32,
+            k3: p[6] as f32,
+            k4: p[7] as f32,
+        }),
+        ColmapCameraModel::FullOpenCV => RadialTangential8(RadialTangential8Params {
+            k1: p[4] as f32,
+            k2: p[5] as f32,
+            k3: p[8] as f32,
+            k4: p[9] as f32,
+            k5: p[10] as f32,
+            k6: p[11] as f32,
+            p1: p[6] as f32,
+            p2: p[7] as f32,
+        }),
+        ColmapCameraModel::Pinhole => Pinhole,
+        _ => {
+            log::warn!(
+                "Unsupported camera model: {:?}! Falling back to pinhole camera",
+                colmap_camera.model
+            );
+            Pinhole
+        }
+    }
 }

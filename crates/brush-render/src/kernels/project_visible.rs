@@ -1,16 +1,16 @@
 //! Compute projected splat data for visible gaussians. PF already
 //! culled non-finite-cov2d splats so this kernel trusts `calc_cov2d`.
 
+use super::helpers::{
+    calc_cov2d, compensate_cov2d, is_finite_f32, read_quat_unorm, read_scale, sigmoid,
+    world_to_cam, write_projected_splat,
+};
+use super::sh::{num_sh_coeffs, sh_coeffs_to_color};
+use super::types::{ProjectUniforms, Splat, Vec3A};
+use crate::kernels::camera_model::{CameraModel, project};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
-
-use super::helpers::{
-    calc_cov2d, compensate_cov2d, inverse_sym2, is_finite_f32, sigmoid, world_to_cam,
-    write_projected_splat,
-};
-use super::sh::{num_sh_coeffs, sh_coeffs_to_color};
-use super::types::{ProjectUniforms, Quat, Splat, Vec3A};
 
 pub const WG_SIZE: u32 = 256;
 
@@ -24,6 +24,7 @@ pub fn project_visible_kernel(
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
     #[comptime] sh_degree: u32,
+    #[comptime] camera_model: CameraModel,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
     if compact_gid >= u.num_visible {
@@ -35,28 +36,17 @@ pub fn project_visible_kernel(
     // means(3) + quats(4) + log_scales(3)
     let base = (global_gid * 10u32) as usize;
     let mean = Vec3A::new(transforms[base], transforms[base + 1], transforms[base + 2]);
-    let scale = Vec3A::new(
-        f32::exp(transforms[base + 7]),
-        f32::exp(transforms[base + 8]),
-        f32::exp(transforms[base + 9]),
-    );
-    let quat_unorm = Quat::new(
-        transforms[base + 3],
-        transforms[base + 4],
-        transforms[base + 5],
-        transforms[base + 6],
-    );
+    let scale = read_scale(transforms, base);
+    let quat_unorm = read_quat_unorm(transforms, base);
     let quat = quat_unorm.normalize();
 
     let mean_c = world_to_cam(mean, u);
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u);
+    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     let opac = sigmoid(raw_opacities[global_gid as usize]) * filter_comp;
-    let conic = inverse_sym2(cov);
+    let conic = cov.inverse();
 
-    let inv_z = 1.0f32 / mean_c.z();
-    let mean2d_x = u.focal_x * mean_c.x() * inv_z + u.pixel_center_x;
-    let mean2d_y = u.focal_y * mean_c.y() * inv_z + u.pixel_center_y;
+    let (mean2d_x, mean2d_y) = project(mean_c, u.pinhole_params, camera_model);
 
     // Viewdir. Safe to normalize: splats with length(mean - cam) == 0
     // would already be culled in PF.
