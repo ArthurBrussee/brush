@@ -1,6 +1,6 @@
 use crate::kernels::camera_model::pinhole::PinholeParams;
 use crate::kernels::types::ProjectUniforms;
-use brush_cube::{Mat2x3, Sym2, Sym3, Vec3A};
+use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
 use bytemuck::{ByteHash, NoUninit};
@@ -134,12 +134,18 @@ pub fn calculate_project_jacobian_kb4(
     let pinhole_dv_dz = -dy * y * inv_z;
 
     Mat2x3 {
-        c0_x: select(near_axis, pinhole_du_dx, du_dx),
-        c0_y: select(near_axis, 0.0, dv_dx),
-        c1_x: select(near_axis, 0.0, du_dy),
-        c1_y: select(near_axis, pinhole_dv_dy, dv_dy),
-        c2_x: select(near_axis, pinhole_du_dz, du_dz),
-        c2_y: select(near_axis, pinhole_dv_dz, dv_dz),
+        c0: Vec2::new(
+            select(near_axis, pinhole_du_dx, du_dx),
+            select(near_axis, 0.0, dv_dx),
+        ),
+        c1: Vec2::new(
+            select(near_axis, 0.0, du_dy),
+            select(near_axis, pinhole_dv_dy, dv_dy),
+        ),
+        c2: Vec2::new(
+            select(near_axis, pinhole_du_dz, du_dz),
+            select(near_axis, pinhole_dv_dz, dv_dz),
+        ),
     }
 }
 
@@ -150,8 +156,7 @@ pub fn calculate_projection_vjp_kb4(
     cov_c: Sym3,
     u: ProjectUniforms,
     v_cov2d: Sym2,
-    v_mean2d_x: f32,
-    v_mean2d_y: f32,
+    v_mean2d: Vec2,
     #[comptime] params: KannalaBrandt4Params,
 ) -> Vec3A {
     let PinholeParams { fx, fy, .. } = u.pinhole_params;
@@ -206,19 +211,10 @@ pub fn calculate_projection_vjp_kb4(
     let dg_y = p1 * dth_y;
     let dg_z = p1 * dth_z;
 
-    let Mat2x3 {
-        c0_x: j00,
-        c0_y: j10,
-        c1_x: j01,
-        c1_y: j11,
-        c2_x: j02,
-        c2_y: j12,
-    } = project_jacobian;
-
     // --- Path 1: v_mean_c = J^T v_mean2d ---
-    let mut v_mx = j00 * v_mean2d_x + j10 * v_mean2d_y;
-    let mut v_my = j01 * v_mean2d_x + j11 * v_mean2d_y;
-    let mut v_mz = j02 * v_mean2d_x + j12 * v_mean2d_y;
+    let mut v_mx = v_mean2d.dot(project_jacobian.c0);
+    let mut v_my = v_mean2d.dot(project_jacobian.c1);
+    let mut v_mz = v_mean2d.dot(project_jacobian.c2);
 
     // --- v_J = 2 * sym(v_cov2d) * J * cov_c   (2x3) ---
     // tmp = v_cov2d * J  (works because Sym2.mul_mat2x3 already does

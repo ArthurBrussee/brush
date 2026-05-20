@@ -1,7 +1,7 @@
 use crate::kernels::camera_model::JacobianClampLimits;
 use crate::kernels::camera_model::pinhole::PinholeParams;
 use crate::kernels::types::ProjectUniforms;
-use brush_cube::{Mat2x3, Sym2, Sym3, Vec3A};
+use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
 use bytemuck::{ByteHash, NoUninit};
@@ -134,12 +134,9 @@ pub fn calculate_project_jacobian_rt8(
     let dv_dz = -fy * (d10 * xc + d11 * yc) * inv_z2;
 
     Mat2x3 {
-        c0_x: du_dx,
-        c0_y: dv_dx,
-        c1_x: du_dy,
-        c1_y: dv_dy,
-        c2_x: du_dz,
-        c2_y: dv_dz,
+        c0: Vec2::new(du_dx, dv_dx),
+        c1: Vec2::new(du_dy, dv_dy),
+        c2: Vec2::new(du_dz, dv_dz),
     }
 }
 
@@ -149,8 +146,7 @@ pub fn calculate_projection_vjp_rt8(
     cov_c: Sym3,
     u: ProjectUniforms,
     v_cov2d: Sym2,
-    v_mean2d_x: f32,
-    v_mean2d_y: f32,
+    v_mean2d: Vec2,
     #[comptime] params: RadianTangential8Params,
 ) -> Vec3A {
     let PinholeParams { fx, fy, .. } = u.pinhole_params;
@@ -255,18 +251,15 @@ pub fn calculate_projection_vjp_rt8(
     let je12 = (select(in_x, 0.0f32, mx_rz * js10)) + (select(in_y, 0.0f32, my_rz * js11)) + js12;
 
     // Path 1: v_mean_c += J_eff^T v_mean2d
-    let mut v_mx = je00 * v_mean2d_x + je10 * v_mean2d_y;
-    let mut v_my = je01 * v_mean2d_x + je11 * v_mean2d_y;
-    let mut v_mz = je02 * v_mean2d_x + je12 * v_mean2d_y;
+    let mut v_mx = je00 * v_mean2d.x() + je10 * v_mean2d.y();
+    let mut v_my = je01 * v_mean2d.x() + je11 * v_mean2d.y();
+    let mut v_mz = je02 * v_mean2d.x() + je12 * v_mean2d.y();
 
     // v_J_eff = 2 sym(v_cov2d) J_eff cov_c (2x3)
     let tmp = v_cov2d.mul_mat2x3(Mat2x3 {
-        c0_x: je00,
-        c0_y: je10,
-        c1_x: je01,
-        c1_y: je11,
-        c2_x: je02,
-        c2_y: je12,
+        c0: Vec2::new(je00, je10),
+        c1: Vec2::new(je01, je11),
+        c2: Vec2::new(je02, je12),
     });
     let ve_u0 = 2.0f32 * tmp.row0().dot(cov_c.row0());
     let ve_u1 = 2.0f32 * tmp.row0().dot(cov_c.row1());

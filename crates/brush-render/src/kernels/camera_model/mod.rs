@@ -9,16 +9,13 @@ use crate::kernels::camera_model::CameraModel::{KannalaBrandt4, Pinhole, RadialT
 use crate::kernels::camera_model::kannala_brandt_4::{
     KannalaBrandt4Params, calculate_project_jacobian_kb4, calculate_projection_vjp_kb4, project_kb4,
 };
-use crate::kernels::camera_model::pinhole::{
-    PinholeParams, calculate_project_jacobian_pinhole, calculate_projection_vjp_pinhole,
-    project_pinhole,
-};
+use crate::kernels::camera_model::pinhole::{PinholeParams, calculate_project_jacobian_pinhole, project_pinhole, calculate_projection_vjp_pinhole};
 use crate::kernels::camera_model::radial_tangential_8::{
     RadianTangential8Params, calculate_project_jacobian_rt8, calculate_projection_vjp_rt8,
     project_rt8,
 };
 use crate::kernels::types::ProjectUniforms;
-use brush_cube::{Mat2x3, Sym2, Sym3, Vec3A};
+use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
 
 #[derive(Copy, Clone, PartialEq, Debug, Hash, Default)]
 pub enum CameraModel {
@@ -77,8 +74,7 @@ pub fn calculate_projection_vjp(
     cov_c: Sym3,
     u: ProjectUniforms,
     v_cov2d: Sym2,
-    v_mean2d_x: f32,
-    v_mean2d_y: f32,
+    v_mean2d: Vec2,
     #[comptime] camera_model: CameraModel,
 ) -> Vec3A {
     match camera_model {
@@ -88,8 +84,7 @@ pub fn calculate_projection_vjp(
             cov_c,
             u,
             v_cov2d,
-            v_mean2d_x,
-            v_mean2d_y,
+            v_mean2d,
         ),
         KannalaBrandt4(params) => calculate_projection_vjp_kb4(
             projection_jacobian,
@@ -97,12 +92,11 @@ pub fn calculate_projection_vjp(
             cov_c,
             u,
             v_cov2d,
-            v_mean2d_x,
-            v_mean2d_y,
+            v_mean2d,
             params,
         ),
         RadialTangential8(params) => {
-            calculate_projection_vjp_rt8(mean_c, cov_c, u, v_cov2d, v_mean2d_x, v_mean2d_y, params)
+            calculate_projection_vjp_rt8(mean_c, cov_c, u, v_cov2d, v_mean2d, params)
         }
     }
 }

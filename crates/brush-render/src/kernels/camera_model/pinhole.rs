@@ -1,6 +1,6 @@
 use crate::kernels::camera_model::JacobianClampLimits;
 use crate::kernels::types::ProjectUniforms;
-use brush_cube::{Mat2x3, Sym2, Sym3, Vec3A};
+use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
 use bytemuck::{ByteHash, NoUninit};
@@ -52,12 +52,9 @@ pub fn calculate_project_jacobian_pinhole(
     let clamped_y = clamp(y * inv_z, limits.lim_neg_y, limits.lim_pos_y);
 
     Mat2x3 {
-        c0_x: dx,
-        c0_y: 0.0,
-        c1_x: 0.0,
-        c1_y: dy,
-        c2_x: -dx * clamped_x,
-        c2_y: -dy * clamped_y,
+        c0: Vec2::new(dx, 0.0),
+        c1: Vec2::new(0.0, dy),
+        c2: Vec2::new(-dx * clamped_x, -dy * clamped_y),
     }
 }
 
@@ -68,8 +65,7 @@ pub fn calculate_projection_vjp_pinhole(
     cov_c: Sym3,
     u: ProjectUniforms,
     v_cov2d: Sym2,
-    v_mean2d_x: f32,
-    v_mean2d_y: f32,
+    v_mean2d: Vec2,
 ) -> Vec3A {
     let PinholeParams { fx, fy, .. } = u.pinhole_params;
     let JacobianClampLimits {
@@ -95,9 +91,9 @@ pub fn calculate_projection_vjp_pinhole(
     let inv_z2 = inv_z * inv_z;
     let inv_z3 = inv_z2 * inv_z;
 
-    let mut v_mx = fx * inv_z * v_mean2d_x;
-    let mut v_my = fy * inv_z * v_mean2d_y;
-    let mut v_mz = -(fx * mx * v_mean2d_x + fy * my * v_mean2d_y) * inv_z2;
+    let mut v_mx = fx * inv_z * v_mean2d.x();
+    let mut v_my = fy * inv_z * v_mean2d.y();
+    let mut v_mz = -(fx * mx * v_mean2d.x() + fy * my * v_mean2d.y()) * inv_z2;
 
     // tmp = v_cov2d * J (2x3, col-major).
     let tmp = v_cov2d.mul_mat2x3(project_jacobian);

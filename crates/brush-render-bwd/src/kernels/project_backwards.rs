@@ -1,6 +1,6 @@
 //! Backward projection.
 
-use brush_cube::{is_finite_f32, sigmoid};
+use brush_cube::{is_finite_f32, sigmoid, Vec2};
 use brush_render::kernels::camera_model::CameraModel;
 use brush_render::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
 use brush_render::kernels::helpers::{
@@ -207,8 +207,7 @@ pub fn project_backwards_kernel(
         cov_c,
         u,
         v_cov2d,
-        v_mean2d_x,
-        v_mean2d_y,
+        Vec2::new(v_mean2d_x, v_mean2d_y),
         camera_model,
     );
 

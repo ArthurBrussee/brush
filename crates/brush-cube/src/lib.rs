@@ -308,79 +308,53 @@ impl Mat3 {
     }
 }
 
-/// 2x3 matrix, column-major. `c{i}_{x,y}` is column i, row x/y.
+/// 2x3 matrix, column-major.
 #[derive(CubeType, Copy, Clone)]
 pub struct Mat2x3 {
-    pub c0_x: f32,
-    pub c0_y: f32,
-    pub c1_x: f32,
-    pub c1_y: f32,
-    pub c2_x: f32,
-    pub c2_y: f32,
+    pub c0: Vec2,
+    pub c1: Vec2,
+    pub c2: Vec2,
 }
 
 #[cube]
 impl Mat2x3 {
-    pub fn from_cols(c0: Vec2, c1: Vec2, c2: Vec2) -> Mat2x3 {
-        Mat2x3 {
-            c0_x: c0.x(),
-            c0_y: c0.y(),
-            c1_x: c1.x(),
-            c1_y: c1.y(),
-            c2_x: c2.x(),
-            c2_y: c2.y(),
-        }
-    }
-
-    pub fn col0(self) -> Vec2 {
-        Vec2::new(self.c0_x, self.c0_y)
-    }
-
-    pub fn col1(self) -> Vec2 {
-        Vec2::new(self.c1_x, self.c1_y)
-    }
-
-    pub fn col2(self) -> Vec2 {
-        Vec2::new(self.c2_x, self.c2_y)
-    }
-
     /// `M * N`. Each output column is `M * N.col_i`.
     pub fn mul_mat3(self, n: Mat3) -> Mat2x3 {
-        Mat2x3::from_cols(
-            self.mul_vec3(n.col0()),
-            self.mul_vec3(n.col1()),
-            self.mul_vec3(n.col2()),
-        )
+        Mat2x3 {
+            c0: self.mul_vec3(n.col0()),
+            c1: self.mul_vec3(n.col1()),
+            c2: self.mul_vec3(n.col2()),
+        }
     }
 
     /// `M * v`.
     pub fn mul_vec3(self, v: Vec3A) -> Vec2 {
-        self.col0()
+        self.c0
             .scale(v.x())
-            .add(self.col1().scale(v.y()))
-            .add(self.col2().scale(v.z()))
+            .add(self.c1.scale(v.y()))
+            .add(self.c2.scale(v.z()))
     }
 
     pub fn row0(self) -> Vec3A {
-        Vec3A::new(self.c0_x, self.c1_x, self.c2_x)
+        Vec3A::new(self.c0.x(), self.c1.x(), self.c2.x())
     }
 
     pub fn row1(self) -> Vec3A {
-        Vec3A::new(self.c0_y, self.c1_y, self.c2_y)
+        Vec3A::new(self.c0.y(), self.c1.y(), self.c2.y())
     }
 
     /// `self^T * sym * self` — congruence (2×3)^T × (2×2 sym) × (2×3) → (3×3 sym).
     pub fn transpose_congruence_sym2(self, sym: Sym2) -> Sym3 {
-        let sc0 = sym.mul_vec2(self.col0());
-        let sc1 = sym.mul_vec2(self.col1());
-        let sc2 = sym.mul_vec2(self.col2());
+        let sc0 = sym.mul_vec2(self.c0);
+        let sc1 = sym.mul_vec2(self.c1);
+        let sc2 = sym.mul_vec2(self.c2);
         Sym3 {
-            c00: self.col0().dot(sc0),
-            c01: self.col0().dot(sc1),
-            c02: self.col0().dot(sc2),
-            c11: self.col1().dot(sc1),
-            c12: self.col1().dot(sc2),
-            c22: self.col2().dot(sc2),
+            c00: self.c0.dot(sc0),
+            c01: self.c0.dot(sc1),
+            c02: self.c0.dot(sc2),
+            c11: self.c1.dot(sc1),
+            c12: self.c1.dot(sc2),
+            c22: self.c2.dot(sc2),
         }
     }
 
@@ -390,9 +364,9 @@ impl Mat2x3 {
     }
 
     pub fn gram_matrix(self) -> Sym2 {
-        let c00 = self.c0_x * self.c0_x + self.c1_x * self.c1_x + self.c2_x * self.c2_x;
-        let c01 = self.c0_x * self.c0_y + self.c1_x * self.c1_y + self.c2_x * self.c2_y;
-        let c11 = self.c0_y * self.c0_y + self.c1_y * self.c1_y + self.c2_y * self.c2_y;
+        let c00 = self.c0.x() * self.c0.x() + self.c1.x() * self.c1.x() + self.c2.x() * self.c2.x();
+        let c01 = self.c0.x() * self.c0.y() + self.c1.x() * self.c1.y() + self.c2.x() * self.c2.y();
+        let c11 = self.c0.y() * self.c0.y() + self.c1.y() * self.c1.y() + self.c2.y() * self.c2.y();
 
         Sym2 { c00, c01, c11 }
     }
@@ -438,11 +412,11 @@ impl Sym2 {
 
     /// `M * N`. Each output column is `M * N.col_i`.
     pub fn mul_mat2x3(self, n: Mat2x3) -> Mat2x3 {
-        Mat2x3::from_cols(
-            self.mul_vec2(n.col0()),
-            self.mul_vec2(n.col1()),
-            self.mul_vec2(n.col2()),
-        )
+        Mat2x3 {
+            c0: self.mul_vec2(n.c0),
+            c1: self.mul_vec2(n.c1),
+            c2: self.mul_vec2(n.c2),
+        }
     }
 
     /// 2x2 inverse of a symmetric matrix, returning the inverse as a `Sym2`.
