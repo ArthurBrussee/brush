@@ -19,7 +19,7 @@ use glam::Vec3;
 
 use crate::{
     MainBackend, MainBackendBase, RenderAuxInner, SplatOps, camera::Camera,
-    gaussian_splats::SplatRenderMode, render_aux::RenderOutput,
+    gaussian_splats::SplatRenderMode, render_aux::RenderOutput, wgpu_kind,
 };
 
 /// Inner Wgpu autodiff backend (same as `Autodiff<burn::backend::Wgpu>`).
@@ -43,7 +43,7 @@ pub type AutodiffMain = Autodiff<MainBackend>;
 pub fn unwrap_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<MainBackend> {
     let dispatch: DispatchTensor = t.into_primitive().into();
     match dispatch.kind {
-        DispatchTensorKind::Wgpu(bt) => bt.float(),
+        wgpu_kind!(bt) => bt.float(),
         other => panic!(
             "expected Wgpu tensor, got: {:?}",
             std::mem::discriminant(&other)
@@ -56,7 +56,7 @@ pub fn unwrap_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<MainBacken
 pub fn unwrap_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBackend> {
     let dispatch: DispatchTensor = t.into_primitive().into();
     match dispatch.kind {
-        DispatchTensorKind::Wgpu(bt) => bt.int(),
+        wgpu_kind!(bt) => bt.int(),
         other => panic!(
             "expected Wgpu int tensor, got: {:?}",
             std::mem::discriminant(&other)
@@ -68,7 +68,7 @@ pub fn unwrap_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBacke
 /// user-facing `Tensor<D>`.
 pub fn wrap_wgpu_float<const D: usize>(t: FloatTensor<MainBackend>) -> Tensor<D> {
     Tensor::from_primitive(BridgeTensor::Float(DispatchTensor {
-        kind: DispatchTensorKind::Wgpu(BackendTensor::Float(t)),
+        kind: wgpu_kind!(BackendTensor::Float(t)),
         checkpointing: None,
     }))
 }
@@ -76,7 +76,7 @@ pub fn wrap_wgpu_float<const D: usize>(t: FloatTensor<MainBackend>) -> Tensor<D>
 /// Like [`wrap_wgpu_float`] for an int tensor.
 pub fn wrap_wgpu_int<const D: usize>(t: IntTensor<MainBackend>) -> Tensor<D, Int> {
     Tensor::from_primitive(BridgeTensor::Int(DispatchTensor {
-        kind: DispatchTensorKind::Wgpu(BackendTensor::Int(t)),
+        kind: wgpu_kind!(BackendTensor::Int(t)),
         checkpointing: None,
     }))
 }
@@ -87,7 +87,7 @@ pub fn unwrap_ad_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<Autodif
     let prim: DispatchTensor = t.into_primitive().into();
     match prim.kind {
         DispatchTensorKind::Autodiff(inner) => match *inner {
-            DispatchTensorKind::Wgpu(BackendTensor::Autodiff(t)) => t,
+            wgpu_kind!(BackendTensor::Autodiff(t)) => t,
             other => panic!(
                 "autodiff inner kind is not Wgpu: {:?}",
                 std::mem::discriminant(&other)
@@ -109,7 +109,7 @@ pub fn unwrap_ad_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBa
         other => other,
     };
     match kind {
-        DispatchTensorKind::Wgpu(bt) => bt.int(),
+        wgpu_kind!(bt) => bt.int(),
         other => panic!(
             "expected Wgpu int tensor; got: {:?}",
             std::mem::discriminant(&other)
@@ -121,9 +121,7 @@ pub fn unwrap_ad_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBa
 /// user-facing `Tensor<D>` on the autodiff device.
 pub fn wrap_ad_wgpu_float<const D: usize>(t: FloatTensor<AutodiffMain>) -> Tensor<D> {
     Tensor::from_primitive(BridgeTensor::Float(DispatchTensor {
-        kind: DispatchTensorKind::Autodiff(Box::new(DispatchTensorKind::Wgpu(
-            BackendTensor::Autodiff(t),
-        ))),
+        kind: DispatchTensorKind::Autodiff(Box::new(wgpu_kind!(BackendTensor::Autodiff(t)))),
         checkpointing: Some(CheckpointingStrategy::None),
     }))
 }

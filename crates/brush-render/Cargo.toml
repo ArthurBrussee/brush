@@ -30,6 +30,18 @@ tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 [features]
 debug-validation = []
 
+# Pick exactly one wgpu sub-feature per target so burn-dispatch's
+# build.rs uses Vulkan/Metal (u8 bools) on native and WebGpu (u32) on wasm,
+# instead of silently falling back to WebGpu when multiple are enabled.
+[target.'cfg(target_os = "macos")'.dependencies]
+burn = { workspace = true, features = ["metal"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+burn = { workspace = true, features = ["webgpu"] }
+
+[target.'cfg(all(not(target_os = "macos"), not(target_family = "wasm")))'.dependencies]
+burn = { workspace = true, features = ["vulkan"] }
+
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
