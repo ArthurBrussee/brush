@@ -9,7 +9,10 @@ use crate::kernels::camera_model::CameraModel::{KannalaBrandt4, Pinhole, RadialT
 use crate::kernels::camera_model::kannala_brandt_4::{
     KannalaBrandt4Params, calculate_project_jacobian_kb4, calculate_projection_vjp_kb4, project_kb4,
 };
-use crate::kernels::camera_model::pinhole::{PinholeParams, calculate_project_jacobian_pinhole, project_pinhole, calculate_projection_vjp_pinhole};
+use crate::kernels::camera_model::pinhole::{
+    PinholeParams, calculate_project_jacobian_pinhole, calculate_projection_vjp_pinhole,
+    project_pinhole,
+};
 use crate::kernels::camera_model::radial_tangential_8::{
     RadianTangential8Params, calculate_project_jacobian_rt8, calculate_projection_vjp_rt8,
     project_rt8,

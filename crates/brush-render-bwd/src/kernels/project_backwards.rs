@@ -1,6 +1,6 @@
 //! Backward projection.
 
-use brush_cube::{is_finite_f32, sigmoid, Vec2};
+use brush_cube::{Vec2, is_finite_f32, sigmoid};
 use brush_render::kernels::camera_model::CameraModel;
 use brush_render::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
 use brush_render::kernels::helpers::{
