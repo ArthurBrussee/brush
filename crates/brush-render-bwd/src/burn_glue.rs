@@ -182,7 +182,7 @@ pub struct SplatOutputDiff {
 pub fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
     let dispatch: DispatchTensor = t.into_primitive().into();
     match dispatch.kind {
-        DispatchTensorKind::Wgpu(BackendTensor::Float(inner)) => {
+        brush_render::wgpu_kind!(BackendTensor::Float(inner)) => {
             wrap_ad_wgpu_float(<AutodiffMain as AutodiffBackend>::from_inner(inner))
         }
         // Already autodiff — no-op.

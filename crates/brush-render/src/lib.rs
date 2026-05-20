@@ -3,7 +3,6 @@
 use burn::backend::Backend;
 use burn::backend::tensor::FloatTensor;
 use burn_cubecl::CubeBackend;
-use burn_fusion::Fusion;
 use burn_wgpu::WgpuRuntime;
 use camera::Camera;
 use clap::ValueEnum;
@@ -34,8 +33,54 @@ pub mod get_tile_offset;
 pub mod render;
 pub mod validation;
 
+// `MainBackend` is burn's per-platform alias (which already picks the right
+// bool element). `MainBackendBase` is the un-Fusioned CubeBackend that lives
+// inside it — burn doesn't export it directly, so we mirror it here using the
+// same parameters as the alias on each platform.
+#[cfg(target_family = "wasm")]
+pub type MainBackend = burn::backend::wgpu::WebGpu;
+#[cfg(target_family = "wasm")]
 pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u32>;
-pub type MainBackend = Fusion<MainBackendBase>;
+
+#[cfg(target_os = "macos")]
+pub type MainBackend = burn::backend::wgpu::Metal;
+#[cfg(target_os = "macos")]
+pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u8>;
+
+#[cfg(all(not(target_family = "wasm"), not(target_os = "macos")))]
+pub type MainBackend = burn::backend::wgpu::Vulkan;
+#[cfg(all(not(target_family = "wasm"), not(target_os = "macos")))]
+pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u8>;
+
+/// `DispatchTensorKind` variant for the active wgpu backend. burn-dispatch
+/// uses different variant names per backend (`Wgpu`, `Vulkan`, `Metal`); brush
+/// only ever runs on one, so this alias hides the per-platform name from
+/// match arms and constructors. Use as `wgpu_kind!(bt)` in both positions.
+#[macro_export]
+macro_rules! wgpu_kind {
+    ($($t:tt)*) => {
+        $crate::__wgpu_kind!($($t)*)
+    };
+}
+
+#[cfg(target_family = "wasm")]
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __wgpu_kind {
+    ($($t:tt)*) => { ::burn::backend::DispatchTensorKind::Wgpu($($t)*) };
+}
+#[cfg(target_os = "macos")]
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __wgpu_kind {
+    ($($t:tt)*) => { ::burn::backend::DispatchTensorKind::Metal($($t)*) };
+}
+#[cfg(all(not(target_family = "wasm"), not(target_os = "macos")))]
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __wgpu_kind {
+    ($($t:tt)*) => { ::burn::backend::DispatchTensorKind::Vulkan($($t)*) };
+}
 
 /// Trait for the gaussian splatting rendering pipeline.
 ///
