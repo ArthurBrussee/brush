@@ -142,7 +142,7 @@ async fn run_loader(
             img_packed,
             has_alpha,
             alpha_mode: view.image.alpha_mode(),
-            camera: view.camera.clone(),
+            camera: view.camera,
         };
 
         if tx.send(batch).await.is_err() {

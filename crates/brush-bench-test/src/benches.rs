@@ -4,6 +4,7 @@ use brush_render::{
     bounding_box::BoundingBox,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
+    kernels::camera_model::CameraModel::Pinhole,
     render_splats,
 };
 use brush_render_bwd::render_splats as render_splats_diff;
@@ -122,7 +123,14 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
         .collect();
 
     let img_packed = TensorData::new(img_packed_data, [height as usize, width as usize]);
-    let camera = Camera::new(camera_pos, Quat::IDENTITY, 50.0, 50.0, glam::vec2(0.5, 0.5));
+    let camera = Camera::new(
+        camera_pos,
+        Quat::IDENTITY,
+        50.0,
+        50.0,
+        glam::vec2(0.5, 0.5),
+        Pinhole,
+    );
 
     SceneBatch {
         img_packed,
@@ -139,6 +147,7 @@ fn bench_camera() -> Camera {
         50.0,
         50.0,
         glam::vec2(0.5, 0.5),
+        Pinhole,
     )
 }
 

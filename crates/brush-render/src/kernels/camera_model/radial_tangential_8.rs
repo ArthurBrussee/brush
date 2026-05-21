@@ -4,10 +4,8 @@ use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
-use bytemuck::{ByteHash, NoUninit};
 
-#[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug)]
-#[repr(C)]
+#[derive(CubeLaunch, CubeType, Copy, Clone, PartialEq, Debug, Default)]
 pub struct RadialTangential8Params {
     pub k1: f32,
     pub k2: f32,
@@ -19,11 +17,19 @@ pub struct RadialTangential8Params {
     pub p2: f32,
 }
 
+impl RadialTangential8Params {
+    pub fn to_launch_object<R: Runtime>(&self) -> RadialTangential8ParamsLaunch<R> {
+        RadialTangential8ParamsLaunch::new(
+            self.k1, self.k2, self.k3, self.k4, self.k5, self.k6, self.p1, self.p2,
+        )
+    }
+}
+
 #[cube]
 pub fn project_rt8(
     point: Vec3A,
     pinhole_params: PinholeParams,
-    #[comptime] params: RadialTangential8Params,
+    params: RadialTangential8Params,
 ) -> (f32, f32) {
     let PinholeParams { fx, fy, cx, cy } = pinhole_params;
     let RadialTangential8Params {
@@ -67,7 +73,7 @@ pub fn calculate_project_jacobian_rt8(
     point: Vec3A,
     limits: JacobianClampLimits,
     pinhole_params: PinholeParams,
-    #[comptime] params: RadialTangential8Params,
+    params: RadialTangential8Params,
 ) -> Mat2x3 {
     let PinholeParams { fx, fy, .. } = pinhole_params;
     let RadialTangential8Params {
@@ -147,7 +153,7 @@ pub fn calculate_projection_vjp_rt8(
     u: ProjectUniforms,
     v_cov2d: Sym2,
     v_mean2d: Vec2,
-    #[comptime] params: RadialTangential8Params,
+    params: RadialTangential8Params,
 ) -> Vec3A {
     let PinholeParams { fx, fy, .. } = u.pinhole_params;
     let RadialTangential8Params {

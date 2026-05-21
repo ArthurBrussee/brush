@@ -210,14 +210,7 @@ async fn load_dataset_inner(
             let cam_to_world = world_to_cam.inverse();
             let (_, quat, translation) = cam_to_world.to_scale_rotation_translation();
 
-            let camera = Camera::new_with_calibration(
-                translation,
-                quat,
-                fovx,
-                fovy,
-                center_uv,
-                camera_model,
-            );
+            let camera = Camera::new(translation, quat, fovx, fovy, center_uv, camera_model);
 
             if !camera.is_valid() {
                 warnings.push(format!(

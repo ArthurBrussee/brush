@@ -91,7 +91,7 @@ impl SplatBackbuffer {
         // Check if we need to re-render
         let current_state = LastRenderState {
             frame,
-            camera: camera.clone(),
+            camera: *camera,
             background,
             splat_scale,
             img_size,

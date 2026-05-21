@@ -108,7 +108,7 @@ impl SplatTrainer {
         self.step_count += 1;
 
         let [img_h, img_w] = batch.img_size();
-        let camera = batch.camera.clone();
+        let camera = batch.camera;
 
         let device = splats.device();
         let has_alpha = batch.has_alpha;

@@ -21,6 +21,7 @@ use brush_render::{
     MainBackendBase, RenderOutput, SplatOps,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
+    kernels::camera_model::CameraModel::Pinhole,
     shaders::helpers::TILE_WIDTH,
 };
 use burn::backend::wgpu::WgpuDevice;
@@ -197,6 +198,7 @@ fn std_cam() -> Camera {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        Pinhole,
     )
 }
 
@@ -219,7 +221,7 @@ fn rand_cam(rng: &mut Sm64) -> Camera {
         glam::Quat::from_axis_angle(axis, angle)
     };
     let fov = rng.uniform(0.3, 1.2) as f64;
-    Camera::new(pos, rot, fov, fov, glam::vec2(0.5, 0.5))
+    Camera::new(pos, rot, fov, fov, glam::vec2(0.5, 0.5), Pinhole)
 }
 
 fn rand_img_size(rng: &mut Sm64) -> glam::UVec2 {

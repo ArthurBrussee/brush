@@ -23,7 +23,6 @@ clap.workspace = true
 serde.workspace = true
 tracing.workspace = true
 log.workspace = true
-bytemuck.workspace = true
 
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 

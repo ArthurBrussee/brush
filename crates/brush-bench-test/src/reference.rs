@@ -142,6 +142,7 @@ async fn test_reference() -> Result<()> {
             fov_x,
             fov_y,
             glam::vec2(0.5, 0.5),
+            Pinhole,
         );
 
         let diff_out = brush_render_bwd::render_splats(

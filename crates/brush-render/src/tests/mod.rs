@@ -25,6 +25,7 @@ async fn renders_at_all() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(32, 32);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
@@ -79,6 +80,7 @@ async fn renders_many_splats() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(64, 64);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
@@ -289,6 +291,7 @@ async fn render_is_deterministic_on_large_splats() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(256, 256);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
@@ -315,6 +318,7 @@ async fn hidden_splats_do_not_perturb_render() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(256, 256);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
@@ -359,6 +363,7 @@ async fn culled_prefix_does_not_perturb_render() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(256, 256);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
@@ -392,6 +397,7 @@ async fn mega_stress_fullscreen_splats() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(512, 512);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
@@ -451,6 +457,7 @@ async fn renders_large_rotated_splats() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(256, 256);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
@@ -515,6 +522,7 @@ async fn renders_many_large_splats_stress() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(128, 128);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
@@ -583,6 +591,7 @@ async fn render_panics_loudly_on_nan_positions() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(32, 32);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
@@ -620,6 +629,7 @@ async fn zero_splats_renders_background() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(32, 32);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
@@ -669,6 +679,7 @@ async fn zero_quaternion_splats_dont_poison_render() {
         0.5,
         0.5,
         glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
     );
     let img_size = glam::uvec2(64, 64);
     let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
