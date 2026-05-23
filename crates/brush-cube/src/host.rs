@@ -1,5 +1,5 @@
-use burn::backend::wgpu::{WgpuDevice, WgpuRuntime};
 use burn::tensor::{DType, Scalar, Shape};
+use burn_wgpu::{WgpuDevice, WgpuRuntime};
 use bytemuck::Pod;
 
 pub use burn_cubecl::cubecl::prelude::KernelId;

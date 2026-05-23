@@ -29,6 +29,7 @@ use burn_cubecl::cubecl::prelude::*;
 /// `glam::Vec3A`. See the module-level note on the cubecl-cpp
 /// alignas-12 workaround.
 #[derive(CubeType, CubeTypeMut, Copy, Clone)]
+#[expand(derive(Clone, Copy))]
 pub struct Vec3A {
     inner: Vector<f32, Const<4>>,
 }
@@ -37,23 +38,23 @@ pub struct Vec3A {
 impl Vec3A {
     pub fn new(x: f32, y: f32, z: f32) -> Vec3A {
         let mut v = Vector::<f32, Const<4>>::empty();
-        v[0] = x;
-        v[1] = y;
-        v[2] = z;
+        v.insert(0, x);
+        v.insert(1, y);
+        v.insert(2, z);
         // Padding lane — must stay 0 so `dot` / `length` see only the
         // three real components.
-        v[3] = 0.0f32;
+        v.insert(3, 0.0f32);
         Vec3A { inner: v }
     }
 
     pub fn x(self) -> f32 {
-        self.inner[0]
+        self.inner.extract(0)
     }
     pub fn y(self) -> f32 {
-        self.inner[1]
+        self.inner.extract(1)
     }
     pub fn z(self) -> f32 {
-        self.inner[2]
+        self.inner.extract(2)
     }
 
     pub fn add(self, other: Vec3A) -> Vec3A {
@@ -77,7 +78,7 @@ impl Vec3A {
     pub fn dot(self, other: Vec3A) -> f32 {
         let p = self.inner * other.inner;
         // Lane 3 is always 0 in both operands → no special case.
-        p[0] + p[1] + p[2] + p[3]
+        p.extract(0) + p.extract(1) + p.extract(2) + p.extract(3)
     }
 
     pub fn length(self) -> f32 {
@@ -95,6 +96,7 @@ impl Vec3A {
 }
 
 #[derive(CubeType, CubeTypeMut, Copy, Clone)]
+#[expand(derive(Clone, Copy))]
 pub struct Vec2 {
     inner: Vector<f32, Const<2>>,
 }
@@ -103,16 +105,16 @@ pub struct Vec2 {
 impl Vec2 {
     pub fn new(x: f32, y: f32) -> Vec2 {
         let mut v = Vector::<f32, Const<2>>::empty();
-        v[0] = x;
-        v[1] = y;
+        v.insert(0, x);
+        v.insert(1, y);
         Vec2 { inner: v }
     }
 
     pub fn x(self) -> f32 {
-        self.inner[0]
+        self.inner.extract(0)
     }
     pub fn y(self) -> f32 {
-        self.inner[1]
+        self.inner.extract(1)
     }
 
     pub fn add(self, other: Vec2) -> Vec2 {
@@ -134,6 +136,7 @@ impl Vec2 {
 
 /// Unit quaternion stored as `(w, x, y, z)` in a 4-lane cubecl vector.
 #[derive(CubeType, CubeTypeMut, Copy, Clone)]
+#[expand(derive(Clone, Copy))]
 pub struct Quat {
     inner: Vector<f32, Const<4>>,
 }
@@ -142,29 +145,29 @@ pub struct Quat {
 impl Quat {
     pub fn new(w: f32, x: f32, y: f32, z: f32) -> Quat {
         let mut v = Vector::<f32, Const<4>>::empty();
-        v[0] = w;
-        v[1] = x;
-        v[2] = y;
-        v[3] = z;
+        v.insert(0, w);
+        v.insert(1, x);
+        v.insert(2, y);
+        v.insert(3, z);
         Quat { inner: v }
     }
 
     pub fn w(self) -> f32 {
-        self.inner[0]
+        self.inner.extract(0)
     }
     pub fn x(self) -> f32 {
-        self.inner[1]
+        self.inner.extract(1)
     }
     pub fn y(self) -> f32 {
-        self.inner[2]
+        self.inner.extract(2)
     }
     pub fn z(self) -> f32 {
-        self.inner[3]
+        self.inner.extract(3)
     }
 
     pub fn dot(self, other: Quat) -> f32 {
         let p = self.inner * other.inner;
-        p[0] + p[1] + p[2] + p[3]
+        p.extract(0) + p.extract(1) + p.extract(2) + p.extract(3)
     }
 
     pub fn scale(self, s: f32) -> Quat {
@@ -209,6 +212,7 @@ impl Quat {
 
 /// 3x3 matrix, column-major. `c{i}_{x,y,z}` is column i, row x/y/z.
 #[derive(CubeType, Copy, Clone)]
+#[expand(derive(Clone, Copy))]
 pub struct Mat3 {
     pub c0_x: f32,
     pub c0_y: f32,
@@ -310,6 +314,7 @@ impl Mat3 {
 
 /// 2x3 matrix, column-major.
 #[derive(CubeType, Copy, Clone)]
+#[expand(derive(Clone, Copy))]
 pub struct Mat2x3 {
     pub c0: Vec2,
     pub c1: Vec2,
@@ -374,6 +379,7 @@ impl Mat2x3 {
 
 /// Symmetric 2x2 matrix. Three independent entries: `c00`, `c01`, `c11`.
 #[derive(CubeType, Copy, Clone)]
+#[expand(derive(Clone, Copy))]
 pub struct Sym2 {
     pub c00: f32,
     pub c01: f32,
@@ -447,6 +453,7 @@ impl Sym2 {
 
 /// Symmetric 3×3 matrix. Six independent entries: `c{i}{j}` with `i ≤ j`.
 #[derive(CubeType, Copy, Clone)]
+#[expand(derive(Clone, Copy))]
 pub struct Sym3 {
     pub c00: f32,
     pub c01: f32,
@@ -531,6 +538,7 @@ impl Sym3 {
 
 /// 2D bbox in tile coords (inclusive min, exclusive max).
 #[derive(CubeType, Copy, Clone)]
+#[expand(derive(Clone, Copy))]
 pub struct TileBbox {
     pub min_x: u32,
     pub min_y: u32,
@@ -540,6 +548,7 @@ pub struct TileBbox {
 
 /// 2D pixel bbox as a rect (min/max corners in pixel coords).
 #[derive(CubeType, Copy, Clone)]
+#[expand(derive(Clone, Copy))]
 pub struct PixelRect {
     pub min_x: f32,
     pub min_y: f32,

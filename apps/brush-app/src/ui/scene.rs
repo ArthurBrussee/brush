@@ -1,7 +1,6 @@
 use brush_process::DataSource;
 use brush_process::{create_process, message::ProcessMessage};
 use brush_render::camera::{focal_to_fov, fov_to_focal};
-use brush_render::kernels::camera_model::CameraModel;
 use core::f32;
 use eframe::egui_wgpu::RenderState;
 use egui::{Align2, Button, Frame, RichText, containers::Popup};
@@ -501,30 +500,9 @@ impl ScenePanel {
     fn draw_controls_content(ui: &mut egui::Ui, process: &UiProcess) {
         ui.spacing_mut().item_spacing.y = 6.0;
 
-        // Camera model — surfaces what the scene view is rendering with
-        // (tracks the match-dataset toggle below) and lets fisheye / radial-
-        // tangential datasets fall back to a plain pinhole preview.
-        let current_camera = process.current_camera();
-        ui.label(
-            RichText::new(format!(
-                "Rendering with: {}",
-                current_camera.camera_model.label()
-            ))
-            .size(12.0),
-        );
-        if !matches!(process.view_camera_model(), CameraModel::Pinhole) {
-            let mut match_dataset = process.match_dataset_camera();
-            if ui
-                .checkbox(&mut match_dataset, "Match dataset")
-                .on_hover_text("Uncheck to force a pinhole projection for preview / debug.")
-                .changed()
-            {
-                process.set_match_dataset_camera(match_dataset);
-            }
-        }
-
         // FOV slider
         ui.label(RichText::new("Field of View").size(12.0));
+        let current_camera = process.current_camera();
         let mut fov_degrees = current_camera.fov_y.to_degrees() as f32;
 
         let response = ui.add(
@@ -582,49 +560,25 @@ impl ScenePanel {
             process.set_cam_settings(&settings);
         }
 
-        // Background swatch + inline-expandable picker. egui's
-        // `color_edit_button_srgba` opens a nested popup which our outer
-        // settings popup dismisses on the same frame, so we drive the
-        // expand state ourselves and render the picker inline.
-        let mut settings = process.get_cam_settings();
-        let mut bg_color = settings.background.map_or(egui::Color32::BLACK, |b| {
-            egui::Color32::from_rgb(
-                (b.x * 255.0) as u8,
-                (b.y * 255.0) as u8,
-                (b.z * 255.0) as u8,
-            )
-        });
+        ui.label(RichText::new("Background").size(12.0));
 
-        let expand_id = ui.make_persistent_id("bg-color-expand");
-        let mut expanded = ui.data(|d| d.get_temp::<bool>(expand_id).unwrap_or(false));
+        ui.separator();
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Background").size(12.0));
-            // Manual swatch — a small clickable colored rect.
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(24.0, 14.0), egui::Sense::click());
-            ui.painter().rect_filled(rect, 3.0, bg_color);
-            ui.painter().rect_stroke(
-                rect,
-                3.0,
-                egui::Stroke::new(1.0, Color32::from_gray(160)),
-                egui::StrokeKind::Inside,
-            );
-            if resp.clicked() {
-                expanded = !expanded;
-                ui.data_mut(|d| d.insert_temp(expand_id, expanded));
-            }
-        });
+            let mut settings = process.get_cam_settings();
+            let mut bg_color = settings.background.map_or(egui::Color32::BLACK, |b| {
+                egui::Color32::from_rgb(
+                    (b.x * 255.0) as u8,
+                    (b.y * 255.0) as u8,
+                    (b.z * 255.0) as u8,
+                )
+            });
 
-        if expanded {
-            let prev_slider_width = ui.spacing().slider_width;
-            ui.spacing_mut().slider_width = 140.0;
-            let changed = egui::widgets::color_picker::color_picker_color32(
+            if egui::widgets::color_picker::color_picker_color32(
                 ui,
                 &mut bg_color,
                 egui::color_picker::Alpha::Opaque,
-            );
-            ui.spacing_mut().slider_width = prev_slider_width;
-            if changed {
+            ) {
                 settings.background = Some(glam::vec3(
                     bg_color.r() as f32 / 255.0,
                     bg_color.g() as f32 / 255.0,
@@ -632,7 +586,7 @@ impl ScenePanel {
                 ));
                 process.set_cam_settings(&settings);
             }
-        }
+        });
 
         ui.add_space(8.0);
         ui.separator();

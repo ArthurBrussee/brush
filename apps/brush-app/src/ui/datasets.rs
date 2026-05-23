@@ -152,11 +152,10 @@ impl AppPane for DatasetPanel {
         );
         job.append(
             &format!(
-                "  |  {}x{} {}  |  {}",
+                "  |  {}x{} {}",
                 tex.handle.size()[0],
                 tex.handle.size()[1],
-                mask_info,
-                view.camera.camera_model.label(),
+                mask_info
             ),
             0.0,
             egui::TextFormat {

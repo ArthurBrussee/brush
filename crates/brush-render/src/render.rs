@@ -1,3 +1,4 @@
+use crate::camera::calculate_jacobian_clamp_limits;
 use crate::{
     MainBackendBase, RenderAuxInner, SplatOps,
     camera::Camera,
@@ -5,7 +6,7 @@ use crate::{
     gaussian_splats::SplatRenderMode,
     get_tile_offset::{CHECKS_PER_ITER, get_tile_offsets},
     kernels,
-    render_aux::{RenderOutput, RenderState},
+    render_aux::RenderOutput,
     sh::sh_degree_from_coeffs,
     shaders,
 };
@@ -23,6 +24,7 @@ use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
 use glam::{Vec3, uvec2};
 use kernels::types::RasterizeUniformsLaunch;
+use std::f32::consts::PI;
 
 #[doc(hidden)]
 pub fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
@@ -62,7 +64,27 @@ impl SplatOps<Self> for MainBackendBase {
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
-        let tile_bounds = calc_tile_bounds(img_size);
+        let half_max_render_fov =
+            ((camera.fov_x as f32).hypot(camera.fov_y as f32) * 1.05).min(2.0 * PI - 1e-6) * 0.5;
+        let pinhole_params = camera.build_pinhole_params(img_size);
+
+        let mut project_uniforms = shaders::helpers::ProjectUniforms {
+            viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
+            camera_model: camera.camera_model,
+            half_max_render_fov,
+            pinhole_params,
+            camera_position: [camera.position.x, camera.position.y, camera.position.z, 0.0],
+            img_size: img_size.into(),
+            tile_bounds: calc_tile_bounds(img_size).into(),
+            sh_degree,
+            total_splats,
+            num_visible: 0, // num_visible — not yet known.
+            jacobian_clamp_limits: calculate_jacobian_clamp_limits(
+                img_size,
+                pinhole_params,
+                camera.camera_model,
+            ),
+        };
 
         let device = transforms.device.clone();
         let client = transforms.client.clone();
@@ -75,27 +97,28 @@ impl SplatOps<Self> for MainBackendBase {
             num_visible_buf,
             num_intersections_buf,
         ) = {
+            let project_uniforms: &shaders::helpers::ProjectUniforms = &project_uniforms;
             let _span = tracing::trace_span!("ProjectSplats").entered();
 
+            let total_splats = project_uniforms.total_splats as usize;
             let num_visible_buf = Self::int_zeros([1].into(), &device, IntDType::U32);
             let num_intersections_buf = Self::int_zeros([1].into(), &device, IntDType::U32);
-            let intersect_counts =
-                Self::int_zeros([total_splats as usize].into(), &device, IntDType::U32);
-            let max_radius =
-                Self::float_zeros([total_splats as usize].into(), &device, FloatDType::F32);
+            let intersect_counts = Self::int_zeros([total_splats].into(), &device, IntDType::U32);
+            let max_radius = Self::float_zeros([total_splats].into(), &device, FloatDType::F32);
 
-            let global_from_presort_gid =
-                create_tensor([total_splats as usize], &device, DType::U32);
-            let depths = create_tensor([total_splats as usize], &device, DType::F32);
+            let global_from_presort_gid = create_tensor([total_splats], &device, DType::U32);
+            let depths = create_tensor([total_splats], &device, DType::F32);
 
-            let uniforms =
-                camera.to_project_uniforms_launch(img_size, tile_bounds, sh_degree, total_splats);
+            let uniforms = project_uniforms.to_launch_object();
 
             // SAFETY: Kernel checked for OOB and loops.
             unsafe {
                 kernels::project_forward::project_forward_kernel::launch_unchecked::<WgpuRuntime>(
                     &client,
-                    calc_cube_count_1d(total_splats, kernels::project_forward::WG_SIZE),
+                    calc_cube_count_1d(
+                        project_uniforms.total_splats,
+                        kernels::project_forward::WG_SIZE,
+                    ),
                     CubeDim::new_1d(kernels::project_forward::WG_SIZE),
                     transforms.clone().into_tensor_arg(),
                     raw_opacities.clone().into_tensor_arg(),
@@ -107,7 +130,7 @@ impl SplatOps<Self> for MainBackendBase {
                     max_radius.clone().into_tensor_arg(),
                     uniforms,
                     mip_splat,
-                    camera.camera_model.kind(),
+                    camera.camera_model,
                 );
             }
             (
@@ -144,7 +167,11 @@ impl SplatOps<Self> for MainBackendBase {
             (num_visible, num_intersections)
         };
 
+        project_uniforms.num_visible = num_visible;
+
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
+        let img_size: glam::UVec2 = project_uniforms.img_size.into();
+        let tile_bounds: glam::UVec2 = project_uniforms.tile_bounds.into();
         let num_visible_sz = (num_visible as usize).max(1);
 
         let global_from_compact_gid = {
@@ -164,8 +191,7 @@ impl SplatOps<Self> for MainBackendBase {
             DType::F32,
         );
         tracing::trace_span!("ProjectVisible").in_scope(|| {
-            let uniforms =
-                camera.to_project_uniforms_launch(img_size, tile_bounds, sh_degree, total_splats);
+            let uniforms = project_uniforms.to_launch_object();
             // SAFETY: Kernel checked to have no OOB, bounded loops.
             unsafe {
                 kernels::project_visible::project_visible_kernel::launch_unchecked::<WgpuRuntime>(
@@ -178,10 +204,9 @@ impl SplatOps<Self> for MainBackendBase {
                     global_from_compact_gid.clone().into_tensor_arg(),
                     projected_splats.clone().into_tensor_arg(),
                     uniforms,
-                    num_visible,
                     mip_splat,
                     sh_degree,
-                    camera.camera_model.kind(),
+                    camera.camera_model,
                 );
             }
         });
@@ -202,8 +227,8 @@ impl SplatOps<Self> for MainBackendBase {
                     cum_tiles_hit.clone().into_tensor_arg(),
                     tile_id_from_isect.clone().into_tensor_arg(),
                     compact_gid_from_isect.clone().into_tensor_arg(),
-                    tile_bounds.x,
-                    tile_bounds.y,
+                    project_uniforms.tile_bounds[0],
+                    project_uniforms.tile_bounds[1],
                     num_visible,
                 );
             }
@@ -241,8 +266,9 @@ impl SplatOps<Self> for MainBackendBase {
         } else {
             (out_img.clone(), create_tensor([1], &device, DType::F32))
         };
+        let total_splats = project_uniforms.total_splats as usize;
         let visible = if bwd_info {
-            Self::float_zeros([total_splats as usize].into(), &device, FloatDType::F32)
+            Self::float_zeros([total_splats].into(), &device, FloatDType::F32)
         } else {
             // Zero-init the dummy — `create_tensor` doesn't initialise, and
             // validate() may read this tensor to check its invariants.
@@ -251,9 +277,9 @@ impl SplatOps<Self> for MainBackendBase {
         };
         tracing::trace_span!("Rasterize").in_scope(|| {
             let uniforms = RasterizeUniformsLaunch::new(
-                tile_bounds.x,
-                img_size.x,
-                img_size.y,
+                project_uniforms.tile_bounds[0],
+                project_uniforms.img_size[0],
+                project_uniforms.img_size[1],
                 background.x,
                 background.y,
                 background.z,
@@ -291,14 +317,7 @@ impl SplatOps<Self> for MainBackendBase {
             },
             projected_splats,
             compact_gid_from_isect,
-            render_state: RenderState {
-                camera: *camera,
-                img_size,
-                tile_bounds,
-                sh_degree,
-                total_splats,
-                num_visible,
-            },
+            project_uniforms,
             global_from_compact_gid,
         }
     }

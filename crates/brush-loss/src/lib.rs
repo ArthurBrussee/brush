@@ -46,7 +46,7 @@ mod kernels {
     use burn_cubecl::cubecl;
     use burn_cubecl::cubecl::cube;
     use burn_cubecl::cubecl::frontend::CompilationArg;
-    use burn_cubecl::cubecl::frontend::CubeIndexMutExpand;
+    use burn_cubecl::cubecl::frontend::IndexMutExpand;
     use burn_cubecl::cubecl::prelude::*;
 
     /// 11-tap Gaussian weights at sigma = 1.5, normalised to sum to 1.

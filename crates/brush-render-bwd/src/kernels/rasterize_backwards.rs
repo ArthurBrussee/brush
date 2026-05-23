@@ -59,7 +59,7 @@ fn zero_grad() -> SplatGrad {
 #[cube]
 pub trait AtomicAddF32: Send + Sync + 'static {
     type Storage: Numeric;
-    fn add(target: &mut Atomic<Self::Storage>, val: f32);
+    fn add(target: &Atomic<Self::Storage>, val: f32);
 }
 
 #[derive(CubeType)]
@@ -71,7 +71,7 @@ pub struct CasAtomicAdd;
 #[cube]
 impl AtomicAddF32 for HfAtomicAdd {
     type Storage = f32;
-    fn add(target: &mut Atomic<f32>, val: f32) {
+    fn add(target: &Atomic<f32>, val: f32) {
         Atomic::fetch_add(target, val);
     }
 }
@@ -79,7 +79,7 @@ impl AtomicAddF32 for HfAtomicAdd {
 #[cube]
 impl AtomicAddF32 for CasAtomicAdd {
     type Storage = u32;
-    fn add(target: &mut Atomic<u32>, val: f32) {
+    fn add(target: &Atomic<u32>, val: f32) {
         let mut old_value = Atomic::load(target);
         let mut done = false;
         while !done {
@@ -140,16 +140,16 @@ pub fn rasterize_backwards_kernel<A: AtomicAddF32>(
         );
         if splat_active {
             let base = (compact_gid * 10u32) as usize;
-            A::add(&mut v_splats[base], grad.xy_x);
-            A::add(&mut v_splats[base + 1], grad.xy_y);
-            A::add(&mut v_splats[base + 2], grad.conic_x);
-            A::add(&mut v_splats[base + 3], grad.conic_y);
-            A::add(&mut v_splats[base + 4], grad.conic_z);
-            A::add(&mut v_splats[base + 5], grad.rgb_r);
-            A::add(&mut v_splats[base + 6], grad.rgb_g);
-            A::add(&mut v_splats[base + 7], grad.rgb_b);
-            A::add(&mut v_splats[base + 8], grad.alpha);
-            A::add(&mut v_splats[base + 9], grad.refine);
+            A::add(&v_splats[base], grad.xy_x);
+            A::add(&v_splats[base + 1], grad.xy_y);
+            A::add(&v_splats[base + 2], grad.conic_x);
+            A::add(&v_splats[base + 3], grad.conic_y);
+            A::add(&v_splats[base + 4], grad.conic_z);
+            A::add(&v_splats[base + 5], grad.rgb_r);
+            A::add(&v_splats[base + 6], grad.rgb_g);
+            A::add(&v_splats[base + 7], grad.rgb_b);
+            A::add(&v_splats[base + 8], grad.alpha);
+            A::add(&v_splats[base + 9], grad.refine);
         }
         batch_idx += 1u32;
     }
@@ -173,8 +173,8 @@ fn load_range(tile_offsets: &Tensor<u32>, tile_id: u32) -> (u32, u32) {
     // Uniform-marked loads so loop bounds derived from these don't trip
     // WebGPU's "barrier in non-uniform control flow" check.
     (
-        range_buf.workgroup_uniform_load(0),
-        range_buf.workgroup_uniform_load(1),
+        workgroup_uniform_load(&range_buf[0]),
+        workgroup_uniform_load(&range_buf[1]),
     )
 }
 

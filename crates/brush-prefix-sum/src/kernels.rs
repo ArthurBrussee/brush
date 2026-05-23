@@ -1,7 +1,7 @@
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::frontend::CompilationArg;
-use burn_cubecl::cubecl::frontend::CubeIndexMutExpand;
+use burn_cubecl::cubecl::frontend::IndexMutExpand;
 use burn_cubecl::cubecl::prelude::*;
 
 pub const THREADS_PER_GROUP: usize = 512;

@@ -7,20 +7,7 @@ use burn::{
     tensor::Int,
 };
 
-use crate::camera::Camera;
-
-/// Per-render dispatch state shared between the forward render and the
-/// autodiff backward. The cube-side `ProjectUniforms` launch arg is built
-/// on demand via [`Camera::to_project_uniforms_launch`].
-#[derive(Debug, Clone, Copy)]
-pub struct RenderState {
-    pub camera: Camera,
-    pub img_size: glam::UVec2,
-    pub tile_bounds: glam::UVec2,
-    pub sh_degree: u32,
-    pub total_splats: u32,
-    pub num_visible: u32,
-}
+use crate::shaders::helpers::ProjectUniforms;
 
 /// Internal render output used by kernel impls. Holds backend primitives.
 #[derive(Debug, Clone)]
@@ -30,7 +17,7 @@ pub struct RenderOutput<B: Backend> {
     // State needed by the backward pass; non-diff callers can ignore these.
     pub projected_splats: FloatTensor<B>,
     pub compact_gid_from_isect: IntTensor<B>,
-    pub render_state: RenderState,
+    pub project_uniforms: ProjectUniforms,
     pub global_from_compact_gid: IntTensor<B>,
 }
 
@@ -39,13 +26,14 @@ impl<B: Backend> RenderOutput<B> {
     pub fn validate_counts(&self) {
         let num_visible = self.aux.num_visible;
         let num_intersections = self.aux.num_intersections;
-        let total_splats = self.render_state.total_splats;
+        let total_splats = self.project_uniforms.total_splats;
         assert!(
             num_visible <= total_splats,
             "num_visible ({num_visible}) > total_splats ({total_splats})",
         );
-        let tile_bounds = self.render_state.tile_bounds;
-        let max_isects = (num_visible as u64) * (tile_bounds.x as u64) * (tile_bounds.y as u64);
+        let max_isects = (num_visible as u64)
+            * (self.project_uniforms.tile_bounds[0] as u64)
+            * (self.project_uniforms.tile_bounds[1] as u64);
         assert!(
             (num_intersections as u64) <= max_isects,
             "num_intersections ({num_intersections}) > max possible {max_isects}",

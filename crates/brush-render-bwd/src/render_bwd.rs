@@ -10,14 +10,14 @@ use burn::tensor::FloatDType;
 use burn_cubecl::cubecl::CubeCount;
 use burn_cubecl::cubecl::CubeDim;
 use burn_cubecl::cubecl::features::AtomicUsage;
-use burn_cubecl::cubecl::ir::{ElemType, FloatKind, StorageType, Type};
+use burn_cubecl::cubecl::ir::{ElemType, FloatKind, Type};
 use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
 use glam::{Vec3, uvec2};
 
 use crate::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};
 use crate::kernels;
-use brush_render::render_aux::RenderState;
+use brush_render::shaders::helpers::ProjectUniforms;
 
 impl SplatBwdOps<Self> for MainBackendBase {
     #[allow(clippy::too_many_arguments)]
@@ -51,9 +51,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let hard_floats = client
             .properties()
-            .atomic_type_usage(Type::Scalar(StorageType::Atomic(ElemType::Float(
-                FloatKind::F32,
-            ))))
+            .atomic_type_usage(Type::atomic(Type::scalar(ElemType::Float(FloatKind::F32))))
             .contains(AtomicUsage::Add);
 
         let cube_count = CubeCount::Static(tile_bounds.x, tile_bounds.y, 1);
@@ -111,7 +109,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         transforms: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
-        render_state: RenderState,
+        project_uniforms: ProjectUniforms,
         render_mode: SplatRenderMode,
         v_combined: FloatTensor<Self>,
     ) -> SplatGrads<Self> {
@@ -129,7 +127,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let v_coeffs = Self::float_zeros(
             [
                 num_points,
-                sh_coeffs_for_degree(render_state.sh_degree) as usize,
+                sh_coeffs_for_degree(project_uniforms.sh_degree) as usize,
                 3,
             ]
             .into(),
@@ -141,14 +139,9 @@ impl SplatBwdOps<Self> for MainBackendBase {
 
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
-        let num_visible = render_state.num_visible;
+        let num_visible = project_uniforms.num_visible;
 
-        let uniforms = render_state.camera.to_project_uniforms_launch(
-            render_state.img_size,
-            render_state.tile_bounds,
-            render_state.sh_degree,
-            render_state.total_splats,
-        );
+        let uniforms = project_uniforms.to_launch_object();
 
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
@@ -168,10 +161,9 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     v_raw_opac.clone().into_tensor_arg(),
                     v_refine_weight.clone().into_tensor_arg(),
                     uniforms,
-                    num_visible,
                     mip_splat,
-                    render_state.sh_degree,
-                    render_state.camera.camera_model.kind(),
+                    project_uniforms.sh_degree,
+                    project_uniforms.camera_model,
                 );
             }
         });
