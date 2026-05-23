@@ -13,10 +13,11 @@ use crate::{
 };
 use brush_render::kernels::camera_model::CameraModel;
 use brush_render::kernels::camera_model::CameraModel::{
-    KannalaBrandt4, Pinhole, RadialTangential8,
+    KannalaBrandt4, Pinhole, RadialTangential8, ThinPrismFisheye,
 };
 use brush_render::kernels::camera_model::kannala_brandt_4::KannalaBrandt4Params;
 use brush_render::kernels::camera_model::radial_tangential_8::RadialTangential8Params;
+use brush_render::kernels::camera_model::thin_prism_fisheye::ThinPrismFisheyeParams;
 use brush_render::{
     camera::{self, Camera},
     sh::rgb_to_sh,
@@ -322,25 +323,34 @@ async fn load_dataset_inner(
 
 fn build_camera_model(colmap_camera: &ColmapCamera) -> CameraModel {
     let p = &colmap_camera.params;
+    // Param layouts follow COLMAP's `src/colmap/sensor/models.h`. Indices
+    // are 0-based positions into `p` after the intrinsics (fx, fy, cx, cy
+    // or f, cx, cy depending on the model).
     match colmap_camera.model {
-        ColmapCameraModel::SimpleRadialFisheye => KannalaBrandt4(KannalaBrandt4Params {
+        // No distortion.
+        ColmapCameraModel::SimplePinhole | ColmapCameraModel::Pinhole => Pinhole,
+        // Pure-radial perspective models → RT8 with the higher-order /
+        // tangential coefficients zeroed.
+        // SIMPLE_RADIAL: f cx cy k1
+        ColmapCameraModel::SimpleRadial => RadialTangential8(RadialTangential8Params {
             k1: p[3] as f32,
-            k2: 0.0,
-            k3: 0.0,
-            k4: 0.0,
+            ..Default::default()
         }),
-        ColmapCameraModel::RadialFisheye => KannalaBrandt4(KannalaBrandt4Params {
+        // RADIAL: f cx cy k1 k2
+        ColmapCameraModel::Radial => RadialTangential8(RadialTangential8Params {
             k1: p[3] as f32,
             k2: p[4] as f32,
-            k3: 0.0,
-            k4: 0.0,
+            ..Default::default()
         }),
-        ColmapCameraModel::OpenCvFishEye => KannalaBrandt4(KannalaBrandt4Params {
+        // OPENCV: fx fy cx cy k1 k2 p1 p2 (Brown-Conrady, 4 distortion coefficients).
+        ColmapCameraModel::OpenCV => RadialTangential8(RadialTangential8Params {
             k1: p[4] as f32,
             k2: p[5] as f32,
-            k3: p[6] as f32,
-            k4: p[7] as f32,
+            p1: p[6] as f32,
+            p2: p[7] as f32,
+            ..Default::default()
         }),
+        // FULL_OPENCV: fx fy cx cy k1 k2 p1 p2 k3 k4 k5 k6.
         ColmapCameraModel::FullOpenCV => RadialTangential8(RadialTangential8Params {
             k1: p[4] as f32,
             k2: p[5] as f32,
@@ -351,12 +361,42 @@ fn build_camera_model(colmap_camera: &ColmapCamera) -> CameraModel {
             p1: p[6] as f32,
             p2: p[7] as f32,
         }),
-        ColmapCameraModel::Pinhole => Pinhole,
-        _ => {
-            log::warn!(
-                "Unsupported camera model: {:?}! Falling back to pinhole camera",
-                colmap_camera.model
-            );
+        // Fisheye variants → KB4 with unused k's zeroed.
+        // SIMPLE_RADIAL_FISHEYE: f cx cy k1
+        ColmapCameraModel::SimpleRadialFisheye => KannalaBrandt4(KannalaBrandt4Params {
+            k1: p[3] as f32,
+            ..Default::default()
+        }),
+        // RADIAL_FISHEYE: f cx cy k1 k2
+        ColmapCameraModel::RadialFisheye => KannalaBrandt4(KannalaBrandt4Params {
+            k1: p[3] as f32,
+            k2: p[4] as f32,
+            ..Default::default()
+        }),
+        // OPENCV_FISHEYE: fx fy cx cy k1 k2 k3 k4
+        ColmapCameraModel::OpenCvFishEye => KannalaBrandt4(KannalaBrandt4Params {
+            k1: p[4] as f32,
+            k2: p[5] as f32,
+            k3: p[6] as f32,
+            k4: p[7] as f32,
+        }),
+        // THIN_PRISM_FISHEYE: fx fy cx cy k1 k2 p1 p2 k3 k4 sx1 sy1
+        ColmapCameraModel::ThinPrismFisheye => ThinPrismFisheye(ThinPrismFisheyeParams {
+            kb4: KannalaBrandt4Params {
+                k1: p[4] as f32,
+                k2: p[5] as f32,
+                k3: p[8] as f32,
+                k4: p[9] as f32,
+            },
+            p1: p[6] as f32,
+            p2: p[7] as f32,
+            sx1: p[10] as f32,
+            sy1: p[11] as f32,
+        }),
+        // FOV uses a tan(ω r) / ω model that doesn't fit either of our
+        // distortion polynomials. Fall back to pinhole — rare in practice.
+        ColmapCameraModel::Fov => {
+            log::warn!("COLMAP `FOV` model is not directly supported; falling back to pinhole.");
             Pinhole
         }
     }

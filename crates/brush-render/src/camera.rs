@@ -1,4 +1,6 @@
-use crate::kernels::camera_model::CameraModel::{KannalaBrandt4, Pinhole, RadialTangential8};
+use crate::kernels::camera_model::CameraModel::{
+    KannalaBrandt4, Pinhole, RadialTangential8, ThinPrismFisheye,
+};
 use crate::kernels::camera_model::kannala_brandt_4::KannalaBrandt4Params;
 use crate::kernels::camera_model::pinhole::PinholeParams;
 use crate::kernels::camera_model::radial_tangential_8::RadialTangential8Params;
@@ -126,6 +128,7 @@ impl Camera {
             pinhole_params.to_launch_object(),
             self.camera_model.kb4_params().to_launch_object(),
             self.camera_model.rt8_params().to_launch_object(),
+            self.camera_model.tpf_params().to_launch_object(),
             self.jacobian_clamp_limits(img_size).to_launch_object(),
             self.position.x,
             self.position.y,
@@ -153,6 +156,9 @@ pub fn fov_to_focal(fov: f64, pixels: u32, model: &CameraModel) -> f64 {
             let r = half_fov.tan();
             r * rt8_radial(r, p)
         }
+        // Tangential / thin-prism vanish along the FOV diagonal, so the
+        // radial KB4 polynomial drives the focal estimate.
+        ThinPrismFisheye(p) => kb4_d(half_fov, &p.kb4),
     };
 
     r_pix / projected
@@ -170,6 +176,7 @@ pub fn focal_to_fov(focal: f64, pixels: u32, model: &CameraModel) -> f64 {
             let r_undist = rt8_undistort_radius(r_norm, p);
             r_undist.atan()
         }
+        ThinPrismFisheye(p) => kb4_invert_d(r_norm, &p.kb4),
     };
 
     2.0 * half_fov
@@ -284,7 +291,12 @@ pub fn calculate_jacobian_clamp_limits(
             lim_neg_x = (-0.3 * img_w - cx) / fx;
             lim_neg_y = (-0.3 * img_h - cy) / fy;
         }
-        KannalaBrandt4(_) => {}
+        // Both fisheye models leave the Jacobian unclamped — radial blowup
+        // is bounded by `theta` rather than `tan(theta)`, so the kernel
+        // doesn't need a screen-space cap. The TPF Jacobian carries an
+        // extra `(x/z, y/z)` tangential + thin-prism term, but it stays
+        // well behaved inside the natural fisheye support set.
+        KannalaBrandt4(_) | ThinPrismFisheye(_) => {}
     }
 
     JacobianClampLimits {

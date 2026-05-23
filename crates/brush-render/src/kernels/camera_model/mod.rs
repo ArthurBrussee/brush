@@ -1,11 +1,14 @@
 pub mod kannala_brandt_4;
 pub mod pinhole;
 pub mod radial_tangential_8;
+pub mod thin_prism_fisheye;
 
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
 
-use crate::kernels::camera_model::CameraModel::{KannalaBrandt4, Pinhole, RadialTangential8};
+use crate::kernels::camera_model::CameraModel::{
+    KannalaBrandt4, Pinhole, RadialTangential8, ThinPrismFisheye,
+};
 use crate::kernels::camera_model::kannala_brandt_4::{
     KannalaBrandt4Params, calculate_project_jacobian_kb4, calculate_projection_vjp_kb4, project_kb4,
 };
@@ -16,6 +19,10 @@ use crate::kernels::camera_model::radial_tangential_8::{
     RadialTangential8Params, calculate_project_jacobian_rt8, calculate_projection_vjp_rt8,
     project_rt8,
 };
+use crate::kernels::camera_model::thin_prism_fisheye::{
+    ThinPrismFisheyeParams, calculate_project_jacobian_tpf, calculate_projection_vjp_tpf,
+    project_tpf,
+};
 use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
 
@@ -25,6 +32,7 @@ pub enum CameraModel {
     Pinhole,
     KannalaBrandt4(KannalaBrandt4Params),
     RadialTangential8(RadialTangential8Params),
+    ThinPrismFisheye(ThinPrismFisheyeParams),
 }
 
 /// Comptime kernel discriminant for the camera model. The actual k-params
@@ -37,6 +45,7 @@ pub enum CameraKind {
     Pinhole,
     KannalaBrandt4,
     RadialTangential8,
+    ThinPrismFisheye,
 }
 
 impl CameraModel {
@@ -45,12 +54,16 @@ impl CameraModel {
             Pinhole => CameraKind::Pinhole,
             KannalaBrandt4(_) => CameraKind::KannalaBrandt4,
             RadialTangential8(_) => CameraKind::RadialTangential8,
+            ThinPrismFisheye(_) => CameraKind::ThinPrismFisheye,
         }
     }
 
     pub fn kb4_params(&self) -> KannalaBrandt4Params {
         match self {
             KannalaBrandt4(p) => *p,
+            // ThinPrismFisheye carries its own KB4 sub-block; expose it so
+            // the FOV helpers can use the radial part directly.
+            ThinPrismFisheye(p) => p.kb4,
             _ => KannalaBrandt4Params::default(),
         }
     }
@@ -62,12 +75,20 @@ impl CameraModel {
         }
     }
 
+    pub fn tpf_params(&self) -> ThinPrismFisheyeParams {
+        match self {
+            ThinPrismFisheye(p) => *p,
+            _ => ThinPrismFisheyeParams::default(),
+        }
+    }
+
     /// Short human-readable name for UI display.
     pub fn label(&self) -> &'static str {
         match self {
             Pinhole => "Pinhole",
             KannalaBrandt4(_) => "Kannala-Brandt 4 (fisheye)",
             RadialTangential8(_) => "Radial-tangential 8 (OpenCV)",
+            ThinPrismFisheye(_) => "Thin-prism fisheye",
         }
     }
 }
@@ -86,6 +107,7 @@ pub fn project(point: Vec3A, u: ProjectUniforms, #[comptime] kind: CameraKind) -
         CameraKind::Pinhole => project_pinhole(point, u.pinhole_params),
         CameraKind::KannalaBrandt4 => project_kb4(point, u.pinhole_params, u.kb4_params),
         CameraKind::RadialTangential8 => project_rt8(point, u.pinhole_params, u.rt8_params),
+        CameraKind::ThinPrismFisheye => project_tpf(point, u.pinhole_params, u.tpf_params),
     }
 }
 
@@ -109,6 +131,9 @@ pub fn calculate_project_jacobian(
             u.pinhole_params,
             u.rt8_params,
         ),
+        CameraKind::ThinPrismFisheye => {
+            calculate_project_jacobian_tpf(point, u.pinhole_params, u.tpf_params)
+        }
     }
 }
 
@@ -147,6 +172,15 @@ pub fn calculate_projection_vjp(
         CameraKind::RadialTangential8 => {
             calculate_projection_vjp_rt8(mean_c, cov_c, u, v_cov2d, v_mean2d, u.rt8_params)
         }
+        CameraKind::ThinPrismFisheye => calculate_projection_vjp_tpf(
+            projection_jacobian,
+            mean_c,
+            cov_c,
+            u,
+            v_cov2d,
+            v_mean2d,
+            u.tpf_params,
+        ),
     }
 }
 
