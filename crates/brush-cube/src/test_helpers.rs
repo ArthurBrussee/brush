@@ -1,4 +1,4 @@
-use burn::backend::wgpu::WgpuDevice;
+use burn_wgpu::WgpuDevice;
 
 /// Initialize and return the default GPU device for tests.
 ///

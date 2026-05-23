@@ -6,6 +6,7 @@ use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
+use bytemuck::{ByteHash, NoUninit};
 
 /// COLMAP `THIN_PRISM_FISHEYE` parameters: Kannala-Brandt 4 radial distortion
 /// plus Brown-Conrady tangential `(p1, p2)` plus a 2-coefficient thin-prism
@@ -18,25 +19,15 @@ use burn_cubecl::cubecl::prelude::*;
 /// ```
 ///
 /// where `theta_d` is the KB4 polynomial of `theta = atan(r)`.
-#[derive(CubeLaunch, CubeType, Copy, Clone, PartialEq, Debug, Default)]
+#[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug, Default)]
+#[expand(derive(Clone, Copy))]
+#[repr(C)]
 pub struct ThinPrismFisheyeParams {
     pub kb4: KannalaBrandt4Params,
     pub p1: f32,
     pub p2: f32,
     pub sx1: f32,
     pub sy1: f32,
-}
-
-impl ThinPrismFisheyeParams {
-    pub fn to_launch_object<R: Runtime>(&self) -> ThinPrismFisheyeParamsLaunch<R> {
-        ThinPrismFisheyeParamsLaunch::new(
-            self.kb4.to_launch_object(),
-            self.p1,
-            self.p2,
-            self.sx1,
-            self.sy1,
-        )
-    }
 }
 
 /// `delta_u_tp = N_u / z²`, `delta_v_tp = N_v / z²` where `N_u`, `N_v` are
@@ -48,7 +39,7 @@ impl ThinPrismFisheyeParams {
 fn thin_prism_polys(
     x: f32,
     y: f32,
-    params: ThinPrismFisheyeParams,
+    #[comptime] params: ThinPrismFisheyeParams,
 ) -> (f32, f32, f32, f32, f32, f32) {
     let ThinPrismFisheyeParams {
         p1, p2, sx1, sy1, ..
@@ -73,7 +64,7 @@ fn thin_prism_polys(
 pub fn project_tpf(
     point: Vec3A,
     pinhole_params: PinholeParams,
-    params: ThinPrismFisheyeParams,
+    #[comptime] params: ThinPrismFisheyeParams,
 ) -> (f32, f32) {
     let (u_kb4, v_kb4) = project_kb4(point, pinhole_params, params.kb4);
 
@@ -92,7 +83,7 @@ pub fn project_tpf(
 pub fn calculate_project_jacobian_tpf(
     point: Vec3A,
     pinhole_params: PinholeParams,
-    params: ThinPrismFisheyeParams,
+    #[comptime] params: ThinPrismFisheyeParams,
 ) -> Mat2x3 {
     let kb4_jac = calculate_project_jacobian_kb4(point, pinhole_params, params.kb4);
 
@@ -135,7 +126,7 @@ pub fn calculate_projection_vjp_tpf(
     u: ProjectUniforms,
     v_cov2d: Sym2,
     v_mean2d: Vec2,
-    params: ThinPrismFisheyeParams,
+    #[comptime] params: ThinPrismFisheyeParams,
 ) -> Vec3A {
     let kb4_grad = calculate_projection_vjp_kb4(
         project_jacobian,

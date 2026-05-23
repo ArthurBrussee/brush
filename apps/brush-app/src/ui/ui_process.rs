@@ -1,10 +1,7 @@
 use anyhow::Result;
 use brush_async::Actor;
 use brush_process::{RunningProcess, message::ProcessMessage, slot::Slot};
-use brush_render::{
-    camera::Camera, gaussian_splats::Splats, kernels::camera_model::CameraModel,
-    kernels::camera_model::CameraModel::Pinhole,
-};
+use brush_render::{camera::Camera, gaussian_splats::Splats, kernels::camera_model::CameraModel};
 use burn_wgpu::WgpuDevice;
 use egui::{Response, TextureHandle};
 use glam::{Affine3A, Quat, Vec3};
@@ -98,27 +95,7 @@ impl UiProcess {
         let mut cam = inner.camera;
         cam.position = inner.controls.position;
         cam.rotation = inner.controls.rotation;
-        if !inner.match_dataset_camera {
-            cam.camera_model = Pinhole;
-        }
         cam
-    }
-
-    /// Camera model of the currently focused view (independent of the
-    /// pinhole/match-dataset toggle, which only affects rendering).
-    pub fn view_camera_model(&self) -> CameraModel {
-        self.read().camera.camera_model
-    }
-
-    pub fn match_dataset_camera(&self) -> bool {
-        self.read().match_dataset_camera
-    }
-
-    pub fn set_match_dataset_camera(&self, match_dataset: bool) {
-        let mut inner = self.write();
-        inner.match_dataset_camera = match_dataset;
-        drop(inner);
-        self.read().repaint();
     }
 
     pub fn set_train_paused(&self, paused: bool) {
@@ -345,7 +322,6 @@ struct UiProcessInner {
     is_loading: bool,
     is_training: bool,
     camera: Camera,
-    match_dataset_camera: bool,
     splat_scale: Option<f32>,
     controls: CameraController,
     process_handle: Option<ProcessHandle>,
@@ -372,12 +348,11 @@ impl UiProcessInner {
             0.8,
             0.8,
             glam::vec2(0.5, 0.5),
-            Pinhole,
+            CameraModel::Pinhole,
         );
 
         Self {
             camera,
-            match_dataset_camera: true,
             controls,
             splat_scale: None,
             is_loading: false,

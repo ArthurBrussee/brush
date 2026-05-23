@@ -3,8 +3,11 @@ use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
+use bytemuck::{ByteHash, NoUninit};
 
-#[derive(CubeLaunch, CubeType, Copy, Clone, PartialEq, Debug, Default)]
+#[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug, Default)]
+#[expand(derive(Clone, Copy))]
+#[repr(C)]
 pub struct PinholeParams {
     pub fx: f32,
     pub fy: f32,
@@ -38,16 +41,12 @@ pub fn calculate_project_jacobian_pinhole(
         ..
     } = params;
 
-    let x = point.x();
-    let y = point.y();
-    let z = point.z();
-
-    let inv_z = 1.0f32 / z;
+    let inv_z = 1.0f32 / point.z();
     let dx = focal_x * inv_z;
     let dy = focal_y * inv_z;
 
-    let clamped_x = clamp(x * inv_z, limits.lim_neg_x, limits.lim_pos_x);
-    let clamped_y = clamp(y * inv_z, limits.lim_neg_y, limits.lim_pos_y);
+    let clamped_x = clamp(point.x() * inv_z, limits.lim_neg_x, limits.lim_pos_x);
+    let clamped_y = clamp(point.y() * inv_z, limits.lim_neg_y, limits.lim_pos_y);
 
     Mat2x3 {
         c0: Vec2::new(dx, 0.0),

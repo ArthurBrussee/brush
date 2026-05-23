@@ -62,8 +62,8 @@ pub fn rasterize_kernel(
 
     // Uniform-marked loads so the loop bounds + early-exit don't trip
     // WebGPU's "workgroupBarrier in non-uniform control flow" check.
-    let range_lo = range.workgroup_uniform_load(0);
-    let range_hi = range.workgroup_uniform_load(1);
+    let range_lo = workgroup_uniform_load(&range[0]);
+    let range_hi = workgroup_uniform_load(&range[1]);
 
     if comptime![bwd_info] && local_idx == 0u32 {
         Atomic::store(&max_useful_isect[0], range_lo);
@@ -85,7 +85,7 @@ pub fn rasterize_kernel(
     while batch_start < range_hi {
         // Doubles as the sync between previous iter's local_batch reads
         // and this iter's overwrites.
-        if num_done_atomic.workgroup_uniform_load_atomic(0) >= TILE_SIZE {
+        if workgroup_uniform_load_atomic(&num_done_atomic[0]) >= TILE_SIZE {
             break;
         }
         let remaining = min(TILE_SIZE, range_hi - batch_start);

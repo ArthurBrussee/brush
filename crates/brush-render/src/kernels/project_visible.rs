@@ -7,13 +7,18 @@ use super::helpers::{
 };
 use super::sh::{num_sh_coeffs, sh_coeffs_to_color};
 use super::types::{ProjectUniforms, Splat, Vec3A};
-use crate::kernels::camera_model::CameraKind;
+use crate::kernels::camera_model::{CameraModel, project};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
 pub const WG_SIZE: u32 = 256;
 
+// The `#[cube]` macro's terminal `write_projected_splat(...)` call expands to
+// `expr();` plus a trailing `()` placeholder, which trips
+// `semicolon_if_nothing_returned`. False positive — the macro already provides
+// the semicolon. Silence here rather than in the kernel body.
+#[allow(clippy::semicolon_if_nothing_returned)]
 #[cube(launch_unchecked)]
 pub fn project_visible_kernel(
     transforms: &Tensor<f32>,
@@ -22,13 +27,12 @@ pub fn project_visible_kernel(
     global_from_compact_gid: &Tensor<u32>,
     projected: &mut Tensor<f32>,
     u: ProjectUniforms,
-    num_visible: u32,
     #[comptime] mip_splatting: bool,
     #[comptime] sh_degree: u32,
-    #[comptime] camera_kind: CameraKind,
+    #[comptime] camera_model: CameraModel,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
-    if compact_gid >= num_visible {
+    if compact_gid >= u.num_visible {
         terminate!();
     }
 
@@ -42,12 +46,12 @@ pub fn project_visible_kernel(
     let quat = quat_unorm.normalize();
 
     let mean_c = world_to_cam(mean, u);
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_kind);
+    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     let opac = sigmoid(raw_opacities[global_gid as usize]) * filter_comp;
     let conic = cov.inverse();
 
-    let (mean2d_x, mean2d_y) = u.project(mean_c, camera_kind);
+    let (mean2d_x, mean2d_y) = project(mean_c, u.pinhole_params, camera_model);
 
     // Viewdir. Safe to normalize: splats with length(mean - cam) == 0
     // would already be culled in PF.

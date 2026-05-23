@@ -5,10 +5,7 @@ use crate::kernels::camera_model::kannala_brandt_4::KannalaBrandt4Params;
 use crate::kernels::camera_model::pinhole::PinholeParams;
 use crate::kernels::camera_model::radial_tangential_8::RadialTangential8Params;
 use crate::kernels::camera_model::{CameraModel, JacobianClampLimits};
-use crate::kernels::types::ProjectUniformsLaunch;
-use burn_cubecl::cubecl::wgpu::WgpuRuntime;
 use glam::Affine3A;
-use std::f32::consts::PI as PI32;
 use std::f64::consts::PI;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -75,71 +72,12 @@ impl Camera {
         }
     }
 
-    /// Diagonal half-FOV with a small safety margin, clamped just under 2π
-    /// so `terminate!` works on pathological out-of-frustum points. Used by
-    /// the project kernel's fisheye-aware cull.
-    pub fn half_max_render_fov(&self) -> f32 {
-        ((self.fov_x as f32).hypot(self.fov_y as f32) * 1.05).min(2.0 * PI32 - 1e-6) * 0.5
-    }
-
-    pub fn jacobian_clamp_limits(&self, img_size: glam::UVec2) -> JacobianClampLimits {
-        calculate_jacobian_clamp_limits(
-            img_size,
-            self.build_pinhole_params(img_size),
-            self.camera_model,
-        )
-    }
-
     pub fn local_to_world(&self) -> Affine3A {
         Affine3A::from_rotation_translation(self.rotation, self.position)
     }
 
     pub fn world_to_local(&self) -> Affine3A {
         self.local_to_world().inverse()
-    }
-
-    /// Build the cube-side `ProjectUniforms` launch arg from the camera and
-    /// the per-render dims. Shared by the forward and backward projection
-    /// passes; `num_visible` isn't part of the uniform — it's passed as a
-    /// separate scalar arg to `project_visible` / `project_backwards`.
-    pub fn to_project_uniforms_launch(
-        &self,
-        img_size: glam::UVec2,
-        tile_bounds: glam::UVec2,
-        sh_degree: u32,
-        total_splats: u32,
-    ) -> ProjectUniformsLaunch<WgpuRuntime> {
-        let viewmat = glam::Mat4::from(self.world_to_local()).to_cols_array_2d();
-        let pinhole_params = self.build_pinhole_params(img_size);
-        ProjectUniformsLaunch::new(
-            viewmat[0][0],
-            viewmat[0][1],
-            viewmat[0][2],
-            viewmat[1][0],
-            viewmat[1][1],
-            viewmat[1][2],
-            viewmat[2][0],
-            viewmat[2][1],
-            viewmat[2][2],
-            viewmat[3][0],
-            viewmat[3][1],
-            viewmat[3][2],
-            self.half_max_render_fov(),
-            pinhole_params.to_launch_object(),
-            self.camera_model.kb4_params().to_launch_object(),
-            self.camera_model.rt8_params().to_launch_object(),
-            self.camera_model.tpf_params().to_launch_object(),
-            self.jacobian_clamp_limits(img_size).to_launch_object(),
-            self.position.x,
-            self.position.y,
-            self.position.z,
-            img_size.x,
-            img_size.y,
-            tile_bounds.x,
-            tile_bounds.y,
-            sh_degree,
-            total_splats,
-        )
     }
 }
 
@@ -156,8 +94,6 @@ pub fn fov_to_focal(fov: f64, pixels: u32, model: &CameraModel) -> f64 {
             let r = half_fov.tan();
             r * rt8_radial(r, p)
         }
-        // Tangential / thin-prism vanish along the FOV diagonal, so the
-        // radial KB4 polynomial drives the focal estimate.
         ThinPrismFisheye(p) => kb4_d(half_fov, &p.kb4),
     };
 
@@ -291,11 +227,6 @@ pub fn calculate_jacobian_clamp_limits(
             lim_neg_x = (-0.3 * img_w - cx) / fx;
             lim_neg_y = (-0.3 * img_h - cy) / fy;
         }
-        // Both fisheye models leave the Jacobian unclamped — radial blowup
-        // is bounded by `theta` rather than `tan(theta)`, so the kernel
-        // doesn't need a screen-space cap. The TPF Jacobian carries an
-        // extra `(x/z, y/z)` tangential + thin-prism term, but it stays
-        // well behaved inside the natural fisheye support set.
         KannalaBrandt4(_) | ThinPrismFisheye(_) => {}
     }
 

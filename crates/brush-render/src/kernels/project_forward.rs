@@ -10,7 +10,7 @@ use super::helpers::{
     is_finite_f32, read_mean_viewspace, read_quat_unorm, read_scale, sigmoid,
 };
 use super::types::ProjectUniforms;
-use crate::kernels::camera_model::CameraKind;
+use crate::kernels::camera_model::{CameraModel, project};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
@@ -30,7 +30,7 @@ pub fn project_forward_kernel(
     max_radius: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
-    #[comptime] camera_kind: CameraKind,
+    #[comptime] camera_model: CameraModel,
 ) {
     let global_gid = ABSOLUTE_POS as u32;
     if global_gid >= u.total_splats {
@@ -44,15 +44,15 @@ pub fn project_forward_kernel(
     if !(mean_c.is_finite() && mean_c.z() <= 1.0e10f32) {
         terminate!();
     }
-    match camera_kind {
-        CameraKind::Pinhole => {
+    match camera_model {
+        CameraModel::Pinhole => {
             if mean_c.z() < 0.01f32 {
                 terminate!();
             }
         }
-        CameraKind::KannalaBrandt4
-        | CameraKind::RadialTangential8
-        | CameraKind::ThinPrismFisheye => {
+        CameraModel::KannalaBrandt4(_)
+        | CameraModel::RadialTangential8(_)
+        | CameraModel::ThinPrismFisheye(_) => {
             let r = f32::sqrt(mean_c.x() * mean_c.x() + mean_c.y() * mean_c.y());
             let theta = r.atan2(mean_c.z());
             if theta > u.half_max_render_fov {
@@ -79,7 +79,7 @@ pub fn project_forward_kernel(
 
     let quat = quat_unorm.normalize();
 
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_kind);
+    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     let opac = sigmoid(raw_opac) * filter_comp;
 
@@ -87,7 +87,7 @@ pub fn project_forward_kernel(
         terminate!();
     }
 
-    let (mean2d_x, mean2d_y) = u.project(mean_c, camera_kind);
+    let (mean2d_x, mean2d_y) = project(mean_c, u.pinhole_params, camera_model);
 
     if !(opac >= 1.0f32 / 255.0f32) {
         terminate!();
