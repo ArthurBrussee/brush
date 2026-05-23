@@ -75,6 +75,11 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "0.25")]
     pub split_at_screen_size: f32,
 
+    /// Experimental: inherit the parent splat's Adam momenta (`moment_1`/`moment_2`)
+    /// for the newly-created splat on a split, instead of resetting them to zero.
+    #[arg(long, help_heading = "Refine options", default_value = "false")]
+    pub refine_inherit_split_momenta: bool,
+
     /// Weight of SSIM loss (compared to l1 loss)
     #[clap(long, help_heading = "Training options", default_value = "0.2")]
     pub ssim_weight: f32,

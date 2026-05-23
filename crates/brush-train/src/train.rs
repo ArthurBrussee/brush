@@ -10,6 +10,7 @@ use crate::{
 
 use brush_dataset::scene::SceneBatch;
 use brush_loss::{ImageLossConfig, image_loss, unpack_gt_rgb};
+use brush_render::burn_glue::detach_autodiff_int;
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
@@ -585,6 +586,8 @@ impl SplatTrainer {
                 Tensor::cat(vec![cur_means + samples, cur_rots, new_log_scales], 1);
             // Momentum/state slots must match the optimizer's inner device.
             let opt_device = device.clone().inner();
+            let inherit_momenta = self.config.refine_inherit_split_momenta;
+            let inner_refine_inds = detach_autodiff_int(refine_inds.inner());
             splats = map_splats_and_opt(
                 splats,
                 &mut record,
@@ -593,17 +596,31 @@ impl SplatTrainer {
                 |x| Tensor::cat(vec![x, new_raw_opac], 0),
                 // Read dims from tensor: moment_2 may have reduced trailing dims.
                 |x: Tensor<2>| {
-                    let d1 = x.dims()[1];
-                    Tensor::cat(vec![x, Tensor::zeros([refine_count, d1], &opt_device)], 0)
+                    let new_rows = if inherit_momenta {
+                        x.clone().select(0, inner_refine_inds.clone())
+                    } else {
+                        let d1 = x.dims()[1];
+                        Tensor::zeros([refine_count, d1], &opt_device)
+                    };
+                    Tensor::cat(vec![x, new_rows], 0)
                 },
                 |x: Tensor<3>| {
-                    let [_, d1, d2] = x.dims();
-                    Tensor::cat(
-                        vec![x, Tensor::zeros([refine_count, d1, d2], &opt_device)],
-                        0,
-                    )
+                    let new_rows = if inherit_momenta {
+                        x.clone().select(0, inner_refine_inds.clone())
+                    } else {
+                        let [_, d1, d2] = x.dims();
+                        Tensor::zeros([refine_count, d1, d2], &opt_device)
+                    };
+                    Tensor::cat(vec![x, new_rows], 0)
                 },
-                |x| Tensor::cat(vec![x, Tensor::zeros([refine_count], &opt_device)], 0),
+                |x| {
+                    let new_rows = if inherit_momenta {
+                        x.clone().select(0, inner_refine_inds.clone())
+                    } else {
+                        Tensor::zeros([refine_count], &opt_device)
+                    };
+                    Tensor::cat(vec![x, new_rows], 0)
+                },
             );
         }
 
@@ -707,7 +724,6 @@ async fn prune_points(
         let valid_inds = valid_inds.squeeze_dim(1);
         // Splat params + optimizer state share the autodiff device, but the
         // refiner runs on the inner device — give `keep()` an inner copy.
-        use brush_render::burn_glue::detach_autodiff_int;
         let inner_valid_inds = detach_autodiff_int(valid_inds.clone().inner());
         splats = map_splats_and_opt(
             splats,
