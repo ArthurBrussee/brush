@@ -3,10 +3,8 @@ use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
-use bytemuck::{ByteHash, NoUninit};
 
-#[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug, Default)]
-#[repr(C)]
+#[derive(CubeLaunch, CubeType, Copy, Clone, PartialEq, Debug, Default)]
 pub struct KannalaBrandt4Params {
     pub k1: f32,
     pub k2: f32,
@@ -14,11 +12,17 @@ pub struct KannalaBrandt4Params {
     pub k4: f32,
 }
 
+impl KannalaBrandt4Params {
+    pub fn to_launch_object<R: Runtime>(&self) -> KannalaBrandt4ParamsLaunch<R> {
+        KannalaBrandt4ParamsLaunch::new(self.k1, self.k2, self.k3, self.k4)
+    }
+}
+
 #[cube]
 pub fn project_kb4(
     point: Vec3A,
     pinhole_params: PinholeParams,
-    #[comptime] params: KannalaBrandt4Params,
+    params: KannalaBrandt4Params,
 ) -> (f32, f32) {
     let x = point.x();
     let y = point.y();
@@ -57,7 +61,7 @@ pub fn project_kb4(
 pub fn calculate_project_jacobian_kb4(
     point: Vec3A,
     pinhole_params: PinholeParams,
-    #[comptime] params: KannalaBrandt4Params,
+    params: KannalaBrandt4Params,
 ) -> Mat2x3 {
     let PinholeParams { fx, fy, .. } = pinhole_params;
     let KannalaBrandt4Params { k1, k2, k3, k4 } = params;
@@ -88,7 +92,7 @@ pub fn calculate_project_jacobian_kb4(
     let theta6 = theta4 * theta2;
     let theta8 = theta4 * theta4;
     let d = theta * (1.0f32 + k1 * theta2 + k2 * theta4 + k3 * theta6 + k4 * theta8);
-    let dd_dthetha = 1.0f32
+    let dd_dtheta = 1.0f32
         + 3.0f32 * k1 * theta2
         + 5.0f32 * k2 * theta4
         + 7.0f32 * k3 * theta6
@@ -102,9 +106,9 @@ pub fn calculate_project_jacobian_kb4(
     let dth_dz = -r * inv_rho2;
 
     // --- d theta_d / d (x, y, z) (chain rule through theta) ---
-    let dd_dx = dd_dthetha * dth_dx;
-    let dd_dy = dd_dthetha * dth_dy;
-    let dd_dz = dd_dthetha * dth_dz;
+    let dd_dx = dd_dtheta * dth_dx;
+    let dd_dy = dd_dtheta * dth_dy;
+    let dd_dz = dd_dtheta * dth_dz;
 
     // --- u-row of J ---
     // d(x/r)/dx = y²/r³,  d(x/r)/dy = -xy/r³,  d(x/r)/dz = 0
@@ -157,7 +161,7 @@ pub fn calculate_projection_vjp_kb4(
     u: ProjectUniforms,
     v_cov2d: Sym2,
     v_mean2d: Vec2,
-    #[comptime] params: KannalaBrandt4Params,
+    params: KannalaBrandt4Params,
 ) -> Vec3A {
     let PinholeParams { fx, fy, .. } = u.pinhole_params;
     let KannalaBrandt4Params { k1, k2, k3, k4 } = params;
@@ -168,6 +172,12 @@ pub fn calculate_projection_vjp_kb4(
 
     // --- Forward intermediates (identical to calc_jacobian) ---
     let r2 = mx * mx + my * my;
+    // Near-axis (r < 1e-6) matches the threshold used in `project_kb4` and
+    // `calculate_project_jacobian_kb4` so the KB4 path falls back to pinhole
+    // consistently across forward/jacobian/vjp.
+    let near_axis = r2 < 1.0e-12f32;
+    // Clamp r away from zero so the KB4 reciprocals don't NaN; the result is
+    // discarded by the final `select` whenever `near_axis` is true.
     let r = r2.sqrt().max(1.0e-8f32);
     let rho2 = r2 + mz * mz;
 
@@ -331,5 +341,29 @@ pub fn calculate_projection_vjp_kb4(
         v_mz += vj_u2 * d_ju + vj_v2 * d_jv;
     }
 
-    Vec3A::new(v_mx, v_my, v_mz)
+    // Pinhole VJP at the optical axis. `project_jacobian` already equals the
+    // unclamped pinhole Jacobian when `near_axis` is true (see
+    // `calculate_project_jacobian_kb4`), so the standard pinhole formula
+    // applies. KB4 leaves `jacobian_clamp_limits = 0`, so we inline the
+    // unclamped variant rather than calling `calculate_projection_vjp_pinhole`.
+    let inv_z = 1.0f32 / mz;
+    let inv_z2 = inv_z * inv_z;
+    let tmp_pin = v_cov2d.mul_mat2x3(project_jacobian);
+    let vj00 = 2.0f32 * tmp_pin.row0().dot(cov_c.row0());
+    let vj11 = 2.0f32 * tmp_pin.row1().dot(cov_c.row1());
+    let vj20 = 2.0f32 * tmp_pin.row0().dot(cov_c.row2());
+    let vj21 = 2.0f32 * tmp_pin.row1().dot(cov_c.row2());
+    let v_mx_pin = fx * inv_z * v_mean2d.x() - fx * inv_z2 * vj20;
+    let v_my_pin = fy * inv_z * v_mean2d.y() - fy * inv_z2 * vj21;
+    let v_mz_pin = -(fx * mx * v_mean2d.x() + fy * my * v_mean2d.y()) * inv_z2
+        - fx * inv_z2 * vj00
+        - fy * inv_z2 * vj11
+        + 2.0f32 * fx * mx * inv_z2 * vj20 * inv_z
+        + 2.0f32 * fy * my * inv_z2 * vj21 * inv_z;
+
+    Vec3A::new(
+        select(near_axis, v_mx_pin, v_mx),
+        select(near_axis, v_my_pin, v_my),
+        select(near_axis, v_mz_pin, v_mz),
+    )
 }

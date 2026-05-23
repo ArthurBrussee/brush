@@ -3,10 +3,8 @@ use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::prelude::*;
-use bytemuck::{ByteHash, NoUninit};
 
-#[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug)]
-#[repr(C)]
+#[derive(CubeLaunch, CubeType, Copy, Clone, PartialEq, Debug, Default)]
 pub struct PinholeParams {
     pub fx: f32,
     pub fy: f32,

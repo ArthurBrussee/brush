@@ -347,7 +347,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             },
             projected_splats,
             compact_gid_from_isect,
-            project_uniforms: out.project_uniforms,
+            render_state: out.render_state,
             global_from_compact_gid,
         }
     }

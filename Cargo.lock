@@ -1138,7 +1138,6 @@ dependencies = [
  "burn-fusion",
  "burn-ir",
  "burn-wgpu",
- "bytemuck",
  "clap",
  "getrandom 0.4.2",
  "glam",

@@ -10,6 +10,7 @@ use brush_render::{
     bounding_box::BoundingBox,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
+    kernels::camera_model::CameraModel::Pinhole,
 };
 use brush_render_bwd::render_splats;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
@@ -118,6 +119,7 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
         45.0,
         45.0,
         glam::vec2(0.5, 0.5),
+        Pinhole,
     );
 
     SceneBatch {
@@ -165,6 +167,7 @@ async fn test_forward_rendering() {
         45.0,
         45.0,
         glam::vec2(0.5, 0.5),
+        Pinhole,
     );
     let img_size = glam::uvec2(64, 64);
     let result = render_splats(splats, &camera, img_size, Vec3::ZERO).await;
@@ -241,6 +244,7 @@ async fn train_with_zero_visible_does_not_crash() {
         45.0,
         45.0,
         glam::vec2(0.5, 0.5),
+        Pinhole,
     );
 
     let pixel = 0x80808080u32 as i32; // mid-grey, opaque; bit-cast to i32 for the dispatch backend
@@ -298,6 +302,7 @@ async fn test_gradient_validation() {
         45.0,
         45.0,
         glam::vec2(0.5, 0.5),
+        Pinhole,
     );
     let img_size = glam::uvec2(64, 64);
 
@@ -357,6 +362,7 @@ async fn stress_concurrent_train_and_view() {
                 45.0,
                 45.0,
                 glam::vec2(0.5, 0.5),
+                Pinhole,
             );
             for _ in 0..viewer_iters_per_task {
                 let snap = rx.borrow_and_update().clone();

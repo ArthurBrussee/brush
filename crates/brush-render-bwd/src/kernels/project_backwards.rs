@@ -1,8 +1,7 @@
 //! Backward projection.
 
 use brush_cube::{Vec2, is_finite_f32, sigmoid};
-use brush_render::kernels::camera_model::CameraModel;
-use brush_render::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
+use brush_render::kernels::camera_model::CameraKind;
 use brush_render::kernels::helpers::{
     calc_cov2d, compensate_cov2d, read_quat_unorm, read_scale, world_to_cam,
 };
@@ -108,12 +107,13 @@ pub fn project_backwards_kernel(
     v_raw_opac: &mut Tensor<f32>,
     v_refine_weight: &mut Tensor<f32>,
     u: ProjectUniforms,
+    num_visible: u32,
     #[comptime] mip_splatting: bool,
     #[comptime] sh_degree: u32,
-    #[comptime] camera_model: CameraModel,
+    #[comptime] camera_kind: CameraKind,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
-    if compact_gid >= u.num_visible {
+    if compact_gid >= num_visible {
         terminate!();
     }
 
@@ -170,7 +170,7 @@ pub fn project_backwards_kernel(
     let r = quat.to_mat3();
     let m = r.mul_diag(scale);
 
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
+    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_kind);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     let opac_sig = sigmoid(raw_opac[global_gid as usize]);
     v_raw_opac[global_gid as usize] = filter_comp * v_alpha_in * opac_sig * (1.0f32 - opac_sig);
@@ -195,20 +195,14 @@ pub fn project_backwards_kernel(
     let view_rot = u.view_rotation();
     let cov_c = covar.congruence(view_rot);
 
-    let cam_jac = calculate_project_jacobian(
-        mean_c,
-        u.jacobian_clamp_limits,
-        u.pinhole_params,
-        camera_model,
-    );
-    let v_mean_c = calculate_projection_vjp(
+    let cam_jac = u.calculate_project_jacobian(mean_c, camera_kind);
+    let v_mean_c = u.calculate_projection_vjp(
         cam_jac,
         mean_c,
         cov_c,
-        u,
         v_cov2d,
         Vec2::new(v_mean2d_x, v_mean2d_y),
-        camera_model,
+        camera_kind,
     );
 
     // v_covar_c = J^T * v_cov2d * J (2x2 sym → 3x3 sym).
