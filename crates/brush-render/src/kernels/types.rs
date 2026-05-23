@@ -10,6 +10,7 @@ use crate::kernels::camera_model::JacobianClampLimits;
 use crate::kernels::camera_model::kannala_brandt_4::KannalaBrandt4Params;
 use crate::kernels::camera_model::pinhole::PinholeParams;
 use crate::kernels::camera_model::radial_tangential_8::RadialTangential8Params;
+use crate::kernels::camera_model::thin_prism_fisheye::ThinPrismFisheyeParams;
 use crate::kernels::camera_model::{
     CameraKind, calculate_project_jacobian, calculate_projection_vjp, project,
 };
@@ -73,6 +74,7 @@ pub struct ProjectUniforms {
     pub pinhole_params: PinholeParams,
     pub kb4_params: KannalaBrandt4Params,
     pub rt8_params: RadialTangential8Params,
+    pub tpf_params: ThinPrismFisheyeParams,
     pub jacobian_clamp_limits: JacobianClampLimits,
     pub camera_x: f32,
     pub camera_y: f32,

@@ -2,6 +2,7 @@ use crate::camera::{focal_to_fov, fov_to_focal};
 use crate::kernels::camera_model::CameraModel;
 use crate::kernels::camera_model::kannala_brandt_4::KannalaBrandt4Params;
 use crate::kernels::camera_model::radial_tangential_8::RadialTangential8Params;
+use crate::kernels::camera_model::thin_prism_fisheye::ThinPrismFisheyeParams;
 use crate::{
     TextureMode,
     camera::Camera,
@@ -761,4 +762,109 @@ fn rt8_focal_to_fov_and_back() {
     let fov = focal_to_fov(f, pixels, &model);
     let f_back = fov_to_focal(fov, pixels, &model);
     assert!((f - f_back).abs() < 1e-6);
+}
+
+#[test]
+fn tpf_focal_to_fov_and_back() {
+    // ThinPrismFisheye's FOV path delegates to the KB4 radial polynomial,
+    // so the roundtrip must hold regardless of the tangential / thin-prism
+    // coefficients.
+    let model = CameraModel::ThinPrismFisheye(ThinPrismFisheyeParams {
+        kb4: KannalaBrandt4Params {
+            k1: -0.01,
+            k2: 0.003,
+            k3: -0.0005,
+            k4: 0.00002,
+        },
+        p1: 1e-3,
+        p2: -2e-3,
+        sx1: 5e-4,
+        sy1: -5e-4,
+    });
+    let f = 280.0;
+    let pixels = 1024;
+    let fov = focal_to_fov(f, pixels, &model);
+    let f_back = fov_to_focal(fov, pixels, &model);
+    assert!((f - f_back).abs() < 1e-6);
+}
+
+/// Render a tiny scene of front-of-camera splats through `model` and
+/// assert every output pixel is finite. Smoke check that each camera
+/// model's projection kernel + Jacobian compiles and runs end-to-end.
+async fn render_smoke_with_model(model: CameraModel) {
+    let cam = Camera::new(
+        glam::vec3(0.0, 0.0, -3.0),
+        glam::Quat::IDENTITY,
+        0.7,
+        0.7,
+        glam::vec2(0.5, 0.5),
+        model,
+    );
+    let img_size = glam::uvec2(48, 48);
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
+
+    let num_splats = 64;
+    let means = Tensor::<2>::random([num_splats, 3], Distribution::Uniform(-1.0, 1.0), &device);
+    let log_scales =
+        Tensor::<2>::random([num_splats, 3], Distribution::Uniform(-3.0, -1.5), &device);
+    let quats = Tensor::<2>::random([num_splats, 4], Distribution::Uniform(-1.0, 1.0), &device);
+    let sh_coeffs =
+        Tensor::<3>::random([num_splats, 1, 3], Distribution::Uniform(0.0, 1.0), &device);
+    // Most splats visible (raw opacity 1..3).
+    let raw_opacity = Tensor::<1>::random([num_splats], Distribution::Uniform(1.0, 3.0), &device);
+
+    let splats = Splats::from_tensor_data(
+        means,
+        quats,
+        log_scales,
+        sh_coeffs,
+        raw_opacity,
+        SplatRenderMode::Default,
+    );
+    let (output, _aux) =
+        render_splats(splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float).await;
+    read_finite(output).await;
+}
+
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn renders_kb4() {
+    render_smoke_with_model(CameraModel::KannalaBrandt4(KannalaBrandt4Params {
+        k1: -0.05,
+        k2: 0.01,
+        k3: -0.001,
+        k4: 5e-5,
+    }))
+    .await;
+}
+
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn renders_rt8() {
+    render_smoke_with_model(CameraModel::RadialTangential8(RadialTangential8Params {
+        k1: -0.2,
+        k2: 0.05,
+        k3: -0.001,
+        k4: 0.0,
+        k5: 0.0,
+        k6: 0.0,
+        p1: 1e-3,
+        p2: -1e-3,
+    }))
+    .await;
+}
+
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn renders_thin_prism_fisheye() {
+    render_smoke_with_model(CameraModel::ThinPrismFisheye(ThinPrismFisheyeParams {
+        kb4: KannalaBrandt4Params {
+            k1: -0.05,
+            k2: 0.01,
+            k3: -0.001,
+            k4: 5e-5,
+        },
+        p1: 1e-3,
+        p2: -1e-3,
+        sx1: 5e-4,
+        sy1: -5e-4,
+    }))
+    .await;
 }

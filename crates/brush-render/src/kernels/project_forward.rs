@@ -50,7 +50,9 @@ pub fn project_forward_kernel(
                 terminate!();
             }
         }
-        CameraKind::KannalaBrandt4 | CameraKind::RadialTangential8 => {
+        CameraKind::KannalaBrandt4
+        | CameraKind::RadialTangential8
+        | CameraKind::ThinPrismFisheye => {
             let r = f32::sqrt(mean_c.x() * mean_c.x() + mean_c.y() * mean_c.y());
             let theta = r.atan2(mean_c.z());
             if theta > u.half_max_render_fov {
