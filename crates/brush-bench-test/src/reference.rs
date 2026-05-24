@@ -1,12 +1,22 @@
-use brush_render::{
-    camera::{Camera, focal_to_fov, fov_to_focal},
-    gaussian_splats::Splats,
-};
-use burn::{Tensor, tensor::s};
+//! Forward-render reference test.
+//!
+//! Each `<name>.safetensors` in `test_cases/` holds the splat input
+//! data (means, quats, scales, coeffs, opacities) plus an `out_img`
+//! tensor — the ground-truth forward render produced by an external
+//! gsplat implementation.
+//!
+//! We don't compare backward gradients against the gsplat reference —
+//! it does `dirs = dirs.detach()` before SH eval and so misses the
+//! viewdir→mean path that we fixed. Backward self-consistency is
+//! verified by the finite-diff suite in `tests/finite_diff.rs`.
 
-use anyhow::{Context, Result};
-use brush_render::kernels::camera_model::CameraModel::Pinhole;
-use glam::Vec3;
+use brush_render::{
+    TextureMode,
+    camera::{Camera, focal_to_fov, fov_to_focal},
+    gaussian_splats::{Splats, render_splats},
+    kernels::camera_model::CameraModel::Pinhole,
+};
+use burn::tensor::Tensor;
 use safetensors::SafeTensors;
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -15,56 +25,59 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 use crate::safetensor_utils::{safetensor_to_burn, splats_from_safetensors};
 
-static CRAB_PNG: &[u8] = include_bytes!("../test_cases/crab.png");
-static TINY_CASE: &[u8] = include_bytes!("../test_cases/tiny_case.safetensors");
-static BASIC_CASE: &[u8] = include_bytes!("../test_cases/basic_case.safetensors");
-#[allow(clippy::large_include_file)] // It's fine, just for a test, not the final binary.
-static MIX_CASE: &[u8] = include_bytes!("../test_cases/mix_case.safetensors");
+const CASES: &[(&str, &[u8])] = &[
+    (
+        "tiny_case",
+        include_bytes!("../test_cases/tiny_case.safetensors"),
+    ),
+    (
+        "basic_case",
+        include_bytes!("../test_cases/basic_case.safetensors"),
+    ),
+    #[allow(clippy::large_include_file)] // reference data
+    (
+        "mix_case",
+        include_bytes!("../test_cases/mix_case.safetensors"),
+    ),
+];
 
-async fn compare<const D1: usize>(
-    name: &str,
-    tensor_a: Tensor<D1>,
-    tensor_b: Tensor<D1>,
-    atol: f32,
-    rtol: f32,
-) {
-    assert!(
-        tensor_a.dims() == tensor_b.dims(),
-        "Tensor shapes for {name} must match"
-    );
-
-    let data_a = tensor_a
+/// Per-element tolerance: 1e-5 absolute, 1% relative. The reference path
+/// uses the hard alpha cutoff (the C^1 smoothstep variant is selected
+/// only by the finite-diff test suite via `RasterPass::BackwardSmoothCutoff`)
+/// so the rasterizer matches the gsplat reference up to f32 / dispatch
+/// nondeterminism, not the ~0.7/255 ramp from smooth cutoff.
+async fn assert_img_matches(name: &str, ours: Tensor<3>, reference: Tensor<3>) {
+    const ATOL: f32 = 1e-5;
+    const RTOL: f32 = 1e-2;
+    assert_eq!(ours.dims(), reference.dims(), "{name} shape mismatch");
+    let ours = ours
         .into_data_async()
         .await
-        .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:a"))
+        .expect("readback ours")
         .into_vec::<f32>()
-        .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:a"));
-    let data_b = tensor_b
+        .expect("vec ours");
+    let reference = reference
         .into_data_async()
         .await
-        .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:b"))
+        .expect("readback reference")
         .into_vec::<f32>()
-        .unwrap_or_else(|_| panic!("Failed to convert tensor {name}:b"));
-
-    for (i, (a, b)) in data_a.iter().zip(&data_b).enumerate() {
-        let tol = atol + rtol * b.abs();
-
+        .expect("vec reference");
+    for (i, (&a, &b)) in ours.iter().zip(&reference).enumerate() {
         assert!(
             !a.is_nan() && !b.is_nan(),
-            "{name}: Found Nan values at position {i}: {a} vs {b}"
+            "{name} NaN at idx {i}: ours={a} ref={b}"
         );
-
+        let tol = ATOL + RTOL * b.abs();
         assert!(
             (a - b).abs() < tol,
-            "{name} mismatch: {a} vs {b} at absolution position idx {i}, Difference is {} > {}",
-            a - b,
-            tol
+            "{name} pixel {i}: ours={a} ref={b} |Δ|={} > tol {tol}",
+            (a - b).abs(),
         );
     }
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
-async fn test_reference() -> Result<()> {
+async fn test_reference() -> anyhow::Result<()> {
     #[cfg(target_family = "wasm")]
     {
         console_error_panic_hook::set_once();
@@ -78,33 +91,7 @@ async fn test_reference() -> Result<()> {
             .try_init();
     }
 
-    let device =
-        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
-
-    let crab_img = image::load_from_memory(CRAB_PNG)?;
-
-    let raw_buffer = crab_img.to_rgb8().into_raw();
-    let crab_tens: Tensor<3> = Tensor::<1>::from_floats(
-        raw_buffer
-            .iter()
-            .map(|&b| b as f32 / 255.0)
-            .collect::<Vec<_>>()
-            .as_slice(),
-        &device,
-    )
-    .reshape([crab_img.height() as usize, crab_img.width() as usize, 3]);
-
-    // Concat alpha to tensor.
-    let crab_tens = Tensor::cat(
-        vec![
-            crab_tens,
-            Tensor::zeros(
-                [crab_img.height() as usize, crab_img.width() as usize, 1],
-                &device,
-            ),
-        ],
-        2,
-    );
+    let device = burn::tensor::Device::from(brush_cube::test_helpers::test_device().await);
 
     #[cfg(not(target_family = "wasm"))]
     let rec = tokio::task::spawn_blocking(|| {
@@ -115,94 +102,50 @@ async fn test_reference() -> Result<()> {
     .await
     .unwrap();
 
-    let test_cases: &[(&str, &[u8])] = &[
-        ("tiny_case", TINY_CASE),
-        ("basic_case", BASIC_CASE),
-        ("mix_case", MIX_CASE),
-    ];
-
-    for (i, &(path, data)) in test_cases.iter().enumerate() {
-        log::info!("Checking path {path}");
+    for (i, &(name, data)) in CASES.iter().enumerate() {
+        log::info!("Checking {name}");
 
         let tensors = SafeTensors::deserialize(data)?;
         let splats: Splats = splats_from_safetensors(&tensors, &device)?;
-
         let img_ref = safetensor_to_burn::<3>(&tensors.tensor("out_img")?, &device);
         let [h, w, _] = img_ref.dims();
 
         let fov = std::f64::consts::PI * 0.5;
-
         let focal = fov_to_focal(fov, w as u32, &Pinhole);
-        let fov_x = focal_to_fov(focal, w as u32, &Pinhole);
-        let fov_y = focal_to_fov(focal, h as u32, &Pinhole);
-
         let cam = Camera::new(
             glam::vec3(0.123, 0.456, -8.0),
             glam::Quat::IDENTITY,
-            fov_x,
-            fov_y,
+            focal_to_fov(focal, w as u32, &Pinhole),
+            focal_to_fov(focal, h as u32, &Pinhole),
             glam::vec2(0.5, 0.5),
             Pinhole,
         );
 
-        let diff_out = brush_render_bwd::render_splats(
-            splats.clone(),
+        let (ours, _aux) = render_splats(
+            splats,
             &cam,
             glam::uvec2(w as u32, h as u32),
-            Vec3::ZERO,
+            glam::Vec3::ZERO,
+            None,
+            TextureMode::Float,
         )
         .await;
-
-        let out: Tensor<3> = diff_out.img;
 
         #[cfg(not(target_family = "wasm"))]
         if let Some(rec) = rec.as_ref() {
             use brush_rerun::burn_to_rerun::BurnToImage;
             rec.set_time_sequence("test case", i as i64);
-            rec.log("img/render", &out.clone().into_rerun_image_blocking())?;
+            rec.log("img/render", &ours.clone().into_rerun_image_blocking())?;
             rec.log("img/ref", &img_ref.clone().into_rerun_image_blocking())?;
             rec.log(
                 "img/dif",
-                &(img_ref.clone() - out.clone()).into_rerun_image_blocking(),
+                &(img_ref.clone() - ours.clone()).into_rerun_image_blocking(),
             )?;
         }
+        #[cfg(target_family = "wasm")]
+        let _ = i;
 
-        // Tolerance reflects f16 precision in the color pipeline: ProjectedSplat stores
-        // colors as f16, giving ~1e-3 relative precision that accumulates through blending.
-        compare("img", out.clone(), img_ref, 1e-5, 1e-2).await;
-
-        let grads = (out.clone() - crab_tens.clone())
-            .powi_scalar(2.0)
-            .mean()
-            .backward();
-
-        let v_coeffs_ref = safetensor_to_burn::<3>(&tensors.tensor("v_coeffs")?, &device).inner();
-        let v_coeffs = splats.sh_coeffs.grad(&grads).context("coeffs grad")?;
-        let [n, c, _] = v_coeffs.dims();
-        let v_coeffs_ref = v_coeffs_ref.slice(s![0..n, 0..c]);
-        compare("v_coeffs", v_coeffs, v_coeffs_ref, 1e-5, 1e-7).await;
-
-        let v_transforms = splats.transforms.grad(&grads).context("transforms grad")?;
-        // Slice transforms gradient: means(0..3), quats(3..7), log_scales(7..10)
-        let v_means = v_transforms.clone().slice(s![.., 0..3]);
-        let v_means_ref = safetensor_to_burn::<2>(&tensors.tensor("v_means")?, &device).inner();
-        compare("v_means", v_means, v_means_ref, 1e-5, 1e-7).await;
-
-        let v_quats = v_transforms.clone().slice(s![.., 3..7]);
-        let v_quats_ref = safetensor_to_burn::<2>(&tensors.tensor("v_quats")?, &device).inner();
-        compare("v_quats", v_quats, v_quats_ref, 1e-5, 1e-7).await;
-
-        let v_scales = v_transforms.slice(s![.., 7..10]);
-        let v_scales_ref = safetensor_to_burn::<2>(&tensors.tensor("v_scales")?, &device).inner();
-        compare("v_scales", v_scales, v_scales_ref, 1e-5, 1e-7).await;
-
-        let v_opacities_ref =
-            safetensor_to_burn::<1>(&tensors.tensor("v_opacities")?, &device).inner();
-        let v_opacities = splats
-            .raw_opacities
-            .grad(&grads)
-            .context("opacities grad")?;
-        compare("v_opacities", v_opacities, v_opacities_ref, 1e-5, 1e-7).await;
+        assert_img_matches(name, ours, img_ref).await;
     }
     Ok(())
 }

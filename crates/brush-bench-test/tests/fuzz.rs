@@ -186,7 +186,7 @@ async fn render_raw(
         cube_tensor(device, [n], opac),
         mode,
         glam::Vec3::ZERO,
-        false,
+        brush_render::gaussian_splats::RasterPass::Forward,
     )
     .await
 }

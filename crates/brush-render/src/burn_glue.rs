@@ -179,7 +179,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
-        bwd_info: bool,
+        pass: crate::gaussian_splats::RasterPass,
     ) -> RenderOutput<Self> {
         let client = transforms.client.clone();
 
@@ -204,7 +204,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             base_raw_opac,
             render_mode,
             background,
-            bwd_info,
+            pass,
         )
         .await;
 

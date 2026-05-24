@@ -135,6 +135,140 @@ pub fn sh_coeffs_to_color(
     color
 }
 
+/// VJP w.r.t. the view direction `v`: given upstream `vc = ∂L/∂color`,
+/// returns `∂L/∂v` from the SH basis polynomials' `v`-dependence. The DC
+/// term contributes nothing. Symbolic derivatives mirror
+/// `sh_coeffs_to_color`'s structure.
+#[cube]
+pub fn sh_color_viewdir_vjp(
+    coeffs: &Tensor<f32>,
+    coeff_base: u32,
+    #[comptime] degree: u32,
+    v: Vec3A,
+    vc: Vec3A,
+) -> Vec3A {
+    let mut gx = 0.0f32;
+    let mut gy = 0.0f32;
+    let mut gz = 0.0f32;
+
+    if comptime![degree >= 1u32] {
+        let f0a = 0.488_602_5f32;
+        let s_n1 = read_coeff(coeffs, coeff_base + 3u32).dot(vc);
+        let s_z0 = read_coeff(coeffs, coeff_base + 6u32).dot(vc);
+        let s_p1 = read_coeff(coeffs, coeff_base + 9u32).dot(vc);
+        gx += -f0a * s_p1;
+        gy += -f0a * s_n1;
+        gz += f0a * s_z0;
+
+        if comptime![degree >= 2u32] {
+            let z = v.z();
+            let x = v.x();
+            let y = v.y();
+            let c2 = -1.092_548_5f32;
+            let f1a = 0.546_274_24f32;
+            let s_n2 = read_coeff(coeffs, coeff_base + 12u32).dot(vc);
+            let s_n1 = read_coeff(coeffs, coeff_base + 15u32).dot(vc);
+            let s_z0 = read_coeff(coeffs, coeff_base + 18u32).dot(vc);
+            let s_p1 = read_coeff(coeffs, coeff_base + 21u32).dot(vc);
+            let s_p2 = read_coeff(coeffs, coeff_base + 24u32).dot(vc);
+            gx += 2.0f32 * f1a * y * s_n2 + c2 * z * s_p1 + 2.0f32 * f1a * x * s_p2;
+            gy += 2.0f32 * f1a * x * s_n2 + c2 * z * s_n1 - 2.0f32 * f1a * y * s_p2;
+            gz += c2 * y * s_n1 + 2.0f32 * 0.946_174_7f32 * z * s_z0 + c2 * x * s_p1;
+
+            if comptime![degree >= 3u32] {
+                let z2 = z * z;
+                let x2 = x * x;
+                let y2 = y * y;
+                let f2a = -0.590_043_6f32;
+                let c1b = 1.445_305_7f32;
+                let f1b = c1b * z;
+                let c0c = -2.285_229f32;
+                let f0c = c0c * z2 + 0.457_045_8f32;
+                let f0c_dz = 2.0f32 * c0c * z;
+                let s_n3 = read_coeff(coeffs, coeff_base + 27u32).dot(vc);
+                let s_n2 = read_coeff(coeffs, coeff_base + 30u32).dot(vc);
+                let s_n1 = read_coeff(coeffs, coeff_base + 33u32).dot(vc);
+                let s_z0 = read_coeff(coeffs, coeff_base + 36u32).dot(vc);
+                let s_p1 = read_coeff(coeffs, coeff_base + 39u32).dot(vc);
+                let s_p2 = read_coeff(coeffs, coeff_base + 42u32).dot(vc);
+                let s_p3 = read_coeff(coeffs, coeff_base + 45u32).dot(vc);
+                let d12_z = 3.0f32 * 1.865_881_7f32 * z2 - 1.119_529f32;
+                gx += f2a * 6.0f32 * x * y * s_n3
+                    + 2.0f32 * f1b * y * s_n2
+                    + f0c * s_p1
+                    + 2.0f32 * f1b * x * s_p2
+                    + f2a * 3.0f32 * (x2 - y2) * s_p3;
+                gy += f2a * 3.0f32 * (x2 - y2) * s_n3
+                    + 2.0f32 * f1b * x * s_n2
+                    + f0c * s_n1
+                    + (-2.0f32) * f1b * y * s_p2
+                    + f2a * (-6.0f32) * x * y * s_p3;
+                gz += 2.0f32 * c1b * x * y * s_n2
+                    + f0c_dz * y * s_n1
+                    + d12_z * s_z0
+                    + f0c_dz * x * s_p1
+                    + c1b * (x2 - y2) * s_p2;
+
+                if comptime![degree >= 4u32] {
+                    // fc_k / fs_k are Re/Im of (x+iy)^k. Partials follow from
+                    // d fc_k/dx = k*fc_{k-1}, d fc_k/dy = -k*fs_{k-1},
+                    // d fs_k/dx = k*fs_{k-1}, d fs_k/dy =  k*fc_{k-1}.
+                    let fc1 = x2 - y2;
+                    let fs1 = 2.0f32 * x * y;
+                    let fc2 = x * fc1 - y * fs1;
+                    let fs2 = x * fs1 + y * fc1;
+                    let f0d = z * (-4.683_326f32 * z2 + 2.007_139_6f32);
+                    let f0d_dz = -14.049_978f32 * z2 + 2.007_139_6f32;
+                    let f1c = 3.311_611_4f32 * z2 - 0.473_087_35f32;
+                    let f1c_dz = 2.0f32 * 3.311_611_4f32 * z;
+                    let f2b_dz_const = -1.770_130_8f32;
+                    let f2b = f2b_dz_const * z;
+                    let f3a = 0.625_835_75f32;
+                    // p_sh20 (m=0) = 1.984... z * p_sh12 - 1.006... p_sh6,
+                    // both pure functions of z; pull the z-derivative.
+                    let p_sh12 = z * (1.865_881_7f32 * z2 - 1.119_529f32);
+                    let dp_sh12_dz = 3.0f32 * 1.865_881_7f32 * z2 - 1.119_529f32;
+                    let dp_sh6_dz = 2.0f32 * 0.946_174_7f32 * z;
+                    let dp_sh20_dz =
+                        1.984_313_5f32 * (p_sh12 + z * dp_sh12_dz) - 1.006_230_6f32 * dp_sh6_dz;
+                    let s_n4 = read_coeff(coeffs, coeff_base + 48u32).dot(vc);
+                    let s_n3 = read_coeff(coeffs, coeff_base + 51u32).dot(vc);
+                    let s_n2 = read_coeff(coeffs, coeff_base + 54u32).dot(vc);
+                    let s_n1 = read_coeff(coeffs, coeff_base + 57u32).dot(vc);
+                    let s_z0 = read_coeff(coeffs, coeff_base + 60u32).dot(vc);
+                    let s_p1 = read_coeff(coeffs, coeff_base + 63u32).dot(vc);
+                    let s_p2 = read_coeff(coeffs, coeff_base + 66u32).dot(vc);
+                    let s_p3 = read_coeff(coeffs, coeff_base + 69u32).dot(vc);
+                    let s_p4 = read_coeff(coeffs, coeff_base + 72u32).dot(vc);
+                    gx += f3a * 4.0f32 * fs2 * s_n4
+                        + f2b * 3.0f32 * fs1 * s_n3
+                        + f1c * 2.0f32 * y * s_n2
+                        + f0d * s_p1
+                        + f1c * 2.0f32 * x * s_p2
+                        + f2b * 3.0f32 * fc1 * s_p3
+                        + f3a * 4.0f32 * fc2 * s_p4;
+                    gy += f3a * 4.0f32 * fc2 * s_n4
+                        + f2b * 3.0f32 * fc1 * s_n3
+                        + f1c * 2.0f32 * x * s_n2
+                        + f0d * s_n1
+                        + f1c * (-2.0f32) * y * s_p2
+                        + f2b * (-3.0f32) * fs1 * s_p3
+                        + f3a * (-4.0f32) * fs2 * s_p4;
+                    gz += f2b_dz_const * fs2 * s_n3
+                        + f1c_dz * fs1 * s_n2
+                        + f0d_dz * y * s_n1
+                        + dp_sh20_dz * s_z0
+                        + f0d_dz * x * s_p1
+                        + f1c_dz * fc1 * s_p2
+                        + f2b_dz_const * fc2 * s_p3;
+                }
+            }
+        }
+    }
+
+    Vec3A::new(gx, gy, gz)
+}
+
 /// VJP of `sh_coeffs_to_color`. Writes the gradient w.r.t. each
 /// coefficient to `v_coeffs` at offset `coeff_base`. Higher-degree slots
 /// are left untouched (the host pre-zeroes the buffer). `degree` is

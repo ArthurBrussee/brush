@@ -16,7 +16,10 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
-use brush_render::kernels::helpers::{TILE_SIZE, TILE_WIDTH, read_projected_splat};
+use brush_render::kernels::helpers::{
+    ALPHA_CUTOFF_MID, TILE_SIZE, TILE_WIDTH, alpha_cutoff_weight, alpha_cutoff_weight_deriv,
+    read_projected_splat,
+};
 use brush_render::kernels::types::{RasterizeUniforms, Splat, Sym2};
 
 // SPLAT_BATCH = 32 = one Apple-Silicon SIMD group, so the per-iter
@@ -103,6 +106,7 @@ pub fn rasterize_backwards_kernel<A: AtomicAddF32>(
     v_output: &Tensor<f32>,
     v_splats: &mut Tensor<Atomic<A::Storage>>,
     u: RasterizeUniforms,
+    #[comptime] smooth_cutoff: bool,
 ) {
     let (tile_id, tile_origin_x, tile_origin_y) = tile_origin(u.tile_bw);
     // Only `pix_state` lives in shared memory — it gets read-modify-
@@ -137,6 +141,7 @@ pub fn rasterize_backwards_kernel<A: AtomicAddF32>(
             output,
             v_output,
             u,
+            smooth_cutoff,
         );
         if splat_active {
             let base = (compact_gid * 10u32) as usize;
@@ -255,6 +260,7 @@ fn accumulate_grads_for_batch(
     output: &Tensor<f32>,
     v_output: &Tensor<f32>,
     u: RasterizeUniforms,
+    #[comptime] smooth_cutoff: bool,
 ) -> SplatGrad {
     let conic = Sym2 {
         c00: splat.conic_x,
@@ -294,12 +300,18 @@ fn accumulate_grads_for_batch(
                 let gaussian = f32::exp(-sigma);
                 let alpha = min(0.999f32, splat.color_a * gaussian);
 
-                if sigma >= 0.0f32 && alpha >= 1.0f32 / 255.0f32 {
-                    let next_t = state_w * (1.0f32 - alpha);
+                let w_cut = if comptime![smooth_cutoff] {
+                    alpha_cutoff_weight(alpha)
+                } else {
+                    select(alpha >= ALPHA_CUTOFF_MID, 1.0f32, 0.0f32)
+                };
+                if sigma >= 0.0f32 && w_cut > 0.0f32 {
+                    let alpha_eff = alpha * w_cut;
+                    let next_t = state_w * (1.0f32 - alpha_eff);
                     if next_t <= 1.0e-4f32 {
                         pix_state[s + 3] = 0.0f32;
                     } else {
-                        let vis = alpha * state_w;
+                        let vis = alpha_eff * state_w;
                         // Re-derive v_out and inv_final_a from `v_output` /
                         // `output` directly. These reads hit the global
                         // tensor each iter rather than shared memory, but
@@ -317,10 +329,6 @@ fn accumulate_grads_for_batch(
                         let t_final = 1.0f32 - final_a;
                         let v_o_w =
                             (v_a - (u.bg_r * v_o_x + u.bg_g * v_o_y + u.bg_b * v_o_z)) * t_final;
-                        let new_remain_x = state_x - vis * clamped_r;
-                        let new_remain_y = state_y - vis * clamped_g;
-                        let new_remain_z = state_z - vis * clamped_b;
-
                         // Gate the rgb VJP on the original (pre-clamp) sign:
                         // negative raw values clamp to zero and contribute
                         // no gradient.
@@ -328,11 +336,23 @@ fn accumulate_grads_for_batch(
                         grad.rgb_g += select(splat.color_g >= 0.0f32, vis * v_o_y, 0.0f32);
                         grad.rgb_b += select(splat.color_b >= 0.0f32, vis * v_o_z, 0.0f32);
 
-                        let ra = 1.0f32 / (1.0f32 - alpha);
-                        let dot_rgb = (state_w * clamped_r - new_remain_x * ra) * v_o_x
-                            + (state_w * clamped_g - new_remain_y * ra) * v_o_y
-                            + (state_w * clamped_b - new_remain_z * ra) * v_o_z;
-                        let v_alpha = dot_rgb + v_o_w * ra;
+                        let ra = 1.0f32 / (1.0f32 - alpha_eff);
+                        let dot_rgb = ((state_w * clamped_r - state_x) * v_o_x
+                            + (state_w * clamped_g - state_y) * v_o_y
+                            + (state_w * clamped_b - state_z) * v_o_z)
+                            * ra;
+                        let new_remain_x = state_x - vis * clamped_r;
+                        let new_remain_y = state_y - vis * clamped_g;
+                        let new_remain_z = state_z - vis * clamped_b;
+                        // Chain through the cutoff. Hard step (production):
+                        // w' = 0 and w == 1 in-branch, so the factor is 1.
+                        let v_alpha_eff = dot_rgb + v_o_w * ra;
+                        let dw_dalpha = if comptime![smooth_cutoff] {
+                            alpha_cutoff_weight_deriv(alpha)
+                        } else {
+                            0.0f32 * alpha
+                        };
+                        let v_alpha = v_alpha_eff * (w_cut + alpha * dw_dalpha);
                         let v_sigma = -alpha * v_alpha;
                         let vxy_x = v_sigma * (conic.c00 * dx + conic.c01 * dy);
                         let vxy_y = v_sigma * (conic.c01 * dx + conic.c11 * dy);

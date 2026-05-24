@@ -3,7 +3,7 @@ use crate::{
     MainBackendBase, RenderAuxInner, SplatOps,
     camera::Camera,
     dim_check::DimCheck,
-    gaussian_splats::SplatRenderMode,
+    gaussian_splats::{RasterPass, SplatRenderMode},
     get_tile_offset::{CHECKS_PER_ITER, get_tile_offsets},
     kernels,
     render_aux::RenderOutput,
@@ -44,12 +44,14 @@ impl SplatOps<Self> for MainBackendBase {
         raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
-        bwd_info: bool,
+        pass: RasterPass,
     ) -> RenderOutput<Self> {
         assert!(
             img_size[0] > 0 && img_size[1] > 0,
             "Can't render images with 0 size."
         );
+        let bwd_info = pass.bwd_info();
+        let smooth_cutoff = pass.smooth_cutoff();
 
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
@@ -302,6 +304,7 @@ impl SplatOps<Self> for MainBackendBase {
                     visible.clone().into_tensor_arg(),
                     uniforms,
                     bwd_info,
+                    smooth_cutoff,
                 );
             }
         });

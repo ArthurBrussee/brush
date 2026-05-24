@@ -100,8 +100,10 @@ pub fn calculate_projection_vjp_pinhole(
     let vj20 = 2.0f32 * tmp.row0().dot(cov_c.row2());
     let vj21 = 2.0f32 * tmp.row1().dot(cov_c.row2());
 
-    let tx = mz * clamp(mx_rz, lim_neg_x, lim_pos_x);
-    let ty = mz * clamp(my_rz, lim_neg_y, lim_pos_y);
+    // mx_rz / my_rz are already clamp(mx*inv_z, ...) above — second
+    // clamp here was a no-op. tx = mz * mx_rz = clamped(mx) essentially.
+    let tx = mz * mx_rz;
+    let ty = mz * my_rz;
 
     if in_x {
         v_mx += -fx * inv_z2 * vj20;
