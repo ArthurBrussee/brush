@@ -12,13 +12,8 @@ use burn::{
     tensor::{Device, Int, Tensor},
 };
 
-/// Adam optimizer with optional per-parameter second moment reduction, and a
-/// per-splat step counter so freshly-spawned splats get their own Adam warmup.
-///
-/// Second moment reduction is controlled per parameter via the
-/// `reduce_moment_2` flag on [`AdamState`]. When enabled for a parameter,
-/// `moment_2` stores a single scalar per row instead of per-element, saving
-/// memory.
+/// Adam with per-parameter second-moment reduction (via [`AdamState::reduce_moment_2`])
+/// and a per-splat step counter for fresh-splat Adam warmup.
 #[derive(Clone)]
 pub(crate) struct AdamScaled {
     momentum: AdaptiveMomentum,
@@ -45,18 +40,10 @@ struct AdaptiveMomentum {
     epsilon: f32,
 }
 
-/// Per-parameter momentum state.
-///
-/// When the owning [`AdamState`] has `reduce_moment_2` set, `moment_2` has
-/// size 1 in all trailing dimensions (e.g. \[N, 1, 1\] for D=3), while
-/// `moment_1` retains the full shape. Operations in `map_opt` (in
-/// `train.rs`) must be shape-agnostic along trailing dims to handle both
-/// tensors correctly.
-///
-/// `time` is per-splat (rank-1, [N]). Bias correction uses each row's own
-/// step counter so freshly-split splats get the canonical Adam warmup.
-/// `map_opt` in `train.rs` keeps it in sync with splat count during
-/// refine/prune.
+/// Per-parameter momentum state. When `reduce_moment_2` is set on the owning
+/// [`AdamState`], `moment_2` has size 1 in trailing dims; `map_opt` callers
+/// must stay shape-agnostic along those. `time` is per-splat so freshly-split
+/// rows get their own Adam warmup.
 #[derive(Record, Clone)]
 pub(crate) struct MomentumState<const D: usize> {
     pub moment_1: Tensor<D>,
@@ -215,18 +202,16 @@ impl AdaptiveMomentum {
             }
         };
 
-        // Per-splat bias correction: 1 - beta^t computed elementwise from
-        // each row's own time, broadcast over trailing dims. Fresh splats
-        // (time=1) get the full warmup; long-lived splats (time large) see
-        // bias correction collapse to 1.
+        // Per-splat bias correction 1 - beta^t = 1 - exp(t * ln(beta)),
+        // broadcast over trailing dims.
         let time_f: Tensor<1> = state.time.clone().float();
-        let bc_1: Tensor<1> = time_f
+        let bc_1 = time_f
             .clone()
             .mul_scalar(self.beta_1.ln())
             .exp()
             .neg()
             .add_scalar(1.0);
-        let bc_2: Tensor<1> = time_f
+        let bc_2 = time_f
             .mul_scalar(self.beta_2.ln())
             .exp()
             .neg()

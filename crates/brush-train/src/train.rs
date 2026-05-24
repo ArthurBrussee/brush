@@ -567,42 +567,35 @@ impl SplatTrainer {
                 m.scatter(0, refine_inds.clone(), difference, IndexingUpdateOp::Add)
             });
 
-            // Concatenate new splats.
             // Build new transforms row: means(3) + rotations(4) + log_scales(3)
             let new_transforms =
                 Tensor::cat(vec![cur_means + samples, cur_rots, new_log_scales], 1);
-            // Momentum/state slots must match the optimizer's inner device.
+            // Optimizer state lives on the inner (non-autodiff) device.
             let opt_device = device.clone().inner();
             let refine_inds_opt = refine_inds.to_device(&opt_device);
-            // Both halves of a split are treated as equals: zero Adam state
-            // (moments + time) on the in-place "parent" slot via scatter, and
-            // zeros for the appended "child" slot. The only thing telling them
-            // apart is the ±sample position offset above — Adam-wise, both
-            // get a fresh start and the full per-splat bias-correction warmup.
+            // Both halves of a split start with zero Adam state; only the
+            // ±sample position offset tells them apart. Burn's scatter bridge
+            // only implements Add, so we add the negated parent value to zero
+            // it out instead of using Assign.
             splats = map_splats_and_opt(
                 splats,
                 &mut record,
                 |x| Tensor::cat(vec![x, new_transforms], 0),
                 |x| Tensor::cat(vec![x, cur_sh_coeffs], 0),
                 |x| Tensor::cat(vec![x, new_raw_opac], 0),
-                // Read dims from tensor: moment_2 may have reduced trailing dims.
                 |x: Tensor<2>| {
                     let d1 = x.dims()[1];
                     let neg_parent = -x.clone().select(0, refine_inds_opt.clone());
-                    let inds: Tensor<2, Int> = refine_inds_opt
-                        .clone()
-                        .unsqueeze_dim(1)
-                        .repeat_dim(1, d1);
+                    let inds: Tensor<2, Int> =
+                        refine_inds_opt.clone().unsqueeze_dim(1).repeat_dim(1, d1);
                     let x = x.scatter(0, inds, neg_parent, IndexingUpdateOp::Add);
                     Tensor::cat(vec![x, Tensor::zeros([refine_count, d1], &opt_device)], 0)
                 },
                 |x: Tensor<3>| {
                     let [_, d1, d2] = x.dims();
                     let neg_parent = -x.clone().select(0, refine_inds_opt.clone());
-                    let inds_2: Tensor<2, Int> = refine_inds_opt
-                        .clone()
-                        .unsqueeze_dim(1)
-                        .repeat_dim(1, d1);
+                    let inds_2: Tensor<2, Int> =
+                        refine_inds_opt.clone().unsqueeze_dim(1).repeat_dim(1, d1);
                     let inds: Tensor<3, Int> = inds_2.unsqueeze_dim(2).repeat_dim(2, d2);
                     let x = x.scatter(0, inds, neg_parent, IndexingUpdateOp::Add);
                     Tensor::cat(
@@ -612,14 +605,22 @@ impl SplatTrainer {
                 },
                 |x: Tensor<1>| {
                     let neg_parent = -x.clone().select(0, refine_inds_opt.clone());
-                    let x =
-                        x.scatter(0, refine_inds_opt.clone(), neg_parent, IndexingUpdateOp::Add);
+                    let x = x.scatter(
+                        0,
+                        refine_inds_opt.clone(),
+                        neg_parent,
+                        IndexingUpdateOp::Add,
+                    );
                     Tensor::cat(vec![x, Tensor::zeros([refine_count], &opt_device)], 0)
                 },
                 |t: Tensor<1, Int>| {
                     let neg_parent = -t.clone().select(0, refine_inds_opt.clone());
-                    let t =
-                        t.scatter(0, refine_inds_opt.clone(), neg_parent, IndexingUpdateOp::Add);
+                    let t = t.scatter(
+                        0,
+                        refine_inds_opt.clone(),
+                        neg_parent,
+                        IndexingUpdateOp::Add,
+                    );
                     Tensor::cat(vec![t, Tensor::zeros([refine_count], &opt_device)], 0)
                 },
             );
@@ -655,9 +656,19 @@ fn map_splats_and_opt(
     map_opt_time: impl Fn(Tensor<1, Int>) -> Tensor<1, Int>,
 ) -> Splats {
     splats.transforms = splats.transforms.map(map_transforms);
-    map_opt(splats.transforms.id, record, &map_opt_transforms, &map_opt_time);
+    map_opt(
+        splats.transforms.id,
+        record,
+        &map_opt_transforms,
+        &map_opt_time,
+    );
     splats.sh_coeffs = splats.sh_coeffs.map(map_sh_coeffs);
-    map_opt(splats.sh_coeffs.id, record, &map_opt_sh_coeffs, &map_opt_time);
+    map_opt(
+        splats.sh_coeffs.id,
+        record,
+        &map_opt_sh_coeffs,
+        &map_opt_time,
+    );
     splats.raw_opacities = splats.raw_opacities.map(map_opac);
     map_opt(
         splats.raw_opacities.id,
@@ -668,10 +679,9 @@ fn map_splats_and_opt(
     splats
 }
 
-/// Apply `map_fn` to both `moment_1` and `moment_2` in the optimizer state,
-/// and `map_time_fn` to the per-splat `time` tensor. `map_fn` must be
-/// shape-agnostic along trailing dims because `moment_2` may have reduced
-/// trailing dims (size 1) when `reduce_moment_2` is set.
+/// Apply `map_fn` to `moment_1` and `moment_2`, and `map_time_fn` to the
+/// per-splat `time`. `map_fn` must be shape-agnostic along trailing dims
+/// since `moment_2` may have size-1 trailing dims under `reduce_moment_2`.
 fn map_opt<const D: usize>(
     param_id: ParamId,
     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled>>,
