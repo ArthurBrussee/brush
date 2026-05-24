@@ -8,7 +8,7 @@ pub(crate) trait AppPane {
 
     /// Initialize runtime state after creation or deserialization.
     #[allow(unused_variables)]
-    fn init(&mut self, state: &RenderState) {}
+    fn init(&mut self, state: &RenderState, process: &UiProcess) {}
 
     /// Draw the pane's UI's content.
     fn ui(&mut self, ui: &mut egui::Ui, process: &UiProcess);
