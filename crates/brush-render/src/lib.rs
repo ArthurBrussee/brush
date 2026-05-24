@@ -88,9 +88,9 @@ macro_rules! __wgpu_kind {
 pub trait SplatOps<B: Backend> {
     /// Render gaussian splats to an image.
     ///
-    /// This is the full forward pipeline: cull, depth sort, readback, project,
-    /// rasterize. When `bwd_info` is true, extra per-splat data is computed
-    /// for the backward pass.
+    /// Full forward pipeline: cull, depth sort, readback, project, rasterize.
+    /// `pass` picks forward-only vs. forward+backward-bookkeeping, and (only
+    /// for tests) toggles the C^1 smoothstep around the alpha cutoff.
     #[allow(clippy::too_many_arguments)]
     fn render(
         camera: &Camera,
@@ -100,7 +100,7 @@ pub trait SplatOps<B: Backend> {
         raw_opacities: FloatTensor<B>,
         render_mode: SplatRenderMode,
         background: Vec3,
-        bwd_info: bool,
+        pass: gaussian_splats::RasterPass,
     ) -> impl Future<Output = RenderOutput<B>>;
 }
 

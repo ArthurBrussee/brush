@@ -14,6 +14,37 @@ pub use brush_cube::{calc_sigma, is_finite_f32, sigmoid};
 pub const TILE_WIDTH: u32 = 16;
 pub const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 
+/// Smoothstep ramp centered at 1/255: zero below `MID - BAND/2`, one
+/// above `MID + BAND/2`. C^1 in alpha. Selected at kernel-compile-time
+/// via `RasterPass::BackwardSmoothCutoff` — the rasterizer's
+/// `smooth_cutoff` comptime gate routes around this for the production
+/// hard-step path.
+pub const ALPHA_CUTOFF_MID: f32 = 1.0 / 255.0;
+pub const ALPHA_CUTOFF_BAND: f32 = 1.0e-3;
+
+#[cube]
+pub fn alpha_cutoff_weight(alpha: f32) -> f32 {
+    let t = f32::clamp(
+        (alpha - (ALPHA_CUTOFF_MID - 0.5f32 * ALPHA_CUTOFF_BAND)) / ALPHA_CUTOFF_BAND,
+        0.0f32,
+        1.0f32,
+    );
+    t * t * (3.0f32 - 2.0f32 * t)
+}
+
+#[cube]
+pub fn alpha_cutoff_weight_deriv(alpha: f32) -> f32 {
+    let low = ALPHA_CUTOFF_MID - 0.5f32 * ALPHA_CUTOFF_BAND;
+    let high = ALPHA_CUTOFF_MID + 0.5f32 * ALPHA_CUTOFF_BAND;
+    let inside = alpha > low && alpha < high;
+    let t = (alpha - low) / ALPHA_CUTOFF_BAND;
+    select(
+        inside,
+        (6.0f32 * t - 6.0f32 * t * t) / ALPHA_CUTOFF_BAND,
+        0.0f32,
+    )
+}
+
 /// `f32` lanes per projected splat. Layout matches `Splat`:
 ///   0:xy_x, 1:xy_y, 2:conic_x, 3:conic_y, 4:conic_z, 5:color_a,
 ///   6:color_r, 7:color_g, 8:color_b.

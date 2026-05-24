@@ -16,7 +16,8 @@ use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
 use super::helpers::{
-    PROJECTED_LANES, PROJECTED_LANES_USIZE, TILE_SIZE, TILE_WIDTH, calc_sigma, map_1d_to_2d,
+    ALPHA_CUTOFF_MID, PROJECTED_LANES, PROJECTED_LANES_USIZE, TILE_SIZE, TILE_WIDTH,
+    alpha_cutoff_weight, calc_sigma, map_1d_to_2d,
 };
 use super::types::{RasterizeUniforms, Sym2};
 
@@ -32,6 +33,7 @@ pub fn rasterize_kernel(
     visible: &mut Tensor<f32>,
     u: RasterizeUniforms,
     #[comptime] bwd_info: bool,
+    #[comptime] smooth_cutoff: bool,
 ) {
     let global_id = ABSOLUTE_POS as u32;
     let (pix_x, pix_y) = map_1d_to_2d(global_id, u.tile_bw);
@@ -125,15 +127,21 @@ pub fn rasterize_kernel(
             let sigma = calc_sigma(pixel_coord_x, pixel_coord_y, conic, xy_x, xy_y);
             let alpha = min(0.999f32, color_a * f32::exp(-sigma));
 
-            if sigma >= 0.0f32 && alpha >= 1.0f32 / 255.0f32 {
-                let next_t = t_acc * (1.0f32 - alpha);
+            let w_cut = if comptime![smooth_cutoff] {
+                alpha_cutoff_weight(alpha)
+            } else {
+                select(alpha >= ALPHA_CUTOFF_MID, 1.0f32, 0.0f32)
+            };
+            if sigma >= 0.0f32 && w_cut > 0.0f32 {
+                let alpha_eff = alpha * w_cut;
+                let next_t = t_acc * (1.0f32 - alpha_eff);
                 if next_t <= 1.0e-4f32 {
                     done = true;
                 } else {
                     if comptime![bwd_info] {
                         visible[load_gid[t as usize] as usize] = 1.0f32;
                     }
-                    let vis = alpha * t_acc;
+                    let vis = alpha_eff * t_acc;
                     pix_r += max(local_batch[dst_base + 6], 0.0f32) * vis;
                     pix_g += max(local_batch[dst_base + 7], 0.0f32) * vis;
                     pix_b += max(local_batch[dst_base + 8], 0.0f32) * vis;

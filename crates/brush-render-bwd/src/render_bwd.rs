@@ -29,6 +29,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         background: Vec3,
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
+        smooth_cutoff: bool,
     ) -> RasterizeGrads<Self> {
         let _span = tracing::trace_span!("rasterize_bwd").entered();
 
@@ -83,6 +84,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                         v_output.into_tensor_arg(),
                         v_combined.clone().into_tensor_arg(),
                         uniforms,
+                        smooth_cutoff,
                     );
                 } else {
                     rasterize_backwards_kernel::launch_unchecked::<CasAtomicAdd, WgpuRuntime>(
@@ -96,6 +98,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                         v_output.into_tensor_arg(),
                         v_combined.clone().into_tensor_arg(),
                         uniforms,
+                        smooth_cutoff,
                     );
                 }
             }
@@ -107,6 +110,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
     #[allow(clippy::too_many_arguments)]
     fn project_bwd(
         transforms: FloatTensor<Self>,
+        sh_coeffs: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
@@ -116,6 +120,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let _span = tracing::trace_span!("project_bwd").entered();
 
         let transforms = into_contiguous(transforms);
+        let sh_coeffs = into_contiguous(sh_coeffs);
         let raw_opac = into_contiguous(raw_opac);
 
         let device = transforms.device.clone();
@@ -153,6 +158,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     calc_cube_count_1d(num_visible, kernels::project_backwards::WG_SIZE),
                     CubeDim::new_1d(kernels::project_backwards::WG_SIZE),
                     transforms.into_tensor_arg(),
+                    sh_coeffs.into_tensor_arg(),
                     raw_opac.into_tensor_arg(),
                     global_from_compact_gid.into_tensor_arg(),
                     v_combined.into_tensor_arg(),

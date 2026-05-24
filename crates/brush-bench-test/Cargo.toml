@@ -12,7 +12,6 @@ brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
 
 anyhow.workspace = true
-image.workspace = true
 glam.workspace = true
 log.workspace = true
 burn = { workspace = true, features = ["autodiff"] }

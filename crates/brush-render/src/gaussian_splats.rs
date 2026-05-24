@@ -21,6 +21,32 @@ pub enum SplatRenderMode {
     Mip,
 }
 
+/// Forward/backward rasterizer mode. Replaces the old `bwd_info: bool` so the
+/// test-only smooth-cutoff variant rides along on the same enum that already
+/// switches in/out the backward bookkeeping.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+pub enum RasterPass {
+    /// Forward only — inference / eval. No backward bookkeeping, hard
+    /// `alpha >= 1/255` cutoff.
+    #[default]
+    Forward,
+    /// Forward + backward bookkeeping (training). Hard cutoff.
+    Backward,
+    /// Backward + C^1 smoothstep around the alpha=1/255 cutoff. Test-only:
+    /// makes the analytical backward agree with finite-diff at the cutoff,
+    /// at the cost of a sub-1/255 forward shift on edge pixels.
+    BackwardSmoothCutoff,
+}
+
+impl RasterPass {
+    pub const fn bwd_info(self) -> bool {
+        !matches!(self, Self::Forward)
+    }
+    pub const fn smooth_cutoff(self) -> bool {
+        matches!(self, Self::BackwardSmoothCutoff)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum TextureMode {
     Packed,
@@ -283,6 +309,14 @@ pub async fn render_splats(
     let sh_coeffs_p = unwrap_wgpu_float(sh_coeffs);
     let raw_opacities_p = unwrap_wgpu_float(raw_opacities);
 
+    // Float mode needs `Backward` (f32 image + per-splat bookkeeping); Packed
+    // mode goes through the packed u8 path. Neither inference path uses the
+    // smooth cutoff — that's reserved for the gradient-check tests.
+    let pass = if use_float {
+        RasterPass::Backward
+    } else {
+        RasterPass::Forward
+    };
     let output = <crate::MainBackend as crate::SplatOps<crate::MainBackend>>::render(
         camera,
         img_size,
@@ -291,7 +325,7 @@ pub async fn render_splats(
         raw_opacities_p,
         render_mode,
         background,
-        use_float,
+        pass,
     )
     .await;
 

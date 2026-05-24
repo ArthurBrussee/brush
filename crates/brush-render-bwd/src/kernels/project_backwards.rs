@@ -6,7 +6,7 @@ use brush_render::kernels::camera_model::{calculate_project_jacobian, calculate_
 use brush_render::kernels::helpers::{
     calc_cov2d, compensate_cov2d, read_quat_unorm, read_scale, world_to_cam,
 };
-use brush_render::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp};
+use brush_render::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp, sh_color_viewdir_vjp};
 use brush_render::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
@@ -100,6 +100,7 @@ fn inverse2x2_vjp(minv: Sym2, v_minv: Sym2) -> Sym2 {
 #[allow(clippy::too_many_arguments)]
 pub fn project_backwards_kernel(
     transforms: &Tensor<f32>,
+    sh_coeffs: &Tensor<f32>,
     raw_opac: &Tensor<f32>,
     global_from_compact_gid: &Tensor<u32>,
     v_rasterize_grads: &Tensor<f32>,
@@ -159,11 +160,17 @@ pub fn project_backwards_kernel(
     let quat_unorm = read_quat_unorm(transforms, tbase);
     let quat = quat_unorm.normalize();
 
-    // viewdir + SH VJP
-    let v = mean.sub(u.camera_pos()).normalize();
+    // viewdir + SH VJP. d(normalize(u))/du = (I - vv^T)/|u|, so
+    // v_u = (v_v - v * (v · v_v)) / |u|.
+    let u_world = mean.sub(u.camera_pos());
+    let u_len = u_world.length();
+    let v = u_world.scale(1.0f32 / u_len);
     let coeff_base = global_gid * comptime![num_sh_coeffs(sh_degree) * 3u32];
     let v_color = Vec3A::new(v_color_r, v_color_g, v_color_b);
     sh_coeffs_to_color_vjp(v_coeffs, coeff_base, sh_degree, v, v_color);
+    let v_v_sh = sh_color_viewdir_vjp(sh_coeffs, coeff_base, sh_degree, v, v_color);
+    let v_dot_vv = v.dot(v_v_sh);
+    let v_mean_from_sh = v_v_sh.sub(v.scale(v_dot_vv)).scale(1.0f32 / u_len);
 
     let mean_c = world_to_cam(mean, u);
 
@@ -214,8 +221,7 @@ pub fn project_backwards_kernel(
     // v_covar_c = J^T * v_cov2d * J (2x2 sym → 3x3 sym).
     let vcc = cam_jac.transpose_congruence_sym2(v_cov2d);
 
-    // v_mean = R^T * v_mean_c.
-    let v_mean = view_rot.transpose_mul_vec3(v_mean_c);
+    let v_mean = view_rot.transpose_mul_vec3(v_mean_c).add(v_mean_from_sh);
 
     // v_covar = R^T * v_covar_c * R (symmetric).
     // v_M = (v_covar + v_covar^T) * M = 2 * v_covar * M.
