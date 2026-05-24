@@ -96,6 +96,80 @@ mod visualize_tools_impl {
             Ok(())
         }
 
+        pub fn send_default_blueprint(&self, num_eval_views: usize) -> Result<()> {
+            use rerun::blueprint::{
+                Blueprint, BlueprintActivation, Horizontal, Spatial2DView, Spatial3DView, Tabs,
+                TimeSeriesView, Vertical,
+            };
+
+            if !self.rec.is_enabled() {
+                return Ok(());
+            }
+
+            let scene_view = Spatial3DView::new("Scene")
+                .with_origin("world")
+                .with_contents(["world/**"]);
+
+            let main_row = if num_eval_views == 0 {
+                Horizontal::new([scene_view.into()])
+            } else {
+                let eval_tabs = (0..num_eval_views).map(|i| {
+                    Horizontal::new([
+                        Spatial2DView::new("Ground truth")
+                            .with_origin(format!("eval/view_{i}/ground_truth"))
+                            .with_contents(["$origin/**"])
+                            .into(),
+                        Spatial2DView::new("Render")
+                            .with_origin(format!("eval/view_{i}/render"))
+                            .with_contents(["$origin/**"])
+                            .into(),
+                    ])
+                    .with_name(format!("view {i}"))
+                    .into()
+                });
+                Horizontal::new([
+                    Tabs::new(eval_tabs).with_name("Eval views").into(),
+                    scene_view.into(),
+                ])
+                .with_column_shares([3.0, 1.0])
+            };
+
+            let always_visible_graphs = Horizontal::new([
+                TimeSeriesView::new("Quality")
+                    .with_contents(["psnr/**", "ssim/**"])
+                    .into(),
+                TimeSeriesView::new("Splats")
+                    .with_contents(["splats/**", "refine/effective_growth"])
+                    .into(),
+            ]);
+
+            let secondary_tabs = Tabs::new([
+                TimeSeriesView::new("Learning rates")
+                    .with_contents(["lr/**"])
+                    .into(),
+                TimeSeriesView::new("Memory")
+                    .with_contents(["memory/**"])
+                    .into(),
+                TimeSeriesView::new("Refine")
+                    .with_contents(["refine/num_added", "refine/num_pruned"])
+                    .into(),
+            ]);
+
+            let root = Vertical::new([
+                main_row.into(),
+                always_visible_graphs.into(),
+                secondary_tabs.into(),
+            ])
+            .with_row_shares([4.0, 2.0, 1.5]);
+
+            Blueprint::new(root)
+                .with_auto_layout(false)
+                .with_auto_views(false)
+                .send(&self.rec, BlueprintActivation::default())?;
+
+            Ok(())
+        }
+
         #[allow(unused_variables)]
         pub fn log_scene(&self, scene: &Scene, max_img_size: u32) -> Result<()> {
             if self.rec.is_enabled() {
@@ -178,21 +252,21 @@ mod visualize_tools_impl {
                 };
 
                 self.rec.log(
-                    format!("world/eval/view_{index}/ground_truth"),
+                    format!("eval/view_{index}/ground_truth"),
                     &gt_rerun_img,
                 )?;
                 self.rec.log(
-                    format!("world/eval/view_{index}/render"),
+                    format!("eval/view_{index}/render"),
                     &rerun::Image::from_rgb24(rendered.into_vec(), [w, h]),
                 )?;
                 self.rec.log(
-                    format!("psnr/eval_{index}"),
+                    format!("psnr/per_view/{index}"),
                     &rerun::Scalars::new(vec![
                         eval.psnr.clone().into_scalar_async::<f32>().await? as f64,
                     ]),
                 )?;
                 self.rec.log(
-                    format!("ssim/eval_{index}"),
+                    format!("ssim/per_view/{index}"),
                     &rerun::Scalars::new(vec![
                         eval.ssim.clone().into_scalar_async::<f32>().await? as f64,
                     ]),
@@ -295,7 +369,7 @@ mod visualize_tools_impl {
     use burn_cubecl::cubecl::MemoryUsage;
 
     impl VisualizeTools {
-        pub fn new(_enabled: bool) -> Self {
+        pub async fn new(_enabled: bool) -> Self {
             Self {}
         }
 
@@ -306,6 +380,11 @@ mod visualize_tools_impl {
         #[allow(unused_variables)]
         #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
         pub fn log_scene(&self, _scene: &Scene, _max_img_size: u32) -> Result<()> {
+            Ok(())
+        }
+
+        #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
+        pub fn send_default_blueprint(&self, _num_eval_views: usize) -> Result<()> {
             Ok(())
         }
 

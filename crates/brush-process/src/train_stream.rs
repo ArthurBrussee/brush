@@ -83,10 +83,8 @@ pub(crate) async fn train_stream(
         emitter.emit(ProcessMessage::Warning { error }).await;
     }
 
-    if let Err(error) = visualize.log_scene(
-        &dataset.train,
-        train_stream_config.rerun_config.rerun_max_img_size,
-    ) {
+    let num_eval_views = dataset.eval.as_ref().map_or(0, |s| s.views.len());
+    if let Err(error) = visualize.send_default_blueprint(num_eval_views) {
         emitter.emit(ProcessMessage::Warning { error }).await;
     }
 
