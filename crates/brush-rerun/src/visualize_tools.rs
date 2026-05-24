@@ -251,10 +251,8 @@ mod visualize_tools_impl {
                     rerun::Image::from_rgb24(eval.gt_img.into_rgb8().into_vec(), [w, h])
                 };
 
-                self.rec.log(
-                    format!("eval/view_{index}/ground_truth"),
-                    &gt_rerun_img,
-                )?;
+                self.rec
+                    .log(format!("eval/view_{index}/ground_truth"), &gt_rerun_img)?;
                 self.rec.log(
                     format!("eval/view_{index}/render"),
                     &rerun::Image::from_rgb24(rendered.into_vec(), [w, h]),
