@@ -316,6 +316,10 @@ impl UiProcess {
     pub fn burn_device(&self) -> WgpuDevice {
         self.read().burn_device.clone()
     }
+
+    pub(crate) fn actor(&self) -> Actor {
+        self.read().actor.clone()
+    }
 }
 
 struct UiProcessInner {
