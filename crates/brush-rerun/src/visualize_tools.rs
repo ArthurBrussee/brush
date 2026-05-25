@@ -25,24 +25,6 @@ mod visualize_tools_impl {
 
     use super::VisualizeTools;
 
-    fn histogram_fixed(values: &[f32], min: f32, max: f32, num_bins: usize) -> Vec<u64> {
-        let mut bins = vec![0u64; num_bins];
-        let range = (max - min).max(f32::EPSILON);
-        for &v in values {
-            let t = ((v - min) / range).clamp(0.0, 1.0);
-            let idx = ((t * num_bins as f32) as usize).min(num_bins - 1);
-            bins[idx] += 1;
-        }
-        bins
-    }
-
-    fn bin_centers(min: f32, max: f32, num_bins: usize) -> Vec<f32> {
-        let step = (max - min) / num_bins as f32;
-        (0..num_bins)
-            .map(|i| min + (i as f32 + 0.5) * step)
-            .collect()
-    }
-
     impl VisualizeTools {
         #[allow(unused_variables)]
         pub async fn new(enabled: bool) -> Self {
@@ -371,49 +353,6 @@ mod visualize_tools_impl {
             Ok(())
         }
 
-        pub async fn log_histograms(&self, iter: u32, splats: &Splats) -> Result<()> {
-            if !self.rec.is_enabled() {
-                return Ok(());
-            }
-            self.rec.set_time_sequence("iterations", iter);
-
-            let num_bins = 32usize;
-
-            // Opacity is a [0, 1] sigmoid output — fixed-range histogram works directly.
-            let opac = splats
-                .opacities()
-                .into_data_async()
-                .await?
-                .into_vec::<f32>()?;
-            let opac_bins = histogram_fixed(&opac, 0.0, 1.0, num_bins);
-            let opac_centers = bin_centers(0.0, 1.0, num_bins);
-            self.rec.log(
-                "histograms/opacity",
-                &rerun::BarChart::new(opac_bins).with_abscissa(opac_centers),
-            )?;
-
-            // Log-scale is stored directly in the splat params; binning it in log
-            // space gives a useful long-tail view of splat sizes.
-            let log_scales_data = splats
-                .log_scales()
-                .into_data_async()
-                .await?
-                .into_vec::<f32>()?;
-            let mean_log_scale: Vec<f32> = log_scales_data
-                .chunks(3)
-                .map(|c| (c[0] + c[1] + c[2]) / 3.0)
-                .collect();
-            let (scale_lo, scale_hi) = (-10.0_f32, 2.0_f32);
-            let scale_bins = histogram_fixed(&mean_log_scale, scale_lo, scale_hi, num_bins);
-            let scale_centers = bin_centers(scale_lo, scale_hi, num_bins);
-            self.rec.log(
-                "histograms/log_scale",
-                &rerun::BarChart::new(scale_bins).with_abscissa(scale_centers),
-            )?;
-
-            Ok(())
-        }
-
         #[allow(unused_variables)]
         pub fn log_refine_stats(&self, iter: u32, refine: &RefineStats) -> Result<()> {
             if self.rec.is_enabled() {
@@ -525,11 +464,6 @@ mod visualize_tools_impl {
             _stats: &TrainStepStats,
             _step_duration: std::time::Duration,
         ) -> Result<()> {
-            Ok(())
-        }
-
-        #[allow(unused_variables)]
-        pub async fn log_histograms(&self, _iter: u32, _splats: &Splats) -> Result<()> {
             Ok(())
         }
 

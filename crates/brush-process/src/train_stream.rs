@@ -397,12 +397,6 @@ pub(crate) async fn train_stream(
                     .unwrap();
             }
 
-            if rerun_config.rerun_log_histograms_every > 0
-                && iter.is_multiple_of(rerun_config.rerun_log_histograms_every)
-            {
-                visualize.log_histograms(iter, &splats).await.unwrap();
-            }
-
             visualize.log_memory(iter, &WgpuRuntime::client(wgpu_device).memory_usage()?)?;
             if refine.num_added > 0 {
                 visualize.log_refine_stats(iter, &refine).unwrap();
