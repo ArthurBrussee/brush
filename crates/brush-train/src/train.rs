@@ -83,8 +83,17 @@ impl SplatTrainer {
 
         let ssim_enabled = config.ssim_weight > 0.0;
 
+        // Growth is gated on the global iter. LOD phases run past
+        // total_train_iters but their refines should never grow — clamp
+        // here so growth_stop is never effectively past end-of-training.
+        let mut config = config.clone();
+        config.growth_stop_iter = config.growth_stop_iter.min(config.total_train_iters);
+
+        #[cfg(not(target_family = "wasm"))]
+        let lpips = (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device));
+
         Self {
-            config: config.clone(),
+            config,
             sched_mean: lr_mean.init().expect("Mean lr schedule must be valid."),
             sched_scale: lr_scale.init().expect("Scale lr schedule must be valid."),
             optim: None,
@@ -94,7 +103,7 @@ impl SplatTrainer {
             step_count: 0,
             max_sh_degree: 0,
             #[cfg(not(target_family = "wasm"))]
-            lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
+            lpips,
         }
     }
 
