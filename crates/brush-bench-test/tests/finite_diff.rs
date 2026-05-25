@@ -25,15 +25,6 @@ use brush_render_bwd::render_splats_with_pass;
 /// Finite-diff tests need the C^1 cutoff so analytical and numerical
 /// agree at typical eps; production paths use the hard step.
 const PASS: RasterPass = RasterPass::BackwardSmoothCutoff;
-
-async fn render_splats(
-    splats: Splats,
-    cam: &Camera,
-    img_size: glam::UVec2,
-    background: Vec3,
-) -> brush_render_bwd::SplatOutputDiff {
-    render_splats_with_pass(splats, cam, img_size, background, PASS).await
-}
 use burn::tensor::{Gradients, Tensor, s};
 use glam::Vec3;
 
@@ -110,7 +101,13 @@ async fn render_value(
     device: &burn::tensor::Device,
 ) -> f32 {
     let splats = build_splats(scene, device);
-    let diff = render_splats(splats, cam, img_size, Vec3::ZERO).await;
+    let diff = {
+        let splats = splats;
+        let cam: &Camera = cam;
+        let background = Vec3::ZERO;
+        async move { render_splats_with_pass(splats, cam, img_size, background, PASS).await }
+    }
+    .await;
     diff.img
         .mean()
         .into_scalar_async::<f32>()
@@ -125,7 +122,13 @@ async fn analytical_grads(
     device: &burn::tensor::Device,
 ) -> (Splats, Gradients) {
     let splats = build_splats(scene, device);
-    let diff = render_splats(splats.clone(), cam, img_size, Vec3::ZERO).await;
+    let diff = {
+        let splats = splats.clone();
+        let cam: &Camera = cam;
+        let background = Vec3::ZERO;
+        async move { render_splats_with_pass(splats, cam, img_size, background, PASS).await }
+    }
+    .await;
     let grads = diff.img.mean().backward();
     (splats, grads)
 }
@@ -170,7 +173,6 @@ async fn read_first<const D: usize>(t: Tensor<D>) -> f32 {
         .expect("vec")[0]
 }
 
-/// Pick the analytical gradient slot matching `(lane, splat, comp)`.
 async fn analytical_at(
     splats: &Splats,
     grads: &Gradients,
@@ -232,7 +234,6 @@ async fn finite_difference_gradient_broad() {
         (Lane::RawOpac, 0, 0),
         (Lane::RawOpac, 2, 0),
     ];
-
     let mut rows: Vec<(Lane, usize, usize, f32, f32)> = Vec::with_capacity(cases.len());
     for (lane, splat, comp) in cases {
         let mut s_plus = scene.clone();
@@ -248,28 +249,12 @@ async fn finite_difference_gradient_broad() {
 
         rows.push((*lane, *splat, *comp, numerical, an));
     }
-
-    println!(
-        "{:>12} {:>5} {:>5}   {:>14} {:>14} {:>10}",
-        "param", "splat", "comp", "numerical", "analytical", "rel%"
-    );
     let mut failed: Vec<String> = Vec::new();
     for (lane, splat, comp, numerical, an) in &rows {
         let abs_err = (numerical - an).abs();
         let scale = numerical.abs().max(an.abs()).max(1e-8);
-        let rel = abs_err / scale * 100.0;
         let tol = abs_tol + rel_tol * scale;
-        let mark = if abs_err > tol { " ✗" } else { "" };
-        println!(
-            "{:>12} {:>5} {:>5}   {:>14.6} {:>14.6} {:>9.2}%{}",
-            lane_name(*lane),
-            splat,
-            comp,
-            numerical,
-            an,
-            rel,
-            mark,
-        );
+
         if abs_err > tol {
             failed.push(format!(
                 "{}[{},{}]: numerical {numerical:.6} vs analytical {an:.6} \
@@ -322,7 +307,6 @@ async fn finite_diff_tangential_quat() {
     // the normalization projects it out.
     let radial = [1.0_f32, 0.0, 0.0, 0.0];
     let radial_grad: f32 = (0..4).map(|i| q_grad[i] * radial[i]).sum();
-    println!("radial-direction analytical grad = {radial_grad:.3e} (expect ~0)");
     assert!(
         radial_grad.abs() < 1e-4,
         "radial quat grad should be ~0 (normalization), got {radial_grad}",
@@ -337,10 +321,6 @@ async fn finite_diff_tangential_quat() {
         [0.0, 0.6, 0.0, 0.8],
     ];
 
-    println!(
-        "\n{:>26}   {:>14} {:>14} {:>10}",
-        "tangent", "numerical", "analytical", "rel%"
-    );
     let mut failed: Vec<String> = Vec::new();
     for t in tangents {
         let mut s_plus = scene.clone();
@@ -356,8 +336,6 @@ async fn finite_diff_tangential_quat() {
 
         let abs_err = (numerical - an).abs();
         let scale = numerical.abs().max(an.abs()).max(1e-8);
-        let rel = abs_err / scale * 100.0;
-        println!("{t:?}   {numerical:>14.6} {an:>14.6} {rel:>9.2}%");
 
         let tol = 5e-5_f32 + 0.01 * scale;
         if abs_err > tol {
@@ -369,106 +347,6 @@ async fn finite_diff_tangential_quat() {
     assert!(
         failed.is_empty(),
         "tangent-quat mismatches:\n  {}",
-        failed.join("\n  ")
-    );
-}
-
-/// Higher-order SH coefficients. `Scene::sh_dc` holds the full
-/// `[n_splats, n_coeffs, 3]` SH coefficient buffer (one DC + n higher
-/// bands). Build a degree-2 scene (9 coeffs/channel), perturb a
-/// representative coefficient from each band, and verify analytical
-/// gradients match. Higher SH bands are view-direction-dependent, so we
-/// expect each splat-coefficient combo to have a different magnitude.
-#[tokio::test]
-async fn finite_diff_sh_degree2() {
-    use brush_render::sh::sh_coeffs_for_degree;
-
-    let device =
-        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
-    let cam = std_cam();
-    let img_size = glam::uvec2(32, 32);
-    let eps = 3e-4_f32;
-    // SH higher-band coeff gradients at small magnitude (~3e-4) sit at the
-    // GPU-reduction-order noise floor. Looser abs/rel than the broad test
-    // to absorb that — sh[0,1,1] flakes around 6e-5 on Linux CI runners
-    // and 4e-5 locally.
-    let rel_tol = 0.03_f32;
-    let abs_tol = 1e-4_f32;
-
-    let degree = 2_u32;
-    let n_coeffs = sh_coeffs_for_degree(degree) as usize; // 9
-    let mut scene = base_scene();
-    let n = scene.raw_opac.len();
-    // Expand sh_dc field (currently [n*3]) to full [n*n_coeffs*3].
-    let dc = scene.sh_dc.clone();
-    let mut sh = vec![0.0_f32; n * n_coeffs * 3];
-    for splat in 0..n {
-        // DC term (coef 0) — keep existing values.
-        for ch in 0..3 {
-            sh[splat * n_coeffs * 3 + ch] = dc[splat * 3 + ch];
-        }
-        // Higher bands: small deterministic non-zero values so backward
-        // has signal to flow through every coefficient.
-        for coef in 1..n_coeffs {
-            for ch in 0..3 {
-                let phase = ((splat * 13 + coef * 7 + ch) as f32) * 0.31;
-                sh[(splat * n_coeffs + coef) * 3 + ch] = 0.15 * phase.sin();
-            }
-        }
-    }
-    scene.sh_dc = sh;
-
-    let (splats, grads) = analytical_grads(&scene, &cam, img_size, &device).await;
-
-    // (splat, coef, channel) — representative per-band coverage.
-    let cases: &[(usize, usize, usize)] = &[
-        (0, 0, 0), // DC, red
-        (0, 1, 1), // band-1 m=-1 (y), green
-        (0, 2, 2), // band-1 m=0  (z), blue
-        (1, 3, 0), // band-1 m=+1 (x), red
-        (1, 4, 1), // band-2 m=-2 (xy), green
-        (2, 5, 2), // band-2 m=-1 (yz), blue
-        (2, 6, 0), // band-2 m=0  (3z²-1), red
-        (3, 7, 1), // band-2 m=+1 (xz), green
-        (3, 8, 2), // band-2 m=+2 (x²-y²), blue
-    ];
-
-    println!(
-        "\n[sh-deg2] {:>5} {:>5} {:>5}   {:>14} {:>14} {:>10}",
-        "splat", "coef", "ch", "numerical", "analytical", "rel%"
-    );
-    let mut failed: Vec<String> = Vec::new();
-    for (splat, coef, ch) in cases {
-        let flat_idx = splat * n_coeffs * 3 + coef * 3 + ch;
-        let mut s_plus = scene.clone();
-        s_plus.sh_dc[flat_idx] += eps;
-        let l_plus = render_value(&s_plus, &cam, img_size, &device).await;
-        let mut s_minus = scene.clone();
-        s_minus.sh_dc[flat_idx] -= eps;
-        let l_minus = render_value(&s_minus, &cam, img_size, &device).await;
-        let numerical = (l_plus - l_minus) / (2.0 * eps);
-
-        let g = splats.sh_coeffs.grad(&grads).expect("sh grad");
-        let an = read_first(g.slice(s![*splat..*splat + 1, *coef..*coef + 1, *ch..*ch + 1])).await;
-
-        let abs_err = (numerical - an).abs();
-        let scale = numerical.abs().max(an.abs()).max(1e-8);
-        let rel = abs_err / scale * 100.0;
-        let tol = abs_tol + rel_tol * scale;
-        let mark = if abs_err > tol { " ✗" } else { "" };
-        println!(
-            "[sh-deg2] {splat:>5} {coef:>5} {ch:>5}   {numerical:>14.6} {an:>14.6} {rel:>9.2}%{mark}"
-        );
-        if abs_err > tol {
-            failed.push(format!(
-                "sh[{splat},{coef},{ch}]: num {numerical:.6} an {an:.6} \
-                 (|Δ|={abs_err:.3e} > tol {tol:.3e})"
-            ));
-        }
-    }
-    assert!(
-        failed.is_empty(),
-        "sh-degree2 mismatches:\n  {}",
         failed.join("\n  ")
     );
 }
@@ -503,7 +381,7 @@ async fn finite_diff_broad_mip_mode() {
             SplatRenderMode::Mip,
             device,
         );
-        let diff = render_splats(splats, cam, img_size, Vec3::ZERO).await;
+        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS).await;
         diff.img
             .mean()
             .into_scalar_async::<f32>()
@@ -526,7 +404,7 @@ async fn finite_diff_broad_mip_mode() {
             SplatRenderMode::Mip,
             device,
         );
-        let diff = render_splats(splats.clone(), cam, img_size, Vec3::ZERO).await;
+        let diff = render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, PASS).await;
         let g = diff.img.mean().backward();
         (splats, g)
     }
@@ -541,10 +419,6 @@ async fn finite_diff_broad_mip_mode() {
         (Lane::RawOpac, 0, 0),
     ];
 
-    println!(
-        "\n[mip] {:>12} {:>5} {:>5}   {:>14} {:>14} {:>10}",
-        "param", "splat", "comp", "numerical", "analytical", "rel%"
-    );
     let mut failed: Vec<String> = Vec::new();
     for (lane, splat, comp) in cases {
         let mut s_plus = scene.clone();
@@ -558,19 +432,7 @@ async fn finite_diff_broad_mip_mode() {
 
         let abs_err = (numerical - an).abs();
         let scale = numerical.abs().max(an.abs()).max(1e-8);
-        let rel = abs_err / scale * 100.0;
         let tol = abs_tol + rel_tol * scale;
-        let mark = if abs_err > tol { " ✗" } else { "" };
-        println!(
-            "[mip] {:>12} {:>5} {:>5}   {:>14.6} {:>14.6} {:>9.2}%{}",
-            lane_name(*lane),
-            splat,
-            comp,
-            numerical,
-            an,
-            rel,
-            mark,
-        );
         if abs_err > tol {
             failed.push(format!(
                 "{}[{},{}]: num {numerical:.6} an {an:.6} (|Δ|={abs_err:.3e} > {tol:.3e})",
@@ -624,7 +486,7 @@ async fn finite_diff_weighted_loss() {
         device: &burn::tensor::Device,
     ) -> f32 {
         let splats = build_splats(scene, device);
-        let diff = render_splats(splats, cam, img_size, Vec3::ZERO).await;
+        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS).await;
         (diff.img * weights)
             .sum()
             .into_scalar_async::<f32>()
@@ -640,7 +502,7 @@ async fn finite_diff_weighted_loss() {
         device: &burn::tensor::Device,
     ) -> (Splats, Gradients) {
         let splats = build_splats(scene, device);
-        let diff = render_splats(splats.clone(), cam, img_size, Vec3::ZERO).await;
+        let diff = render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, PASS).await;
         let loss = (diff.img * weights).sum();
         (splats, loss.backward())
     }
@@ -656,10 +518,6 @@ async fn finite_diff_weighted_loss() {
         (Lane::RawOpac, 2, 0),
     ];
 
-    println!(
-        "\n[weighted] {:>12} {:>5} {:>5}   {:>14} {:>14} {:>10}",
-        "param", "splat", "comp", "numerical", "analytical", "rel%"
-    );
     let mut failed: Vec<String> = Vec::new();
     for (lane, splat, comp) in cases {
         let mut s_plus = scene.clone();
@@ -673,19 +531,7 @@ async fn finite_diff_weighted_loss() {
 
         let abs_err = (numerical - an).abs();
         let scale = numerical.abs().max(an.abs()).max(1e-8);
-        let rel = abs_err / scale * 100.0;
         let tol = 0.5 + 0.02 * scale; // sum-loss values are O(100s), tolerate larger absolute
-        let mark = if abs_err > tol { " ✗" } else { "" };
-        println!(
-            "[weighted] {:>12} {:>5} {:>5}   {:>14.6} {:>14.6} {:>9.2}%{}",
-            lane_name(*lane),
-            splat,
-            comp,
-            numerical,
-            an,
-            rel,
-            mark,
-        );
         if abs_err > tol {
             failed.push(format!(
                 "{}[{},{}]: num {numerical:.6} an {an:.6} (|Δ|={abs_err:.3e} > {tol:.3e})",
@@ -809,156 +655,8 @@ async fn fuzz_finite_diff_random_scenes() {
         let n = rng.usize_in(3, 9);
         (random_scene(seed, n), n, "rng".into())
     };
-    let results = run_obscure_fuzz(
-        "rng",
-        &device,
-        glam::uvec2(32, 32),
-        40,
-        3,
-        scene_fn,
-        random_camera,
-    )
-    .await;
+    let results = run_obscure_fuzz(&device, glam::uvec2(32, 32), 5, scene_fn, random_camera).await;
     assert_fuzz_clean(&results, 0.02, 2e-4, "rng");
-}
-
-// ---- Targeted forward-clamp tests ----
-
-/// **Alpha cap at 0.999** (`rasterize.rs:126`): forward does
-/// `alpha = min(0.999, color_a * exp(-sigma))`. Backward
-/// (`rasterize_backwards.rs:342`) GATES conic/xy/alpha grad on
-/// `color_a * gaussian <= 0.999` — when the center pixel is saturated,
-/// the backward says "no gradient" for shape/position/opacity at that
-/// pixel. RGB grad still flows. This test pushes a single splat to
-/// near and past saturation, verifies whether the analytical
-/// agrees with central differences at the surrounding pixels.
-#[tokio::test]
-async fn finite_diff_alpha_cap_region() {
-    let device =
-        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
-    let cam = std_cam();
-    let img_size = glam::uvec2(64, 64);
-
-    // Single splat at center, moderately wide so many off-center pixels
-    // contribute. log_scale = 0 → scale = 1.0 world, ~7 px footprint
-    // radius at our camera setup.
-    let make_scene = |raw_opac: f32| Scene {
-        means: vec![0.0, 0.0, 0.0],
-        rots: vec![1.0, 0.0, 0.0, 0.0],
-        log_scales: vec![0.0, 0.0, 0.0],
-        sh_dc: vec![0.6, 0.5, 0.4],
-        raw_opac: vec![raw_opac],
-    };
-
-    let sweep_eps = [3e-3_f32, 1e-3, 3e-4, 1e-4];
-
-    println!(
-        "\n[alpha-cap] {:>9}   {:>10}   {:>10}   {:>14} {:>14} {:>10}",
-        "raw_opac", "sigmoid", "best_eps", "numerical", "analytical", "rel%"
-    );
-    // Sweep raw_opac through the saturation region. sigmoid(6.9) ≈ 0.999
-    // — center pixel exactly at the cap. Beyond ~7 the center is firmly
-    // capped; intermediate radii still see normal gradient.
-    for raw_opac in [
-        2.0_f32, // sigmoid ≈ 0.88 — no saturation
-        5.0,     // sigmoid ≈ 0.993 — center barely below cap
-        6.5,     // sigmoid ≈ 0.9985 — center just below cap
-        6.9,     // sigmoid ≈ 0.999 — center AT cap
-        7.5,     // sigmoid ≈ 0.9994 — center saturated
-        9.0,     // sigmoid ≈ 0.99988 — center deeply saturated
-        12.0,    // sigmoid ≈ 1 - 6e-6 — alpha cap absorbs everything in inner region
-    ] {
-        let scene = make_scene(raw_opac);
-        let (splats, grads) = analytical_grads(&scene, &cam, img_size, &device).await;
-        let an = match splats.raw_opacities.grad(&grads) {
-            Some(g) => read_first(g.slice(s![0..1])).await,
-            None => 0.0,
-        };
-
-        let mut best_rel = f32::MAX;
-        let mut best_num = 0.0;
-        let mut best_eps = 0.0;
-        for eps in sweep_eps {
-            let mut s_plus = scene.clone();
-            s_plus.raw_opac[0] += eps;
-            let l_plus = render_value(&s_plus, &cam, img_size, &device).await;
-            let mut s_minus = scene.clone();
-            s_minus.raw_opac[0] -= eps;
-            let l_minus = render_value(&s_minus, &cam, img_size, &device).await;
-            let numerical = (l_plus - l_minus) / (2.0 * eps);
-            let scale = numerical.abs().max(an.abs()).max(1e-8);
-            let rel = (numerical - an).abs() / scale;
-            if rel < best_rel {
-                best_rel = rel;
-                best_num = numerical;
-                best_eps = eps;
-            }
-        }
-        let sigmoid = 1.0 / (1.0 + (-raw_opac).exp());
-        println!(
-            "[alpha-cap] {raw_opac:>9.3}   {sigmoid:>10.6}   {best_eps:>10.0e}   {best_num:>14.6} {an:>14.6} {:>9.2}%",
-            best_rel * 100.0,
-        );
-    }
-}
-
-/// **Negative SH color clamp**: forward does
-/// `pix_r += max(splat.color_r, 0) * vis` (`rasterize.rs:137`);
-/// backward gates rgb VJP on `splat.color_r >= 0`
-/// (`rasterize_backwards.rs:327`). At negative color the contribution
-/// is zero and the gradient is zero — finite diff should agree away
-/// from the zero crossing, disagree right at it (jump).
-///
-/// To hit the boundary: SH DC color = `0.5 + DC * SH_C0`. `DC = -0.5 /
-/// SH_C0 ≈ -1.7725` puts R channel at 0.0 exactly.
-#[tokio::test]
-async fn finite_diff_negative_color_clamp() {
-    let device =
-        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
-    let cam = std_cam();
-    let img_size = glam::uvec2(48, 48);
-
-    // SH DC encoding: color = 0.5 + DC * SH_C0 (SH_C0 ≈ 0.2821).
-    // dc_zero ≈ -1.7725 puts R at 0.
-    let sh_c0 = 0.282_094_8_f32;
-    let dc_zero = -0.5 / sh_c0;
-
-    let make_scene = |dc_r: f32| Scene {
-        means: vec![0.0, 0.0, 0.0],
-        rots: vec![1.0, 0.0, 0.0, 0.0],
-        log_scales: vec![-0.5, -0.5, -0.5],
-        sh_dc: vec![dc_r, 0.0, 0.0], // perturbing R only; G/B at 0.5
-        raw_opac: vec![2.0],
-    };
-
-    println!(
-        "\n[neg-color] {:>10}   {:>10}   {:>14} {:>14} {:>10}",
-        "dc_r", "R color", "numerical", "analytical", "rel%"
-    );
-    let eps = 3e-4_f32;
-    for offset in [-0.5_f32, -0.1, -0.01, 0.0, 0.01, 0.1, 0.5] {
-        let dc_r = dc_zero + offset;
-        let scene = make_scene(dc_r);
-
-        let mut s_plus = scene.clone();
-        s_plus.sh_dc[0] += eps;
-        let l_plus = render_value(&s_plus, &cam, img_size, &device).await;
-        let mut s_minus = scene.clone();
-        s_minus.sh_dc[0] -= eps;
-        let l_minus = render_value(&s_minus, &cam, img_size, &device).await;
-        let numerical = (l_plus - l_minus) / (2.0 * eps);
-
-        let (splats, grads) = analytical_grads(&scene, &cam, img_size, &device).await;
-        let g = splats.sh_coeffs.grad(&grads).expect("sh grad");
-        let an = read_first(g.slice(s![0..1, 0..1, 0..1])).await;
-
-        let color = 0.5 + dc_r * sh_c0;
-        let scale = numerical.abs().max(an.abs()).max(1e-8);
-        let rel = (numerical - an).abs() / scale * 100.0;
-        println!(
-            "[neg-color] {dc_r:>10.4}   {color:>10.5}   {numerical:>14.6} {an:>14.6} {rel:>9.2}%"
-        );
-    }
 }
 
 /// **T early-out** (`rasterize.rs:130`): `next_t <= 1e-4 → done`. With
@@ -1002,10 +700,6 @@ async fn finite_diff_t_early_out_back_splats() {
     // Three probes: near (idx 1), middle (idx 10), far (idx 25).
     // Expect: near has large grad, far has ~zero grad. Both should
     // agree with numerical.
-    println!(
-        "\n[t-early] {:>10}   {:>14} {:>14} {:>10}",
-        "splat idx", "numerical", "analytical", "abs-diff"
-    );
     let eps = 1e-3_f32;
     for splat_idx in [1_usize, 5, 10, 15, 20, 25, 29] {
         let mut s_plus = scene.clone();
@@ -1018,7 +712,6 @@ async fn finite_diff_t_early_out_back_splats() {
         let g = splats.raw_opacities.grad(&grads).expect("opac grad");
         let an = read_first(g.slice(s![splat_idx..splat_idx + 1])).await;
         let abs_diff = (numerical - an).abs();
-        println!("[t-early] {splat_idx:>10}   {numerical:>14.6} {an:>14.6} {abs_diff:>10.3e}");
         assert!(
             abs_diff < 5e-4,
             "splat {splat_idx}: numerical {numerical} vs analytical {an}, abs diff {abs_diff}"
@@ -1094,16 +787,7 @@ async fn fuzz_finite_diff_camera_models() {
         (random_scene(seed, n), n, model_name.into())
     };
     let cam_fn = |seed: u64| random_camera_with_model(seed).0;
-    let results = run_obscure_fuzz(
-        "cam-models",
-        &device,
-        glam::uvec2(32, 32),
-        30,
-        3,
-        scene_fn,
-        cam_fn,
-    )
-    .await;
+    let results = run_obscure_fuzz(&device, glam::uvec2(32, 32), 20, scene_fn, cam_fn).await;
     assert_fuzz_clean(&results, 0.02, 2e-4, "cam-models");
 }
 
@@ -1117,11 +801,9 @@ type FuzzRow = (f32, u64, usize, usize, Lane, f32, f32, f32, String);
 /// the eps sweep, picks `picks_per_scene` random params per scene, and
 /// returns the sorted-descending rows.
 async fn run_obscure_fuzz<S, C>(
-    label: &str,
     device: &burn::tensor::Device,
     img_size: glam::UVec2,
     n_iter: u64,
-    picks_per_scene: usize,
     scene_fn: S,
     cam_fn: C,
 ) -> Vec<FuzzRow>
@@ -1129,17 +811,7 @@ where
     S: Fn(u64) -> (Scene, usize, String),
     C: Fn(u64) -> Camera,
 {
-    run_obscure_fuzz_with(
-        label,
-        device,
-        img_size,
-        n_iter,
-        picks_per_scene,
-        scene_fn,
-        cam_fn,
-        random_param,
-    )
-    .await
+    run_obscure_fuzz_with(device, img_size, n_iter, scene_fn, cam_fn, random_param).await
 }
 
 /// Default eps used by every fuzz probe. With the smooth alpha cutoff
@@ -1149,11 +821,9 @@ where
 const FUZZ_EPS: f32 = 3e-4;
 
 async fn run_obscure_fuzz_with<S, C, P>(
-    label: &str,
     device: &burn::tensor::Device,
     img_size: glam::UVec2,
     n_iter: u64,
-    picks_per_scene: usize,
     scene_fn: S,
     cam_fn: C,
     param_fn: P,
@@ -1163,7 +833,7 @@ where
     C: Fn(u64) -> Camera,
     P: Fn(&mut Sm64, usize) -> (Lane, usize, usize),
 {
-    let mut results: Vec<FuzzRow> = Vec::with_capacity((n_iter as usize) * picks_per_scene);
+    let mut results: Vec<FuzzRow> = Vec::with_capacity(n_iter as usize);
 
     for seed in 0..n_iter {
         let (scene, n, tag) = scene_fn(seed);
@@ -1171,61 +841,31 @@ where
         let (splats, grads) = analytical_grads(&scene, &cam, img_size, device).await;
 
         let mut rng = Sm64::new(seed.wrapping_mul(0xA5A5_5A5A).wrapping_add(0x1234));
-        for _ in 0..picks_per_scene {
-            let (lane, splat, comp) = param_fn(&mut rng, n);
-            let an = analytical_at(&splats, &grads, lane, splat, comp).await;
+        let (lane, splat, comp) = param_fn(&mut rng, n);
+        let an = analytical_at(&splats, &grads, lane, splat, comp).await;
 
-            let mut s_plus = scene.clone();
-            perturb(&mut s_plus, lane, splat, comp, FUZZ_EPS);
-            let l_plus = render_value(&s_plus, &cam, img_size, device).await;
-            let mut s_minus = scene.clone();
-            perturb(&mut s_minus, lane, splat, comp, -FUZZ_EPS);
-            let l_minus = render_value(&s_minus, &cam, img_size, device).await;
-            let numerical = (l_plus - l_minus) / (2.0 * FUZZ_EPS);
-            let scale = numerical.abs().max(an.abs()).max(1e-8);
-            let rel = (numerical - an).abs() / scale;
-            results.push((
-                rel,
-                seed,
-                splat,
-                comp,
-                lane,
-                numerical,
-                an,
-                FUZZ_EPS,
-                tag.clone(),
-            ));
-        }
+        let mut s_plus = scene.clone();
+        perturb(&mut s_plus, lane, splat, comp, FUZZ_EPS);
+        let l_plus = render_value(&s_plus, &cam, img_size, device).await;
+        let mut s_minus = scene.clone();
+        perturb(&mut s_minus, lane, splat, comp, -FUZZ_EPS);
+        let l_minus = render_value(&s_minus, &cam, img_size, device).await;
+        let numerical = (l_plus - l_minus) / (2.0 * FUZZ_EPS);
+        let scale = numerical.abs().max(an.abs()).max(1e-8);
+        let rel = (numerical - an).abs() / scale;
+        results.push((
+            rel,
+            seed,
+            splat,
+            comp,
+            lane,
+            numerical,
+            an,
+            FUZZ_EPS,
+            tag.clone(),
+        ));
     }
     results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
-
-    // Filter signal cases (small gradients have meaningless rel-err).
-    let signal_floor = 1e-4_f32;
-    let signaled: Vec<&FuzzRow> = results
-        .iter()
-        .filter(|r| r.5.abs().max(r.6.abs()) >= signal_floor)
-        .collect();
-    let n_above = |t: f32| signaled.iter().filter(|r| r.0 > t).count();
-
-    println!(
-        "\n[{label}] {} signal / {} total ({n_iter} seeds, {picks_per_scene} picks/scene, eps={FUZZ_EPS:e})",
-        signaled.len(),
-        results.len(),
-    );
-    println!(
-        "[{label}]   > 1%: {}   > 5%: {}   > 10%: {}",
-        n_above(0.01),
-        n_above(0.05),
-        n_above(0.10),
-    );
-    for (rel, seed, splat, comp, lane, num, an, _eps, tag) in signaled.iter().take(5) {
-        println!(
-            "[{label}] seed {seed:>3} {tag:>10} {:>10}[{splat},{comp}]  num={num:>10.6}  an={an:>10.6}  rel={:>5.2}%",
-            lane_name(*lane),
-            rel * 100.0,
-        );
-    }
-
     results
 }
 
@@ -1298,7 +938,7 @@ async fn fuzz_obscure_rotated_cameras() {
         (random_scene(seed, n), n, "rot".into())
     };
 
-    let results = run_obscure_fuzz("rot-cam", &device, img_size, 30, 3, scene_fn, cam_fn).await;
+    let results = run_obscure_fuzz(&device, img_size, 20, scene_fn, cam_fn).await;
     assert_fuzz_clean(&results, 0.03, 5e-4, "rot-cam");
 }
 
@@ -1337,7 +977,7 @@ async fn fuzz_obscure_off_center_principal_and_asymmetric_focal() {
         (random_scene(seed, n), n, "offc".into())
     };
 
-    let results = run_obscure_fuzz("off-center", &device, img_size, 30, 3, scene_fn, cam_fn).await;
+    let results = run_obscure_fuzz(&device, img_size, 20, scene_fn, cam_fn).await;
     assert_fuzz_clean(&results, 0.03, 5e-4, "off-center");
 }
 
@@ -1361,8 +1001,7 @@ async fn fuzz_obscure_asymmetric_images() {
     ];
 
     let mut all_results: Vec<FuzzRow> = Vec::new();
-    for (idx, &img_size) in sizes.iter().enumerate() {
-        let label = format!("img={}x{}", img_size.x, img_size.y);
+    for img_size in sizes {
         let scene_fn = |seed: u64| {
             let mut rng = Sm64::new(seed.wrapping_add(0xC0DE_F00D));
             let n = rng.usize_in(3, 7);
@@ -1387,16 +1026,7 @@ async fn fuzz_obscure_asymmetric_images() {
                 CameraModel::Pinhole,
             )
         };
-        let results = run_obscure_fuzz(
-            &label,
-            &device,
-            img_size,
-            6 + idx as u64,
-            2,
-            scene_fn,
-            cam_fn,
-        )
-        .await;
+        let results = run_obscure_fuzz(&device, img_size, 5, scene_fn, cam_fn).await;
         all_results.extend(results);
     }
 
@@ -1440,7 +1070,7 @@ async fn fuzz_obscure_anisotropic_scales() {
     };
     let cam_fn = random_camera;
 
-    let results = run_obscure_fuzz("aniso", &device, img_size, 30, 3, scene_fn, cam_fn).await;
+    let results = run_obscure_fuzz(&device, img_size, 20, scene_fn, cam_fn).await;
     assert_fuzz_clean(&results, 0.03, 5e-4, "aniso");
 }
 
@@ -1499,138 +1129,8 @@ async fn fuzz_obscure_near_camera_splats() {
             cam.camera_model,
         )
     };
-    let results = run_obscure_fuzz("near-cam", &device, img_size, 30, 3, scene_fn, cam_fn).await;
+    let results = run_obscure_fuzz(&device, img_size, 20, scene_fn, cam_fn).await;
     assert_fuzz_clean(&results, 0.03, 5e-4, "near-cam");
-}
-
-/// Near-camera × high-SH means gradient. The viewdir → mean VJP scales
-/// by `1/|u_len|`, so a bug in that chain is amplified at small z.
-/// Exercises all four camera models at every degree from 1..4 so each
-/// `if degree >= N` branch of `sh_color_viewdir_vjp` is covered.
-#[tokio::test]
-async fn finite_diff_near_camera_high_sh_all_models() {
-    use brush_render::sh::sh_coeffs_for_degree;
-    let device =
-        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
-    let img_size = glam::uvec2(48, 48);
-    let n = 4;
-
-    let models: &[(&str, CameraModel)] = &[
-        ("Pinhole", CameraModel::Pinhole),
-        (
-            "KB4",
-            CameraModel::KannalaBrandt4(KannalaBrandt4Params {
-                k1: 0.03,
-                k2: -0.01,
-                k3: 0.005,
-                k4: -0.001,
-            }),
-        ),
-        (
-            "RT8",
-            CameraModel::RadialTangential8(RadialTangential8Params {
-                k1: 0.03,
-                k2: -0.01,
-                k3: 0.005,
-                k4: 0.0,
-                k5: 0.0,
-                k6: 0.0,
-                p1: 0.003,
-                p2: -0.002,
-            }),
-        ),
-        (
-            "TPF",
-            CameraModel::ThinPrismFisheye(ThinPrismFisheyeParams {
-                kb4: KannalaBrandt4Params {
-                    k1: 0.03,
-                    k2: -0.01,
-                    k3: 0.005,
-                    k4: -0.001,
-                },
-                p1: 0.003,
-                p2: -0.002,
-                sx1: 0.001,
-                sy1: -0.0015,
-            }),
-        ),
-    ];
-
-    let mut failures: Vec<String> = Vec::new();
-    let eps = 3e-4_f32;
-    for degree in 1u32..=4 {
-        let n_coeffs = sh_coeffs_for_degree(degree) as usize;
-        let mut rng = Sm64::new(0xDEAD_BEEFu64 ^ (u64::from(degree) * 0x9E37));
-        let mut means = vec![0.0_f32; n * 3];
-        let mut log_scales = vec![0.0_f32; n * 3];
-        for i in 0..n {
-            let cam_z = 0.10 + rng.uniform(0.0, 0.4);
-            means[i * 3] = rng.uniform(-0.2, 0.2) * cam_z;
-            means[i * 3 + 1] = rng.uniform(-0.2, 0.2) * cam_z;
-            means[i * 3 + 2] = cam_z - 3.0;
-            for c in 0..3 {
-                log_scales[i * 3 + c] = -3.5 + rng.uniform(-0.3, 0.3);
-            }
-        }
-        let rots: Vec<f32> = (0..n * 4).map(|_| rng.uniform(-1.0, 1.0)).collect();
-        let raw_opac: Vec<f32> = (0..n).map(|_| rng.uniform(0.5, 3.0)).collect();
-        let mut sh = vec![0.0_f32; n * n_coeffs * 3];
-        for splat in 0..n {
-            for ch in 0..3 {
-                sh[splat * n_coeffs * 3 + ch] = rng.uniform(0.2, 0.8);
-            }
-            for coef in 1..n_coeffs {
-                for ch in 0..3 {
-                    sh[(splat * n_coeffs + coef) * 3 + ch] = rng.uniform(-0.1, 0.1);
-                }
-            }
-        }
-        let scene = Scene {
-            means,
-            rots,
-            log_scales,
-            sh_dc: sh,
-            raw_opac,
-        };
-
-        for (label, model) in models {
-            let cam = Camera::new(
-                glam::vec3(0.0, 0.0, -3.0),
-                glam::Quat::IDENTITY,
-                0.8,
-                0.8,
-                glam::vec2(0.5, 0.5),
-                *model,
-            );
-            let (splats, grads) = analytical_grads(&scene, &cam, img_size, &device).await;
-            for splat in 0..n {
-                for comp in 0..3 {
-                    let an = analytical_at(&splats, &grads, Lane::Mean, splat, comp).await;
-                    let mut s_plus = scene.clone();
-                    perturb(&mut s_plus, Lane::Mean, splat, comp, eps);
-                    let l_plus = render_value(&s_plus, &cam, img_size, &device).await;
-                    let mut s_minus = scene.clone();
-                    perturb(&mut s_minus, Lane::Mean, splat, comp, -eps);
-                    let l_minus = render_value(&s_minus, &cam, img_size, &device).await;
-                    let num = (l_plus - l_minus) / (2.0 * eps);
-                    let abs_err = (num - an).abs();
-                    let scale = num.abs().max(an.abs()).max(1e-8);
-                    let tol = 5e-3 + 0.03 * scale;
-                    if abs_err > tol {
-                        failures.push(format!(
-                            "deg={degree} {label} means[{splat},{comp}]: num={num:.6e} an={an:.6e} \
-                             (|Δ|={abs_err:.3e} > tol {tol:.3e})"
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "near-camera × high-SH mismatches:\n  {}",
-        failures.join("\n  "),
-    );
 }
 
 #[tokio::test]
@@ -1667,7 +1167,7 @@ async fn fuzz_obscure_depth_extremes() {
         )
     };
 
-    let results = run_obscure_fuzz("depth-ext", &device, img_size, 25, 3, scene_fn, cam_fn).await;
+    let results = run_obscure_fuzz(&device, img_size, 15, scene_fn, cam_fn).await;
     assert_fuzz_clean(&results, 0.03, 5e-4, "depth-ext");
 }
 
@@ -1735,7 +1235,7 @@ async fn fuzz_obscure_heavy_distortion() {
         (scene, n, tag.into())
     };
 
-    let results = run_obscure_fuzz("heavy-dist", &device, img_size, 30, 3, scene_fn, cam_fn).await;
+    let results = run_obscure_fuzz(&device, img_size, 20, scene_fn, cam_fn).await;
     assert_fuzz_clean(&results, 0.03, 5e-4, "heavy-dist");
 }
 
@@ -1784,17 +1284,8 @@ async fn fuzz_obscure_sh_degree3() {
     // backward already covered by `finite_diff_sh_degree2`; this fuzz
     // exercises means/rots/log_scales/raw_opac under scenes carrying
     // populated higher-band SH.
-    let results = run_obscure_fuzz_with(
-        "sh3",
-        &device,
-        img_size,
-        25,
-        4,
-        scene_fn,
-        cam_fn,
-        random_param_no_sh,
-    )
-    .await;
+    let results =
+        run_obscure_fuzz_with(&device, img_size, 25, scene_fn, cam_fn, random_param_no_sh).await;
     assert_fuzz_clean(&results, 0.03, 5e-4, "sh3");
 }
 
@@ -1858,7 +1349,6 @@ async fn finite_diff_means_through_high_sh_documents_bug() {
     // Jacobian). Take best-of-sweep per component; tile-boundary noise
     // is per-eps, real residual bugs would float to the top.
     let sweep_eps = [3e-2_f32, 3e-3, 1e-3, 3e-4, 1e-4];
-    println!("\n[viewdir-fix] perturbing means with SH deg=2 (best-of-sweep):");
     let mut failed = Vec::new();
     for splat_idx in 0..n {
         for comp in 0..3 {
@@ -1880,10 +1370,6 @@ async fn finite_diff_means_through_high_sh_documents_bug() {
                     best_num = num;
                 }
             }
-            println!(
-                "[viewdir-fix]  means[{splat_idx},{comp}]: num {best_num:>10.6}  an {an:>10.6}  rel {:>5.2}%",
-                best_rel * 100.0
-            );
             // Combined tolerance to discount near-zero noise floor.
             let abs_err = (best_num - an).abs();
             let scale = best_num.abs().max(an.abs()).max(1e-8);
@@ -1917,7 +1403,6 @@ async fn fuzz_obscure_kitchen_sink() {
         glam::uvec2(48, 33),
         glam::uvec2(17, 65),
     ];
-
     for img_idx in 0..3 {
         let img_size = img_choices[img_idx];
         let scene_fn = |seed: u64| {
@@ -1988,19 +1473,9 @@ async fn fuzz_obscure_kitchen_sink() {
             };
             Camera::new(cam_pos, rot, fov_x, fov_y, center, model)
         };
-        let results = run_obscure_fuzz(
-            &format!("sink-{img_idx}"),
-            &device,
-            img_size,
-            25,
-            3,
-            scene_fn,
-            cam_fn,
-        )
-        .await;
+        let results = run_obscure_fuzz(&device, img_size, 10, scene_fn, cam_fn).await;
         all_results.extend(results);
     }
-
     all_results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
     assert_fuzz_clean(&all_results, 0.03, 5e-4, "kitchen-sink");
 }

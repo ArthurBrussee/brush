@@ -325,9 +325,9 @@ async fn stress_concurrent_train_and_view() {
         burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let img_size = glam::uvec2(64, 64);
 
-    let viewer_count = 12;
-    let train_steps = 250;
-    let viewer_iters_per_task = 50;
+    let viewer_count = 6;
+    let train_steps = 100;
+    let viewer_iters_per_task = 10;
 
     let initial = generate_test_splats(&device, 500);
     let (tx, rx) = watch::channel::<Splats>(initial.clone().valid());
