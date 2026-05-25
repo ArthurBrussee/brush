@@ -207,7 +207,7 @@ pub async fn run_cli_ui(
                             eval_views, train_stream_config.process_config.eval_every,
                         ));
                     } else {
-                        eval_spinner.set_message("no eval views — skipping evaluation");
+                        eval_spinner.finish_and_clear();
                     }
                 }
                 TrainMessage::TrainStep {
