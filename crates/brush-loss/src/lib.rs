@@ -192,6 +192,18 @@ mod kernels {
         let pix_y = tile_y0 + UNIT_POS_Y;
         let pix_x = tile_x0 + UNIT_POS_X;
 
+        // DEBUG PROBE — write `ssim_weight + 1.0` to every loss pixel and
+        // bail before any workgroup barrier. On Mac CI we expect the test's
+        // mean to come back as 2.0; if it's 0 the dispatch didn't run, if
+        // it's 1.0 the scalar read returns 0 (struct layout bug), if it's
+        // ssim_weight (1.0) the +1.0 literal got skipped. Removing this
+        // probe restores the real kernel.
+        if pix_x < w && pix_y < h {
+            let idx = (c * h * w + pix_y * w + pix_x) as usize;
+            loss_map[idx] = F::cast_from(ssim_weight) + F::cast_from(1.0_f32);
+        }
+        terminate!();
+
         // Alpha-match channel: simple per-pixel `|pred - gt.a|`, no blur.
         if c == 3u32 {
             if pix_x < w && pix_y < h {
