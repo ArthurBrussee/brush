@@ -298,6 +298,7 @@ pub(crate) async fn train_stream(
         };
         let phase_progress = (phase_iter as f32 / phase_total as f32).clamp(0.0, 1.0);
 
+        let refine_start = Instant::now();
         let refine = if phase_iter > 0
             && phase_iter.is_multiple_of(train_stream_config.train_config.refine_every)
             && phase_progress <= 0.95
@@ -309,10 +310,14 @@ pub(crate) async fn train_stream(
         } else {
             RefineStats {
                 num_added: 0,
+                num_split_oversized: 0,
+                num_split_high_grad: 0,
                 num_pruned: 0,
+                num_pruned_non_finite: 0,
                 total_splats: splats.num_splats(),
             }
         };
+        let refine_dur = refine_start.elapsed();
 
         // We just finished iter 'iter', now starting iter + 1.
         let iter = iter + 1;
@@ -399,7 +404,9 @@ pub(crate) async fn train_stream(
 
             visualize.log_memory(iter, &WgpuRuntime::client(wgpu_device).memory_usage()?)?;
             if refine.num_added > 0 {
-                visualize.log_refine_stats(iter, &refine).unwrap();
+                visualize
+                    .log_refine_stats(iter, &refine, refine_dur)
+                    .unwrap();
             }
         }
 

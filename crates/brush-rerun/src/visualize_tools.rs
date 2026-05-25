@@ -173,10 +173,15 @@ mod visualize_tools_impl {
                         .with_contents(["memory/**"])
                         .into(),
                     TimeSeriesView::new("Refine")
-                        .with_contents(["refine/num_added", "refine/num_pruned"])
+                        .with_contents([
+                            "refine/num_split_oversized",
+                            "refine/num_split_high_grad",
+                            "refine/num_pruned",
+                            "refine/num_pruned_non_finite",
+                        ])
                         .into(),
                     TimeSeriesView::new("Throughput")
-                        .with_contents(["train/step_ms"])
+                        .with_contents(["train/step_ms", "refine/duration_ms"])
                         .into(),
                     TimeSeriesView::new("Learning rates")
                         .with_contents(["lr/**"])
@@ -353,23 +358,44 @@ mod visualize_tools_impl {
             Ok(())
         }
 
-        #[allow(unused_variables)]
-        pub fn log_refine_stats(&self, iter: u32, refine: &RefineStats) -> Result<()> {
-            if self.rec.is_enabled() {
-                self.rec.set_time_sequence("iterations", iter);
-                self.rec.log(
-                    "refine/num_added",
-                    &rerun::Scalars::new(vec![refine.num_added as f64]),
-                )?;
-                self.rec.log(
-                    "refine/num_pruned",
-                    &rerun::Scalars::new(vec![refine.num_pruned as f64]),
-                )?;
-                self.rec.log(
-                    "refine/effective_growth",
-                    &rerun::Scalars::new(vec![refine.num_added as f64 - refine.num_pruned as f64]),
-                )?;
+        pub fn log_refine_stats(
+            &self,
+            iter: u32,
+            refine: &RefineStats,
+            refine_duration: std::time::Duration,
+        ) -> Result<()> {
+            if !self.rec.is_enabled() {
+                return Ok(());
             }
+            self.rec.set_time_sequence("iterations", iter);
+            self.rec.log(
+                "refine/num_added",
+                &rerun::Scalars::new(vec![refine.num_added as f64]),
+            )?;
+            self.rec.log(
+                "refine/num_split_oversized",
+                &rerun::Scalars::new(vec![refine.num_split_oversized as f64]),
+            )?;
+            self.rec.log(
+                "refine/num_split_high_grad",
+                &rerun::Scalars::new(vec![refine.num_split_high_grad as f64]),
+            )?;
+            self.rec.log(
+                "refine/num_pruned",
+                &rerun::Scalars::new(vec![refine.num_pruned as f64]),
+            )?;
+            self.rec.log(
+                "refine/num_pruned_non_finite",
+                &rerun::Scalars::new(vec![refine.num_pruned_non_finite as f64]),
+            )?;
+            self.rec.log(
+                "refine/effective_growth",
+                &rerun::Scalars::new(vec![refine.num_added as f64 - refine.num_pruned as f64]),
+            )?;
+            self.rec.log(
+                "refine/duration_ms",
+                &rerun::Scalars::new(vec![refine_duration.as_secs_f64() * 1000.0]),
+            )?;
             Ok(())
         }
 
@@ -469,7 +495,12 @@ mod visualize_tools_impl {
 
         #[allow(unused_variables)]
         #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
-        pub fn log_refine_stats(&self, _iter: u32, _refine: &RefineStats) -> Result<()> {
+        pub fn log_refine_stats(
+            &self,
+            _iter: u32,
+            _refine: &RefineStats,
+            _refine_duration: std::time::Duration,
+        ) -> Result<()> {
             Ok(())
         }
 

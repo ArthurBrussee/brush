@@ -382,6 +382,13 @@ impl SplatTrainer {
         let sh_bad = row_non_finite(&splats.sh_coeffs.val().flatten(1, 2));
         let opac_bad = row_non_finite(&splats.raw_opacities.val().unsqueeze_dim(1));
         let non_finite_mask = transforms_bad.bool_or(sh_bad).bool_or(opac_bad);
+        let num_pruned_non_finite = non_finite_mask
+            .clone()
+            .int()
+            .sum()
+            .into_scalar_async::<i32>()
+            .await
+            .expect("Failed to count non-finite splats") as u32;
         let prune_mask = alpha_mask
             .bool_or(scale_small)
             .bool_or(scale_big)
@@ -409,6 +416,7 @@ impl SplatTrainer {
             split_inds.extend(resampled_inds);
         }
 
+        let pre_oversized = split_inds.len();
         // Force-split oversized splats, gated by growth_stop_iter. Without
         // the gate, oversized splats from an init ply keep splitting past
         // the stop iter when there isn't enough training time for them to
@@ -436,6 +444,9 @@ impl SplatTrainer {
             }
         }
 
+        let num_split_oversized = (split_inds.len() - pre_oversized) as u32;
+
+        let pre_high_grad = split_inds.len();
         if iter < self.config.growth_stop_iter {
             let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
 
@@ -473,6 +484,7 @@ impl SplatTrainer {
             }
         }
 
+        let num_split_high_grad = (split_inds.len() - pre_high_grad) as u32;
         let refine_count = split_inds.len();
         splats = self.refine_splats(&device, record, splats, split_inds, iter);
 
@@ -486,7 +498,10 @@ impl SplatTrainer {
             splats,
             RefineStats {
                 num_added: refine_count as u32,
+                num_split_oversized,
+                num_split_high_grad,
                 num_pruned: pruned_count,
+                num_pruned_non_finite,
                 total_splats: splat_count,
             },
         )

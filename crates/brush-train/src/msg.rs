@@ -3,7 +3,13 @@ use burn::tensor::Tensor;
 #[derive(Clone)]
 pub struct RefineStats {
     pub num_added: u32,
+    /// Subset of `num_added` that came from the screen-size force-split path.
+    pub num_split_oversized: u32,
+    /// Subset of `num_added` that came from gradient-driven sampling.
+    pub num_split_high_grad: u32,
     pub num_pruned: u32,
+    /// Subset of `num_pruned` whose params went non-finite (NaN/Inf).
+    pub num_pruned_non_finite: u32,
     pub total_splats: u32,
 }
 
