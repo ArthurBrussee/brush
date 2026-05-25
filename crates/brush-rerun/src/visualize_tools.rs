@@ -106,6 +106,40 @@ mod visualize_tools_impl {
                 return Ok(());
             }
 
+            // Override entity-path leaves with human-friendly legend labels.
+            let set_name = |path: &str, name: &str| -> Result<()> {
+                self.rec.log_static(
+                    path,
+                    &rerun::SeriesLines::new().with_names([name.to_owned()]),
+                )?;
+                Ok(())
+            };
+            set_name("loss/total", "Loss")?;
+            set_name("train/step_ms", "Step time")?;
+            set_name("psnr/eval", "Avg")?;
+            set_name("ssim/eval", "Avg")?;
+            for i in 0..num_eval_views {
+                set_name(&format!("psnr/per_view/{i}"), &format!("View {i}"))?;
+                set_name(&format!("ssim/per_view/{i}"), &format!("View {i}"))?;
+            }
+            set_name("splats/num_splats", "Total")?;
+            set_name("splats/splats_visible", "Visible")?;
+            set_name("lr/mean", "Means")?;
+            set_name("lr/rotation", "Rotations")?;
+            set_name("lr/scale", "Scales")?;
+            set_name("lr/coeffs", "SH coeffs")?;
+            set_name("lr/opac", "Opacity")?;
+            set_name("memory/used", "Used")?;
+            set_name("memory/reserved", "Reserved")?;
+            set_name("memory/allocs", "Allocations")?;
+            set_name("refine/num_added", "Added (total)")?;
+            set_name("refine/num_split_oversized", "Split: oversized")?;
+            set_name("refine/num_split_high_grad", "Split: high-grad")?;
+            set_name("refine/num_pruned", "Pruned")?;
+            set_name("refine/num_pruned_non_finite", "Pruned: non-finite")?;
+            set_name("refine/effective_growth", "Effective growth")?;
+            set_name("refine/duration_ms", "Refine duration")?;
+
             let scene_view = Spatial3DView::new("Scene")
                 .with_origin("world")
                 .with_contents(["world/**"]);
