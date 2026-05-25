@@ -112,7 +112,7 @@ async fn image_loss_backward_runs() {
     let gt = gt_packed_from_bytes(&bytes_b, h, w, &device);
 
     let map = image_loss(
-        pred,
+        pred.clone(),
         gt,
         ImageLossConfig {
             l1_weight: 0.8,
@@ -121,7 +121,23 @@ async fn image_loss_backward_runs() {
             mask: false,
         },
     );
-    let _grads = map.mean().backward();
+    let grads = map.mean().backward();
+    let grad = pred.grad(&grads).expect("pred should have a gradient");
+    let data: Vec<f32> = grad
+        .into_data_async()
+        .await
+        .expect("readback")
+        .to_vec()
+        .expect("vec");
+    let max_abs = data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+    assert!(
+        max_abs > 0.0,
+        "backward should produce non-zero gradients, got all zeros"
+    );
+    assert!(
+        data.iter().all(|v| v.is_finite()),
+        "gradients should be finite"
+    );
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]

@@ -11,7 +11,7 @@ brush-cube.path = "../brush-cube"
 brush-prefix-sum.path = "../brush-prefix-sum"
 brush-sort.path = "../brush-sort"
 
-burn.workspace = true
+burn = { workspace = true, features = ["webgpu"] }
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
@@ -30,18 +30,11 @@ tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 [features]
 debug-validation = []
 
-# Pick exactly one wgpu sub-feature per target so burn-dispatch's
-# build.rs uses Vulkan/Metal (u8 bools) on native and WebGpu (u32) on wasm,
-# instead of silently falling back to WebGpu when multiple are enabled.
-[target.'cfg(target_os = "macos")'.dependencies]
-burn = { workspace = true, features = ["metal"] }
-
-[target.'cfg(target_family = "wasm")'.dependencies]
-burn = { workspace = true, features = ["webgpu"] }
-
-[target.'cfg(all(not(target_os = "macos"), not(target_family = "wasm")))'.dependencies]
-burn = { workspace = true, features = ["vulkan"] }
-
+# Force the WebGPU backend on every platform. We previously used Vulkan
+# on Linux/Windows and Metal on macOS, but both produced random crashes
+# (see #423 / #395 — buffer-destroyed validation errors, ARM/AMD instability).
+# WebGPU runs through wgpu's WGSL frontend everywhere so we avoid the
+# per-backend cubecl codegen divergence.
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 

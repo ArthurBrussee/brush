@@ -78,7 +78,10 @@ use tokio::sync::SetOnce;
 static DEVICE: SetOnce<WgpuDevice> = SetOnce::const_new();
 
 pub(crate) fn connect_device(device: WgpuDevice) {
-    DEVICE.set(device).unwrap();
+    // Idempotent: a JS host can call `init()` and `init_existing()`, or a
+    // dev-mode double-mount can re-run setup. Re-registering the same device
+    // is fine; we only care that *some* device wins the race.
+    let _ = DEVICE.set(device);
 }
 
 pub async fn wait_for_device() -> &'static WgpuDevice {

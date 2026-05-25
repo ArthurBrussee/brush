@@ -21,7 +21,7 @@ use super::helpers::{
 };
 use super::types::{RasterizeUniforms, Sym2};
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 pub fn rasterize_kernel(
     compact_gid_from_isect: &Tensor<u32>,

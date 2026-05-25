@@ -19,7 +19,7 @@ pub const WG_SIZE: u32 = 256;
 // `semicolon_if_nothing_returned`. False positive — the macro already provides
 // the semicolon. Silence here rather than in the kernel body.
 #[allow(clippy::semicolon_if_nothing_returned)]
-#[cube(launch_unchecked)]
+#[cube(launch)]
 pub fn project_visible_kernel(
     transforms: &Tensor<f32>,
     coeffs: &Tensor<f32>,

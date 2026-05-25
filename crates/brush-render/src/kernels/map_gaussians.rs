@@ -12,7 +12,7 @@ use super::helpers::{
 
 pub const WG_SIZE: u32 = 256;
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 pub fn map_gaussians_to_intersect_kernel(
     projected: &Tensor<f32>,
     splat_cum_hit_counts: &Tensor<u32>,
