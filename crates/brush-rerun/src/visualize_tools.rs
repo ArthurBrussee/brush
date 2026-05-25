@@ -3,6 +3,11 @@
 pub struct VisualizeTools {
     #[cfg(not(target_family = "wasm"))]
     rec: rerun::RecordingStream,
+    /// Tracks which eval view indices have had their GT image logged. GT
+    /// images never change, so we log them once as static instead of paying
+    /// the full readback + send cost every eval iter.
+    #[cfg(not(target_family = "wasm"))]
+    gt_logged: std::sync::Mutex<std::collections::HashSet<u32>>,
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -20,10 +25,22 @@ mod visualize_tools_impl {
     use anyhow::Result;
 
     use burn_cubecl::cubecl::MemoryUsage;
-    use image::{Rgb32FImage, Rgba32FImage};
+    use image::imageops::FilterType;
     use rerun::external::glam;
 
     use super::VisualizeTools;
+
+    fn resize_to_max(img: image::RgbImage, max_size: u32) -> image::RgbImage {
+        let (w, h) = img.dimensions();
+        let longest = w.max(h);
+        if max_size == 0 || longest <= max_size {
+            return img;
+        }
+        let scale = max_size as f32 / longest as f32;
+        let new_w = ((w as f32 * scale).round() as u32).max(1);
+        let new_h = ((h as f32 * scale).round() as u32).max(1);
+        image::imageops::resize(&img, new_w, new_h, FilterType::Triangle)
+    }
 
     impl VisualizeTools {
         #[allow(unused_variables)]
@@ -43,6 +60,7 @@ mod visualize_tools_impl {
             Self {
                 // Spawn rerun - creating this is already explicitly done by a user.
                 rec,
+                gt_logged: std::sync::Mutex::default(),
             }
         }
 
@@ -294,64 +312,70 @@ mod visualize_tools_impl {
             Ok(())
         }
 
-        #[allow(unused_variables)]
-        pub async fn log_eval_sample(&self, iter: u32, index: u32, eval: EvalSample) -> Result<()> {
-            if self.rec.is_enabled() {
-                fn tensor_into_image(data: TensorData) -> image::DynamicImage {
-                    let [h, w, c] = [data.shape[0], data.shape[1], data.shape[2]];
+        pub async fn log_eval_sample(
+            &self,
+            iter: u32,
+            index: u32,
+            eval: EvalSample,
+            max_img_size: u32,
+        ) -> Result<()> {
+            if !self.rec.is_enabled() {
+                return Ok(());
+            }
 
-                    let img: image::DynamicImage = match data.dtype {
-                        DType::F32 => {
-                            let data = data.into_vec::<f32>().expect("Wrong type");
-                            if c == 3 {
-                                Rgb32FImage::from_raw(w as u32, h as u32, data)
-                                    .expect("Failed to create image from tensor")
-                                    .into()
-                            } else if c == 4 {
-                                Rgba32FImage::from_raw(w as u32, h as u32, data)
-                                    .expect("Failed to create image from tensor")
-                                    .into()
-                            } else {
-                                panic!("Unsupported number of channels: {c}");
-                            }
-                        }
-                        _ => panic!("unsupported dtype {:?}", data.dtype),
-                    };
+            self.rec.set_time_sequence("iterations", iter);
 
-                    img
-                }
+            // Read the rendered f32 tensor and convert straight to u8 RGB,
+            // skipping the intermediate Rgb32FImage allocation.
+            let data = eval.rendered.clone().into_data_async().await?;
+            let [h, w, c] = [data.shape[0], data.shape[1], data.shape[2]];
+            assert!(
+                c == 3,
+                "Expected 3-channel eval render, got {c} (would need updating to log alpha)"
+            );
+            let f32_buf = data.into_vec::<f32>()?;
+            let render_u8: Vec<u8> = f32_buf
+                .into_iter()
+                .map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
+                .collect();
+            let render_img = image::RgbImage::from_raw(w as u32, h as u32, render_u8)
+                .expect("Failed to build RgbImage from rendered tensor");
+            let render_img = resize_to_max(render_img, max_img_size);
+            let rw = render_img.width();
+            let rh = render_img.height();
+            self.rec.log(
+                format!("eval/view_{index}/render"),
+                &rerun::Image::from_rgb24(render_img.into_vec(), [rw, rh]),
+            )?;
 
-                self.rec.set_time_sequence("iterations", iter);
-
-                let eval_render = tensor_into_image(eval.rendered.clone().into_data_async().await?);
-                let rendered = eval_render.into_rgb8();
-
-                let [w, h] = [rendered.width(), rendered.height()];
-                let gt_rerun_img = if eval.gt_img.color().has_alpha() {
-                    rerun::Image::from_rgba32(eval.gt_img.into_rgba8().into_vec(), [w, h])
-                } else {
-                    rerun::Image::from_rgb24(eval.gt_img.into_rgb8().into_vec(), [w, h])
-                };
-
-                self.rec
-                    .log(format!("eval/view_{index}/ground_truth"), &gt_rerun_img)?;
-                self.rec.log(
-                    format!("eval/view_{index}/render"),
-                    &rerun::Image::from_rgb24(rendered.into_vec(), [w, h]),
-                )?;
-                self.rec.log(
-                    format!("psnr/per_view/{index}"),
-                    &rerun::Scalars::new(vec![
-                        eval.psnr.clone().into_scalar_async::<f32>().await? as f64,
-                    ]),
-                )?;
-                self.rec.log(
-                    format!("ssim/per_view/{index}"),
-                    &rerun::Scalars::new(vec![
-                        eval.ssim.clone().into_scalar_async::<f32>().await? as f64,
-                    ]),
+            // GT never changes. Log it once as static per view.
+            let first_gt = {
+                let mut logged = self.gt_logged.lock().expect("gt_logged poisoned");
+                logged.insert(index)
+            };
+            if first_gt {
+                let gt_rgb = eval.gt_img.into_rgb8();
+                let gt_img = resize_to_max(gt_rgb, max_img_size);
+                let gw = gt_img.width();
+                let gh = gt_img.height();
+                self.rec.log_static(
+                    format!("eval/view_{index}/ground_truth"),
+                    &rerun::Image::from_rgb24(gt_img.into_vec(), [gw, gh]),
                 )?;
             }
+
+            self.rec.log(
+                format!("psnr/per_view/{index}"),
+                &rerun::Scalars::new(vec![
+                    eval.psnr.clone().into_scalar_async::<f32>().await? as f64,
+                ]),
+            )?;
+            self.rec.log(
+                format!("ssim/per_view/{index}"),
+                &rerun::Scalars::new(vec![
+                    eval.ssim.clone().into_scalar_async::<f32>().await? as f64,
+                ]),
+            )?;
 
             Ok(())
         }
@@ -519,6 +543,7 @@ mod visualize_tools_impl {
             _iter: u32,
             _index: u32,
             _eval: EvalSample,
+            _max_img_size: u32,
         ) -> Result<()> {
             Ok(())
         }

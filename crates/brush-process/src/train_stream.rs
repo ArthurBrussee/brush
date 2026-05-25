@@ -345,6 +345,7 @@ pub(crate) async fn train_stream(
                 iter,
                 eval_scene,
                 save_path,
+                train_stream_config.rerun_config.rerun_max_img_size,
             )
             .await
             .with_context(|| format!("Failed evaluation at iteration {iter}"));
@@ -464,6 +465,7 @@ async fn run_eval(
     iter: u32,
     eval_scene: &Scene,
     save_path: Option<PathBuf>,
+    rerun_max_img_size: u32,
 ) -> Result<(), anyhow::Error> {
     let mut psnr = 0.0;
     let mut ssim = 0.0;
@@ -500,7 +502,9 @@ async fn run_eval(
         #[cfg(target_family = "wasm")]
         let _ = save_path;
 
-        visualize.log_eval_sample(iter, i as u32, sample).await?;
+        visualize
+            .log_eval_sample(iter, i as u32, sample, rerun_max_img_size)
+            .await?;
     }
     psnr /= count as f32;
     ssim /= count as f32;
