@@ -33,24 +33,15 @@ pub mod get_tile_offset;
 pub mod render;
 pub mod validation;
 
-// `MainBackend` is burn's per-platform alias; `MainBackendBase` is the
-// un-Fusioned CubeBackend that lives inside it. burn doesn't export the latter
-// directly, so we mirror it here using the same bool storage element as the
-// alias on each platform — see crates/brush-render/Cargo.toml for the
-// rationale behind the per-platform backend choice.
-#[cfg(target_os = "macos")]
-pub type MainBackend = burn::backend::wgpu::Metal;
-#[cfg(target_os = "macos")]
-pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u8>;
-
-#[cfg(not(target_os = "macos"))]
+// Single WebGPU backend on every platform — see Cargo.toml. The un-Fusioned
+// `CubeBackend` that lives inside burn's `WebGpu` alias is not exported, so we
+// mirror it here. WebGpu uses u32 for bool storage on every backend.
 pub type MainBackend = burn::backend::wgpu::WebGpu;
-#[cfg(not(target_os = "macos"))]
 pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u32>;
 
 /// `DispatchTensorKind` variant for the active wgpu backend. burn-dispatch
-/// uses different variant names per backend (`Wgpu`, `Metal`, `Vulkan`); brush
-/// only ever runs on one, so this macro hides the per-platform name.
+/// uses different variant names per backend; brush only ever runs on the
+/// `WebGpu` variant, so this macro hides the variant name from match arms.
 #[macro_export]
 macro_rules! wgpu_kind {
     ($($t:tt)*) => {
@@ -58,14 +49,6 @@ macro_rules! wgpu_kind {
     };
 }
 
-#[cfg(target_os = "macos")]
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __wgpu_kind {
-    ($($t:tt)*) => { ::burn::backend::DispatchTensorKind::Metal($($t)*) };
-}
-
-#[cfg(not(target_os = "macos"))]
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __wgpu_kind {
