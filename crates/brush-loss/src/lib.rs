@@ -91,7 +91,12 @@ mod kernels {
     const C2: f32 = 0.03 * 0.03;
     const INV_255: f32 = 1.0 / 255.0;
 
-    /// Read `pred[c, y, x]` returning zero for out-of-bounds.
+    /// Read `pred[c, y, x]` returning zero for out-of-bounds. The
+    /// `if/else` form generated a non-uniform branch that Naga's MSL
+    /// backend tracked into the post-load `workgroupBarrier()`; we use
+    /// `select` to keep control flow uniform. The read always executes —
+    /// for OOB threads `(y, x) = (0, 0)` (see `coords`), so the index
+    /// `c * h * w + 0` is always in-bounds.
     #[cube]
     fn read_pred<F: Float>(
         pred: &Tensor<F>,
@@ -102,17 +107,16 @@ mod kernels {
         h: u32,
         w: u32,
     ) -> F {
-        if oob {
-            F::cast_from(0.0_f32)
-        } else {
-            pred[(c * h * w + y * w + x) as usize]
-        }
+        let v = pred[(c * h * w + y * w + x) as usize];
+        select(oob, F::cast_from(0.0_f32), v)
     }
 
     /// Read one `[r8 g8 b8 a8]`-packed pixel from `gt_packed`. Returns the
     /// requested colour byte and the alpha byte, both in `[0, 1]`. The alpha
     /// is always returned so it's available for compositing or masking when
-    /// those flags are on.
+    /// those flags are on. As with `read_pred`, the body runs unconditionally
+    /// and `oob` is folded in via `select` so we don't emit a non-uniform
+    /// branch before a workgroup barrier.
     #[cube]
     fn read_gt<F: Float>(
         gt_packed: &Tensor<u32>,
@@ -122,17 +126,13 @@ mod kernels {
         oob: bool,
         w: u32,
     ) -> (F, F) {
-        if oob {
-            (F::cast_from(0.0_f32), F::cast_from(0.0_f32))
-        } else {
-            let val = gt_packed[(y * w + x) as usize];
-            let byte_c = f32::cast_from((val >> (c * 8u32)) & 0xffu32);
-            let byte_a = f32::cast_from((val >> 24u32) & 0xffu32);
-            (
-                F::cast_from(byte_c * INV_255),
-                F::cast_from(byte_a * INV_255),
-            )
-        }
+        let val = gt_packed[(y * w + x) as usize];
+        let byte_c = f32::cast_from((val >> (c * 8u32)) & 0xffu32);
+        let byte_a = f32::cast_from((val >> 24u32) & 0xffu32);
+        let zero = F::cast_from(0.0_f32);
+        let gt_c = F::cast_from(byte_c * INV_255);
+        let gt_a = F::cast_from(byte_a * INV_255);
+        (select(oob, zero, gt_c), select(oob, zero, gt_a))
     }
 
     /// Map a tile-local position offset by `halo` to global image coords.
