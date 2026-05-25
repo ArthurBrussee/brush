@@ -110,85 +110,102 @@ mod visualize_tools_impl {
                 .with_origin("world")
                 .with_contents(["world/**"]);
 
-            // Up to 4 eval views laid out as a 2-column grid (1 view stays as a single row).
-            let visible_eval = num_eval_views.min(4);
-            let eval_cells: Vec<ContainerLike> = (0..visible_eval)
-                .map(|i| {
-                    Horizontal::new([
-                        Spatial2DView::new("Ground truth")
-                            .with_origin(format!("eval/view_{i}/ground_truth"))
-                            .with_contents(["$origin/**"])
-                            .into(),
-                        Spatial2DView::new("Render")
-                            .with_origin(format!("eval/view_{i}/render"))
-                            .with_contents(["$origin/**"])
-                            .into(),
-                    ])
-                    .with_name(format!("view {i}"))
-                    .into()
-                })
-                .collect();
-
-            let main_row = match visible_eval {
-                0 => Horizontal::new([scene_view.into()]),
-                1 => Horizontal::new([
-                    eval_cells.into_iter().next().expect("len 1"),
-                    scene_view.into(),
+            // Each eval view = a Horizontal[GT, Render] cell. Groups of up to 4 are
+            // laid out as a 2-column Grid; if there are more than 4 views, those
+            // grids become switchable tabs ("views 0-3", "views 4-7", ...).
+            let eval_cell = |i: usize| -> ContainerLike {
+                Horizontal::new([
+                    Spatial2DView::new("Ground truth")
+                        .with_origin(format!("eval/view_{i}/ground_truth"))
+                        .with_contents(["$origin/**"])
+                        .into(),
+                    Spatial2DView::new("Render")
+                        .with_origin(format!("eval/view_{i}/render"))
+                        .with_contents(["$origin/**"])
+                        .into(),
                 ])
-                .with_column_shares([3.0, 1.0]),
-                _ => Horizontal::new([
-                    Grid::new(eval_cells).with_grid_columns(2).into(),
-                    scene_view.into(),
-                ])
-                .with_column_shares([3.0, 1.0]),
+                .with_name(format!("view {i}"))
+                .into()
+            };
+            let eval_group = |start: usize, end: usize| -> ContainerLike {
+                let cells: Vec<ContainerLike> = (start..end).map(eval_cell).collect();
+                if cells.len() == 1 {
+                    cells.into_iter().next().expect("len 1")
+                } else {
+                    let label = format!("views {start}-{}", end - 1);
+                    Grid::new(cells)
+                        .with_grid_columns(2)
+                        .with_name(label)
+                        .into()
+                }
             };
 
-            // Default-visible: Quality (aggregate only), Splats, Memory.
-            // Per-view PSNR/SSIM lives in the right-most tab strip alongside every
-            // other graph so they're discoverable without crowding the default view.
+            let main_row = if num_eval_views == 0 {
+                Horizontal::new([scene_view.into()])
+            } else {
+                let group_size = 4;
+                let eval_panel: ContainerLike = if num_eval_views <= group_size {
+                    eval_group(0, num_eval_views)
+                } else {
+                    let num_groups = num_eval_views.div_ceil(group_size);
+                    let groups = (0..num_groups).map(|g| {
+                        let start = g * group_size;
+                        let end = (start + group_size).min(num_eval_views);
+                        eval_group(start, end)
+                    });
+                    Tabs::new(groups).with_name("Eval views").into()
+                };
+                Horizontal::new([eval_panel, scene_view.into()]).with_column_shares([3.0, 1.0])
+            };
+
+            // Default-visible graph row: Quality (PSNR + per-view PSNR + SSIM +
+            // per-view SSIM + Loss as a tab strip), then Splats / Refine / Memory
+            // each as their own view, then an "Other" tab for the rest.
+            let quality_tabs = Tabs::new([
+                TimeSeriesView::new("PSNR")
+                    .with_contents(["psnr/eval"])
+                    .into(),
+                TimeSeriesView::new("PSNR per view")
+                    .with_contents(["psnr/per_view/**"])
+                    .into(),
+                TimeSeriesView::new("SSIM")
+                    .with_contents(["ssim/eval"])
+                    .into(),
+                TimeSeriesView::new("SSIM per view")
+                    .with_contents(["ssim/per_view/**"])
+                    .into(),
+                TimeSeriesView::new("Loss")
+                    .with_contents(["loss/**"])
+                    .into(),
+            ])
+            .with_name("Quality");
+
+            let splats_view = TimeSeriesView::new("Splats").with_contents(["splats/**"]);
+            let refine_view = TimeSeriesView::new("Refine").with_contents([
+                "refine/num_split_oversized",
+                "refine/num_split_high_grad",
+                "refine/num_pruned",
+                "refine/num_pruned_non_finite",
+                "refine/effective_growth",
+            ]);
+            let memory_view = TimeSeriesView::new("Memory").with_contents(["memory/**"]);
+
+            let other_tabs = Tabs::new([
+                TimeSeriesView::new("Throughput")
+                    .with_contents(["train/step_ms", "refine/duration_ms"])
+                    .into(),
+                TimeSeriesView::new("Learning rates")
+                    .with_contents(["lr/**"])
+                    .into(),
+            ])
+            .with_name("Other");
+
             let graphs = Horizontal::new([
-                TimeSeriesView::new("Quality")
-                    .with_contents(["psnr/eval", "ssim/eval"])
-                    .into(),
-                TimeSeriesView::new("Splats")
-                    .with_contents(["splats/**", "refine/effective_growth"])
-                    .into(),
-                TimeSeriesView::new("Memory")
-                    .with_contents(["memory/**"])
-                    .into(),
-                Tabs::new([
-                    TimeSeriesView::new("Loss")
-                        .with_contents(["loss/**"])
-                        .into(),
-                    TimeSeriesView::new("Quality (aggregate)")
-                        .with_contents(["psnr/eval", "ssim/eval"])
-                        .into(),
-                    TimeSeriesView::new("Quality (per view)")
-                        .with_contents(["psnr/per_view/**", "ssim/per_view/**"])
-                        .into(),
-                    TimeSeriesView::new("Splats")
-                        .with_contents(["splats/**", "refine/effective_growth"])
-                        .into(),
-                    TimeSeriesView::new("Memory")
-                        .with_contents(["memory/**"])
-                        .into(),
-                    TimeSeriesView::new("Refine")
-                        .with_contents([
-                            "refine/num_split_oversized",
-                            "refine/num_split_high_grad",
-                            "refine/num_pruned",
-                            "refine/num_pruned_non_finite",
-                        ])
-                        .into(),
-                    TimeSeriesView::new("Throughput")
-                        .with_contents(["train/step_ms", "refine/duration_ms"])
-                        .into(),
-                    TimeSeriesView::new("Learning rates")
-                        .with_contents(["lr/**"])
-                        .into(),
-                ])
-                .with_name("All graphs")
-                .into(),
+                quality_tabs.into(),
+                splats_view.into(),
+                refine_view.into(),
+                memory_view.into(),
+                other_tabs.into(),
             ]);
 
             let root = Vertical::new([main_row.into(), graphs.into()]).with_row_shares([3.0, 2.0]);
