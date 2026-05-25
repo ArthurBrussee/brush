@@ -19,6 +19,9 @@ pub struct RerunConfig {
     /// How often to log out the full splat point cloud to rerun (warning: heavy).
     #[arg(long, help_heading = "Rerun options")]
     pub rerun_log_splats_every: Option<u32>,
+    /// How often to log opacity / scale histograms (0 disables).
+    #[arg(long, help_heading = "Rerun options", default_value = "5000")]
+    pub rerun_log_histograms_every: u32,
     /// The maximum size of images from the dataset logged to rerun.
     #[arg(long, help_heading = "Rerun options", default_value = "512")]
     pub rerun_max_img_size: u32,

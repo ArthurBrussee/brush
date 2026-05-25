@@ -1,3 +1,5 @@
+use burn::tensor::Tensor;
+
 #[derive(Clone)]
 pub struct RefineStats {
     pub num_added: u32,
@@ -13,4 +15,7 @@ pub struct TrainStepStats {
     pub lr_scale: f64,
     pub lr_coeffs: f64,
     pub lr_opac: f64,
+    // Non-autodiff inner tensor; consumers read the scalar lazily so disabled
+    // logging doesn't force a GPU readback.
+    pub loss: Tensor<1>,
 }

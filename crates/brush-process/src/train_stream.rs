@@ -318,7 +318,8 @@ pub(crate) async fn train_stream(
         let iter = iter + 1;
         let is_last_step = iter == train_stream_config.train_config.total_iters();
 
-        train_duration += step_time.elapsed();
+        let step_dur = step_time.elapsed();
+        train_duration += step_dur;
 
         // Do evals. We skip this for LODs as it'd be confusing for rerun, but, could
         // revisit this.
@@ -390,7 +391,16 @@ pub(crate) async fn train_stream(
             }
 
             if iter.is_multiple_of(rerun_config.rerun_log_train_stats_every) || is_last_step {
-                visualize.log_train_stats(iter, &stats).unwrap();
+                visualize
+                    .log_train_stats(iter, &stats, step_dur)
+                    .await
+                    .unwrap();
+            }
+
+            if rerun_config.rerun_log_histograms_every > 0
+                && iter.is_multiple_of(rerun_config.rerun_log_histograms_every)
+            {
+                visualize.log_histograms(iter, &splats).await.unwrap();
             }
 
             visualize.log_memory(iter, &WgpuRuntime::client(wgpu_device).memory_usage()?)?;

@@ -25,6 +25,24 @@ mod visualize_tools_impl {
 
     use super::VisualizeTools;
 
+    fn histogram_fixed(values: &[f32], min: f32, max: f32, num_bins: usize) -> Vec<u64> {
+        let mut bins = vec![0u64; num_bins];
+        let range = (max - min).max(f32::EPSILON);
+        for &v in values {
+            let t = ((v - min) / range).clamp(0.0, 1.0);
+            let idx = ((t * num_bins as f32) as usize).min(num_bins - 1);
+            bins[idx] += 1;
+        }
+        bins
+    }
+
+    fn bin_centers(min: f32, max: f32, num_bins: usize) -> Vec<f32> {
+        let step = (max - min) / num_bins as f32;
+        (0..num_bins)
+            .map(|i| min + (i as f32 + 0.5) * step)
+            .collect()
+    }
+
     impl VisualizeTools {
         #[allow(unused_variables)]
         pub async fn new(enabled: bool) -> Self {
@@ -143,12 +161,12 @@ mod visualize_tools_impl {
                 .with_column_shares([3.0, 1.0]),
             };
 
-            // Quality / Splats / Memory always visible; the right-most slot is a tab
-            // strip containing every graph (including duplicates) so anything can be
-            // surfaced without rearranging the layout.
+            // Default-visible: Quality (aggregate only), Splats, Memory.
+            // Per-view PSNR/SSIM lives in the right-most tab strip alongside every
+            // other graph so they're discoverable without crowding the default view.
             let graphs = Horizontal::new([
                 TimeSeriesView::new("Quality")
-                    .with_contents(["psnr/**", "ssim/**"])
+                    .with_contents(["psnr/eval", "ssim/eval"])
                     .into(),
                 TimeSeriesView::new("Splats")
                     .with_contents(["splats/**", "refine/effective_growth"])
@@ -157,8 +175,14 @@ mod visualize_tools_impl {
                     .with_contents(["memory/**"])
                     .into(),
                 Tabs::new([
-                    TimeSeriesView::new("Quality")
-                        .with_contents(["psnr/**", "ssim/**"])
+                    TimeSeriesView::new("Loss")
+                        .with_contents(["loss/**"])
+                        .into(),
+                    TimeSeriesView::new("Quality (aggregate)")
+                        .with_contents(["psnr/eval", "ssim/eval"])
+                        .into(),
+                    TimeSeriesView::new("Quality (per view)")
+                        .with_contents(["psnr/per_view/**", "ssim/per_view/**"])
                         .into(),
                     TimeSeriesView::new("Splats")
                         .with_contents(["splats/**", "refine/effective_growth"])
@@ -168,6 +192,9 @@ mod visualize_tools_impl {
                         .into(),
                     TimeSeriesView::new("Refine")
                         .with_contents(["refine/num_added", "refine/num_pruned"])
+                        .into(),
+                    TimeSeriesView::new("Throughput")
+                        .with_contents(["train/step_ms"])
                         .into(),
                     TimeSeriesView::new("Learning rates")
                         .with_contents(["lr/**"])
@@ -303,25 +330,87 @@ mod visualize_tools_impl {
             Ok(())
         }
 
-        #[allow(unused_variables)]
-        pub fn log_train_stats(&self, iter: u32, stats: &TrainStepStats) -> Result<()> {
-            if self.rec.is_enabled() {
-                self.rec.set_time_sequence("iterations", iter);
-                self.rec
-                    .log("lr/mean", &rerun::Scalars::new(vec![stats.lr_mean]))?;
-                self.rec
-                    .log("lr/rotation", &rerun::Scalars::new(vec![stats.lr_rotation]))?;
-                self.rec
-                    .log("lr/scale", &rerun::Scalars::new(vec![stats.lr_scale]))?;
-                self.rec
-                    .log("lr/coeffs", &rerun::Scalars::new(vec![stats.lr_coeffs]))?;
-                self.rec
-                    .log("lr/opac", &rerun::Scalars::new(vec![stats.lr_opac]))?;
-                self.rec.log(
-                    "splats/splats_visible",
-                    &rerun::Scalars::new(vec![stats.num_visible as f64]),
-                )?;
+        pub fn is_enabled(&self) -> bool {
+            self.rec.is_enabled()
+        }
+
+        pub async fn log_train_stats(
+            &self,
+            iter: u32,
+            stats: &TrainStepStats,
+            step_duration: std::time::Duration,
+        ) -> Result<()> {
+            if !self.rec.is_enabled() {
+                return Ok(());
             }
+            self.rec.set_time_sequence("iterations", iter);
+            // Reading the loss scalar forces a GPU readback, so it's gated on
+            // logging being enabled and only happens on logging iters (the
+            // caller decides the cadence).
+            let loss = stats.loss.clone().into_scalar_async::<f32>().await? as f64;
+            self.rec
+                .log("loss/total", &rerun::Scalars::new(vec![loss]))?;
+            self.rec.log(
+                "train/step_ms",
+                &rerun::Scalars::new(vec![step_duration.as_secs_f64() * 1000.0]),
+            )?;
+            self.rec
+                .log("lr/mean", &rerun::Scalars::new(vec![stats.lr_mean]))?;
+            self.rec
+                .log("lr/rotation", &rerun::Scalars::new(vec![stats.lr_rotation]))?;
+            self.rec
+                .log("lr/scale", &rerun::Scalars::new(vec![stats.lr_scale]))?;
+            self.rec
+                .log("lr/coeffs", &rerun::Scalars::new(vec![stats.lr_coeffs]))?;
+            self.rec
+                .log("lr/opac", &rerun::Scalars::new(vec![stats.lr_opac]))?;
+            self.rec.log(
+                "splats/splats_visible",
+                &rerun::Scalars::new(vec![stats.num_visible as f64]),
+            )?;
+            Ok(())
+        }
+
+        pub async fn log_histograms(&self, iter: u32, splats: &Splats) -> Result<()> {
+            if !self.rec.is_enabled() {
+                return Ok(());
+            }
+            self.rec.set_time_sequence("iterations", iter);
+
+            let num_bins = 32usize;
+
+            // Opacity is a [0, 1] sigmoid output — fixed-range histogram works directly.
+            let opac = splats
+                .opacities()
+                .into_data_async()
+                .await?
+                .into_vec::<f32>()?;
+            let opac_bins = histogram_fixed(&opac, 0.0, 1.0, num_bins);
+            let opac_centers = bin_centers(0.0, 1.0, num_bins);
+            self.rec.log(
+                "histograms/opacity",
+                &rerun::BarChart::new(opac_bins).with_abscissa(opac_centers),
+            )?;
+
+            // Log-scale is stored directly in the splat params; binning it in log
+            // space gives a useful long-tail view of splat sizes.
+            let log_scales_data = splats
+                .log_scales()
+                .into_data_async()
+                .await?
+                .into_vec::<f32>()?;
+            let mean_log_scale: Vec<f32> = log_scales_data
+                .chunks(3)
+                .map(|c| (c[0] + c[1] + c[2]) / 3.0)
+                .collect();
+            let (scale_lo, scale_hi) = (-10.0_f32, 2.0_f32);
+            let scale_bins = histogram_fixed(&mean_log_scale, scale_lo, scale_hi, num_bins);
+            let scale_centers = bin_centers(scale_lo, scale_hi, num_bins);
+            self.rec.log(
+                "histograms/log_scale",
+                &rerun::BarChart::new(scale_bins).with_abscissa(scale_centers),
+            )?;
+
             Ok(())
         }
 
@@ -424,8 +513,23 @@ mod visualize_tools_impl {
             Ok(())
         }
 
+        #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
+        pub fn is_enabled(&self) -> bool {
+            false
+        }
+
         #[allow(unused_variables)]
-        pub fn log_train_stats(&self, _iter: u32, _stats: &TrainStepStats) -> Result<()> {
+        pub async fn log_train_stats(
+            &self,
+            _iter: u32,
+            _stats: &TrainStepStats,
+            _step_duration: std::time::Duration,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        #[allow(unused_variables)]
+        pub async fn log_histograms(&self, _iter: u32, _splats: &Splats) -> Result<()> {
             Ok(())
         }
 

@@ -117,7 +117,7 @@ impl SplatTrainer {
 
         let median_scale = self.bounds.median_size();
 
-        let (mut grads, visible, num_visible) = {
+        let (mut grads, visible, num_visible, loss_inner) = {
             let render_input = splats.clone();
             let diff_out = render_splats(render_input, &camera, img_size, background)
                 .instrument(trace_span!("Forward"))
@@ -181,7 +181,10 @@ impl SplatTrainer {
                     ) * self.config.lpips_loss_weight;
             }
 
-            let mut grads = splats.bwd_validate(loss.clone()).await;
+            // Strip the autodiff graph off the loss so consumers can read the
+            // scalar later without keeping the backward pass alive.
+            let loss_inner = loss.clone().inner();
+            let mut grads = splats.bwd_validate(loss).await;
 
             trace_span!("Housekeeping").in_scope(|| {
                 // Refine state accumulates on the inner (non-autodiff) device
@@ -204,7 +207,7 @@ impl SplatTrainer {
                 );
             });
 
-            (grads, visible, diff_out.num_visible)
+            (grads, visible, diff_out.num_visible, loss_inner)
         };
 
         // OptimizerAdaptor strips autodiff before calling SimpleOptimizer::step,
@@ -320,17 +323,17 @@ impl SplatTrainer {
             Tensor::from_inner(out).require_grad()
         });
 
-        (
-            splats,
-            TrainStepStats {
-                num_visible,
-                lr_mean,
-                lr_rotation: self.config.lr_rotation,
-                lr_scale: self.config.lr_scale,
-                lr_coeffs: self.config.lr_coeffs_dc,
-                lr_opac: self.config.lr_opac,
-            },
-        )
+        let stats = TrainStepStats {
+            num_visible,
+            lr_mean,
+            lr_rotation: self.config.lr_rotation,
+            lr_scale: self.config.lr_scale,
+            lr_coeffs: self.config.lr_coeffs_dc,
+            lr_opac: self.config.lr_opac,
+            loss: loss_inner,
+        };
+
+        (splats, stats)
     }
 
     pub async fn refine(&mut self, iter: u32, splats: Splats) -> (Splats, RefineStats) {
