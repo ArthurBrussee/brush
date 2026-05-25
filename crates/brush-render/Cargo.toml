@@ -11,7 +11,7 @@ brush-cube.path = "../brush-cube"
 brush-prefix-sum.path = "../brush-prefix-sum"
 brush-sort.path = "../brush-sort"
 
-burn = { workspace = true, features = ["webgpu"] }
+burn.workspace = true
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
@@ -30,11 +30,19 @@ tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 [features]
 debug-validation = []
 
-# Force the WebGPU backend on every platform. We previously used Vulkan
-# on Linux/Windows and Metal on macOS, but both produced random crashes
-# (see #423 / #395 — buffer-destroyed validation errors, ARM/AMD instability).
-# WebGPU runs through wgpu's frontend with bounds-checked dispatches so we
-# avoid per-backend codegen divergence in cubecl-wgpu.
+# Backend selection per platform:
+# - Linux/Windows: `webgpu` feature → WGSL codegen, swapped away from `vulkan`
+#   to escape the SPIR-V/cubecl-vulkan crash class (#395, #423).
+# - macOS: keep `metal` (direct MSL codegen via cubecl_cpp). The `webgpu`
+#   feature on macOS routes through WGSL→Naga→MSL and currently emits a broken
+#   SSIM kernel (loss=0 — caught by `ssim_identical_inputs_is_one`).
+# - wasm: `webgpu` is the only option in-browser.
+[target.'cfg(target_os = "macos")'.dependencies]
+burn = { workspace = true, features = ["metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+burn = { workspace = true, features = ["webgpu"] }
+
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
