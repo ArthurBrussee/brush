@@ -98,8 +98,8 @@ mod visualize_tools_impl {
 
         pub fn send_default_blueprint(&self, num_eval_views: usize) -> Result<()> {
             use rerun::blueprint::{
-                Blueprint, BlueprintActivation, Horizontal, Spatial2DView, Spatial3DView, Tabs,
-                TimeSeriesView, Vertical,
+                Blueprint, BlueprintActivation, ContainerLike, Grid, Horizontal, Spatial2DView,
+                Spatial3DView, TimeSeriesView, Vertical,
             };
 
             if !self.rec.is_enabled() {
@@ -110,10 +110,10 @@ mod visualize_tools_impl {
                 .with_origin("world")
                 .with_contents(["world/**"]);
 
-            let main_row = if num_eval_views == 0 {
-                Horizontal::new([scene_view.into()])
-            } else {
-                let eval_tabs = (0..num_eval_views).map(|i| {
+            // Up to 4 eval views laid out as a 2-column grid (1 view stays as a single row).
+            let visible_eval = num_eval_views.min(4);
+            let eval_cells: Vec<ContainerLike> = (0..visible_eval)
+                .map(|i| {
                     Horizontal::new([
                         Spatial2DView::new("Ground truth")
                             .with_origin(format!("eval/view_{i}/ground_truth"))
@@ -126,26 +126,30 @@ mod visualize_tools_impl {
                     ])
                     .with_name(format!("view {i}"))
                     .into()
-                });
-                Horizontal::new([
-                    Tabs::new(eval_tabs).with_name("Eval views").into(),
+                })
+                .collect();
+
+            let main_row = match visible_eval {
+                0 => Horizontal::new([scene_view.into()]),
+                1 => Horizontal::new([
+                    eval_cells.into_iter().next().expect("len 1"),
                     scene_view.into(),
                 ])
-                .with_column_shares([3.0, 1.0])
+                .with_column_shares([3.0, 1.0]),
+                _ => Horizontal::new([
+                    Grid::new(eval_cells).with_grid_columns(2).into(),
+                    scene_view.into(),
+                ])
+                .with_column_shares([3.0, 1.0]),
             };
 
-            let always_visible_graphs = Horizontal::new([
+            // One graph area; memory visible by default, LRs hidden (toggle in blueprint panel).
+            let graphs = Horizontal::new([
                 TimeSeriesView::new("Quality")
                     .with_contents(["psnr/**", "ssim/**"])
                     .into(),
                 TimeSeriesView::new("Splats")
                     .with_contents(["splats/**", "refine/effective_growth"])
-                    .into(),
-            ]);
-
-            let secondary_tabs = Tabs::new([
-                TimeSeriesView::new("Learning rates")
-                    .with_contents(["lr/**"])
                     .into(),
                 TimeSeriesView::new("Memory")
                     .with_contents(["memory/**"])
@@ -153,14 +157,13 @@ mod visualize_tools_impl {
                 TimeSeriesView::new("Refine")
                     .with_contents(["refine/num_added", "refine/num_pruned"])
                     .into(),
+                TimeSeriesView::new("Learning rates")
+                    .with_contents(["lr/**"])
+                    .with_visible(false)
+                    .into(),
             ]);
 
-            let root = Vertical::new([
-                main_row.into(),
-                always_visible_graphs.into(),
-                secondary_tabs.into(),
-            ])
-            .with_row_shares([4.0, 2.0, 1.5]);
+            let root = Vertical::new([main_row.into(), graphs.into()]).with_row_shares([3.0, 2.0]);
 
             Blueprint::new(root)
                 .with_auto_layout(false)
