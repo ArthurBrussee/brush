@@ -112,14 +112,6 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
         slider(ui, &mut tc.lr_scale, 1e-3..=1e-1, "scale", true, enabled);
         slider(
             ui,
-            &mut tc.lr_scale_end,
-            1e-4..=1e-2,
-            "scale (end)",
-            true,
-            enabled,
-        );
-        slider(
-            ui,
             &mut tc.lr_rotation,
             1e-4..=1e-2,
             "rotation",
@@ -187,14 +179,6 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             &mut tc.opac_decay,
             0.0..=0.01,
             "Splat opacity decay",
-            true,
-            enabled,
-        );
-        slider(
-            ui,
-            &mut tc.scale_decay,
-            0.0..=0.01,
-            "Splat scale decay",
             true,
             enabled,
         );
