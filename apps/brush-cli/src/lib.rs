@@ -151,10 +151,7 @@ pub async fn run_cli_ui(
         ),
     );
 
-    eval_spinner.set_message(format!(
-        "evaluating every {} steps",
-        train_stream_config.process_config.eval_every,
-    ));
+    eval_spinner.set_message("waiting for dataset...");
 
     let stats_spinner = sp.add(stats_spinner);
     stats_spinner.set_message("Starting up");
@@ -204,12 +201,13 @@ pub async fn run_cli_ui(
                     main_spinner.set_message(format!(
                         "Loading dataset with {train_views} training, {eval_views} eval views",
                     ));
-                    if let Some(val) = dataset.eval.as_ref() {
+                    if eval_views > 0 {
                         eval_spinner.set_message(format!(
                             "evaluating {} views every {} steps",
-                            val.views.len(),
-                            train_stream_config.process_config.eval_every,
+                            eval_views, train_stream_config.process_config.eval_every,
                         ));
+                    } else {
+                        eval_spinner.set_message("no eval views — skipping evaluation");
                     }
                 }
                 TrainMessage::TrainStep {

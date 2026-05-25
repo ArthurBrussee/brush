@@ -465,6 +465,10 @@ async fn run_eval(
     eval_scene: &Scene,
     save_path: Option<PathBuf>,
 ) -> Result<(), anyhow::Error> {
+    if eval_scene.views.is_empty() {
+        return Ok(());
+    }
+
     let mut psnr = 0.0;
     let mut ssim = 0.0;
     let mut count = 0;
