@@ -77,6 +77,16 @@ mod kernels {
     const EXT_X: u32 = BLOCK_X + 4 * HALO; // 36
     const EXT_Y: u32 = BLOCK_Y + 4 * HALO; // 36
 
+    // Padded heights chosen so the chunked-load / row-blur loops cover every
+    // thread of the workgroup without a per-thread `if`. Naga's MSL backend
+    // (used by webgpu→Metal on macOS) can't prove that
+    // `local_invocation_id.y < workgroup_size_y`, so any `if ly < SHARED_Y`
+    // before a `workgroupBarrier()` is conservatively flagged as non-uniform
+    // and the kernel silently no-ops on Apple GPUs. Padding lets every thread
+    // execute the same straight-line code: sacrificial writes go to the
+    // padded rows, which the subsequent stages don't read.
+    const PADDED_SHARED_Y: u32 = 32; // smallest 2*BLOCK_Y >= SHARED_Y
+
     const C1: f32 = 0.01 * 0.01;
     const C2: f32 = 0.03 * 0.03;
     const INV_255: f32 = 1.0 / 255.0;
@@ -161,7 +171,7 @@ mod kernels {
     ///   zero bg make the math a no-op so callers gate it off to skip the work.
     /// - `mask`: multiply the loss-map output by `gt.a` per pixel.
     #[allow(clippy::assign_op_pattern)]
-    #[cube(launch_unchecked)]
+    #[cube(launch)]
     pub fn image_loss_forward_kernel<F: Float>(
         pred: &Tensor<F>,
         gt_packed: &Tensor<u32>,
@@ -199,8 +209,10 @@ mod kernels {
         // Tile + halo of (pred, gt_eff_c, gt_a) interleaved as 3 floats.
         // We carry gt.a alongside the colour so the centre pixel has its
         // mask weight available without a second global read.
-        let mut s_tile = SharedMemory::<F>::new((SHARED_Y * SHARED_X * 3) as usize);
-        let mut x_conv = SharedMemory::<F>::new((SHARED_Y * BLOCK_X * 5) as usize);
+        // Allocated with PADDED_SHARED_Y rows so the chunked load / row blur
+        // can iterate unconditionally; see the comment on PADDED_SHARED_Y.
+        let mut s_tile = SharedMemory::<F>::new((PADDED_SHARED_Y * SHARED_X * 3) as usize);
+        let mut x_conv = SharedMemory::<F>::new((PADDED_SHARED_Y * BLOCK_X * 5) as usize);
 
         let bg_c = if composite {
             if c == 0u32 {
@@ -216,71 +228,74 @@ mod kernels {
 
         let thread_rank = UNIT_POS_Y * BLOCK_X + UNIT_POS_X;
         let threads = BLOCK_X * BLOCK_Y;
-        let tile_size = SHARED_Y * SHARED_X;
+        // Load (BLOCK_X*BLOCK_Y)*3 = 768 cells over 3 chunks, no per-thread
+        // guard. The real tile is SHARED_Y*SHARED_X = 676 cells; threads with
+        // tid ∈ [676, 767] write to padded rows of `s_tile` that the blur
+        // doesn't sample, so the "garbage" is harmless.
         #[unroll]
         for s in 0u32..3u32 {
             let tid = s * threads + thread_rank;
-            if tid < tile_size {
-                let local_y = tid / SHARED_X;
-                let local_x = tid % SHARED_X;
-                let (gy, gx, oob) = coords(tile_y0, tile_x0, local_y, local_x, HALO, h, w);
-                let pv = read_pred::<F>(pred, c, gy, gx, oob, h, w);
-                let (gt_c, gt_a) = read_gt::<F>(gt_packed, c, gy, gx, oob, w);
-                let gt_eff = if composite {
-                    gt_c + (F::cast_from(1.0_f32) - gt_a) * bg_c
-                } else {
-                    gt_c
-                };
-                let base = ((local_y * SHARED_X + local_x) * 3u32) as usize;
-                s_tile[base] = pv;
-                s_tile[base + 1] = gt_eff;
-                s_tile[base + 2] = gt_a;
-            }
+            let local_y = tid / SHARED_X;
+            let local_x = tid % SHARED_X;
+            let (gy, gx, oob) = coords(tile_y0, tile_x0, local_y, local_x, HALO, h, w);
+            let pv = read_pred::<F>(pred, c, gy, gx, oob, h, w);
+            let (gt_c, gt_a) = read_gt::<F>(gt_packed, c, gy, gx, oob, w);
+            let gt_eff = if composite {
+                gt_c + (F::cast_from(1.0_f32) - gt_a) * bg_c
+            } else {
+                gt_c
+            };
+            let base = ((local_y * SHARED_X + local_x) * 3u32) as usize;
+            s_tile[base] = pv;
+            s_tile[base + 1] = gt_eff;
+            s_tile[base + 2] = gt_a;
         }
         sync_cube();
 
         // Horizontal 11-tap blur over (pred, gt_eff_c) -> 5 sums per pixel.
+        // Iterates BLOCK_Y*2 = PADDED_SHARED_Y rows unconditionally; rows
+        // beyond SHARED_Y are computed but their outputs are never sampled
+        // by the vertical blur (which only reads ly_blur ± HALO from [HALO,
+        // BLOCK_Y+HALO-1] = [5, 20] → at most row 25).
         let lx = UNIT_POS_X + HALO;
         #[unroll]
         for pass in 0u32..2u32 {
             let ly = UNIT_POS_Y + pass * BLOCK_Y;
-            if ly < SHARED_Y {
-                let mut sum_x = F::cast_from(0.0_f32);
-                let mut sum_x2 = F::cast_from(0.0_f32);
-                let mut sum_y = F::cast_from(0.0_f32);
-                let mut sum_y2 = F::cast_from(0.0_f32);
-                let mut sum_xy = F::cast_from(0.0_f32);
-                #[unroll]
-                for d in 1u32..6u32 {
-                    let w_d = gw::<F>(comptime![5u32 - d]);
-                    let il = (ly * SHARED_X + (lx - d)) as usize;
-                    let ir = (ly * SHARED_X + (lx + d)) as usize;
-                    let xl = s_tile[il * 3];
-                    let yl = s_tile[il * 3 + 1];
-                    let xr = s_tile[ir * 3];
-                    let yr = s_tile[ir * 3 + 1];
-                    sum_x += (xl + xr) * w_d;
-                    sum_x2 += (xl * xl + xr * xr) * w_d;
-                    sum_y += (yl + yr) * w_d;
-                    sum_y2 += (yl * yl + yr * yr) * w_d;
-                    sum_xy += (xl * yl + xr * yr) * w_d;
-                }
-                let ic = (ly * SHARED_X + lx) as usize;
-                let xc = s_tile[ic * 3];
-                let yc = s_tile[ic * 3 + 1];
-                let wc = gw::<F>(5u32);
-                sum_x += xc * wc;
-                sum_x2 += xc * xc * wc;
-                sum_y += yc * wc;
-                sum_y2 += yc * yc * wc;
-                sum_xy += xc * yc * wc;
-                let base = ((ly * BLOCK_X + UNIT_POS_X) * 5) as usize;
-                x_conv[base] = sum_x;
-                x_conv[base + 1] = sum_x2;
-                x_conv[base + 2] = sum_y;
-                x_conv[base + 3] = sum_y2;
-                x_conv[base + 4] = sum_xy;
+            let mut sum_x = F::cast_from(0.0_f32);
+            let mut sum_x2 = F::cast_from(0.0_f32);
+            let mut sum_y = F::cast_from(0.0_f32);
+            let mut sum_y2 = F::cast_from(0.0_f32);
+            let mut sum_xy = F::cast_from(0.0_f32);
+            #[unroll]
+            for d in 1u32..6u32 {
+                let w_d = gw::<F>(comptime![5u32 - d]);
+                let il = (ly * SHARED_X + (lx - d)) as usize;
+                let ir = (ly * SHARED_X + (lx + d)) as usize;
+                let xl = s_tile[il * 3];
+                let yl = s_tile[il * 3 + 1];
+                let xr = s_tile[ir * 3];
+                let yr = s_tile[ir * 3 + 1];
+                sum_x += (xl + xr) * w_d;
+                sum_x2 += (xl * xl + xr * xr) * w_d;
+                sum_y += (yl + yr) * w_d;
+                sum_y2 += (yl * yl + yr * yr) * w_d;
+                sum_xy += (xl * yl + xr * yr) * w_d;
             }
+            let ic = (ly * SHARED_X + lx) as usize;
+            let xc = s_tile[ic * 3];
+            let yc = s_tile[ic * 3 + 1];
+            let wc = gw::<F>(5u32);
+            sum_x += xc * wc;
+            sum_x2 += xc * xc * wc;
+            sum_y += yc * wc;
+            sum_y2 += yc * yc * wc;
+            sum_xy += xc * yc * wc;
+            let base = ((ly * BLOCK_X + UNIT_POS_X) * 5) as usize;
+            x_conv[base] = sum_x;
+            x_conv[base + 1] = sum_x2;
+            x_conv[base + 2] = sum_y;
+            x_conv[base + 3] = sum_y2;
+            x_conv[base + 4] = sum_xy;
         }
         sync_cube();
 
@@ -346,7 +361,7 @@ mod kernels {
     /// arrays alias into two physical buffers. Total ~28 KiB at 16x16 f32,
     /// inside Apple's 32 KiB threadgroup budget without needing shader-f16.
     #[allow(clippy::assign_op_pattern)]
-    #[cube(launch_unchecked)]
+    #[cube(launch)]
     pub fn image_loss_backward_kernel<F: Float>(
         pred: &Tensor<F>,
         gt_packed: &Tensor<u32>,
@@ -643,7 +658,7 @@ mod kernels {
     /// Decode `gt_packed` to `[H, W, 3]` f32 RGB. Comptime `composite` gates
     /// the `gt + (1 - gt.a) * bg` math; callers pass false when the source
     /// has no real alpha or when `bg == 0`. Used by the LPIPS path.
-    #[cube(launch_unchecked)]
+    #[cube(launch)]
     pub fn unpack_gt_rgb_kernel<F: Float>(
         gt_packed: &Tensor<u32>,
         out: &mut Tensor<F>,
@@ -814,29 +829,23 @@ fn launch_image_forward<R: CubeRuntime>(
     let bg = cfg.composite_bg.unwrap_or(Vec3::ZERO);
     let map = alloc_zeros(&pred);
     let client = pred.client.clone();
-    // SAFETY: Naga's MSL backend miscompiles this kernel under `Checked`
-    // execution mode and writes 0 to every loss pixel on macOS. We pin it to
-    // `launch_unchecked` until that's fixed; the kernel itself bounds-checks
-    // every global access via `oob` / `pix_x < w && pix_y < h`.
-    unsafe {
-        kernels::image_loss_forward_kernel::launch_unchecked::<f32, R>(
-            &client,
-            cube_count_3d(c, h, w),
-            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
-            pred.into_tensor_arg(),
-            gt_packed.into_tensor_arg(),
-            map.clone().into_tensor_arg(),
-            h,
-            w,
-            cfg.l1_weight,
-            cfg.ssim_weight,
-            bg.x,
-            bg.y,
-            bg.z,
-            composite,
-            cfg.mask,
-        );
-    }
+    kernels::image_loss_forward_kernel::launch::<f32, R>(
+        &client,
+        cube_count_3d(c, h, w),
+        CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
+        pred.into_tensor_arg(),
+        gt_packed.into_tensor_arg(),
+        map.clone().into_tensor_arg(),
+        h,
+        w,
+        cfg.l1_weight,
+        cfg.ssim_weight,
+        bg.x,
+        bg.y,
+        bg.z,
+        composite,
+        cfg.mask,
+    );
     map
 }
 
@@ -860,28 +869,24 @@ fn launch_image_backward<R: CubeRuntime>(
     let dl_dpred = alloc_zeros(&pred);
     let client = pred.client.clone();
 
-    // SAFETY: Same Naga MSL miscompile as the forward — keep unchecked. The
-    // kernel guards every global read/write with the same boundary checks.
-    unsafe {
-        kernels::image_loss_backward_kernel::launch_unchecked::<f32, R>(
-            &client,
-            cube_count_3d(c, h, w),
-            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
-            pred.into_tensor_arg(),
-            gt_packed.into_tensor_arg(),
-            dl_dmap.into_tensor_arg(),
-            dl_dpred.clone().into_tensor_arg(),
-            h,
-            w,
-            cfg.l1_weight,
-            cfg.ssim_weight,
-            bg.x,
-            bg.y,
-            bg.z,
-            composite,
-            cfg.mask,
-        );
-    }
+    kernels::image_loss_backward_kernel::launch::<f32, R>(
+        &client,
+        cube_count_3d(c, h, w),
+        CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
+        pred.into_tensor_arg(),
+        gt_packed.into_tensor_arg(),
+        dl_dmap.into_tensor_arg(),
+        dl_dpred.clone().into_tensor_arg(),
+        h,
+        w,
+        cfg.l1_weight,
+        cfg.ssim_weight,
+        bg.x,
+        bg.y,
+        bg.z,
+        composite,
+        cfg.mask,
+    );
     dl_dpred
 }
 
@@ -911,24 +916,19 @@ fn launch_unpack_gt_rgb<R: CubeRuntime>(
         h.div_ceil(kernels::BLOCK_Y),
         1,
     );
-    // SAFETY: Kept on `launch_unchecked` for parity with the forward/backward
-    // loss kernels — Naga MSL miscompile triggered by `Checked` execution mode.
-    // One thread per pixel, bounds-checked by `pix_x < w && pix_y < h`.
-    unsafe {
-        kernels::unpack_gt_rgb_kernel::launch_unchecked::<f32, R>(
-            &client,
-            cube_count,
-            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
-            gt_packed.into_tensor_arg(),
-            out.clone().into_tensor_arg(),
-            h,
-            w,
-            bg.x,
-            bg.y,
-            bg.z,
-            composite,
-        );
-    }
+    kernels::unpack_gt_rgb_kernel::launch::<f32, R>(
+        &client,
+        cube_count,
+        CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
+        gt_packed.into_tensor_arg(),
+        out.clone().into_tensor_arg(),
+        h,
+        w,
+        bg.x,
+        bg.y,
+        bg.z,
+        composite,
+    );
     out
 }
 
