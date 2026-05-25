@@ -17,7 +17,7 @@ use burn_cubecl::cubecl::prelude::*;
 
 pub const WG_SIZE: u32 = 256;
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 pub fn project_forward_kernel(
     transforms: &Tensor<f32>,

@@ -57,18 +57,15 @@ pub fn radix_argsort(
     for pass in 0..sorting_bits.div_ceil(4) {
         let count_buf = create_tensor([(max_needed_wgs as usize) * 16], &device, DType::I32);
 
-        // SAFETY: Kernel checked OOB-safe.
-        unsafe {
-            kernels::sort_count_kernel::launch_unchecked::<WgpuRuntime>(
-                &client,
-                num_wgs.clone(),
-                cube_dim,
-                num_keys_buf.clone().into_tensor_arg(),
-                cur_keys.clone().into_tensor_arg(),
-                count_buf.clone().into_tensor_arg(),
-                pass * 4,
-            );
-        }
+        kernels::sort_count_kernel::launch::<WgpuRuntime>(
+            &client,
+            num_wgs.clone(),
+            cube_dim,
+            num_keys_buf.clone().into_tensor_arg(),
+            cur_keys.clone().into_tensor_arg(),
+            count_buf.clone().into_tensor_arg(),
+            pass * 4,
+        );
 
         {
             // Size `reduced_buf` to the real number of per-chunk totals. The
@@ -79,59 +76,47 @@ pub fn radix_argsort(
             let reduced_buf_size = num_reduce_wgs_count.div_ceil(BLOCK_SIZE).max(1) * BLOCK_SIZE;
             let reduced_buf = create_tensor([reduced_buf_size as usize], &device, DType::I32);
 
-            // SAFETY: Kernel checked OOB-safe.
-            unsafe {
-                kernels::sort_reduce_kernel::launch_unchecked::<WgpuRuntime>(
-                    &client,
-                    num_reduce_wgs.clone(),
-                    cube_dim,
-                    num_keys_buf.clone().into_tensor_arg(),
-                    count_buf.clone().into_tensor_arg(),
-                    reduced_buf.clone().into_tensor_arg(),
-                );
-            }
-            // SAFETY: No OOB or loops in kernel.
-            unsafe {
-                kernels::sort_scan_kernel::launch_unchecked::<WgpuRuntime>(
-                    &client,
-                    CubeCount::Static(1, 1, 1),
-                    cube_dim,
-                    num_keys_buf.clone().into_tensor_arg(),
-                    reduced_buf.clone().into_tensor_arg(),
-                );
-            }
+            kernels::sort_reduce_kernel::launch::<WgpuRuntime>(
+                &client,
+                num_reduce_wgs.clone(),
+                cube_dim,
+                num_keys_buf.clone().into_tensor_arg(),
+                count_buf.clone().into_tensor_arg(),
+                reduced_buf.clone().into_tensor_arg(),
+            );
+            kernels::sort_scan_kernel::launch::<WgpuRuntime>(
+                &client,
+                CubeCount::Static(1, 1, 1),
+                cube_dim,
+                num_keys_buf.clone().into_tensor_arg(),
+                reduced_buf.clone().into_tensor_arg(),
+            );
 
-            // SAFETY: Kernel checked OOB-safe.
-            unsafe {
-                kernels::sort_scan_add_kernel::launch_unchecked::<WgpuRuntime>(
-                    &client,
-                    num_reduce_wgs.clone(),
-                    cube_dim,
-                    num_keys_buf.clone().into_tensor_arg(),
-                    reduced_buf.clone().into_tensor_arg(),
-                    count_buf.clone().into_tensor_arg(),
-                );
-            }
+            kernels::sort_scan_add_kernel::launch::<WgpuRuntime>(
+                &client,
+                num_reduce_wgs.clone(),
+                cube_dim,
+                num_keys_buf.clone().into_tensor_arg(),
+                reduced_buf.clone().into_tensor_arg(),
+                count_buf.clone().into_tensor_arg(),
+            );
         }
 
         let output_keys = create_tensor([max_n as usize], &device, cur_keys.dtype());
         let output_values = create_tensor([max_n as usize], &device, cur_vals.dtype());
 
-        // SAFETY: Kernel checked OOB-safe.
-        unsafe {
-            kernels::sort_scatter_kernel::launch_unchecked::<WgpuRuntime>(
-                &client,
-                num_wgs.clone(),
-                cube_dim,
-                num_keys_buf.clone().into_tensor_arg(),
-                cur_keys.clone().into_tensor_arg(),
-                cur_vals.clone().into_tensor_arg(),
-                count_buf.clone().into_tensor_arg(),
-                output_keys.clone().into_tensor_arg(),
-                output_values.clone().into_tensor_arg(),
-                pass * 4,
-            );
-        }
+        kernels::sort_scatter_kernel::launch::<WgpuRuntime>(
+            &client,
+            num_wgs.clone(),
+            cube_dim,
+            num_keys_buf.clone().into_tensor_arg(),
+            cur_keys.clone().into_tensor_arg(),
+            cur_vals.clone().into_tensor_arg(),
+            count_buf.clone().into_tensor_arg(),
+            output_keys.clone().into_tensor_arg(),
+            output_values.clone().into_tensor_arg(),
+            pass * 4,
+        );
 
         cur_keys = output_keys;
         cur_vals = output_values;

@@ -161,7 +161,7 @@ mod kernels {
     ///   zero bg make the math a no-op so callers gate it off to skip the work.
     /// - `mask`: multiply the loss-map output by `gt.a` per pixel.
     #[allow(clippy::assign_op_pattern)]
-    #[cube(launch_unchecked)]
+    #[cube(launch)]
     pub fn image_loss_forward_kernel<F: Float>(
         pred: &Tensor<F>,
         gt_packed: &Tensor<u32>,
@@ -346,7 +346,7 @@ mod kernels {
     /// arrays alias into two physical buffers. Total ~28 KiB at 16x16 f32,
     /// inside Apple's 32 KiB threadgroup budget without needing shader-f16.
     #[allow(clippy::assign_op_pattern)]
-    #[cube(launch_unchecked)]
+    #[cube(launch)]
     pub fn image_loss_backward_kernel<F: Float>(
         pred: &Tensor<F>,
         gt_packed: &Tensor<u32>,
@@ -643,7 +643,7 @@ mod kernels {
     /// Decode `gt_packed` to `[H, W, 3]` f32 RGB. Comptime `composite` gates
     /// the `gt + (1 - gt.a) * bg` math; callers pass false when the source
     /// has no real alpha or when `bg == 0`. Used by the LPIPS path.
-    #[cube(launch_unchecked)]
+    #[cube(launch)]
     pub fn unpack_gt_rgb_kernel<F: Float>(
         gt_packed: &Tensor<u32>,
         out: &mut Tensor<F>,
@@ -814,27 +814,23 @@ fn launch_image_forward<R: CubeRuntime>(
     let bg = cfg.composite_bg.unwrap_or(Vec3::ZERO);
     let map = alloc_zeros(&pred);
     let client = pred.client.clone();
-    // SAFETY: every read goes through bounds-checked helpers and writes are
-    // gated on `pix_x < w && pix_y < h`.
-    unsafe {
-        kernels::image_loss_forward_kernel::launch_unchecked::<f32, R>(
-            &client,
-            cube_count_3d(c, h, w),
-            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
-            pred.into_tensor_arg(),
-            gt_packed.into_tensor_arg(),
-            map.clone().into_tensor_arg(),
-            h,
-            w,
-            cfg.l1_weight,
-            cfg.ssim_weight,
-            bg.x,
-            bg.y,
-            bg.z,
-            composite,
-            cfg.mask,
-        );
-    }
+    kernels::image_loss_forward_kernel::launch::<f32, R>(
+        &client,
+        cube_count_3d(c, h, w),
+        CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
+        pred.into_tensor_arg(),
+        gt_packed.into_tensor_arg(),
+        map.clone().into_tensor_arg(),
+        h,
+        w,
+        cfg.l1_weight,
+        cfg.ssim_weight,
+        bg.x,
+        bg.y,
+        bg.z,
+        composite,
+        cfg.mask,
+    );
     map
 }
 
@@ -858,27 +854,24 @@ fn launch_image_backward<R: CubeRuntime>(
     let dl_dpred = alloc_zeros(&pred);
     let client = pred.client.clone();
 
-    // SAFETY: same boundary guarantees as the forward.
-    unsafe {
-        kernels::image_loss_backward_kernel::launch_unchecked::<f32, R>(
-            &client,
-            cube_count_3d(c, h, w),
-            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
-            pred.into_tensor_arg(),
-            gt_packed.into_tensor_arg(),
-            dl_dmap.into_tensor_arg(),
-            dl_dpred.clone().into_tensor_arg(),
-            h,
-            w,
-            cfg.l1_weight,
-            cfg.ssim_weight,
-            bg.x,
-            bg.y,
-            bg.z,
-            composite,
-            cfg.mask,
-        );
-    }
+    kernels::image_loss_backward_kernel::launch::<f32, R>(
+        &client,
+        cube_count_3d(c, h, w),
+        CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
+        pred.into_tensor_arg(),
+        gt_packed.into_tensor_arg(),
+        dl_dmap.into_tensor_arg(),
+        dl_dpred.clone().into_tensor_arg(),
+        h,
+        w,
+        cfg.l1_weight,
+        cfg.ssim_weight,
+        bg.x,
+        bg.y,
+        bg.z,
+        composite,
+        cfg.mask,
+    );
     dl_dpred
 }
 
@@ -908,22 +901,19 @@ fn launch_unpack_gt_rgb<R: CubeRuntime>(
         h.div_ceil(kernels::BLOCK_Y),
         1,
     );
-    // SAFETY: bounds-checked, one thread per pixel.
-    unsafe {
-        kernels::unpack_gt_rgb_kernel::launch_unchecked::<f32, R>(
-            &client,
-            cube_count,
-            CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
-            gt_packed.into_tensor_arg(),
-            out.clone().into_tensor_arg(),
-            h,
-            w,
-            bg.x,
-            bg.y,
-            bg.z,
-            composite,
-        );
-    }
+    kernels::unpack_gt_rgb_kernel::launch::<f32, R>(
+        &client,
+        cube_count,
+        CubeDim::new_2d(kernels::BLOCK_X, kernels::BLOCK_Y),
+        gt_packed.into_tensor_arg(),
+        out.clone().into_tensor_arg(),
+        h,
+        w,
+        bg.x,
+        bg.y,
+        bg.z,
+        composite,
+    );
     out
 }
 

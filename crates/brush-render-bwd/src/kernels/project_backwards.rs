@@ -96,7 +96,7 @@ fn inverse2x2_vjp(minv: Sym2, v_minv: Sym2) -> Sym2 {
     }
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 pub fn project_backwards_kernel(
     transforms: &Tensor<f32>,

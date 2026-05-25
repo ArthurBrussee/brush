@@ -1843,26 +1843,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "c2rust-bitfields"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46dc7d2bffa0d0b3d47eb2dc69973466858281446c2ac9f6d8a10e92ab1017df"
-dependencies = [
- "c2rust-bitfields-derive",
-]
-
-[[package]]
-name = "c2rust-bitfields-derive"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebe1117afa5937ce280034e31fa1e84ed1824a252f75380327eed438535333f8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "calloop"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2947,22 +2927,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cubecl-spirv"
-version = "0.11.0-pre.1"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fmetal%2Fcompilation#7cd9a7cc36c1e2710061f78973741e341beb721a"
-dependencies = [
- "bitflags 2.11.1",
- "cubecl-common",
- "cubecl-core",
- "cubecl-opt",
- "cubecl-runtime",
- "half",
- "hashbrown 0.17.1",
- "serde",
- "tracel-rspirv",
-]
-
-[[package]]
 name = "cubecl-std"
 version = "0.11.0-pre.1"
 source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fmetal%2Fcompilation#7cd9a7cc36c1e2710061f78973741e341beb721a"
@@ -2983,17 +2947,14 @@ name = "cubecl-wgpu"
 version = "0.11.0-pre.1"
 source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fmetal%2Fcompilation#7cd9a7cc36c1e2710061f78973741e341beb721a"
 dependencies = [
- "ash",
  "async-channel",
  "bytemuck",
  "cfg-if",
  "cfg_aliases",
  "cubecl-common",
  "cubecl-core",
- "cubecl-cpp",
  "cubecl-ir",
  "cubecl-runtime",
- "cubecl-spirv",
  "derive-new",
  "derive_more",
  "half",
@@ -3001,7 +2962,6 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "sanitize-filename",
- "tracel-ash",
  "tracing",
  "wasm-bindgen-futures",
  "wgpu",
@@ -10397,16 +10357,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
-name = "tracel-ash"
-version = "0.39.3+sdk1.4.350"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d97fcf7e656528db871e679727140819a221d8c2aa5b90bfb5eb492a0ecc16e6"
-dependencies = [
- "ash",
- "c2rust-bitfields",
-]
-
-[[package]]
 name = "tracel-llvm"
 version = "22.1.4-3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10471,17 +10421,6 @@ checksum = "59ac1a8360f2b71c665e3f412bc8268c2d31ed09ec1f2abd67fc3721083892cc"
 dependencies = [
  "reqwest 0.12.28",
  "tracel-llvm-bundler",
-]
-
-[[package]]
-name = "tracel-rspirv"
-version = "0.13.1+sdk-1.4.350.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33f8d9173a81da18a8014822ac00525c6ecf8086c93f65b4113c24127b12cc09"
-dependencies = [
- "bitflags 2.11.1",
- "rustc-hash 2.1.2",
- "serde",
 ]
 
 [[package]]

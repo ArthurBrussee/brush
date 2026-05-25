@@ -25,7 +25,7 @@ fn div_ceil(a: u32, b: u32) -> u32 {
     (a + b - 1u32) / b
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 pub fn sort_count_kernel(
     num_keys_arr: &Tensor<u32>,
     src: &Tensor<u32>,
@@ -64,7 +64,7 @@ pub fn sort_count_kernel(
     }
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 pub fn sort_reduce_kernel(
     num_keys_arr: &Tensor<u32>,
     counts: &Tensor<u32>,
@@ -123,7 +123,7 @@ pub fn sort_reduce_kernel(
     }
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 pub fn sort_scan_kernel(num_keys_arr: &Tensor<u32>, reduced: &mut Tensor<u32>) {
     let num_keys = num_keys_arr[0];
     let num_wgs = div_ceil(num_keys, BLOCK_SIZE);
@@ -211,7 +211,7 @@ pub fn sort_scan_kernel(num_keys_arr: &Tensor<u32>, reduced: &mut Tensor<u32>) {
     }
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 pub fn sort_scan_add_kernel(
     num_keys_arr: &Tensor<u32>,
     reduced: &Tensor<u32>,
@@ -238,9 +238,8 @@ pub fn sort_scan_add_kernel(
         let data_index = base_index + i * WG + UNIT_POS;
         let col = (i * WG + UNIT_POS) / ELEMENTS_PER_THREAD;
         let row = (i * WG + UNIT_POS) % ELEMENTS_PER_THREAD;
-        // Gate explicitly: the prior version relied on WebGPU robustness
-        // clamping OOB reads to zero, which isn't a guarantee under
-        // `launch_unchecked` on non-WebGPU backends.
+        // Gate explicitly so a stray OOB read is impossible regardless of
+        // whether the backend implements robust-access clamping.
         let mut v = 0u32;
         if data_index < num_wgs {
             v = counts[(bin_offset + data_index) as usize];
@@ -300,7 +299,7 @@ pub fn sort_scan_add_kernel(
     }
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 pub fn sort_scatter_kernel(
     num_keys_arr: &Tensor<u32>,
     src: &Tensor<u32>,

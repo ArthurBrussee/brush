@@ -113,28 +113,25 @@ impl SplatOps<Self> for MainBackendBase {
 
             let uniforms = project_uniforms.to_launch_object();
 
-            // SAFETY: Kernel checked for OOB and loops.
-            unsafe {
-                kernels::project_forward::project_forward_kernel::launch_unchecked::<WgpuRuntime>(
-                    &client,
-                    calc_cube_count_1d(
-                        project_uniforms.total_splats,
-                        kernels::project_forward::WG_SIZE,
-                    ),
-                    CubeDim::new_1d(kernels::project_forward::WG_SIZE),
-                    transforms.clone().into_tensor_arg(),
-                    raw_opacities.clone().into_tensor_arg(),
-                    global_from_presort_gid.clone().into_tensor_arg(),
-                    depths.clone().into_tensor_arg(),
-                    num_visible_buf.clone().into_tensor_arg(),
-                    intersect_counts.clone().into_tensor_arg(),
-                    num_intersections_buf.clone().into_tensor_arg(),
-                    max_radius.clone().into_tensor_arg(),
-                    uniforms,
-                    mip_splat,
-                    camera.camera_model,
-                );
-            }
+            kernels::project_forward::project_forward_kernel::launch::<WgpuRuntime>(
+                &client,
+                calc_cube_count_1d(
+                    project_uniforms.total_splats,
+                    kernels::project_forward::WG_SIZE,
+                ),
+                CubeDim::new_1d(kernels::project_forward::WG_SIZE),
+                transforms.clone().into_tensor_arg(),
+                raw_opacities.clone().into_tensor_arg(),
+                global_from_presort_gid.clone().into_tensor_arg(),
+                depths.clone().into_tensor_arg(),
+                num_visible_buf.clone().into_tensor_arg(),
+                intersect_counts.clone().into_tensor_arg(),
+                num_intersections_buf.clone().into_tensor_arg(),
+                max_radius.clone().into_tensor_arg(),
+                uniforms,
+                mip_splat,
+                camera.camera_model,
+            );
             (
                 global_from_presort_gid,
                 depths,
@@ -194,46 +191,38 @@ impl SplatOps<Self> for MainBackendBase {
         );
         tracing::trace_span!("ProjectVisible").in_scope(|| {
             let uniforms = project_uniforms.to_launch_object();
-            // SAFETY: Kernel checked to have no OOB, bounded loops.
-            unsafe {
-                kernels::project_visible::project_visible_kernel::launch_unchecked::<WgpuRuntime>(
-                    &client,
-                    calc_cube_count_1d(num_visible, kernels::project_visible::WG_SIZE),
-                    CubeDim::new_1d(kernels::project_visible::WG_SIZE),
-                    transforms.into_tensor_arg(),
-                    sh_coeffs.into_tensor_arg(),
-                    raw_opacities.into_tensor_arg(),
-                    global_from_compact_gid.clone().into_tensor_arg(),
-                    projected_splats.clone().into_tensor_arg(),
-                    uniforms,
-                    mip_splat,
-                    sh_degree,
-                    camera.camera_model,
-                );
-            }
+            kernels::project_visible::project_visible_kernel::launch::<WgpuRuntime>(
+                &client,
+                calc_cube_count_1d(num_visible, kernels::project_visible::WG_SIZE),
+                CubeDim::new_1d(kernels::project_visible::WG_SIZE),
+                transforms.into_tensor_arg(),
+                sh_coeffs.into_tensor_arg(),
+                raw_opacities.into_tensor_arg(),
+                global_from_compact_gid.clone().into_tensor_arg(),
+                projected_splats.clone().into_tensor_arg(),
+                uniforms,
+                mip_splat,
+                sh_degree,
+                camera.camera_model,
+            );
         });
         let num_tiles = tile_bounds.x * tile_bounds.y;
         let buffer_size = (num_intersections as usize).max(1);
         let tile_id_from_isect = create_tensor([buffer_size], &device, DType::U32);
         let compact_gid_from_isect = create_tensor([buffer_size], &device, DType::U32);
         tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
-            // SAFETY: Kernel checked to have no OOB, bounded loops.
-            unsafe {
-                kernels::map_gaussians::map_gaussians_to_intersect_kernel::launch_unchecked::<
-                    WgpuRuntime,
-                >(
-                    &client,
-                    calc_cube_count_1d(num_visible, kernels::map_gaussians::WG_SIZE),
-                    CubeDim::new_1d(kernels::map_gaussians::WG_SIZE),
-                    projected_splats.clone().into_tensor_arg(),
-                    cum_tiles_hit.clone().into_tensor_arg(),
-                    tile_id_from_isect.clone().into_tensor_arg(),
-                    compact_gid_from_isect.clone().into_tensor_arg(),
-                    project_uniforms.tile_bounds[0],
-                    project_uniforms.tile_bounds[1],
-                    num_visible,
-                );
-            }
+            kernels::map_gaussians::map_gaussians_to_intersect_kernel::launch::<WgpuRuntime>(
+                &client,
+                calc_cube_count_1d(num_visible, kernels::map_gaussians::WG_SIZE),
+                CubeDim::new_1d(kernels::map_gaussians::WG_SIZE),
+                projected_splats.clone().into_tensor_arg(),
+                cum_tiles_hit.clone().into_tensor_arg(),
+                tile_id_from_isect.clone().into_tensor_arg(),
+                compact_gid_from_isect.clone().into_tensor_arg(),
+                project_uniforms.tile_bounds[0],
+                project_uniforms.tile_bounds[1],
+                num_visible,
+            );
         });
         let bits = u32::BITS - num_tiles.leading_zeros();
         let (tile_id_from_isect, compact_gid_from_isect) = tracing::trace_span!("Tile sort")
@@ -245,17 +234,15 @@ impl SplatOps<Self> for MainBackendBase {
             IntDType::U32,
         );
         tracing::trace_span!("GetTileOffsets").in_scope(|| {
-            // SAFETY: Safe kernel.
-            unsafe {
-                get_tile_offsets::launch_unchecked::<WgpuRuntime>(
-                    &client,
-                    calc_cube_count_1d(num_intersections, cube_dim.x * CHECKS_PER_ITER),
-                    cube_dim,
-                    num_intersections,
-                    tile_id_from_isect.into_tensor_arg(),
-                    tile_offsets.clone().into_tensor_arg(),
-                );
-            }
+            get_tile_offsets::launch::<WgpuRuntime>(
+                &client,
+                calc_cube_count_1d(num_intersections, cube_dim.x * CHECKS_PER_ITER),
+                cube_dim,
+                num_intersections,
+                num_tiles,
+                tile_id_from_isect.into_tensor_arg(),
+                tile_offsets.clone().into_tensor_arg(),
+            );
         });
         let out_dim = if bwd_info { 4 } else { 1 };
         let out_img = create_tensor(
@@ -286,27 +273,24 @@ impl SplatOps<Self> for MainBackendBase {
                 background.y,
                 background.z,
             );
-            // SAFETY: Kernel checked to have no OOB, bounded loops.
-            unsafe {
-                kernels::rasterize::rasterize_kernel::launch_unchecked::<WgpuRuntime>(
-                    &client,
-                    calc_cube_count_1d(
-                        num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
-                        shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
-                    ),
-                    CubeDim::new_1d(shaders::helpers::TILE_SIZE),
-                    compact_gid_from_isect.clone().into_tensor_arg(),
-                    tile_offsets.clone().into_tensor_arg(),
-                    projected_splats.clone().into_tensor_arg(),
-                    out_packed_arg.into_tensor_arg(),
-                    out_f32_arg.into_tensor_arg(),
-                    global_from_compact_gid.clone().into_tensor_arg(),
-                    visible.clone().into_tensor_arg(),
-                    uniforms,
-                    bwd_info,
-                    smooth_cutoff,
-                );
-            }
+            kernels::rasterize::rasterize_kernel::launch::<WgpuRuntime>(
+                &client,
+                calc_cube_count_1d(
+                    num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
+                    shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
+                ),
+                CubeDim::new_1d(shaders::helpers::TILE_SIZE),
+                compact_gid_from_isect.clone().into_tensor_arg(),
+                tile_offsets.clone().into_tensor_arg(),
+                projected_splats.clone().into_tensor_arg(),
+                out_packed_arg.into_tensor_arg(),
+                out_f32_arg.into_tensor_arg(),
+                global_from_compact_gid.clone().into_tensor_arg(),
+                visible.clone().into_tensor_arg(),
+                uniforms,
+                bwd_info,
+                smooth_cutoff,
+            );
         });
         RenderOutput {
             out_img,

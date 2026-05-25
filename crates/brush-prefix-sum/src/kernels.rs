@@ -37,7 +37,7 @@ fn group_scan(id: usize, gi: usize, x: u32, output: &mut Tensor<u32>) {
     }
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 pub fn prefix_sum_scan_kernel(input: &Tensor<u32>, output: &mut Tensor<u32>) {
     let id = linear_global_id();
 
@@ -49,7 +49,7 @@ pub fn prefix_sum_scan_kernel(input: &Tensor<u32>, output: &mut Tensor<u32>) {
     group_scan(id, UNIT_POS as usize, x, output);
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 pub fn prefix_sum_scan_sums_kernel(input: &Tensor<u32>, output: &mut Tensor<u32>) {
     let id = linear_global_id();
     // id * THREADS_PER_GROUP - 1, gated on id != 0 to avoid underflow.
@@ -63,7 +63,7 @@ pub fn prefix_sum_scan_sums_kernel(input: &Tensor<u32>, output: &mut Tensor<u32>
     group_scan(id, UNIT_POS as usize, x, output);
 }
 
-#[cube(launch_unchecked)]
+#[cube(launch)]
 pub fn prefix_sum_add_scanned_sums_kernel(input: &Tensor<u32>, output: &mut Tensor<u32>) {
     let id = linear_global_id();
     let workgroup_id = linear_workgroup_id();

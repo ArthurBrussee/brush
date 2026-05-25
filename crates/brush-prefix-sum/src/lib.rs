@@ -17,16 +17,13 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
 
     let cube_dim = CubeDim::new_1d(THREADS_PER_GROUP as u32);
 
-    // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
-    unsafe {
-        kernels::prefix_sum_scan_kernel::launch_unchecked::<WgpuRuntime>(
-            &client,
-            calc_cube_count_1d(num as u32, THREADS_PER_GROUP as u32),
-            cube_dim,
-            input.into_tensor_arg(),
-            outputs.clone().into_tensor_arg(),
-        );
-    }
+    kernels::prefix_sum_scan_kernel::launch::<WgpuRuntime>(
+        &client,
+        calc_cube_count_1d(num as u32, THREADS_PER_GROUP as u32),
+        cube_dim,
+        input.into_tensor_arg(),
+        outputs.clone().into_tensor_arg(),
+    );
 
     if num <= THREADS_PER_GROUP {
         return outputs;
@@ -41,58 +38,46 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
         work_size.push(work_sz);
     }
 
-    // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
-    unsafe {
-        kernels::prefix_sum_scan_sums_kernel::launch_unchecked::<WgpuRuntime>(
-            &client,
-            calc_cube_count_1d(work_size[0] as u32, THREADS_PER_GROUP as u32),
-            cube_dim,
-            outputs.clone().into_tensor_arg(),
-            group_buffer[0].clone().into_tensor_arg(),
-        );
-    }
+    kernels::prefix_sum_scan_sums_kernel::launch::<WgpuRuntime>(
+        &client,
+        calc_cube_count_1d(work_size[0] as u32, THREADS_PER_GROUP as u32),
+        cube_dim,
+        outputs.clone().into_tensor_arg(),
+        group_buffer[0].clone().into_tensor_arg(),
+    );
 
     for l in 0..(group_buffer.len() - 1) {
-        // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
-        unsafe {
-            kernels::prefix_sum_scan_sums_kernel::launch_unchecked::<WgpuRuntime>(
-                &client,
-                calc_cube_count_1d(work_size[l + 1] as u32, THREADS_PER_GROUP as u32),
-                cube_dim,
-                group_buffer[l].clone().into_tensor_arg(),
-                group_buffer[l + 1].clone().into_tensor_arg(),
-            );
-        }
+        kernels::prefix_sum_scan_sums_kernel::launch::<WgpuRuntime>(
+            &client,
+            calc_cube_count_1d(work_size[l + 1] as u32, THREADS_PER_GROUP as u32),
+            cube_dim,
+            group_buffer[l].clone().into_tensor_arg(),
+            group_buffer[l + 1].clone().into_tensor_arg(),
+        );
     }
 
     for l in (1..group_buffer.len()).rev() {
         let work_sz = work_size[l - 1];
 
-        // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
-        unsafe {
-            kernels::prefix_sum_add_scanned_sums_kernel::launch_unchecked::<WgpuRuntime>(
-                &client,
-                calc_cube_count_1d(work_sz as u32, THREADS_PER_GROUP as u32),
-                cube_dim,
-                group_buffer[l].clone().into_tensor_arg(),
-                group_buffer[l - 1].clone().into_tensor_arg(),
-            );
-        }
-    }
-
-    // SAFETY: Kernel has to contain no OOB indexing, bounded loops.
-    unsafe {
-        kernels::prefix_sum_add_scanned_sums_kernel::launch_unchecked::<WgpuRuntime>(
+        kernels::prefix_sum_add_scanned_sums_kernel::launch::<WgpuRuntime>(
             &client,
-            calc_cube_count_1d(
-                (work_size[0] * THREADS_PER_GROUP) as u32,
-                THREADS_PER_GROUP as u32,
-            ),
+            calc_cube_count_1d(work_sz as u32, THREADS_PER_GROUP as u32),
             cube_dim,
-            group_buffer[0].clone().into_tensor_arg(),
-            outputs.clone().into_tensor_arg(),
+            group_buffer[l].clone().into_tensor_arg(),
+            group_buffer[l - 1].clone().into_tensor_arg(),
         );
     }
+
+    kernels::prefix_sum_add_scanned_sums_kernel::launch::<WgpuRuntime>(
+        &client,
+        calc_cube_count_1d(
+            (work_size[0] * THREADS_PER_GROUP) as u32,
+            THREADS_PER_GROUP as u32,
+        ),
+        cube_dim,
+        group_buffer[0].clone().into_tensor_arg(),
+        outputs.clone().into_tensor_arg(),
+    );
 
     outputs
 }
