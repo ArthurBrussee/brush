@@ -99,7 +99,7 @@ mod visualize_tools_impl {
         pub fn send_default_blueprint(&self, num_eval_views: usize) -> Result<()> {
             use rerun::blueprint::{
                 Blueprint, BlueprintActivation, ContainerLike, Grid, Horizontal, Spatial2DView,
-                Spatial3DView, TimeSeriesView, Vertical,
+                Spatial3DView, Tabs, TimeSeriesView, Vertical,
             };
 
             if !self.rec.is_enabled() {
@@ -143,7 +143,9 @@ mod visualize_tools_impl {
                 .with_column_shares([3.0, 1.0]),
             };
 
-            // One graph area; memory visible by default, LRs hidden (toggle in blueprint panel).
+            // Quality / Splats / Memory always visible; the right-most slot is a tab
+            // strip containing every graph (including duplicates) so anything can be
+            // surfaced without rearranging the layout.
             let graphs = Horizontal::new([
                 TimeSeriesView::new("Quality")
                     .with_contents(["psnr/**", "ssim/**"])
@@ -154,13 +156,25 @@ mod visualize_tools_impl {
                 TimeSeriesView::new("Memory")
                     .with_contents(["memory/**"])
                     .into(),
-                TimeSeriesView::new("Refine")
-                    .with_contents(["refine/num_added", "refine/num_pruned"])
-                    .into(),
-                TimeSeriesView::new("Learning rates")
-                    .with_contents(["lr/**"])
-                    .with_visible(false)
-                    .into(),
+                Tabs::new([
+                    TimeSeriesView::new("Quality")
+                        .with_contents(["psnr/**", "ssim/**"])
+                        .into(),
+                    TimeSeriesView::new("Splats")
+                        .with_contents(["splats/**", "refine/effective_growth"])
+                        .into(),
+                    TimeSeriesView::new("Memory")
+                        .with_contents(["memory/**"])
+                        .into(),
+                    TimeSeriesView::new("Refine")
+                        .with_contents(["refine/num_added", "refine/num_pruned"])
+                        .into(),
+                    TimeSeriesView::new("Learning rates")
+                        .with_contents(["lr/**"])
+                        .into(),
+                ])
+                .with_name("All graphs")
+                .into(),
             ]);
 
             let root = Vertical::new([main_row.into(), graphs.into()]).with_row_shares([3.0, 2.0]);
