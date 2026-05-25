@@ -40,15 +40,11 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Training options", default_value = "7e-3")]
     pub lr_scale: f64,
 
-    /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
-    pub lr_scale_end: f64,
-
     /// Learning rate for the rotation parameters.
     #[arg(long, help_heading = "Training options", default_value = "2e-3")]
     pub lr_rotation: f64,
 
-    /// Max nr. of splats. This is an upper bound, but the actual final number of splats might be lower than this.
+    /// Max nr. of splats. This is only an upper bound, the actual final number of splats is NOT determined by this.
     #[arg(long, help_heading = "Refine options", default_value = "10000000")]
     pub max_splats: u32,
 
@@ -82,10 +78,6 @@ pub struct TrainConfig {
     /// Factor of the opacity decay.
     #[arg(long, help_heading = "Training options", default_value = "0.004")]
     pub opac_decay: f32,
-
-    /// Factor of the scaling decay.
-    #[arg(long, help_heading = "Training options", default_value = "0.002")]
-    pub scale_decay: f32,
 
     /// Weight of l1 loss on alpha if input view has transparency.
     #[arg(long, help_heading = "Refine options", default_value = "0.1")]

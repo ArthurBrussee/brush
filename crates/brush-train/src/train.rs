@@ -40,7 +40,6 @@ type OptimizerType = OptimizerAdaptor<AdamScaled, Splats>;
 pub struct SplatTrainer {
     config: TrainConfig,
     sched_mean: ExponentialLrScheduler,
-    sched_scale: ExponentialLrScheduler,
     refine_record: Option<RefineRecord>,
     optim: Option<OptimizerType>,
     ssim_enabled: bool,
@@ -77,16 +76,11 @@ impl SplatTrainer {
             (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_train_iters as f64);
         let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean, decay);
 
-        let decay =
-            (config.lr_scale_end / config.lr_scale).powf(1.0 / config.total_train_iters as f64);
-        let lr_scale = ExponentialLrSchedulerConfig::new(config.lr_scale, decay);
-
         let ssim_enabled = config.ssim_weight > 0.0;
 
         Self {
             config: config.clone(),
             sched_mean: lr_mean.init().expect("Mean lr schedule must be valid."),
-            sched_scale: lr_scale.init().expect("Scale lr schedule must be valid."),
             optim: None,
             refine_record: None,
             ssim_enabled,
@@ -213,16 +207,6 @@ impl SplatTrainer {
             (grads, visible, diff_out.num_visible)
         };
 
-        let (lr_mean, lr_rotation, lr_scale, lr_coeffs, lr_opac) = (
-            self.sched_mean.step() * median_scale as f64,
-            self.config.lr_rotation,
-            // Scale is relative to the scene scale, but the exp() activation function
-            // means "offsetting" all values also solves the learning rate scaling.
-            self.sched_scale.step(),
-            self.config.lr_coeffs_dc,
-            self.config.lr_opac,
-        );
-
         // OptimizerAdaptor strips autodiff before calling SimpleOptimizer::step,
         // so optimizer state (scaling, momentum) lives on the inner device.
         let opt_device = device.clone().inner();
@@ -250,25 +234,28 @@ impl SplatTrainer {
                 )]))
             });
 
+        let lr_mean = self.sched_mean.step() * median_scale as f64;
+
         // Update per-component LR scaling for the transforms param.
         // transforms layout: means(3) + rotations(4) + log_scales(3)
         // We use base_lr=1.0 and encode actual LRs in the scaling tensor.
+        //
+        // TODO: Ideally we don't have to do this every step... but idk as long as mean is on a schedule not much to do!
         {
             let lr_values: [f32; 10] = [
                 lr_mean as f32,
                 lr_mean as f32,
                 lr_mean as f32,
-                lr_rotation as f32,
-                lr_rotation as f32,
-                lr_rotation as f32,
-                lr_rotation as f32,
-                lr_scale as f32,
-                lr_scale as f32,
-                lr_scale as f32,
+                self.config.lr_rotation as f32,
+                self.config.lr_rotation as f32,
+                self.config.lr_rotation as f32,
+                self.config.lr_rotation as f32,
+                self.config.lr_scale as f32,
+                self.config.lr_scale as f32,
+                self.config.lr_scale as f32,
             ];
             let transform_scaling =
                 Tensor::<1>::from_floats(lr_values.as_slice(), &opt_device).reshape([1, 10]);
-
             let mut record = optimizer.to_record();
             let existing = record.remove(&splats.transforms.id);
             let momentum = existing.and_then(|r| r.into_state::<2>().momentum);
@@ -292,12 +279,12 @@ impl SplatTrainer {
             splats = trace_span!("SH Coeffs step").in_scope(|| {
                 let grad_coeff =
                     GradientsParams::from_params(&mut grads, &splats, &[splats.sh_coeffs.id]);
-                optimizer.step(lr_coeffs, splats, grad_coeff)
+                optimizer.step(self.config.lr_coeffs_dc, splats, grad_coeff)
             });
             splats = trace_span!("Opacity step").in_scope(|| {
                 let grad_opac =
                     GradientsParams::from_params(&mut grads, &splats, &[splats.raw_opacities.id]);
-                optimizer.step(lr_opac, splats, grad_opac)
+                optimizer.step(self.config.lr_opac, splats, grad_opac)
             });
             splats
         });
@@ -333,16 +320,17 @@ impl SplatTrainer {
             Tensor::from_inner(out).require_grad()
         });
 
-        let stats = TrainStepStats {
-            num_visible,
-            lr_mean,
-            lr_rotation,
-            lr_scale,
-            lr_coeffs,
-            lr_opac,
-        };
-
-        (splats, stats)
+        (
+            splats,
+            TrainStepStats {
+                num_visible,
+                lr_mean,
+                lr_rotation: self.config.lr_rotation,
+                lr_scale: self.config.lr_scale,
+                lr_coeffs: self.config.lr_coeffs_dc,
+                lr_opac: self.config.lr_opac,
+            },
+        )
     }
 
     pub async fn refine(&mut self, iter: u32, splats: Splats) -> (Splats, RefineStats) {
@@ -610,23 +598,13 @@ impl SplatTrainer {
         let train_t = (iter as f32 / self.config.total_train_iters as f32).clamp(0.0, 1.0);
         let t_shrink_strength = 1.0 - train_t;
         let minus_opac = self.config.opac_decay * t_shrink_strength;
-        let scale_scaling = 1.0 - self.config.scale_decay * t_shrink_strength;
 
         // Lower opacity slowly over time.
         splats.raw_opacities = splats.raw_opacities.map(|f| {
             let new_opac = sigmoid(f) - minus_opac;
             inv_sigmoid(new_opac.clamp(1e-12, 1.0 - 1e-12))
         });
-
-        // Decay log_scales (cols 7..10) within transforms
-        splats.transforms = splats.transforms.map(|t| {
-            let log_scale_shift = scale_scaling.max(1e-30).ln();
-            let new_log_scales = t.clone().slice(s![.., 7..10]) + log_scale_shift;
-            t.slice_assign(s![.., 7..10], new_log_scales)
-        });
-
         self.optim = Some(create_optimizer_from_config().load_record(record));
-
         splats
     }
 }
