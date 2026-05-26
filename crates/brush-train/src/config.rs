@@ -13,11 +13,11 @@ pub struct TrainConfig {
     pub render_mode: Option<SplatRenderMode>,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "2.8e-5")]
+    #[arg(long, help_heading = "Training options", default_value = "2e-5")]
     pub lr_mean: f64,
 
     /// Start learning rate for the mean parameters.
-    #[arg(long, help_heading = "Training options", default_value = "2.8e-7")]
+    #[arg(long, help_heading = "Training options", default_value = "2e-7")]
     pub lr_mean_end: f64,
 
     /// How much noise to add to the mean parameters of low opacity gaussians.
@@ -37,11 +37,11 @@ pub struct TrainConfig {
     pub lr_opac: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "9.8e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "7e-3")]
     pub lr_scale: f64,
 
     /// Learning rate for the rotation parameters.
-    #[arg(long, help_heading = "Training options", default_value = "2.8e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "2e-3")]
     pub lr_rotation: f64,
 
     /// Max nr. of splats. This is only an upper bound, the actual final number of splats is NOT determined by this.
