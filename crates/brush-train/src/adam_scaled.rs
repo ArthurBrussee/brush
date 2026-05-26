@@ -9,11 +9,10 @@ use burn::{
         decay::{WeightDecay, WeightDecayConfig},
     },
     record::Record,
-    tensor::{Device, Int, Tensor},
+    tensor::{Device, ElementConversion, Tensor},
 };
 
-/// Adam with per-parameter second-moment reduction (via [`AdamState::reduce_moment_2`])
-/// and a per-splat step counter for fresh-splat Adam warmup.
+/// Adam with per-parameter second-moment reduction (via [`AdamState::reduce_moment_2`]).
 #[derive(Clone)]
 pub(crate) struct AdamScaled {
     momentum: AdaptiveMomentum,
@@ -42,13 +41,12 @@ struct AdaptiveMomentum {
 
 /// Per-parameter momentum state. When `reduce_moment_2` is set on the owning
 /// [`AdamState`], `moment_2` has size 1 in trailing dims; `map_opt` callers
-/// must stay shape-agnostic along those. `time` is per-splat so freshly-split
-/// rows get their own Adam warmup.
+/// must stay shape-agnostic along those.
 #[derive(Record, Clone)]
 pub(crate) struct MomentumState<const D: usize> {
     pub moment_1: Tensor<D>,
     pub moment_2: Tensor<D>,
-    pub time: Tensor<1, Int>,
+    pub time: usize,
 }
 
 impl<const D: usize> MomentumState<D> {
@@ -57,7 +55,7 @@ impl<const D: usize> MomentumState<D> {
         Self {
             moment_1: self.moment_1.to_device(device),
             moment_2: self.moment_2.to_device(device),
-            time: self.time.to_device(device),
+            time: self.time,
         }
     }
 }
@@ -163,9 +161,6 @@ impl AdaptiveMomentum {
         momentum_state: Option<MomentumState<D>>,
         reduce_moment_2: bool,
     ) -> (Tensor<D>, MomentumState<D>) {
-        let n = grad.dims()[0];
-        let device = grad.device();
-
         let grad_sq = grad.clone().powi_scalar(2);
         let grad_sq_for_moment = if reduce_moment_2 && D > 1 {
             mean_trailing_dims(grad_sq)
@@ -186,7 +181,7 @@ impl AdaptiveMomentum {
                 .mul_scalar(self.beta_2)
                 .add(grad_sq_for_moment.mul_scalar(factor));
 
-            state.time = state.time.add_scalar(1);
+            state.time += 1;
             state
         } else {
             let factor = 1.0 - self.beta_1;
@@ -198,32 +193,19 @@ impl AdaptiveMomentum {
             MomentumState {
                 moment_1,
                 moment_2,
-                time: Tensor::ones([n], &device),
+                time: 1,
             }
         };
 
-        // Per-splat bias correction 1 - beta^t = 1 - exp(t * ln(beta)),
-        // broadcast over trailing dims.
-        let time_f: Tensor<1> = state.time.clone().float();
-        let bc_1 = time_f
+        let time = (state.time as i32).elem();
+        let moment_1_corrected = state
+            .moment_1
             .clone()
-            .mul_scalar(self.beta_1.ln())
-            .exp()
-            .neg()
-            .add_scalar(1.0);
-        let bc_2 = time_f
-            .mul_scalar(self.beta_2.ln())
-            .exp()
-            .neg()
-            .add_scalar(1.0);
-
-        let mut target = [1usize; D];
-        target[0] = n;
-        let bc_1_b: Tensor<D> = bc_1.reshape(target);
-        let bc_2_b: Tensor<D> = bc_2.reshape(target);
-
-        let moment_1_corrected = state.moment_1.clone().div(bc_1_b);
-        let moment_2_corrected = state.moment_2.clone().div(bc_2_b);
+            .div_scalar(1f32 - self.beta_1.powi(time));
+        let moment_2_corrected = state
+            .moment_2
+            .clone()
+            .div_scalar(1f32 - self.beta_2.powi(time));
         // moment_2_corrected broadcasts when it has reduced trailing dims
         let grad = moment_1_corrected.div(moment_2_corrected.sqrt().add_scalar(self.epsilon));
         (grad, state)
