@@ -1,6 +1,7 @@
 use brush_process::message::ProcessMessage;
 use brush_process::message::TrainMessage;
 use burn_cubecl::cubecl::Runtime;
+use burn_wgpu::AutoCompiler;
 use burn_wgpu::WgpuRuntime;
 use eframe::egui_wgpu::RenderState;
 use web_time::Duration;
@@ -208,8 +209,8 @@ impl AppPane for StatsPanel {
             }
 
             let device = process.burn_device();
-            let client = WgpuRuntime::client(&device);
-            let memory = client.memory_usage();
+            let client = WgpuRuntime::<AutoCompiler>::client(&device);
+            let memory = client.memory_usage_total();
 
             ui.add_space(10.0);
             ui.heading("GPU");

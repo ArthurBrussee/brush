@@ -127,10 +127,9 @@ pub fn radix_argsort(
 #[cfg(test)]
 mod tests {
     use crate::radix_argsort;
-    use brush_cube::create_tensor_from_slice;
+    use brush_cube::{MainBackendBase, create_tensor_from_slice};
     use burn::backend::ops::IntTensorOps;
     use burn::tensor::DType;
-    use burn_cubecl::CubeBackend;
     use burn_wgpu::{CubeTensor, WgpuRuntime};
     use rand::RngExt;
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -138,10 +137,10 @@ mod tests {
     #[cfg(target_family = "wasm")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
-
     async fn read_i32(tensor: CubeTensor<WgpuRuntime>) -> Vec<i32> {
-        let data = Backend::int_into_data(tensor).await.expect("readback");
+        let data = MainBackendBase::int_into_data(tensor)
+            .await
+            .expect("readback");
         data.as_slice::<i32>().expect("Wrong type").to_vec()
     }
 

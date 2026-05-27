@@ -1,3 +1,4 @@
+use brush_cube::MainBackend;
 use burn::{
     Tensor,
     module::{Module, Param, ParamId},
@@ -8,7 +9,7 @@ use glam::Vec3;
 use tracing::trace_span;
 
 use crate::{
-    RenderAux,
+    RenderAux, SplatOps,
     burn_glue::{unwrap_wgpu_float, wrap_wgpu_float, wrap_wgpu_int},
     camera::Camera,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
@@ -317,7 +318,7 @@ pub async fn render_splats(
     } else {
         RasterPass::Forward
     };
-    let output = <crate::MainBackend as crate::SplatOps<crate::MainBackend>>::render(
+    let output = <MainBackend as SplatOps<MainBackend>>::render(
         camera,
         img_size,
         transforms_p,

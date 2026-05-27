@@ -103,8 +103,8 @@ burn-fusion = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 # crypto family (digest 0.11, hmac 0.13, ...).
 burn-store = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 
-egui = { version = "0.34"  }
-eframe = { version = "0.34", default-features = false, features = [
+egui = { version = "0.34.3"  }
+eframe = { version = "0.34.3", default-features = false, features = [
     "wgpu",
     "android-game-activity",
     "wayland",
@@ -311,80 +311,39 @@ single_range_in_vec_init = "allow"
 
 # wgpu fork with WebGPU subgroups feature mapping + JS interop accessors
 # (needed for our backward kernel's subgroupAdd/subgroupAny on web, and for
-# brush-js to expose the underlying GPUDevice/GPUBuffer to JS).
+# brush-js to expose the underlying GPUDevice/GPUBuffer to JS). Our js-interop
+# wgpu rides trunk (for cubecl-wgpu's transition_resources and
+# Result<BufferView> from get_mapped_range), and carries a small patch raising
+# Metal's per-stage buffer limits back to the v29.0.1 relaxed values — trunk
+# still ships the conservative 8/12/8 split from #9118 (tracked by #9287).
+#
+# Trunk also added AdapterInfo::limit_bucket which trips egui-wgpu 0.34.3;
+# fixed on the egui fork — bump together since egui is a workspace.
 [patch.crates-io]
-wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
-wgpu-core = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
-wgpu-hal = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
-wgpu-types = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
-naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+wgpu                 = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+wgpu-core            = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+wgpu-hal             = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+wgpu-types           = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+naga                 = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+egui                 = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu-trunk-compat-0.34.3" }
+eframe               = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu-trunk-compat-0.34.3" }
+egui-wgpu            = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu-trunk-compat-0.34.3" }
+egui-winit           = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu-trunk-compat-0.34.3" }
+egui_glow            = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu-trunk-compat-0.34.3" }
+ecolor               = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu-trunk-compat-0.34.3" }
+emath                = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu-trunk-compat-0.34.3" }
+epaint               = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu-trunk-compat-0.34.3" }
+epaint_default_fonts = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu-trunk-compat-0.34.3" }
 
 # cubecl-wgpu pins wgpu to a specific git rev of gfx-rs/wgpu (not crates.io),
 # so the patch above doesn't catch it — redirect that source too, otherwise we
 # end up with two parallel wgpu trees.
 [patch."https://github.com/gfx-rs/wgpu.git"]
-wgpu = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
-wgpu-core = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
-wgpu-hal = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+wgpu       = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+wgpu-core  = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
+wgpu-hal   = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
 wgpu-types = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
-naga = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
-
-# Our js-interop wgpu rides trunk (for cubecl-wgpu's transition_resources and
-# Result<BufferView> from get_mapped_range), and carries a small patch raising
-# Metal's per-stage buffer limits back to the v29.0.1 relaxed values — trunk
-# still ships the conservative 8/12/8 split from #9118 (tracked by #9287).
-# Trunk also added AdapterInfo::limit_bucket which trips egui-wgpu 0.34.2;
-# fixed on this egui branch — bump together since egui is a workspace.
-[patch.crates-io.egui]
-git = "https://github.com/ArthurBrussee/egui"
-branch = "wgpu-trunk-compat-0.34.2"
-[patch.crates-io.eframe]
-git = "https://github.com/ArthurBrussee/egui"
-branch = "wgpu-trunk-compat-0.34.2"
-[patch.crates-io.egui-wgpu]
-git = "https://github.com/ArthurBrussee/egui"
-branch = "wgpu-trunk-compat-0.34.2"
-[patch.crates-io.egui-winit]
-git = "https://github.com/ArthurBrussee/egui"
-branch = "wgpu-trunk-compat-0.34.2"
-[patch.crates-io.egui_glow]
-git = "https://github.com/ArthurBrussee/egui"
-branch = "wgpu-trunk-compat-0.34.2"
-[patch.crates-io.ecolor]
-git = "https://github.com/ArthurBrussee/egui"
-branch = "wgpu-trunk-compat-0.34.2"
-[patch.crates-io.emath]
-git = "https://github.com/ArthurBrussee/egui"
-branch = "wgpu-trunk-compat-0.34.2"
-[patch.crates-io.epaint]
-git = "https://github.com/ArthurBrussee/egui"
-branch = "wgpu-trunk-compat-0.34.2"
-[patch.crates-io.epaint_default_fonts]
-git = "https://github.com/ArthurBrussee/egui"
-branch = "wgpu-trunk-compat-0.34.2"
-
-# cubecl mega-refactor (#1322) broke Metal codegen — array<T,N> polyfill missed
-# the `thread` qualifier (later landed in #1343), and Item::Pointer emitted a
-# stray `const` that shadowed the MSL address-space `const`, producing
-# `const const device …` warnings and read-only scalar pointers. Both fixed by
-# #1347, mirrored to our fork so cargo accepts the patch. Drop once #1347 lands
-# and burn picks it up.
-[patch."https://github.com/tracel-ai/cubecl"]
-cubecl = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-common = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-core = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-cpp = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-cpu = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-cuda = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-hip = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-ir = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-macros = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-macros-internal = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-opt = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-runtime = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-std = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-wgpu = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
-cubecl-zspace = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/metal/compilation" }
+naga       = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop" }
 
 # To iterate locally on a checkout, swap each `git = "..."` for
 # `path = "../cubecl/crates/<name>"`.

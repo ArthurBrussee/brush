@@ -14,11 +14,11 @@
 //! Backward recomputes SSIM partials inline so no per-pixel state survives
 //! across the autograd tape.
 
+use brush_cube::{MainBackend, MainBackendBase};
 use brush_render::burn_glue::{
     AutodiffMain, unwrap_ad_wgpu_float, unwrap_ad_wgpu_int, unwrap_wgpu_float, unwrap_wgpu_int,
     wrap_ad_wgpu_float, wrap_wgpu_float,
 };
-use brush_render::{MainBackend, MainBackendBase};
 use burn::{
     backend::{
         Backend, TensorMetadata,
@@ -217,8 +217,8 @@ mod kernels {
         // bytes actually declared in WGSL), so this kernel has to stay under
         // ~half the real Apple Metal threadgroup budget. gt_a was previously
         // carried here too; the mask=true path now re-reads it at the centre.
-        let mut s_tile = SharedMemory::<F>::new((SHARED_Y * SHARED_X * 2) as usize);
-        let mut x_conv = SharedMemory::<F>::new((SHARED_Y * BLOCK_X * 5) as usize);
+        let mut s_tile = Shared::new_slice((SHARED_Y * SHARED_X * 2) as usize);
+        let mut x_conv = Shared::new_slice((SHARED_Y * BLOCK_X * 5) as usize);
 
         let bg_c = if composite {
             if c == 0u32 {
@@ -414,8 +414,8 @@ mod kernels {
 
         // buf_a holds the image tile, then chain*partials after the v-blur.
         // buf_b holds the 1st h-blur sums, then the 2nd h-blur sums.
-        let mut buf_a = SharedMemory::<F>::new((EXT_Y_BWD * EXT_X_BWD * 2) as usize);
-        let mut buf_b = SharedMemory::<F>::new((EXT_Y_BWD * SHARED_X_BWD * 5) as usize);
+        let mut buf_a = Shared::new_slice((EXT_Y_BWD * EXT_X_BWD * 2) as usize);
+        let mut buf_b = Shared::new_slice((EXT_Y_BWD * SHARED_X_BWD * 5) as usize);
 
         let bg_c = if composite {
             if c == 0u32 {

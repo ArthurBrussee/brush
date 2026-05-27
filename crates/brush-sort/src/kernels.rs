@@ -41,7 +41,7 @@ pub fn sort_count_kernel(
         terminate!();
     }
 
-    let histogram = SharedMemory::<Atomic<u32>>::new(BIN_COUNT_USIZE);
+    let histogram = Shared::<[Atomic<u32>]>::new_slice(BIN_COUNT_USIZE);
     if UNIT_POS < BIN_COUNT {
         Atomic::store(&histogram[UNIT_POS as usize], 0u32);
     }
@@ -95,7 +95,7 @@ pub fn sort_reduce_kernel(
 
     let subgroup_sum = plane_sum(sum);
 
-    let mut partials = SharedMemory::<u32>::new(MAX_SUBGROUPS as usize);
+    let mut partials = Shared::new_slice(MAX_SUBGROUPS as usize);
     let subgroup_id = UNIT_POS / PLANE_DIM;
     let num_subgroups = WG / PLANE_DIM;
 
@@ -132,9 +132,9 @@ pub fn sort_scan_kernel(num_keys_arr: &Tensor<u32>, reduced: &mut Tensor<u32>) {
     let subgroup_id = UNIT_POS / PLANE_DIM;
     let num_subgroups = WG / PLANE_DIM;
 
-    let mut partials = SharedMemory::<u32>::new(MAX_SUBGROUPS as usize);
-    let mut lds = SharedMemory::<u32>::new((WG * ELEMENTS_PER_THREAD) as usize);
-    let mut chunk_total = SharedMemory::<u32>::new(1usize);
+    let mut partials = Shared::new_slice(MAX_SUBGROUPS as usize);
+    let mut lds = Shared::new_slice((WG * ELEMENTS_PER_THREAD) as usize);
+    let mut chunk_total = Shared::new_slice(1usize);
 
     let mut carry = 0u32;
     let mut chunk_start = 0u32;
@@ -231,8 +231,8 @@ pub fn sort_scan_add_kernel(
     let bin_offset = bin_id * num_wgs;
     let base_index = (group_id % num_reduce_wg_per_bin) * ELEMENTS_PER_THREAD * WG;
 
-    let mut partials = SharedMemory::<u32>::new(MAX_SUBGROUPS as usize);
-    let mut lds = SharedMemory::<u32>::new((WG * ELEMENTS_PER_THREAD) as usize);
+    let mut partials = Shared::new_slice(MAX_SUBGROUPS as usize);
+    let mut lds = Shared::new_slice((WG * ELEMENTS_PER_THREAD) as usize);
 
     for i in 0u32..ELEMENTS_PER_THREAD {
         let data_index = base_index + i * WG + UNIT_POS;
@@ -320,13 +320,13 @@ pub fn sort_scatter_kernel(
     let subgroup_id = UNIT_POS / PLANE_DIM;
     let num_subgroups = WG / PLANE_DIM;
 
-    let mut lds_keys = SharedMemory::<u32>::new(WG_USIZE);
-    let mut lds_values = SharedMemory::<u32>::new(WG_USIZE);
-    let mut lds_scratch = SharedMemory::<u32>::new(WG_USIZE);
-    let mut bin_offset_cache = SharedMemory::<u32>::new(WG_USIZE);
-    let local_histogram = SharedMemory::<Atomic<u32>>::new(BIN_COUNT_USIZE);
-    let mut partials = SharedMemory::<u32>::new(MAX_SUBGROUPS as usize);
-    let mut chunk_total = SharedMemory::<u32>::new(1usize);
+    let mut lds_keys = Shared::new_slice(WG_USIZE);
+    let mut lds_values = Shared::new_slice(WG_USIZE);
+    let mut lds_scratch = Shared::new_slice(WG_USIZE);
+    let mut bin_offset_cache = Shared::new_slice(WG_USIZE);
+    let local_histogram = Shared::<[Atomic<u32>]>::new_slice(BIN_COUNT_USIZE);
+    let mut partials = Shared::new_slice(MAX_SUBGROUPS as usize);
+    let mut chunk_total = Shared::new_slice(1usize);
 
     if UNIT_POS < BIN_COUNT {
         bin_offset_cache[UNIT_POS as usize] = counts[(UNIT_POS * num_wgs + group_id) as usize];

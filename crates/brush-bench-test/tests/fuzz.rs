@@ -16,9 +16,9 @@
 //! tests run on `Autodiff<MainBackend>` (via fusion), exercising the
 //! gradient kernels.
 
-use brush_cube::Runtime;
+use brush_cube::{MainBackendBase, Runtime};
 use brush_render::{
-    MainBackendBase, RenderOutput, SplatOps,
+    RenderOutput, SplatOps,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
     kernels::camera_model::CameraModel::Pinhole,

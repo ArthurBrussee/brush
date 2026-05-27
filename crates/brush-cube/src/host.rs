@@ -1,5 +1,5 @@
 use burn::tensor::{DType, Scalar, Shape};
-use burn_wgpu::{WgpuDevice, WgpuRuntime};
+use burn_wgpu::{AutoCompiler, WgpuDevice, WgpuRuntime};
 use bytemuck::Pod;
 
 pub use burn_cubecl::cubecl::prelude::KernelId;
@@ -12,6 +12,8 @@ use bytemuck::NoUninit;
 
 // Re-export bytemuck for use by generated code
 pub use bytemuck;
+
+use crate::MainBackendBase;
 
 /// Calculate workgroup count for a 1D dispatch, tiling into 2D if needed.
 /// Use this for kernels processing a 1D array of elements that may exceed 65535 workgroups.
@@ -49,7 +51,6 @@ pub fn create_tensor<const D: usize>(
 
     if cfg!(test) {
         use burn::backend::ops::FloatTensorOps;
-        use burn_cubecl::CubeBackend;
         // for tests - make doubly sure we're not accidentally relying on values
         // being initialized to zero by adding in some random noise.
         let f = CubeTensor::new_contiguous(
@@ -59,8 +60,7 @@ pub fn create_tensor<const D: usize>(
             buffer,
             DType::F32,
         );
-        let noised =
-            CubeBackend::<WgpuRuntime, f32, i32, u32>::float_add_scalar(f, Scalar::Float(-12345.0));
+        let noised = MainBackendBase::float_add_scalar(f, Scalar::Float(-12345.0));
         buffer = noised.handle;
     }
     CubeTensor::new_contiguous(client, device.clone(), shape, buffer, dtype)
@@ -71,7 +71,7 @@ pub fn create_tensor_from_slice<T: Pod>(
     data: &[T],
     device: &WgpuDevice,
     dtype: DType,
-) -> CubeTensor<WgpuRuntime> {
+) -> CubeTensor<WgpuRuntime<AutoCompiler>> {
     let client = WgpuRuntime::client(device);
     let handle = client.create_from_slice(bytemuck::cast_slice(data));
     CubeTensor::new_contiguous(

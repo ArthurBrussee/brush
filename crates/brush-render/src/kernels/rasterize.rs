@@ -48,12 +48,12 @@ pub fn rasterize_kernel(
     // Workgroup-shared splat batch + bookkeeping. The bwd-only `load_gid`
     // gets a comptime-tiny size when `bwd_info=false` so we don't pay
     // 1 KiB of static shared mem on the forward-only variant.
-    let mut local_batch = SharedMemory::<f32>::new((TILE_SIZE * PROJECTED_LANES) as usize);
+    let mut local_batch = Shared::new_slice((TILE_SIZE * PROJECTED_LANES) as usize);
     let mut load_gid =
-        SharedMemory::<u32>::new(comptime![if bwd_info { TILE_SIZE } else { 1u32 }] as usize);
-    let num_done_atomic = SharedMemory::<Atomic<u32>>::new(1usize);
-    let max_useful_isect = SharedMemory::<Atomic<u32>>::new(1usize);
-    let mut range = SharedMemory::<u32>::new(2usize);
+        Shared::new_slice(comptime![if bwd_info { TILE_SIZE } else { 1u32 }] as usize);
+    let num_done_atomic = Shared::<[Atomic<u32>]>::new_slice(1usize);
+    let max_useful_isect = Shared::<[Atomic<u32>]>::new_slice(1usize);
+    let mut range = Shared::new_slice(2usize);
 
     let local_idx = UNIT_POS;
     if local_idx == 0u32 {
