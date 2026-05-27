@@ -2,8 +2,9 @@ use brush_render::{AlphaMode, bounding_box::BoundingBox, camera::Camera};
 use brush_vfs::BrushVfs;
 use burn::tensor::TensorData;
 use glam::{Affine3A, Vec3, vec3};
-use image::{DynamicImage, GenericImageView};
+use image::{DynamicImage, GenericImageView, ImageBuffer};
 use std::{
+    io::Cursor,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -68,7 +69,7 @@ impl LoadImage {
             .await?
             .read_to_end(&mut img_bytes)
             .await?;
-        let mut img = image::load_from_memory(&img_bytes)?;
+        let mut img = decode_with_cap(&img_bytes, &self.path, self.max_resolution)?;
 
         // Copy over mask.
         if let Some(mask_path) = &self.mask_path {
@@ -105,6 +106,7 @@ impl LoadImage {
 
             img = masked_img.into();
         }
+
         let max = self.max_resolution;
         let cap = max as f32 / img.width().max(img.height()).max(max) as f32;
         let scale = (cap * self.scale).min(1.0);
@@ -123,6 +125,11 @@ impl LoadImage {
 
     pub fn with_scale(mut self, scale: f32) -> Self {
         self.scale = scale;
+        self
+    }
+
+    pub fn with_max_resolution(mut self, max_resolution: u32) -> Self {
+        self.max_resolution = max_resolution;
         self
     }
 
@@ -207,6 +214,47 @@ impl Scene {
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|(index, _)| index) // We return the index instead of the camera
+    }
+}
+
+/// Decode `bytes`, hinting `jpeg-decoder`'s IDCT scaler to land at or just
+/// above `max_resolution` on the long edge for JPEG inputs — that cuts decode
+/// cost by ~4-16× on oversized source images. Falls back to `image` for
+/// non-JPEG files and for JPEG pixel formats we don't unpack directly.
+fn decode_with_cap(
+    bytes: &[u8],
+    path: &Path,
+    max_resolution: u32,
+) -> image::ImageResult<DynamicImage> {
+    let is_jpeg = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg"));
+    if is_jpeg
+        && let Some(img) = decode_jpeg_scaled(bytes, max_resolution)
+    {
+        return Ok(img);
+    }
+    image::load_from_memory(bytes)
+}
+
+fn decode_jpeg_scaled(bytes: &[u8], max_resolution: u32) -> Option<DynamicImage> {
+    let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(bytes));
+    let target = max_resolution.min(u16::MAX as u32) as u16;
+    decoder.scale(target, target).ok()?;
+    let pixels = decoder.decode().ok()?;
+    let info = decoder.info()?;
+    let w = info.width as u32;
+    let h = info.height as u32;
+    match info.pixel_format {
+        jpeg_decoder::PixelFormat::RGB24 => {
+            ImageBuffer::from_raw(w, h, pixels).map(DynamicImage::ImageRgb8)
+        }
+        jpeg_decoder::PixelFormat::L8 => {
+            ImageBuffer::from_raw(w, h, pixels).map(DynamicImage::ImageLuma8)
+        }
+        // CMYK32 / L16 are rare in photogrammetry data; fall back to image crate.
+        _ => None,
     }
 }
 

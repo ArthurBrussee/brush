@@ -84,20 +84,12 @@ impl Default for DatasetPanel {
     }
 }
 
-/// Decode + resize + `ColorImage` build + GPU upload for a single preview view.
+/// Decode + `ColorImage` build + GPU upload for a single preview view. The
+/// max-resolution cap lives on the loaded `LoadImage` so the JPEG IDCT fast
+/// path in `decode_with_cap` can pick a fractional decode size directly.
 async fn load_preview(view: SceneView, ctx: egui::Context) -> Option<TexHandle> {
-    let image = view.image.load().await.ok()?;
-
-    // Downsize to preview cap.
-    let max_edge = image.width().max(image.height());
-    let image = if max_edge > PREVIEW_MAX_EDGE {
-        let scale = PREVIEW_MAX_EDGE as f32 / max_edge as f32;
-        let w = ((image.width() as f32 * scale).round() as u32).max(1);
-        let h = ((image.height() as f32 * scale).round() as u32).max(1);
-        image.resize_exact(w, h, image::imageops::FilterType::Triangle)
-    } else {
-        image
-    };
+    let preview_load = view.image.clone().with_max_resolution(PREVIEW_MAX_EDGE);
+    let image = preview_load.load().await.ok()?;
 
     brush_async::yield_now().await;
 
