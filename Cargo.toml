@@ -43,6 +43,9 @@ image = { version = "0.25", default-features = false, features = [
     "jpeg",
     'exr'
 ] }
+# Direct dep alongside `image` — only this crate exposes IDCT scale-on-decode,
+# which lets us decode large JPEGs at 1/2, 1/4, or 1/8 size.
+jpeg-decoder = "0.3"
 
 serde = { version = "1.0.215", default-features = false, features = [
     "derive",

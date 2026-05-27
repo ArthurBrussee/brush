@@ -40,7 +40,6 @@ pub enum BackgroundStyle {
 pub struct TexHandle {
     pub handle: TextureHandle,
     pub has_alpha: bool,
-    pub blurred_bg: Option<TextureHandle>,
 }
 
 impl UiProcess {
