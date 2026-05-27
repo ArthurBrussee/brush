@@ -1,5 +1,6 @@
 #![allow(clippy::match_wildcard_for_single_variants)]
 
+use brush_cube::{MainBackend, MainBackendBase};
 use burn::backend::{
     Autodiff, BackendTensor, CheckpointingStrategy, DispatchTensor, DispatchTensorKind,
     TensorMetadata,
@@ -17,8 +18,8 @@ use burn_wgpu::WgpuRuntime;
 use glam::Vec3;
 
 use crate::{
-    MainBackend, MainBackendBase, RenderAuxInner, SplatOps, camera::Camera,
-    gaussian_splats::SplatRenderMode, render_aux::RenderOutput, wgpu_kind,
+    RenderAuxInner, SplatOps, camera::Camera, gaussian_splats::SplatRenderMode,
+    render_aux::RenderOutput, wgpu_kind,
 };
 
 /// Inner Wgpu autodiff backend (same as `Autodiff<burn::backend::Wgpu>`).

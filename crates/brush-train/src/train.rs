@@ -14,7 +14,7 @@ use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
 use burn::{
-    backend::wgpu::{WgpuDevice, WgpuRuntime},
+    backend::wgpu::{AutoCompiler, WgpuDevice, WgpuRuntime},
     lr_scheduler::{
         LrScheduler,
         exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig},
@@ -348,7 +348,7 @@ impl SplatTrainer {
     pub async fn refine(&mut self, iter: u32, splats: Splats) -> (Splats, RefineStats) {
         let device = splats.device();
         // `memory_cleanup` lives on the wgpu client, not on `Device`.
-        let client = WgpuRuntime::client(&WgpuDevice::default());
+        let client = WgpuRuntime::<AutoCompiler>::client(&WgpuDevice::default());
 
         let refiner = self
             .refine_record

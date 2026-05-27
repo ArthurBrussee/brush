@@ -19,7 +19,13 @@
 
 mod host;
 pub mod test_helpers;
+use burn_wgpu::CubeBackend;
+use burn_wgpu::Wgpu;
+use burn_wgpu::WgpuRuntime;
 pub use host::*;
+
+pub type MainBackend = Wgpu;
+pub type MainBackendBase = CubeBackend<WgpuRuntime>;
 
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;

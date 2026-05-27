@@ -1,6 +1,6 @@
 use crate::camera::calculate_jacobian_clamp_limits;
 use crate::{
-    MainBackendBase, RenderAuxInner, SplatOps,
+    RenderAuxInner, SplatOps,
     camera::Camera,
     dim_check::DimCheck,
     gaussian_splats::{RasterPass, SplatRenderMode},
@@ -10,8 +10,8 @@ use crate::{
     sh::sh_degree_from_coeffs,
     shaders,
 };
-use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
+use brush_cube::{MainBackendBase, calc_cube_count_1d};
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::backend::TensorMetadata;

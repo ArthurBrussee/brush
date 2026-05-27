@@ -7,7 +7,7 @@ pub mod train_stream;
 pub use brush_vfs::DataSource;
 
 use burn_wgpu::{
-    RuntimeOptions, WgpuDevice,
+    AutoCompiler, RuntimeOptions, WgpuDevice,
     graphics::{AutoGraphicsApi, GraphicsApi},
 };
 use wgpu::{Adapter, Device, Queue};
@@ -180,7 +180,7 @@ async fn run_process<
         let device: burn::tensor::Device = wgpu_device.clone().into();
         let mut paths: Vec<_> = vfs.file_paths().collect();
         alphanumeric_sort::sort_path_slice(&mut paths);
-        let client = WgpuRuntime::client(wgpu_device);
+        let client = WgpuRuntime::<AutoCompiler>::client(wgpu_device);
         let total_frames = paths.len() as u32;
 
         for (frame, path) in paths.iter().enumerate() {

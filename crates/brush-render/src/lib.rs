@@ -2,8 +2,6 @@
 
 use burn::backend::Backend;
 use burn::backend::tensor::FloatTensor;
-use burn_cubecl::CubeBackend;
-use burn_wgpu::WgpuRuntime;
 use camera::Camera;
 use clap::ValueEnum;
 use glam::Vec3;
@@ -32,12 +30,6 @@ pub mod gaussian_splats;
 pub mod get_tile_offset;
 pub mod render;
 pub mod validation;
-
-// Single WebGPU backend on every platform — see Cargo.toml. The un-Fusioned
-// `CubeBackend` that lives inside burn's `WebGpu` alias is not exported, so we
-// mirror it here. WebGpu uses u32 for bool storage on every backend.
-pub type MainBackend = burn::backend::wgpu::WebGpu;
-pub type MainBackendBase = CubeBackend<WgpuRuntime, f32, i32, u32>;
 
 /// `DispatchTensorKind` variant for the active wgpu backend. burn-dispatch
 /// uses different variant names per backend; brush only ever runs on the

@@ -20,7 +20,7 @@ use brush_train::{
 use brush_vfs::BrushVfs;
 use burn::module::AutodiffModule;
 use burn_cubecl::cubecl::Runtime;
-use burn_wgpu::WgpuRuntime;
+use burn_wgpu::{AutoCompiler, WgpuRuntime};
 use rand::SeedableRng;
 use std::{path::PathBuf, sync::Arc};
 
@@ -165,7 +165,7 @@ pub(crate) async fn train_stream(
     emitter.emit(ProcessMessage::DoneLoading).await;
 
     // Start with memory cleared out.
-    let client = WgpuRuntime::client(wgpu_device);
+    let client = WgpuRuntime::<AutoCompiler>::client(wgpu_device);
     client.memory_cleanup();
 
     let mut eval_scene = dataset.eval;
@@ -251,7 +251,7 @@ pub(crate) async fn train_stream(
             let after = splats.num_splats();
             log::info!("LOD {current_lod}/{lod_levels}: {before} -> {after} splats");
 
-            let client = WgpuRuntime::client(wgpu_device);
+            let client = WgpuRuntime::<AutoCompiler>::client(wgpu_device);
             client.memory_cleanup();
 
             let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(current_lod as i32);
@@ -403,7 +403,10 @@ pub(crate) async fn train_stream(
                     .unwrap();
             }
 
-            visualize.log_memory(iter, &WgpuRuntime::client(wgpu_device).memory_usage()?)?;
+            visualize.log_memory(
+                iter,
+                &WgpuRuntime::<AutoCompiler>::client(wgpu_device).memory_usage()?,
+            )?;
             if refine.num_added > 0 {
                 visualize
                     .log_refine_stats(iter, &refine, refine_dur)

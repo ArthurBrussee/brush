@@ -1,5 +1,4 @@
-use brush_cube::calc_cube_count_1d;
-use brush_render::MainBackendBase;
+use brush_cube::{MainBackendBase, calc_cube_count_1d};
 use brush_render::gaussian_splats::SplatRenderMode;
 use brush_render::kernels::types::RasterizeUniformsLaunch;
 use brush_render::sh::sh_coeffs_for_degree;
@@ -20,7 +19,6 @@ use crate::kernels;
 use brush_render::shaders::helpers::ProjectUniforms;
 
 impl SplatBwdOps<Self> for MainBackendBase {
-    #[allow(clippy::too_many_arguments)]
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
         projected_splats: FloatTensor<Self>,

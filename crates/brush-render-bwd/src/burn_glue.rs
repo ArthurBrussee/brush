@@ -1,10 +1,11 @@
 #![allow(clippy::match_wildcard_for_single_variants)]
 
+use brush_cube::{MainBackend, MainBackendBase};
 use brush_render::burn_glue::{
     AutodiffMain, unwrap_ad_wgpu_float, wrap_ad_wgpu_float, wrap_wgpu_float,
 };
 use brush_render::{
-    MainBackend, MainBackendBase, SplatOps,
+    SplatOps,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
     sh::sh_coeffs_for_degree,

@@ -85,20 +85,19 @@ pub fn prefix_sum(input: CubeTensor<WgpuRuntime>) -> CubeTensor<WgpuRuntime> {
 #[cfg(test)]
 mod tests {
     use crate::prefix_sum;
-    use brush_cube::create_tensor_from_slice;
+    use brush_cube::{MainBackendBase, create_tensor_from_slice};
     use burn::backend::ops::IntTensorOps;
     use burn::tensor::DType;
-    use burn_cubecl::CubeBackend;
     use burn_wgpu::{CubeTensor, WgpuRuntime};
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[cfg(target_family = "wasm")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    type Backend = CubeBackend<WgpuRuntime, f32, i32, u32>;
-
     async fn read_i32(tensor: CubeTensor<WgpuRuntime>) -> Vec<i32> {
-        let data = Backend::int_into_data(tensor).await.expect("readback");
+        let data = MainBackendBase::int_into_data(tensor)
+            .await
+            .expect("readback");
         data.as_slice::<i32>().expect("Wrong type").to_vec()
     }
 

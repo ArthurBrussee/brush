@@ -18,7 +18,7 @@ fn linear_global_id() -> usize {
 
 #[cube]
 fn group_scan(id: usize, gi: usize, x: u32, output: &mut Tensor<u32>) {
-    let mut bucket = SharedMemory::<u32>::new(THREADS_PER_GROUP);
+    let mut bucket = Shared::new_slice(THREADS_PER_GROUP);
     bucket[gi] = x;
 
     let mut t = 1;

@@ -115,7 +115,7 @@ pub fn rasterize_backwards_kernel<A: AtomicAddF32>(
     // pre-roll) are read-only post-init and L1-cached, so we re-derive
     // them inline in the inner loop. Smaller shared footprint → more
     // workgroup occupancy on Apple.
-    let mut pix_state = SharedMemory::<f32>::new((TILE_SIZE * 4u32) as usize);
+    let mut pix_state = Shared::new_slice((TILE_SIZE * 4u32) as usize);
     load_pixel_state(output, u, tile_origin_x, tile_origin_y, &mut pix_state);
     let (range_lo, range_hi) = load_range(tile_offsets, tile_id);
     let num_splats_in_tile = range_hi - range_lo;
@@ -170,7 +170,7 @@ fn tile_origin(tile_bw: u32) -> (u32, u32, u32) {
 
 #[cube]
 fn load_range(tile_offsets: &Tensor<u32>, tile_id: u32) -> (u32, u32) {
-    let mut range_buf = SharedMemory::<u32>::new(2usize);
+    let mut range_buf = Shared::new_slice(2usize);
     if UNIT_POS == 0u32 {
         range_buf[0] = tile_offsets[(tile_id * 2u32) as usize];
         range_buf[1] = tile_offsets[(tile_id * 2u32 + 1u32) as usize];
@@ -193,7 +193,7 @@ fn load_pixel_state(
     u: RasterizeUniforms,
     tile_origin_x: u32,
     tile_origin_y: u32,
-    pix_state: &mut SharedMemory<f32>,
+    pix_state: &mut Shared<[f32]>,
 ) {
     let pixels_per_load = (TILE_SIZE + SPLAT_BATCH - 1u32) / SPLAT_BATCH;
     let mut p = 0u32;
@@ -256,7 +256,7 @@ fn accumulate_grads_for_batch(
     tile_origin_y: u32,
     num_splats_in_tile: u32,
     batch_idx: u32,
-    pix_state: &mut SharedMemory<f32>,
+    pix_state: &mut Shared<[f32]>,
     output: &Tensor<f32>,
     v_output: &Tensor<f32>,
     u: RasterizeUniforms,
