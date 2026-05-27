@@ -133,6 +133,10 @@ impl LoadImage {
             .to_string_lossy()
             .to_string()
     }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 #[derive(Clone)]
