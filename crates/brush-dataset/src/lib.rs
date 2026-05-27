@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 pub mod config;
+pub mod load_image;
 pub mod scene;
 pub mod scene_loader;
 
