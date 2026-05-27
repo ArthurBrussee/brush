@@ -150,9 +150,7 @@ fn decode_with_cap(
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg"));
-    if is_jpeg
-        && let Some(img) = decode_jpeg_scaled(bytes, max_resolution)
-    {
+    if is_jpeg && let Some(img) = decode_jpeg_scaled(bytes, max_resolution) {
         return Ok(img);
     }
     image::load_from_memory(bytes)
