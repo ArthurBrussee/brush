@@ -50,7 +50,12 @@ pub struct TrainConfig {
 
     /// Frequency of 'refinement' where gaussians are replaced and densified. This should
     /// roughly be the number of images it takes to properly "cover" your scene.
-    #[arg(long, help_heading = "Refine options", default_value = "200")]
+    #[arg(
+        long,
+        help_heading = "Refine options",
+        default_value = "200",
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
     pub refine_every: u32,
 
     /// Threshold to control splat growth. Lower means faster growth.
