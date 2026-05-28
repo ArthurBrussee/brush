@@ -11,13 +11,23 @@ pub struct ProcessConfig {
     #[arg(long, help_heading = "Process options", default_value = "0")]
     pub start_iter: u32,
     /// Eval every this many steps.
-    #[arg(long, help_heading = "Process options", default_value = "1000")]
+    #[arg(
+        long,
+        help_heading = "Process options",
+        default_value = "1000",
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
     pub eval_every: u32,
     /// Save the rendered eval images to disk. Uses export-path for the file location.
     #[arg(long, help_heading = "Process options", default_value = "false")]
     pub eval_save_to_disk: bool,
     /// Export every this many steps.
-    #[arg(long, help_heading = "Process options", default_value = "5000")]
+    #[arg(
+        long,
+        help_heading = "Process options",
+        default_value = "5000",
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
     pub export_every: u32,
     /// Location to put exported files. Supports {dataset} interpolation for the dataset
     /// folder name. Path is relative to the dataset's parent directory (or CWD if unavailable).
