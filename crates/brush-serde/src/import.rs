@@ -214,7 +214,7 @@ pub fn stream_splat_from_ply<T: AsyncRead + Unpin>(
             .filter_map(|c| {
                 match c
                     .to_lowercase()
-                    .strip_prefix("SplatRenderMode: ")
+                    .strip_prefix("splatrendermode: ")
                     .map(|s| s.trim())
                 {
                     Some("mip") => Some(SplatRenderMode::Mip),
