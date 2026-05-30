@@ -19,7 +19,7 @@ use burn::{
         LrScheduler,
         exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig},
     },
-    module::ParamId,
+    module::{AutodiffModule, ParamId},
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
     tensor::{
         Bool, Device, Distribution, IndexingUpdateOp, Int, Tensor, TensorData, activation::sigmoid,
@@ -118,7 +118,12 @@ impl SplatTrainer {
         // GT lives on the GPU as packed `[H, W]` u32 (RGBA u8). All mixing
         // (bg compositing, alpha matching, mask) is folded into the loss
         // kernels; no f32 GT image is ever materialised here.
-        let gt_packed: Tensor<2, Int> = Tensor::from_data(batch.img_packed, &device);
+        // GT is pure data — never differentiated. Build it on the inner
+        // backend so it doesn't inherit the autodiff device's residual
+        // checkpointing flag (the LPIPS `unpack_gt_rgb` path, via
+        // `unwrap_wgpu_int`, expects a clean Wgpu tensor).
+        let gt_packed: Tensor<2, Int> =
+            Tensor::from_data(batch.img_packed, &device.clone().inner());
         let img_size = glam::uvec2(img_w as u32, img_h as u32);
         let base = &self.config.background_color;
         let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
@@ -209,11 +214,10 @@ impl SplatTrainer {
                 let record = self
                     .refine_record
                     .get_or_insert_with(|| RefineRecord::new(splats.num_splats(), &device));
-                record.gather_stats(
-                    detach_autodiff(refine_weight),
-                    detach_autodiff(visible.clone().inner()),
-                    detach_autodiff(max_radius.inner()),
-                );
+                // `visible` / `max_radius` already arrive on the inner backend;
+                // only the freshly-extracted `refine_weight` gradient needs the
+                // autodiff stripped off.
+                record.gather_stats(detach_autodiff(refine_weight), visible.clone(), max_radius);
             });
 
             (grads, visible, diff_out.num_visible, loss_inner)
@@ -303,8 +307,12 @@ impl SplatTrainer {
 
         // Add random noise. Only do this in the growth phase, otherwise
         // let the splats settle in without noise, not much point in exploring regions anymore.
-        let inv_opac: Tensor<1> = 1.0 - splats.opacities();
-        let noise_weight = inv_opac.inner().powi_scalar(150.0).clamp(0.0, 1.0) * visible.inner();
+        // The noise gate is non-differentiable bookkeeping. Read opacity from
+        // the valid (inner) splats so the sigmoid never lands on the autodiff
+        // graph, and `visible` is already inner — so nothing here builds a
+        // node that won't get a backward pass.
+        let inv_opac: Tensor<1> = 1.0 - splats.valid().opacities();
+        let noise_weight = inv_opac.powi_scalar(150.0).clamp(0.0, 1.0) * visible;
         let noise_weight = noise_weight.unsqueeze_dim(1);
         // `samples` is pure data — keep it on the inner device so it can
         // multiply with the `.inner()`-stripped `noise_weight` without

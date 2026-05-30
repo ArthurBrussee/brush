@@ -177,9 +177,12 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
 }
 
 pub struct SplatOutputDiff {
+    /// Rendered image, on the autodiff graph (this is what the loss backprops through).
     pub img: Tensor<3>,
     pub num_visible: u32,
+    /// Per-splat visibility aux — on the **inner** backend (no gradients).
     pub visible: Tensor<1>,
+    /// Per-splat max screen radius aux — on the **inner** backend (no gradients).
     pub max_radius: Tensor<1>,
     pub refine_weight_holder: Tensor<1>,
 }
@@ -332,8 +335,11 @@ pub async fn render_splats_with_pass(
     SplatOutputDiff {
         img: wrap_ad_wgpu_float(img_ad),
         num_visible,
-        visible: Tensor::from_inner(wrap_wgpu_float(visible_inner)),
-        max_radius: Tensor::from_inner(wrap_wgpu_float(max_radius_inner)),
+        // `visible` / `max_radius` are render aux — they only feed refine
+        // bookkeeping and never get a backward. Hand them back on the inner
+        // backend directly so callers don't have to strip autodiff off them.
+        visible: wrap_wgpu_float(visible_inner),
+        max_radius: wrap_wgpu_float(max_radius_inner),
         refine_weight_holder,
     }
 }
