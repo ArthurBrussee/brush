@@ -217,11 +217,7 @@ impl SplatTrainer {
                 // `visible` / `max_radius` already arrive on the inner backend;
                 // only the freshly-extracted `refine_weight` gradient needs the
                 // autodiff stripped off.
-                record.gather_stats(
-                    detach_autodiff(refine_weight),
-                    visible.clone(),
-                    max_radius,
-                );
+                record.gather_stats(detach_autodiff(refine_weight), visible.clone(), max_radius);
             });
 
             (grads, visible, diff_out.num_visible, loss_inner)
