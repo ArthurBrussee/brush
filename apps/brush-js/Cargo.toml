@@ -29,6 +29,7 @@ web-sys = { workspace = true, features = [
     "FileSystemDirectoryHandle",
 ] }
 wasm-logger = "0.2"
+console_error_panic_hook = "0.1"
 
 # wasm_js random backend needs to be enabled explicitly.
 getrandom = { version = "0.4", features = ["wasm_js"] }

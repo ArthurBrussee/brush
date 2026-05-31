@@ -1027,6 +1027,7 @@ dependencies = [
  "brush-process",
  "brush-render",
  "burn",
+ "console_error_panic_hook",
  "getrandom 0.3.4",
  "getrandom 0.4.2",
  "log",

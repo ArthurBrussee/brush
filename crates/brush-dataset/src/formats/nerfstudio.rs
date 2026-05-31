@@ -157,6 +157,13 @@ async fn read_transforms_file(
 
         // NeRF 'transform_matrix' is a camera-to-world transform
         let transform_matrix: Vec<f32> = frame.transform_matrix.iter().flatten().copied().collect();
+        if transform_matrix.len() != 16 {
+            return Err(FormatError::InvalidFormat(format!(
+                "frame '{}' has a {}-element transform_matrix, expected a 4x4 (16 elements)",
+                frame.file_path,
+                transform_matrix.len()
+            )));
+        }
         let mut transform = glam::Mat4::from_cols_slice(&transform_matrix).transpose();
         // Swap basis to match camera format and reconstrunstion ply (if included).
         transform.y_axis *= -1.0;

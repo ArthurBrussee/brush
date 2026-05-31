@@ -214,11 +214,20 @@ impl UiProcess {
                     // Check if training is paused. Don't care about other messages as pausing loading
                     // doesn't make much sense.
                     if matches!(train_receiver.try_recv(), Ok(ControlMessage::Paused(true))) {
-                        // Pause if needed.
-                        while !matches!(
-                            train_receiver.recv().await,
-                            Some(ControlMessage::Paused(false))
-                        ) {}
+                        // Pause until we're explicitly unpaused. If the control channel
+                        // closed (the process was reset / replaced, dropping the sender),
+                        // `recv()` returns `None` immediately and forever — treat that as
+                        // "resume" so we don't busy-spin and wedge the single-threaded
+                        // executor (a dropped sender must never livelock the message pump).
+                        loop {
+                            match train_receiver.recv().await {
+                                Some(ControlMessage::Paused(false)) | None => break,
+                                _ => {}
+                            }
+                            // Yield back to the runtime so a burst of control messages
+                            // while paused can't starve the browser event loop.
+                            brush_async::yield_now().await;
+                        }
                     }
 
                     // Mark egui as needing a repaint.

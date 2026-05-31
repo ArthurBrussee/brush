@@ -9,7 +9,7 @@ use crate::{
 };
 
 use brush_dataset::scene::SceneBatch;
-use brush_loss::{ImageLossConfig, image_loss, unpack_gt_rgb};
+use brush_loss::{ImageLossConfig, image_loss};
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
@@ -174,6 +174,9 @@ impl SplatTrainer {
             };
             let loss_map = image_loss(pred_for_loss, gt_packed.clone(), cfg);
 
+            // `loss` is only reassigned by the LPIPS path below, which is
+            // compiled out on wasm — so `mut` is unused there.
+            #[cfg_attr(target_family = "wasm", allow(unused_mut))]
             let mut loss = if do_alpha_match {
                 let rgb = loss_map.clone().slice(s![.., .., 0..3]).mean();
                 let alpha = loss_map.slice(s![.., .., 3..4]).mean();
@@ -186,7 +189,7 @@ impl SplatTrainer {
             // here costs ~99 MB at 4K, only when LPIPS is enabled.
             #[cfg(not(target_family = "wasm"))]
             if let Some(lpips) = &self.lpips {
-                let gt_rgb = unpack_gt_rgb(gt_packed.clone(), composite_bg);
+                let gt_rgb = brush_loss::unpack_gt_rgb(gt_packed.clone(), composite_bg);
                 let gt_rgb_diff: Tensor<3> = Tensor::from_inner(gt_rgb);
                 loss = loss
                     + lpips.lpips(

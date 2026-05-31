@@ -10,25 +10,25 @@ use crate::scene::{Scene, SceneBatch, sample_to_packed_data, view_to_sample_imag
 /// Cache budget for decoded source images. 6 GB on native; less on
 /// wasm since the whole heap is bounded by browser limits.
 #[cfg(not(target_family = "wasm"))]
-const CACHE_BUDGET_MB: usize = 6 * 1024;
+const CACHE_BUDGET_BYTES: usize = 6 * 1024 * 1024 * 1024;
 #[cfg(target_family = "wasm")]
-const CACHE_BUDGET_MB: usize = 2 * 1024;
+const CACHE_BUDGET_BYTES: usize = 2 * 1024 * 1024 * 1024;
 
 /// Shared decoded-image cache. Each slot holds at most one image; once
-/// the running total passes `budget_mb`, new images bypass the cache
+/// the running total passes `budget_bytes`, new images bypass the cache
 /// and just get re-decoded on every visit.
 struct ImageCache {
     slots: Vec<Option<Arc<DynamicImage>>>,
-    used_mb: usize,
-    budget_mb: usize,
+    used_bytes: usize,
+    budget_bytes: usize,
 }
 
 impl ImageCache {
     fn new(n_views: usize) -> Self {
         Self {
             slots: vec![None; n_views],
-            used_mb: 0,
-            budget_mb: CACHE_BUDGET_MB,
+            used_bytes: 0,
+            budget_bytes: CACHE_BUDGET_BYTES,
         }
     }
 
@@ -40,10 +40,12 @@ impl ImageCache {
         if self.slots[index].is_some() {
             return;
         }
-        let size_mb = image.as_bytes().len() / (1024 * 1024);
-        if self.used_mb + size_mb < self.budget_mb {
+        // Track exact bytes: rounding to whole MB let sub-MB images slip in
+        // for free and bypass the budget entirely.
+        let size_bytes = image.as_bytes().len();
+        if self.used_bytes + size_bytes < self.budget_bytes {
             self.slots[index] = Some(image);
-            self.used_mb += size_mb;
+            self.used_bytes += size_bytes;
         }
     }
 }
