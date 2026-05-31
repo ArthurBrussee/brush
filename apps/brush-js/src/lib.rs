@@ -425,8 +425,6 @@ async fn bridge_config_callback(
 /// the WebGPU backend (which is the only backend brush-js currently
 /// supports anyway).
 fn tensor_buffer_js<const D: usize>(tensor: burn::tensor::Tensor<D>) -> Option<JsValue> {
-    // Drain pending fusion ops down to a concrete Wgpu buffer via the shared
-    // burn_glue helper (keeps us off burn's churning fusion internals).
     let cube_tensor = brush_render::burn_glue::resolve_to_cube_float::<D>(tensor);
     let resource = cube_tensor.client.get_resource(cube_tensor.handle).ok()?;
     resource.resource().buffer.as_webgpu().map(|w| w.raw_js())

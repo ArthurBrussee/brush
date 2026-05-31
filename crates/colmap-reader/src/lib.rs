@@ -430,7 +430,6 @@ async fn read_images_binary<R: AsyncBufRead + Unpin>(
         let point_data = if with_points {
             // `num_points2d` comes straight from the file; don't pre-allocate
             // from it or a hostile/truncated file can trigger a huge alloc.
-            // The per-element reads below bound growth to real file content.
             let mut xys = Vec::new();
             let mut point3d_ids = Vec::new();
 
@@ -568,8 +567,6 @@ async fn read_points3d_binary<R: AsyncRead + Unpin>(
         let track_length = reader.read_u64_le().await?;
 
         let points_aux = if points_aux {
-            // `track_length` is file-controlled; see the note above — grow from
-            // empty so a bogus length can't drive an unbounded allocation.
             let mut image_ids = Vec::new();
             let mut point2d_idxs = Vec::new();
 

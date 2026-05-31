@@ -216,16 +216,13 @@ impl UiProcess {
                     if matches!(train_receiver.try_recv(), Ok(ControlMessage::Paused(true))) {
                         // Pause until we're explicitly unpaused. If the control channel
                         // closed (the process was reset / replaced, dropping the sender),
-                        // `recv()` returns `None` immediately and forever — treat that as
-                        // "resume" so we don't busy-spin and wedge the single-threaded
-                        // executor (a dropped sender must never livelock the message pump).
+                        // `recv()` returns `None` immediately and forever.
                         loop {
                             match train_receiver.recv().await {
                                 Some(ControlMessage::Paused(false)) | None => break,
                                 _ => {}
                             }
-                            // Yield back to the runtime so a burst of control messages
-                            // while paused can't starve the browser event loop.
+                            // Yield back to the runtime can't starve the browser event loop.
                             brush_async::yield_now().await;
                         }
                     }
