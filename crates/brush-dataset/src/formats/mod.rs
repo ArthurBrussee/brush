@@ -65,6 +65,17 @@ pub async fn load_dataset(
 
     let result = dataset?;
 
+    // A dataset that parsed but has no usable training views (e.g. every image
+    // was missing or filtered out) would otherwise "load" and then crash on the
+    // first training batch. Reject it here with a typed error instead.
+    if result.dataset.train.views.is_empty() {
+        return Err(FormatError::InvalidFormat(
+            "dataset contains no usable training views (all images missing or filtered out)"
+                .to_owned(),
+        )
+        .into());
+    }
+
     // If there's an initial ply file, override the init stream with that.
     let mut ply_paths: Vec<_> = vfs.files_with_extension("ply").collect();
     ply_paths.sort();

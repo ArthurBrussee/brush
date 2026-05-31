@@ -6,7 +6,12 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "kebab-case")]
 pub struct ModelConfig {
     /// SH degree of splats.
-    #[arg(long, help_heading = "Model Options", default_value = "3")]
+    #[arg(
+        long,
+        help_heading = "Model Options",
+        default_value = "3",
+        value_parser = clap::value_parser!(u32).range(0..=4)
+    )]
     pub sh_degree: u32,
 }
 

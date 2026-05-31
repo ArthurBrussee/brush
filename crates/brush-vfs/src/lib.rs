@@ -57,7 +57,9 @@ impl PathKey {
     }
 
     fn from_path(path: &Path) -> Self {
-        Self::from_str(path.clean().to_str().expect("Invalid path"))
+        // Lossily convert rather than panicking on non-UTF-8 filenames; the key
+        // is only used for case-insensitive lookups.
+        Self::from_str(&path.clean().to_string_lossy())
     }
 }
 

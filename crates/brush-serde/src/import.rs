@@ -189,7 +189,9 @@ pub fn stream_splat_from_ply<T: AsyncRead + Unpin>(
         let mut file = PlyChunkedReader::new();
         read_chunk(&mut reader, file.buffer_mut()).await?;
 
-        let header = file.header().expect("Must have header");
+        let header = file
+            .header()
+            .ok_or_else(|| DeserializeError::custom("missing PLY header"))?;
         // Parse some metadata.
         let up_axis = header
             .comments
@@ -292,7 +294,9 @@ async fn parse_ply<T: AsyncRead + Unpin>(
     render_mode: Option<SplatRenderMode>,
     update: &mut TimedUpdate,
 ) -> Result<(), DeserializeError> {
-    let header = file.header().expect("Must have header");
+    let header = file
+        .header()
+        .ok_or_else(|| DeserializeError::custom("missing PLY header"))?;
     let vertex = header
         .get_element("vertex")
         .ok_or(DeserializeError::custom("Unknown format"))?;
@@ -474,7 +478,7 @@ async fn parse_compressed_ply<T: AsyncRead + Unpin>(
 
     let sh_vals = file
         .header()
-        .expect("Must have header")
+        .ok_or_else(|| DeserializeError::custom("missing PLY header"))?
         .elem_defs
         .get(2)
         .cloned();

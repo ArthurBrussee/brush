@@ -5,7 +5,6 @@
 use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_process::slot::Slot;
 use brush_process::{DataSource, ProcessStream, burn_init_device, burn_init_setup, create_process};
-use brush_render::MainBackend;
 use brush_render::gaussian_splats::Splats;
 use serde::Serialize;
 use std::pin::Pin;
@@ -229,6 +228,11 @@ impl BrushApp {
     /// (or call `app.initExisting(...)`) before starting any training.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
+        // Route Rust panics to console.error with a readable message+stack
+        // instead of an opaque "unreachable executed" trap. `set_once` is
+        // idempotent, so re-init (React StrictMode, hot reload) is harmless.
+        console_error_panic_hook::set_once();
+
         // Idempotent: hosts that re-init us (React StrictMode in dev, hot
         // reloads, etc.) would otherwise hit "logger already set" each time.
         static LOGGER_INIT: std::sync::Once = std::sync::Once::new();
@@ -421,13 +425,7 @@ async fn bridge_config_callback(
 /// the WebGPU backend (which is the only backend brush-js currently
 /// supports anyway).
 fn tensor_buffer_js<const D: usize>(tensor: burn::tensor::Tensor<D>) -> Option<JsValue> {
-    use brush_render::MainBackendBase;
-
-    let fusion_tensor = tensor.into_primitive().tensor();
-    let cube_tensor = fusion_tensor
-        .client
-        .clone()
-        .resolve_tensor_float::<MainBackendBase>(fusion_tensor);
+    let cube_tensor = brush_render::burn_glue::resolve_to_cube_float::<D>(tensor);
     let resource = cube_tensor.client.get_resource(cube_tensor.handle).ok()?;
     resource.resource().buffer.as_webgpu().map(|w| w.raw_js())
 }

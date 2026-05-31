@@ -413,6 +413,14 @@ async fn read_images_binary<R: AsyncBufRead + Unpin>(
         let mut name_bytes = Vec::new();
         reader.read_until(b'\0', &mut name_bytes).await?;
 
+        // `read_until` only stops short of the delimiter on EOF; a truncated
+        // file leaves us without the trailing '\0', so don't slice blindly.
+        if name_bytes.last() != Some(&b'\0') {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "image name was not null-terminated (truncated images file?)",
+            ));
+        }
         let name = std::str::from_utf8(&name_bytes[..name_bytes.len() - 1])
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
             .to_owned();
@@ -420,8 +428,10 @@ async fn read_images_binary<R: AsyncBufRead + Unpin>(
         let num_points2d = reader.read_u64_le().await?;
 
         let point_data = if with_points {
-            let mut xys = Vec::with_capacity(num_points2d as usize);
-            let mut point3d_ids = Vec::with_capacity(num_points2d as usize);
+            // `num_points2d` comes straight from the file; don't pre-allocate
+            // from it or a hostile/truncated file can trigger a huge alloc.
+            let mut xys = Vec::new();
+            let mut point3d_ids = Vec::new();
 
             for _ in 0..num_points2d {
                 xys.push(glam::Vec2::new(
@@ -557,8 +567,8 @@ async fn read_points3d_binary<R: AsyncRead + Unpin>(
         let track_length = reader.read_u64_le().await?;
 
         let points_aux = if points_aux {
-            let mut image_ids = Vec::with_capacity(track_length as usize);
-            let mut point2d_idxs = Vec::with_capacity(track_length as usize);
+            let mut image_ids = Vec::new();
+            let mut point2d_idxs = Vec::new();
 
             for _ in 0..track_length {
                 image_ids.push(reader.read_i32_le().await?);
