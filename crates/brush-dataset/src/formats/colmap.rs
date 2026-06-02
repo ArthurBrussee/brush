@@ -8,7 +8,7 @@ use super::{DatasetLoadResult, FormatError};
 use crate::{
     Dataset,
     config::LoadDataseConfig,
-    formats::find_mask_path,
+    formats::{find_image_by_name, find_mask_path, split_eval_every},
     scene::{LoadImage, SceneView},
 };
 use brush_render::kernels::camera_model::CameraModel;
@@ -25,18 +25,6 @@ use brush_render::{
 use brush_serde::{ParseMetadata, SplatData, SplatMessage};
 use brush_vfs::BrushVfs;
 use colmap_reader::{ColmapCamera, ColmapCameraModel};
-use itertools::Itertools;
-
-fn find_img<'a>(vfs: &'a BrushVfs, name: &str) -> Option<&'a Path> {
-    // Colmap only specifies an image name, not a full path. We brute force
-    // search for the image in the archive.
-    //
-    // Make sure this path doesn't start with a '/' as the files_ending_in expects
-    // things in that format (like a "filename with slashes").
-    vfs.files_ending_in(name)
-        .filter(|p| !p.iter().any(|f| f == "masks")) // Skip anything that is a mask.
-        .min()
-}
 
 /// COLMAP can emit several independent sparse reconstructions (`sparse/0`,
 /// `sparse/1`, ...) when the image graph is disconnected. They share no
@@ -198,7 +186,7 @@ async fn load_dataset_inner(
             let center_uv =
                 center / glam::vec2(colmap_camera.width as f32, colmap_camera.height as f32);
 
-            let Some(path) = find_img(&vfs, &img_info.name) else {
+            let Some(path) = find_image_by_name(&vfs, &img_info.name) else {
                 warnings.push(format!("Skipped '{}': image file not found", img_info.name));
                 continue;
             };
@@ -232,15 +220,7 @@ async fn load_dataset_inner(
             views.push(SceneView { camera, image });
         }
 
-        let (train_views, eval_views) = views.into_iter().enumerate().partition_map(|(i, v)| {
-            if let Some(split) = load_args.eval_split_every
-                && i % split == 0
-            {
-                itertools::Either::Right(v)
-            } else {
-                itertools::Either::Left(v)
-            }
-        });
+        let (train_views, eval_views) = split_eval_every(views, load_args.eval_split_every);
 
         Result::<_, FormatError>::Ok((Dataset::from_views(train_views, eval_views), warnings))
     });

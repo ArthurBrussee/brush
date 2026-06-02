@@ -1,5 +1,4 @@
-use super::find_mask_path;
-use super::{DatasetLoadResult, FormatError};
+use super::{DatasetLoadResult, FormatError, find_mask_path, opengl_c2w_to_pose};
 use crate::{
     Dataset,
     config::LoadDataseConfig,
@@ -164,11 +163,8 @@ async fn read_transforms_file(
                 transform_matrix.len()
             )));
         }
-        let mut transform = glam::Mat4::from_cols_slice(&transform_matrix).transpose();
-        // Swap basis to match camera format and reconstrunstion ply (if included).
-        transform.y_axis *= -1.0;
-        transform.z_axis *= -1.0;
-        let (_, rotation, translation) = transform.to_scale_rotation_translation();
+        let transform = glam::Mat4::from_cols_slice(&transform_matrix).transpose();
+        let (translation, rotation) = opengl_c2w_to_pose(transform);
 
         let mut path = transforms_path
             .parent()
