@@ -78,15 +78,6 @@ impl SplatTrainer {
 
         let ssim_enabled = config.ssim_weight > 0.0;
 
-        // Push the in-kernel screen-area regulariser config into the
-        // brush-render global so the host code's ProjectUniforms
-        // construction picks it up and the backward kernel applies the
-        // gradient contribution to v_cov2d.
-        brush_render::set_screen_area_penalty(
-            config.screen_area_penalty,
-            config.screen_area_threshold,
-        );
-
         // Growth is gated on the global iter. LOD phases run past
         // total_train_iters but their refines should never grow — clamp
         // here so growth_stop is never effectively past end-of-training.
@@ -142,9 +133,16 @@ impl SplatTrainer {
 
         let (mut grads, visible, num_visible, loss_inner) = {
             let render_input = splats.clone();
-            let diff_out = render_splats(render_input, &camera, img_size, background)
-                .instrument(trace_span!("Forward"))
-                .await;
+            let diff_out = render_splats(
+                render_input,
+                &camera,
+                img_size,
+                background,
+                self.config.screen_area_penalty,
+                self.config.screen_area_threshold,
+            )
+            .instrument(trace_span!("Forward"))
+            .await;
 
             let pred_image = diff_out.img;
             let refine_weight_holder = diff_out.refine_weight_holder;

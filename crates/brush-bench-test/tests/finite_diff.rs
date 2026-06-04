@@ -101,13 +101,16 @@ async fn render_value(
     device: &burn::tensor::Device,
 ) -> f32 {
     let splats = build_splats(scene, device);
-    let diff = {
-        let splats = splats;
-        let cam: &Camera = cam;
-        let background = Vec3::ZERO;
-        async move { render_splats_with_pass(splats, cam, img_size, background, PASS).await }
-    }
-    .await;
+    let diff =
+        {
+            let splats = splats;
+            let cam: &Camera = cam;
+            let background = Vec3::ZERO;
+            async move {
+                render_splats_with_pass(splats, cam, img_size, background, PASS, 0.0, 0.0).await
+            }
+        }
+        .await;
     diff.img
         .mean()
         .into_scalar_async::<f32>()
@@ -122,13 +125,16 @@ async fn analytical_grads(
     device: &burn::tensor::Device,
 ) -> (Splats, Gradients) {
     let splats = build_splats(scene, device);
-    let diff = {
-        let splats = splats.clone();
-        let cam: &Camera = cam;
-        let background = Vec3::ZERO;
-        async move { render_splats_with_pass(splats, cam, img_size, background, PASS).await }
-    }
-    .await;
+    let diff =
+        {
+            let splats = splats.clone();
+            let cam: &Camera = cam;
+            let background = Vec3::ZERO;
+            async move {
+                render_splats_with_pass(splats, cam, img_size, background, PASS, 0.0, 0.0).await
+            }
+        }
+        .await;
     let grads = diff.img.mean().backward();
     (splats, grads)
 }
@@ -381,7 +387,7 @@ async fn finite_diff_broad_mip_mode() {
             SplatRenderMode::Mip,
             device,
         );
-        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS).await;
+        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS, 0.0, 0.0).await;
         diff.img
             .mean()
             .into_scalar_async::<f32>()
@@ -404,7 +410,9 @@ async fn finite_diff_broad_mip_mode() {
             SplatRenderMode::Mip,
             device,
         );
-        let diff = render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, PASS).await;
+        let diff =
+            render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, PASS, 0.0, 0.0)
+                .await;
         let g = diff.img.mean().backward();
         (splats, g)
     }
@@ -486,7 +494,7 @@ async fn finite_diff_weighted_loss() {
         device: &burn::tensor::Device,
     ) -> f32 {
         let splats = build_splats(scene, device);
-        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS).await;
+        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS, 0.0, 0.0).await;
         (diff.img * weights)
             .sum()
             .into_scalar_async::<f32>()
@@ -502,7 +510,9 @@ async fn finite_diff_weighted_loss() {
         device: &burn::tensor::Device,
     ) -> (Splats, Gradients) {
         let splats = build_splats(scene, device);
-        let diff = render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, PASS).await;
+        let diff =
+            render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, PASS, 0.0, 0.0)
+                .await;
         let loss = (diff.img * weights).sum();
         (splats, loss.backward())
     }

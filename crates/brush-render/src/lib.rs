@@ -31,30 +31,6 @@ pub mod get_tile_offset;
 pub mod render;
 pub mod validation;
 
-/// Global config for the in-kernel screen-area regulariser. Set once by the
-/// training driver before the train loop starts; read inside the rasterizer
-/// host code when constructing `ProjectUniforms`. The values flow into the
-/// backward kernel which uses them to add an area-loss gradient contribution
-/// to v_cov2d. Zero penalty = disabled (the kernel branch short-circuits).
-use std::sync::atomic::{AtomicU32, Ordering};
-static SCREEN_AREA_PENALTY_BITS: AtomicU32 = AtomicU32::new(0);
-static SCREEN_AREA_THRESHOLD_BITS: AtomicU32 = AtomicU32::new(0);
-
-/// Set the screen-area penalty weight + threshold. Call before training.
-pub fn set_screen_area_penalty(weight: f32, threshold: f32) {
-    SCREEN_AREA_PENALTY_BITS.store(weight.to_bits(), Ordering::Relaxed);
-    SCREEN_AREA_THRESHOLD_BITS.store(threshold.to_bits(), Ordering::Relaxed);
-}
-
-/// Read the current screen-area penalty config. Used by the rasterizer host
-/// code to populate `ProjectUniforms`.
-pub fn screen_area_penalty_config() -> (f32, f32) {
-    (
-        f32::from_bits(SCREEN_AREA_PENALTY_BITS.load(Ordering::Relaxed)),
-        f32::from_bits(SCREEN_AREA_THRESHOLD_BITS.load(Ordering::Relaxed)),
-    )
-}
-
 /// `DispatchTensorKind` variant for the active wgpu backend. burn-dispatch
 /// uses different variant names per backend; brush only ever runs on the
 /// `WebGpu` variant, so this macro hides the variant name from match arms.

@@ -98,7 +98,10 @@ pub async fn compute_pup_scores(
         let mut splats: Splats = splats.clone().train();
         splats.transforms = splats.transforms.map(|t: Tensor<2>| t.require_grad());
 
-        let diff_out = render_splats(splats.clone(), &view.camera, img_size, Vec3::ZERO).await;
+        // No screen-area penalty for LOD sensitivity scoring — keep the
+        // gradient on pure image loss.
+        let diff_out =
+            render_splats(splats.clone(), &view.camera, img_size, Vec3::ZERO, 0.0, 0.0).await;
         let pred_rgb = diff_out.img.slice(s![.., .., 0..3]);
 
         let gt_packed: Tensor<2, Int> = Tensor::from_data(gt_data, device);
