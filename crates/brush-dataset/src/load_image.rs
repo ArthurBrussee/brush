@@ -2,7 +2,7 @@ use brush_render::AlphaMode;
 use brush_vfs::BrushVfs;
 use image::{DynamicImage, GenericImageView, ImageBuffer};
 use std::{
-    io::Cursor,
+    io::{self, Cursor},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -113,16 +113,28 @@ impl LoadImage {
     /// Read just the image dimensions from the file header, without decoding
     /// the pixels. Much cheaper than `load()` when only the size is needed
     /// (e.g. formats that carry intrinsics but not image dimensions).
+    ///
+    /// Reads the file in chunks and stops as soon as the header parses, so for
+    /// typical formats only the first chunk is fetched rather than the whole
+    /// (potentially many-MB) file. A truncated prefix only ever fails to parse
+    /// (the dimension fields are reported once fully present), so a partial
+    /// buffer can't yield wrong dimensions.
     pub async fn dimensions(&self) -> image::ImageResult<(u32, u32)> {
-        let mut img_bytes = vec![];
-        self.vfs
-            .reader_at_path(&self.path)
-            .await?
-            .read_to_end(&mut img_bytes)
-            .await?;
-        image::ImageReader::new(Cursor::new(&img_bytes))
-            .with_guessed_format()?
-            .into_dimensions()
+        let mut reader = self.vfs.reader_at_path(&self.path).await?;
+        let dims = brush_vfs::read_until_parsed(&mut reader, 64 * 1024, |bytes| {
+            image::ImageReader::new(Cursor::new(bytes))
+                .with_guessed_format()
+                .ok()
+                .and_then(|r| r.into_dimensions().ok())
+        })
+        .await?;
+        dims.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("could not determine image dimensions for {:?}", self.path),
+            )
+            .into()
+        })
     }
 
     pub fn alpha_mode(&self) -> AlphaMode {
