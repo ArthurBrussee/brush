@@ -70,6 +70,32 @@ async fn read_at_most<R: AsyncRead + Unpin>(reader: &mut R, limit: usize) -> io:
     Ok(buffer)
 }
 
+/// Read from `reader` in chunks of `chunk_size`, calling `parse` on everything
+/// read so far after each chunk. Returns the first `Some` value `parse` yields,
+/// without consuming the rest of the reader; returns `None` if the reader hits
+/// EOF before `parse` succeeds.
+pub async fn read_until_parsed<R, T>(
+    reader: &mut R,
+    chunk_size: usize,
+    mut parse: impl FnMut(&[u8]) -> Option<T>,
+) -> io::Result<Option<T>>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut buf = vec![];
+    let mut chunk = vec![0u8; chunk_size];
+    loop {
+        let n = reader.read(&mut chunk).await?;
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(value) = parse(&buf) {
+            return Ok(Some(value));
+        }
+        if n == 0 {
+            return Ok(None);
+        }
+    }
+}
+
 enum VfsContainer {
     /// Raw data stored in memory (from zip files)
     InMemory {

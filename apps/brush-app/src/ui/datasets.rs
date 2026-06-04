@@ -18,10 +18,10 @@ use crate::ui::{
 };
 
 const TEX_CACHE_LIMIT: usize = 16;
-/// Max edge length the preview panel keeps. Big enough that downscaling is
-/// barely visible at typical window sizes, small enough that 8K source images
-/// don't dominate `ColorImage` alloc + GPU upload.
-const PREVIEW_MAX_EDGE: u32 = 2048;
+/// Floor for the preview edge so a collapsed/tiny panel still decodes a usable
+/// image. There's no ceiling: the preview is sized to the panel (see `ui`), and
+/// `load()` never upscales past the source anyway.
+const PREVIEW_MIN_EDGE: u32 = 32;
 /// Concurrent decode actors. Sized to the cache so a full burst of distinct
 /// requests can each get their own actor instead of queuing.
 const LOAD_POOL_SIZE: usize = TEX_CACHE_LIMIT;
@@ -63,6 +63,10 @@ pub struct DatasetPanel {
     /// Pool of decode actors. Round-robin via `next_actor`.
     actors: Vec<Actor>,
     next_actor: usize,
+
+    /// Edge length (physical px) the cached previews were decoded for; tracks
+    /// the panel size so resizing reloads at a matching resolution.
+    preview_edge: u32,
 }
 
 impl Default for DatasetPanel {
@@ -80,15 +84,19 @@ impl Default for DatasetPanel {
             displayed: None,
             actors,
             next_actor: 0,
+            preview_edge: PREVIEW_MIN_EDGE,
         }
     }
 }
 
-/// Decode + `ColorImage` build + GPU upload for a single preview view. The
-/// max-resolution cap lives on the loaded `LoadImage` so the JPEG IDCT fast
-/// path in `decode_with_cap` can pick a fractional decode size directly.
-async fn load_preview(view: SceneView, ctx: egui::Context) -> Option<TexHandle> {
-    let preview_load = view.image.clone().with_max_resolution(PREVIEW_MAX_EDGE);
+async fn load_preview(view: SceneView, ctx: egui::Context, preview_edge: u32) -> Option<TexHandle> {
+    // The preview texture is capped to the panel size for GPU/memory reasons,
+    // but report the resolution training actually uses (read from the header,
+    // no full decode) so the panel doesn't claim a misleadingly small size.
+    let (tw, th) = view.image.output_dimensions().await.ok()?;
+    let train_size = [tw as usize, th as usize];
+
+    let preview_load = view.image.clone().with_max_resolution(preview_edge);
     let image = preview_load.load().await.ok()?;
 
     brush_async::yield_now().await;
@@ -111,6 +119,7 @@ async fn load_preview(view: SceneView, ctx: egui::Context) -> Option<TexHandle> 
     Some(TexHandle {
         handle: egui_handle,
         has_alpha,
+        train_size,
     })
 }
 
@@ -153,9 +162,10 @@ impl DatasetPanel {
         let actor = &self.actors[self.next_actor];
         self.next_actor = (self.next_actor + 1) % self.actors.len();
         let view_for_task = view.clone();
+        let preview_edge = self.preview_edge;
         actor
             .run(move || async move {
-                if let Some(tex) = load_preview(view_for_task, ctx.clone()).await {
+                if let Some(tex) = load_preview(view_for_task, ctx.clone(), preview_edge).await {
                     let _ = tx.send(tex);
                     ctx.request_repaint();
                 }
@@ -209,9 +219,7 @@ impl AppPane for DatasetPanel {
         job.append(
             &format!(
                 "  |  {}x{} {}",
-                tex.handle.size()[0],
-                tex.handle.size()[1],
-                mask_info
+                tex.train_size[0], tex.train_size[1], mask_info
             ),
             0.0,
             egui::TextFormat {
@@ -275,6 +283,17 @@ impl AppPane for DatasetPanel {
 
         let target_view = pick_scene.views[*nearest].clone();
         self.current_view_index = Some(*nearest);
+
+        // Size previews to the panel in physical pixels, so we neither waste
+        // memory on oversized textures nor visibly downscale on large/hi-DPI
+        // windows.
+        let needed = ((ui.available_size().max_elem() * ui.ctx().pixels_per_point()).ceil() as u32)
+            .max(PREVIEW_MIN_EDGE);
+        let (lo, hi) = (needed.min(self.preview_edge), needed.max(self.preview_edge));
+        if hi * 10 > lo * 11 {
+            self.preview_edge = needed;
+            self.cache.clear();
+        }
 
         // Cache hit (Ready) → swap display. Pending/Miss → ensure a load is in
         // flight; spawn_load no-ops if an entry already exists.
