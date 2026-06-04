@@ -212,6 +212,11 @@ pub fn calculate_jacobian_clamp_limits(
     let img_w = img_size.x as f32;
     let img_h = img_size.y as f32;
 
+    // The clamp bounds the normalized coord x/z that feeds the projection, so
+    // the EWA covariance Jacobian isn't evaluated where the perspective
+    // projection blows up near the field-of-view edge. The pinhole margin
+    // `1.15 * img - c` equals the canonical 3DGS limit `1.3 * tan(fov/2)`
+    // (graphdeco-inria/diff-gaussian-rasterization, `computeCov2D`).
     match camera_model {
         Pinhole => {
             lim_pos_x = (1.15 * img_w - cx) / fx;
@@ -219,14 +224,24 @@ pub fn calculate_jacobian_clamp_limits(
             lim_neg_x = (-0.15 * img_w - cx) / fx;
             lim_neg_y = (-0.15 * img_h - cy) / fy;
         }
-        RadialTangential8(_) => {
-            // TODO: this works for small distortions,
-            // the more sophisticated version would require to invert the RT8 model
-            lim_pos_x = (1.3 * img_w - cx) / fx;
-            lim_pos_y = (1.3 * img_h - cy) / fy;
-            lim_neg_x = (-0.3 * img_w - cx) / fx;
-            lim_neg_y = (-0.3 * img_h - cy) / fy;
+        RadialTangential8(p) => {
+            // The clamp bounds x/z, the *undistorted* coord that `project_rt8`
+            // feeds the distortion. A pixel maps to the distorted coord
+            // `(px - c) / f`; invert the radial model to get the undistorted
+            // bound. With the same image margin as pinhole this collapses to the
+            // pinhole limit for a near-pinhole lens (so a tiny distortion no
+            // longer loosens the clamp and lets wide-fov splats blow up) while
+            // widening it for real barrel distortion.
+            let undistort =
+                |edge: f32| (rt8_undistort_radius((edge as f64).abs(), &p) as f32) * edge.signum();
+            lim_pos_x = undistort((1.15 * img_w - cx) / fx);
+            lim_pos_y = undistort((1.15 * img_h - cy) / fy);
+            lim_neg_x = undistort((-0.15 * img_w - cx) / fx);
+            lim_neg_y = undistort((-0.15 * img_h - cy) / fy);
         }
+        // Fisheye models project the full hemisphere without the perspective
+        // singularity, so their Jacobians aren't clamped (their kernels ignore
+        // these limits); leave them at zero.
         KannalaBrandt4(_) | ThinPrismFisheye(_) => {}
     }
 

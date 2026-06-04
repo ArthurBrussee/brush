@@ -24,9 +24,10 @@ use tokio::io::AsyncReadExt;
 /// `x,y,alt` is the camera position and `heading,pitch,roll` its orientation
 /// (degrees). `f`, `px` and `py` are in 35mm-film units (36mm reference): `f`
 /// is the focal length and `px,py` the principal point offset from the image
-/// center. All three scale by the larger image dimension to reach pixels. `k*`
-/// and `t*` are Brown radial/tangential distortion coeffs. The accompanying
-/// sparse point cloud is a separate `.ply`, handled by the generic loader.
+/// center. All three scale by the larger image dimension to reach pixels.
+/// `k1..k4` are Brown polynomial radial coeffs (r^2, r^4, r^6, r^8) and `t1,t2`
+/// the tangential coeffs; brush has no r^8 term, so brown4's `k4` is dropped
+/// (brown3 approximation) with a warning.
 ///
 /// The column set is a user-customizable template, so optional columns may be
 /// absent: distortion (`k*`/`t*`) defaults to none (pinhole) and the principal
@@ -98,6 +99,7 @@ async fn read_dataset_inner(
 
     let mut views = Vec::new();
     let mut warnings = Vec::new();
+    let mut warned_brown4 = false;
 
     for line in lines
         .step_by(load_args.subsample_frames.unwrap_or(1) as usize)
@@ -109,6 +111,17 @@ async fn read_dataset_inner(
         let Some(name) = col(&fields, &header, "name").map(str::trim) else {
             continue;
         };
+
+        // brush's distortion model has no 4th-order (r^8) radial term, so the
+        // brown4 `k4` coefficient can't be represented; fall back to the brown3
+        // approximation and flag it once.
+        if !warned_brown4 && col_f64(&fields, &header, "k4") != 0.0 {
+            warnings.push(
+                "RealityCapture brown4 radial term (k4) isn't supported; approximating with brown3"
+                    .to_owned(),
+            );
+            warned_brown4 = true;
+        }
 
         let Some(image_path) = find_image_by_name(&vfs, name).map(Path::to_path_buf) else {
             warnings.push(format!("Skipped '{name}': image file not found"));
@@ -162,7 +175,6 @@ fn row_to_camera(fields: &[&str], header: &HashMap<String, usize>, w: u32, h: u3
         col_f64(fields, header, "k1"),
         col_f64(fields, header, "k2"),
         col_f64(fields, header, "k3"),
-        col_f64(fields, header, "k4"),
         col_f64(fields, header, "t1"),
         col_f64(fields, header, "t2"),
     );
@@ -190,15 +202,19 @@ fn row_to_camera(fields: &[&str], header: &HashMap<String, usize>, w: u32, h: u3
     Camera::new(position, rotation, fov_x, fov_y, center_uv, camera_model)
 }
 
-fn build_camera_model(k1: f64, k2: f64, k3: f64, k4: f64, t1: f64, t2: f64) -> CameraModel {
-    if [k1, k2, k3, k4, t1, t2].iter().all(|v| *v == 0.0) {
+/// `RealityCapture`'s brown3+tangential model maps onto `RadialTangential8`:
+/// `k1,k2,k3` are the polynomial radial terms (the numerator, with the rational
+/// denominator left at zero) and `t1,t2` the Brown-Conrady tangential terms.
+/// The brown4 `k4` (an r^8 term) has no slot here and is handled by the caller.
+fn build_camera_model(k1: f64, k2: f64, k3: f64, t1: f64, t2: f64) -> CameraModel {
+    if [k1, k2, k3, t1, t2].iter().all(|v| *v == 0.0) {
         return Pinhole;
     }
     RadialTangential8(RadialTangential8Params {
         k1: k1 as f32,
         k2: k2 as f32,
         k3: k3 as f32,
-        k4: k4 as f32,
+        k4: 0.0,
         k5: 0.0,
         k6: 0.0,
         p1: t1 as f32,
@@ -265,15 +281,18 @@ mod tests {
     #[wasm_bindgen_test(unsupported = test)]
     fn test_build_camera_model() {
         assert!(matches!(
-            build_camera_model(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            build_camera_model(0.0, 0.0, 0.0, 0.0, 0.0),
             Pinhole
         ));
-        let RadialTangential8(p) = build_camera_model(1.0, 2.0, 3.0, 4.0, 5.0, 6.0) else {
+        // brown3 radial (k1,k2,k3) -> numerator; tangential (t1,t2) -> p1,p2;
+        // the rational denominator (k4,k5,k6) stays zero so it's a pure
+        // polynomial.
+        let RadialTangential8(p) = build_camera_model(1.0, 2.0, 3.0, 4.0, 5.0) else {
             panic!("expected RadialTangential8");
         };
         assert_eq!(
-            (p.k1, p.k2, p.k3, p.k4, p.p1, p.p2),
-            (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+            (p.k1, p.k2, p.k3, p.k4, p.k5, p.k6, p.p1, p.p2),
+            (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 4.0, 5.0)
         );
     }
 }

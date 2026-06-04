@@ -98,15 +98,37 @@ impl LoadImage {
             img = masked_img.into();
         }
 
-        let max = self.max_resolution;
-        let cap = max as f32 / img.width().max(img.height()).max(max) as f32;
-        let scale = (cap * self.scale).min(1.0);
+        let scale = self.output_scale(img.width(), img.height());
         if scale < 1.0 {
             let new_w = (img.width() as f32 * scale).max(1.0) as u32;
             let new_h = (img.height() as f32 * scale).max(1.0) as u32;
             Ok(img.resize_exact(new_w, new_h, image::imageops::FilterType::Lanczos3))
         } else {
             Ok(img)
+        }
+    }
+
+    /// Factor `load()` applies to a source of size `w`x`h`: the long edge is
+    /// capped to `max_resolution` and multiplied by `scale`.
+    fn output_scale(&self, w: u32, h: u32) -> f32 {
+        let max = self.max_resolution;
+        let cap = max as f32 / w.max(h).max(max) as f32;
+        (cap * self.scale).min(1.0)
+    }
+
+    /// Dimensions `load()` would return, computed from the header without
+    /// decoding pixels. Useful for displaying the real training resolution
+    /// without paying for a full decode.
+    pub async fn output_dimensions(&self) -> image::ImageResult<(u32, u32)> {
+        let (w, h) = self.dimensions().await?;
+        let scale = self.output_scale(w, h);
+        if scale < 1.0 {
+            Ok((
+                (w as f32 * scale).max(1.0) as u32,
+                (h as f32 * scale).max(1.0) as u32,
+            ))
+        } else {
+            Ok((w, h))
         }
     }
 
