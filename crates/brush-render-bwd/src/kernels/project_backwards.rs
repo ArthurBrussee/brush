@@ -193,7 +193,34 @@ pub fn project_backwards_kernel(
         c01: v_conics_y * 0.5f32,
         c11: v_conics_z,
     };
-    let v_cov2d = inverse2x2_vjp(conic_inv, v_inv);
+    let v_cov2d_image = inverse2x2_vjp(conic_inv, v_inv);
+
+    // Differentiable per-splat screen-area regulariser. The 1σ ellipse area
+    // in pixels is π·sqrt(det(cov)); as a fraction of the image it's
+    //   area_frac = π · sqrt(det) / (W · H)
+    // The in-kernel loss contribution is `weight · max(0, area_frac - τ)^2`
+    // normalised by num_visible. Gradient flows analytically into v_cov2d via
+    //   d(sqrt(det))/d(cov.c00) = cov.c11 / (2·sqrt(det))
+    //   d(sqrt(det))/d(cov.c01) = -cov.c01 / sqrt(det)
+    //   d(sqrt(det))/d(cov.c11) = cov.c00 / (2·sqrt(det))
+    // When weight=0, dloss_darea=0 → contribution is 0 (branch-free).
+    let det = cov.c00 * cov.c11 - cov.c01 * cov.c01;
+    let sqrt_det = f32::sqrt(f32::max(det, 1.0e-20f32));
+    let pi = 3.14159274f32;
+    let img_w_f = u.img_w as f32;
+    let img_h_f = u.img_h as f32;
+    let area_frac = pi * sqrt_det / (img_w_f * img_h_f);
+    let excess = f32::max(0.0f32, area_frac - u.screen_area_threshold);
+    let dloss_darea =
+        2.0f32 * u.screen_area_penalty * excess / f32::max(u.num_visible as f32, 1.0f32);
+    let inv_imghw = 1.0f32 / (img_w_f * img_h_f);
+    let half_pi_over_sqrtdet = pi * 0.5f32 / sqrt_det * inv_imghw;
+    let pi_over_sqrtdet = pi / sqrt_det * inv_imghw;
+    let v_cov2d = Sym2 {
+        c00: v_cov2d_image.c00 + dloss_darea * cov.c11 * half_pi_over_sqrtdet,
+        c01: v_cov2d_image.c01 + dloss_darea * (-cov.c01) * pi_over_sqrtdet,
+        c11: v_cov2d_image.c11 + dloss_darea * cov.c00 * half_pi_over_sqrtdet,
+    };
 
     // covar = M * M^T (symmetric).
     let covar = m.outer_product_self();

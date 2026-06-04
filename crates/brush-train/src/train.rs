@@ -78,6 +78,15 @@ impl SplatTrainer {
 
         let ssim_enabled = config.ssim_weight > 0.0;
 
+        // Push the in-kernel screen-area regulariser config into the
+        // brush-render global so the host code's ProjectUniforms
+        // construction picks it up and the backward kernel applies the
+        // gradient contribution to v_cov2d.
+        brush_render::set_screen_area_penalty(
+            config.screen_area_penalty,
+            config.screen_area_threshold,
+        );
+
         // Growth is gated on the global iter. LOD phases run past
         // total_train_iters but their refines should never grow — clamp
         // here so growth_stop is never effectively past end-of-training.
@@ -366,6 +375,49 @@ impl SplatTrainer {
             .take()
             .expect("Can only refine if refine stats are initialized");
 
+        // Log per-splat screen-size distribution so we can track how
+        // many splats are visually large (and thus susceptible to the
+        // "big-low-α" failure mode). Uses `max_screen_size` (fraction of
+        // the smaller image dim covered by the larger 2D ellipse extent);
+        // area is approximated by squaring it (upper bound — exact for
+        // round splats, overestimates for needles). Cheap CPU pass on
+        // ~1M floats; gated on refine cadence anyway.
+        let ss_data = refiner
+            .max_screen_size
+            .clone()
+            .into_data_async()
+            .await
+            .expect("Failed to read screen size")
+            .into_vec::<f32>()
+            .expect("Failed to read screen size vec");
+        if !ss_data.is_empty() {
+            let mut sorted: Vec<f32> = ss_data.iter().copied().filter(|v| v.is_finite()).collect();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let n = sorted.len();
+            let pct = |p: f32| sorted[((p * (n - 1) as f32) as usize).min(n - 1)];
+            let n_total = n as f64;
+            let n_gt_025 = ss_data.iter().filter(|v| **v > 0.25).count();
+            let n_gt_010 = ss_data.iter().filter(|v| **v > 0.10).count();
+            let n_gt_005 = ss_data.iter().filter(|v| **v > 0.05).count();
+            // area fraction (upper bound) = max_dim^2
+            let n_area_gt_005 = ss_data.iter().filter(|v| (*v * *v) > 0.05).count();
+            let n_area_gt_010 = ss_data.iter().filter(|v| (*v * *v) > 0.10).count();
+            log::info!(
+                "screen_size iter={} n={} max_dim p50={:.4} p95={:.4} p99={:.4} max={:.4} frac>0.05={:.4} frac>0.10={:.4} frac>0.25={:.4} frac_area>0.05={:.4} frac_area>0.10={:.4}",
+                iter,
+                n,
+                pct(0.5),
+                pct(0.95),
+                pct(0.99),
+                pct(1.0),
+                n_gt_005 as f64 / n_total,
+                n_gt_010 as f64 / n_total,
+                n_gt_025 as f64 / n_total,
+                n_area_gt_005 as f64 / n_total,
+                n_area_gt_010 as f64 / n_total,
+            );
+        }
+
         let max_allowed_bounds = self.bounds.extent.max_element() * 100.0;
 
         // If not refining, update splat to step with gradients applied.
@@ -378,8 +430,12 @@ impl SplatTrainer {
         let alpha_mask = splats.opacities().lower_elem(MIN_OPACITY);
         let scales = splats.scales();
 
-        let scale_small = scales.clone().lower_elem(1e-10).any_dim(1).squeeze_dim(1);
+        // Note: we do NOT cull on a minimum scale. A genuinely flat splat
+        // (a thin "pancake" representing a surface) legitimately has a tiny
+        // smallest axis, so there's no correct min-scale threshold — the
+        // non-finite check below still removes actually-degenerate splats.
         let scale_big = scales
+            .clone()
             .greater_elem(max_allowed_bounds)
             .any_dim(1)
             .squeeze_dim(1);
@@ -409,11 +465,31 @@ impl SplatTrainer {
             .into_scalar_async::<i32>()
             .await
             .expect("Failed to count non-finite splats") as u32;
+
+        // "Poisoned" big-screen prune: kill splats whose max 2D screen extent
+        // exceeds the threshold (every refine, including post-growth). The
+        // freed budget is re-sampled below. This handles the hard outliers
+        // that the smooth split + area regulariser don't reach on their own.
+        let big_screen_mask = if self.config.kill_at_screen_size > 0.0 {
+            Some(
+                refiner
+                    .max_screen_size
+                    .clone()
+                    .greater_elem(self.config.kill_at_screen_size),
+            )
+        } else {
+            None
+        };
+
         let prune_mask = alpha_mask
-            .bool_or(scale_small)
             .bool_or(scale_big)
             .bool_or(bound_mask)
             .bool_or(non_finite_mask);
+        let prune_mask = if let Some(bsm) = big_screen_mask {
+            prune_mask.bool_or(bsm)
+        } else {
+            prune_mask
+        };
 
         let (mut splats, refiner, pruned_count) =
             prune_points(splats, &mut record, refiner, prune_mask).await;
@@ -436,35 +512,10 @@ impl SplatTrainer {
             split_inds.extend(resampled_inds);
         }
 
-        let pre_oversized = split_inds.len();
-        // Force-split oversized splats, gated by growth_stop_iter. Without
-        // the gate, oversized splats from an init ply keep splitting past
-        // the stop iter when there isn't enough training time for them to
-        // shrink first.
-        if self.config.split_at_screen_size > 0.0 && iter < self.config.growth_stop_iter {
-            let oversized = refiner.above_screen_size(self.config.split_at_screen_size);
-            let oversized_vec = oversized
-                .float()
-                .into_data_async()
-                .await
-                .expect("Failed to get oversized mask")
-                .into_vec::<f32>()
-                .expect("Failed to read oversized mask");
-            let mut budget = self
-                .config
-                .max_splats
-                .saturating_sub(splats.num_splats() + split_inds.len() as u32);
-            for (i, &v) in oversized_vec.iter().enumerate() {
-                if budget == 0 {
-                    break;
-                }
-                if v > 0.0 && split_inds.insert(i as i32) {
-                    budget -= 1;
-                }
-            }
-        }
-
-        let num_split_oversized = (split_inds.len() - pre_oversized) as u32;
+        // Big splats are no longer force-split in place — they're killed and
+        // resampled via `kill_at_screen_size` (the prune path above), so the
+        // "oversized split" count is always 0 now.
+        let num_split_oversized = 0u32;
 
         let pre_high_grad = split_inds.len();
         if iter < self.config.growth_stop_iter {
@@ -563,26 +614,59 @@ impl SplatTrainer {
             let cur_scales = cur_log_scale.clone().exp();
 
             let cur_opac = sigmoid(cur_raw_opac.clone());
-            let inv_opac: Tensor<1> = 1.0 - cur_opac;
-            let new_opac: Tensor<1> = 1.0 - inv_opac.sqrt();
+            let inv_opac: Tensor<1> = 1.0 - cur_opac.clone();
+            // Post-split child opacity: power law in transmittance,
+            //   a' = 1 - (1 - a)^p.
+            // Alpha compositing multiplies transmittance (1-a), so p encodes
+            // the effective overlap: p=1/2 reproduces the parent when the two
+            // children fully overlap (classic 3DGS); p=1 is full inheritance
+            // (no overlap). The covariance-aware split offsets the children
+            // ~2 child-stds apart (= 2·sqrt(1-k²)/k at k=1/√2), i.e. between 1
+            // and 2 effective overlapping copies — which is exactly where
+            // p = 1/√2 lands. A p-sweep confirmed the PSNR optimum at ~0.7
+            // with monotonically fewer low-opacity ambient splats. So p
+            // reuses the split's own constant.
+            let p = std::f32::consts::FRAC_1_SQRT_2;
+            let new_opac: Tensor<1> = 1.0 - inv_opac.powf_scalar(p);
             let new_raw_opac = inv_sigmoid(new_opac.clamp(MIN_OPACITY, 1.0 - MIN_OPACITY));
 
-            let f_clamped = std::f32::consts::FRAC_1_SQRT_2;
-            let offset_std = (1.0_f32 - f_clamped * f_clamped).sqrt();
-            let (new_log_scales, samples) = {
-                // Mirror split (.sample): 2-component mixture exactly
-                // preserves parent's covariance. Sample from parent's
-                // anisotropic gaussian with math-correct std.
-                let log_factor = f_clamped.ln();
-                let new_log_scales = cur_log_scale.clone() + log_factor;
-                let sample_local = Tensor::random(
-                    [refine_count, 3],
-                    Distribution::Normal(0.0, offset_std as f64),
-                    device,
-                ) * cur_scales;
-                let samples = quaternion_vec_multiply(cur_rots.clone(), sample_local);
-                (new_log_scales, samples)
-            };
+            // Smooth covariance-aware split. Per-axis shrink factor:
+            //   k_i = 1 - (1 - k) * (scale_i² / scale_max²)
+            // is k on the principal axis, smoothly approaching 1 on much-
+            // smaller axes. Mass-conserving on each axis independently:
+            //   new_scale_i = k_i * scale_i
+            //   offset_i    = sqrt(1 - k_i²) * scale_i (deterministic ±)
+            // Limits: isotropic → uniform shrink, diagonal offset (≈ the old
+            // iso mirror split). Needle → axial shrink + axial offset only.
+            // Pancake → in-plane shrink + offset, thin axis untouched. One
+            // function, no threshold.
+            //   k_i = 1 - (1 - k) · (s_i² / s_max²)        ∈ [k, 1]
+            //   new_scale_i = k_i · s_i
+            //   offset_i    = sqrt(1 - k_i²) · s_i         (deterministic ±)
+            // Mass-conserving on each axis: offset_i² + (k_i·s_i)² = s_i².
+            // k is pinned near 1/√2 (the variance-preserving 2-component
+            // mixture value); clamped to (0,1) for safety.
+            let k: f32 = self.config.split_anisotropic_k.max(1e-3).min(0.99);
+            let cur_scales_sq = cur_scales.clone().powi_scalar(2);
+            let max_scale_sq = cur_scales_sq.clone().max_dim(1).clamp_min(1e-30);
+            // ratio_i = s_i² / s_max²  (broadcast [N,3] / [N,1])
+            let ratio = cur_scales_sq / max_scale_sq;
+            // k_i = 1 - (1 - k) · ratio_i
+            let one_minus_k = 1.0_f32 - k;
+            let k_per_axis: Tensor<2> = -(ratio * one_minus_k) + 1.0;
+            let offset_factor_per_axis = (-k_per_axis.clone().powi_scalar(2) + 1.0)
+                .clamp_min(0.0)
+                .sqrt();
+            let offset_local = offset_factor_per_axis * cur_scales.clone();
+            let samples = quaternion_vec_multiply(cur_rots.clone(), offset_local);
+            // log_scale_diff_i = ln(k_i)  — applied additively to cur_log_scale below.
+            let log_scale_diff: Tensor<2> = k_per_axis.log();
+
+            let new_log_scales = cur_log_scale.clone() + log_scale_diff.clone();
+
+            // Children inherit the parent's rotation; the split is expressed
+            // entirely through the per-axis scale shrink + ±offset.
+            let child_rots = cur_rots.clone();
 
             // Shrink & offset existing splats.
 
@@ -605,9 +689,11 @@ impl SplatTrainer {
                 m.scatter(0, refine_inds.clone(), difference, IndexingUpdateOp::Add)
             });
 
+            // Child sits at parent_mean + samples (parent moves to
+            // parent_mean - samples) — anti-correlated, centroid-preserving.
             // Build new transforms row: means(3) + rotations(4) + log_scales(3)
             let new_transforms =
-                Tensor::cat(vec![cur_means + samples, cur_rots, new_log_scales], 1);
+                Tensor::cat(vec![cur_means + samples, child_rots, new_log_scales], 1);
             // Optimizer state lives on the inner (non-autodiff) device.
             let opt_device = device.clone().inner();
             let refine_inds_opt = refine_inds.to_device(&opt_device);
@@ -663,6 +749,7 @@ impl SplatTrainer {
             let new_opac = sigmoid(f) - minus_opac;
             inv_sigmoid(new_opac.clamp(1e-12, 1.0 - 1e-12))
         });
+
         self.optim = Some(create_optimizer_from_config().load_record(record));
         splats
     }

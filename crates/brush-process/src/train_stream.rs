@@ -412,6 +412,16 @@ pub(crate) async fn train_stream(
                     .log_refine_stats(iter, &refine, refine_dur)
                     .unwrap();
             }
+
+            // Sample splat distribution shape (anisotropy, opacity, scale)
+            // every 1000 iters. Read-back is non-trivial, so don't run it
+            // every refine.
+            if iter % 1000 == 0 || is_last_step {
+                visualize
+                    .log_splat_distribution_stats(iter, splats.clone())
+                    .await
+                    .unwrap();
+            }
         }
 
         if refine.num_added > 0 {

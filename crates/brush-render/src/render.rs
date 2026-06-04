@@ -70,6 +70,7 @@ impl SplatOps<Self> for MainBackendBase {
             ((camera.fov_x as f32).hypot(camera.fov_y as f32) * 1.05).min(2.0 * PI - 1e-6) * 0.5;
         let pinhole_params = camera.build_pinhole_params(img_size);
 
+        let (screen_area_penalty, screen_area_threshold) = crate::screen_area_penalty_config();
         let mut project_uniforms = shaders::helpers::ProjectUniforms {
             viewmat: glam::Mat4::from(camera.world_to_local()).to_cols_array_2d(),
             camera_model: camera.camera_model,
@@ -81,6 +82,8 @@ impl SplatOps<Self> for MainBackendBase {
             sh_degree,
             total_splats,
             num_visible: 0, // num_visible — not yet known.
+            screen_area_penalty,
+            screen_area_threshold,
             jacobian_clamp_limits: calculate_jacobian_clamp_limits(
                 img_size,
                 pinhole_params,

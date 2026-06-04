@@ -23,6 +23,7 @@ tokio.workspace = true
 rerun.workspace = true
 glam.workspace = true
 image.workspace = true
+log.workspace = true
 
 [lints]
 workspace = true

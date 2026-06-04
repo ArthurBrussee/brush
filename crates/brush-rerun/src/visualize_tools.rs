@@ -30,6 +30,45 @@ mod visualize_tools_impl {
 
     use super::VisualizeTools;
 
+    struct Percentiles {
+        p01: f64,
+        p25: f64,
+        p50: f64,
+        p75: f64,
+        p95: f64,
+        p99: f64,
+        max: f64,
+    }
+
+    fn percentiles(values: &[f32]) -> Percentiles {
+        let mut sorted: Vec<f32> = values.iter().copied().filter(|v| v.is_finite()).collect();
+        if sorted.is_empty() {
+            return Percentiles {
+                p01: 0.0,
+                p25: 0.0,
+                p50: 0.0,
+                p75: 0.0,
+                p95: 0.0,
+                p99: 0.0,
+                max: 0.0,
+            };
+        }
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let pct = |p: f32| -> f64 {
+            let idx = ((p * (sorted.len() as f32 - 1.0)).round() as usize).min(sorted.len() - 1);
+            sorted[idx] as f64
+        };
+        Percentiles {
+            p01: pct(0.01),
+            p25: pct(0.25),
+            p50: pct(0.50),
+            p75: pct(0.75),
+            p95: pct(0.95),
+            p99: pct(0.99),
+            max: pct(1.00),
+        }
+    }
+
     fn resize_to_max(img: image::RgbImage, max_size: u32) -> image::RgbImage {
         let (w, h) = img.dimensions();
         let longest = w.max(h);
@@ -392,6 +431,160 @@ mod visualize_tools_impl {
             Ok(())
         }
 
+        /// Log distributional shape stats for the current splat config: scale,
+        /// opacity, and anisotropy percentiles + degenerate-tail counts.
+        ///
+        /// Anisotropy is reported as two factors derived from the sorted scales
+        /// (s_max >= s_med >= s_min):
+        /// - spindle = s_max / s_med ("needle-likeness", higher = worse)
+        /// - flatness = s_med / s_min ("pancake-likeness", high = 2D surface, usually ok)
+        pub async fn log_splat_distribution_stats(&self, iter: u32, splats: Splats) -> Result<()> {
+            let scales_data = splats
+                .scales()
+                .into_data_async()
+                .await?
+                .into_vec::<f32>()
+                .expect("scales");
+            let opac_data = splats
+                .opacities()
+                .into_data_async()
+                .await?
+                .into_vec::<f32>()
+                .expect("opacities");
+
+            let n = opac_data.len();
+            if n == 0 {
+                return Ok(());
+            }
+            let mut max_scales = Vec::with_capacity(n);
+            let mut min_scales = Vec::with_capacity(n);
+            let mut spindle = Vec::with_capacity(n);
+            let mut flatness = Vec::with_capacity(n);
+            for chunk in scales_data.chunks(3) {
+                let mut s = [chunk[0], chunk[1], chunk[2]];
+                s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let smin = s[0].max(1e-30);
+                let smed = s[1].max(1e-30);
+                let smax = s[2].max(1e-30);
+                max_scales.push(smax);
+                min_scales.push(smin);
+                spindle.push(smax / smed);
+                flatness.push(smed / smin);
+            }
+
+            let log10 = |v: &[f32]| -> Vec<f32> { v.iter().map(|x| x.log10()).collect() };
+            let max_log = log10(&max_scales);
+            let min_log = log10(&min_scales);
+
+            let n_total = n as f64;
+            let frac = |p: usize| (p as f64) / n_total;
+
+            let n_spindle_gt_3 = spindle.iter().filter(|x| **x > 3.0).count();
+            let n_spindle_gt_5 = spindle.iter().filter(|x| **x > 5.0).count();
+            let n_spindle_gt_10 = spindle.iter().filter(|x| **x > 10.0).count();
+            let n_opac_lt_05 = opac_data.iter().filter(|x| **x < 0.05).count();
+            let n_opac_lt_20 = opac_data.iter().filter(|x| **x < 0.20).count();
+
+            let spindle_pct = percentiles(&spindle);
+            let scale_max_pct = percentiles(&max_log);
+            let opac_pct = percentiles(&opac_data);
+
+            log::info!(
+                concat!(
+                    "splat_dist iter={iter} n={n} ",
+                    "spindle p50={sp50:.2} p95={sp95:.2} p99={sp99:.2} max={spmax:.2} ",
+                    "frac_gt_3={fr3:.4} frac_gt_5={fr5:.4} frac_gt_10={fr10:.4} ",
+                    "scale_max_log10 p50={smp50:.2} p99={smp99:.2} max={smmax:.2} ",
+                    "opac p50={op50:.2} p25={op25:.2} p01={op01:.2} ",
+                    "frac_opac_lt_05={fol05:.4} frac_opac_lt_20={fol20:.4}"
+                ),
+                iter = iter,
+                n = n,
+                sp50 = spindle_pct.p50,
+                sp95 = spindle_pct.p95,
+                sp99 = spindle_pct.p99,
+                spmax = spindle_pct.max,
+                fr3 = frac(n_spindle_gt_3),
+                fr5 = frac(n_spindle_gt_5),
+                fr10 = frac(n_spindle_gt_10),
+                smp50 = scale_max_pct.p50,
+                smp99 = scale_max_pct.p99,
+                smmax = scale_max_pct.max,
+                op50 = opac_pct.p50,
+                op25 = opac_pct.p25,
+                op01 = opac_pct.p01,
+                fol05 = frac(n_opac_lt_05),
+                fol20 = frac(n_opac_lt_20),
+            );
+
+            if !self.rec.is_enabled() {
+                return Ok(());
+            }
+            self.rec.set_time_sequence("iterations", iter);
+
+            self.log_percentiles("splat_dist/scale_max_log10", &max_log)?;
+            self.log_percentiles("splat_dist/scale_min_log10", &min_log)?;
+            self.log_percentiles("splat_dist/opacity", &opac_data)?;
+            self.log_percentiles("splat_dist/spindle", &spindle)?;
+            self.log_percentiles("splat_dist/flatness", &flatness)?;
+
+            self.rec.log(
+                "splat_dist/frac_spindle_gt_3",
+                &rerun::Scalars::new(vec![frac(n_spindle_gt_3)]),
+            )?;
+            self.rec.log(
+                "splat_dist/frac_spindle_gt_5",
+                &rerun::Scalars::new(vec![frac(n_spindle_gt_5)]),
+            )?;
+            self.rec.log(
+                "splat_dist/frac_spindle_gt_10",
+                &rerun::Scalars::new(vec![frac(n_spindle_gt_10)]),
+            )?;
+            self.rec.log(
+                "splat_dist/frac_opac_lt_05",
+                &rerun::Scalars::new(vec![frac(n_opac_lt_05)]),
+            )?;
+            self.rec.log(
+                "splat_dist/frac_opac_lt_20",
+                &rerun::Scalars::new(vec![frac(n_opac_lt_20)]),
+            )?;
+
+            Ok(())
+        }
+
+        fn log_percentiles(&self, path_prefix: &str, values: &[f32]) -> Result<()> {
+            let p = percentiles(values);
+            self.rec.log(
+                format!("{path_prefix}/p01"),
+                &rerun::Scalars::new(vec![p.p01]),
+            )?;
+            self.rec.log(
+                format!("{path_prefix}/p25"),
+                &rerun::Scalars::new(vec![p.p25]),
+            )?;
+            self.rec.log(
+                format!("{path_prefix}/p50"),
+                &rerun::Scalars::new(vec![p.p50]),
+            )?;
+            self.rec.log(
+                format!("{path_prefix}/p75"),
+                &rerun::Scalars::new(vec![p.p75]),
+            )?;
+            self.rec.log(
+                format!("{path_prefix}/p95"),
+                &rerun::Scalars::new(vec![p.p95]),
+            )?;
+            self.rec.log(
+                format!("{path_prefix}/p99"),
+                &rerun::Scalars::new(vec![p.p99]),
+            )?;
+            self.rec.log(
+                format!("{path_prefix}/max"),
+                &rerun::Scalars::new(vec![p.max]),
+            )?;
+            Ok(())
+        }
+
         pub fn is_enabled(&self) -> bool {
             self.rec.is_enabled()
         }
@@ -551,6 +744,15 @@ mod visualize_tools_impl {
         #[allow(unused_variables)]
         #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
         pub fn log_splat_stats(&self, _iter: u32, _num_splats: u32) -> Result<()> {
+            Ok(())
+        }
+
+        #[allow(unused_variables)]
+        pub async fn log_splat_distribution_stats(
+            &self,
+            _iter: u32,
+            _splats: Splats,
+        ) -> Result<()> {
             Ok(())
         }
 
