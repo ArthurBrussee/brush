@@ -110,6 +110,21 @@ impl LoadImage {
         }
     }
 
+    /// Read just the image dimensions from the file header, without decoding
+    /// the pixels. Much cheaper than `load()` when only the size is needed
+    /// (e.g. formats that carry intrinsics but not image dimensions).
+    pub async fn dimensions(&self) -> image::ImageResult<(u32, u32)> {
+        let mut img_bytes = vec![];
+        self.vfs
+            .reader_at_path(&self.path)
+            .await?
+            .read_to_end(&mut img_bytes)
+            .await?;
+        image::ImageReader::new(Cursor::new(&img_bytes))
+            .with_guessed_format()?
+            .into_dimensions()
+    }
+
     pub fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
     }

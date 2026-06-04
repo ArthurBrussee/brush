@@ -12,7 +12,6 @@ use brush_render::kernels::camera_model::CameraModel;
 use brush_render::kernels::camera_model::CameraModel::{Pinhole, RadialTangential8};
 use brush_render::kernels::camera_model::radial_tangential_8::RadialTangential8Params;
 use brush_vfs::BrushVfs;
-use image::GenericImageView;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -126,9 +125,9 @@ async fn read_dataset_inner(
         );
 
         // The csv carries no image dimensions; intrinsics are resolution
-        // independent once expressed as fov + normalized center, so reading the
-        // (possibly downscaled) image just to get its aspect is fine.
-        let (w, h) = image.load().await?.dimensions();
+        // independent once expressed as fov + normalized center, so a
+        // header-only dimension read (no full decode) is enough.
+        let (w, h) = image.dimensions().await?;
 
         let camera = row_to_camera(&fields, &header, w, h);
         if !camera.is_valid() {
