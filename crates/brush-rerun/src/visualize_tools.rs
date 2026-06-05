@@ -435,9 +435,9 @@ mod visualize_tools_impl {
         /// opacity, and anisotropy percentiles + degenerate-tail counts.
         ///
         /// Anisotropy is reported as two factors derived from the sorted scales
-        /// (s_max >= s_med >= s_min):
-        /// - spindle = s_max / s_med ("needle-likeness", higher = worse)
-        /// - flatness = s_med / s_min ("pancake-likeness", high = 2D surface, usually ok)
+        /// (`s_max` >= `s_med` >= `s_min)`:
+        /// - spindle = `s_max` / `s_med` ("needle-likeness", higher = worse)
+        /// - flatness = `s_med` / `s_min` ("pancake-likeness", high = 2D surface, usually ok)
         pub async fn log_splat_distribution_stats(&self, iter: u32, splats: Splats) -> Result<()> {
             let scales_data = splats
                 .scales()

@@ -89,18 +89,12 @@ pub struct TrainConfig {
 
     /// Weight on the differentiable per-splat screen-area penalty, applied in
     /// the `project_backwards` kernel: the analytic gradient of
-    /// `weight·max(0, area_frac - threshold)² / num_visible` (area_frac =
-    /// π·sqrt(det(cov_2d))/(W·H)) is added to the 2D-covariance gradient and
-    /// flows back to scales/rotations/means. A gentle nudge toward small
-    /// on-screen footprints; `kill_at_screen_size` handles the hard outliers.
-    /// 0 disables.
-    #[arg(long, help_heading = "Training options", default_value = "0.01")]
+    /// `weight·area_frac² / num_visible` (`area_frac` = `π·sqrt(det(cov_2d))/(W·H)`)
+    /// is added to the 2D-covariance gradient and flows back to
+    /// scales/rotations/means. A gentle nudge toward small on-screen
+    /// footprints; `kill_at_screen_size` handles the hard outliers. 0 disables.
+    #[arg(long, help_heading = "Training options", default_value = "0.005")]
     pub screen_area_penalty: f32,
-
-    /// Threshold for `screen_area_penalty` (fraction of image area). Only the
-    /// excess `area_frac - threshold` is penalised.
-    #[arg(long, help_heading = "Training options", default_value = "0.05")]
-    pub screen_area_threshold: f32,
 
     /// Weight of SSIM loss (compared to l1 loss)
     #[clap(long, help_heading = "Training options", default_value = "0.2")]

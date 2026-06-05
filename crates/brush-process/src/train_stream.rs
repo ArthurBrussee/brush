@@ -413,10 +413,9 @@ pub(crate) async fn train_stream(
                     .unwrap();
             }
 
-            // Sample splat distribution shape (anisotropy, opacity, scale)
-            // every 1000 iters. Read-back is non-trivial, so don't run it
-            // every refine.
-            if iter % 1000 == 0 || is_last_step {
+            // Distribution stats need a GPU read-back, so sample them on a
+            // coarser cadence than the per-refine stats.
+            if iter.is_multiple_of(rerun_config.rerun_log_distribution_every) || is_last_step {
                 visualize
                     .log_splat_distribution_stats(iter, splats.clone())
                     .await

@@ -84,7 +84,6 @@ pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
         render_mode: SplatRenderMode,
         v_combined: FloatTensor<B>,
         screen_area_penalty: f32,
-        screen_area_threshold: f32,
     ) -> SplatGrads<B>;
 }
 
@@ -108,7 +107,6 @@ struct GaussianBackwardState<B: Backend> {
     background: Vec3,
     img_size: glam::UVec2,
     screen_area_penalty: f32,
-    screen_area_threshold: f32,
 }
 
 #[derive(Debug)]
@@ -160,7 +158,6 @@ impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards 
             state.render_mode,
             rasterize_grads.v_combined,
             state.screen_area_penalty,
-            state.screen_area_threshold,
         );
 
         if let Some(node) = transforms_parent {
@@ -238,7 +235,6 @@ pub async fn render_splats(
     img_size: glam::UVec2,
     background: Vec3,
     screen_area_penalty: f32,
-    screen_area_threshold: f32,
 ) -> SplatOutputDiff {
     render_splats_with_pass(
         splats,
@@ -247,7 +243,6 @@ pub async fn render_splats(
         background,
         brush_render::gaussian_splats::RasterPass::Backward,
         screen_area_penalty,
-        screen_area_threshold,
     )
     .await
 }
@@ -263,7 +258,6 @@ pub async fn render_splats_with_pass(
     background: Vec3,
     pass: brush_render::gaussian_splats::RasterPass,
     screen_area_penalty: f32,
-    screen_area_threshold: f32,
 ) -> SplatOutputDiff {
     splats.clone().validate_values().await;
 
@@ -339,7 +333,6 @@ pub async fn render_splats_with_pass(
                 background,
                 img_size,
                 screen_area_penalty,
-                screen_area_threshold,
             };
             prep.finish(state, output.out_img)
         }
@@ -462,13 +455,11 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
         render_mode: SplatRenderMode,
         v_combined: FloatTensor<Self>,
         screen_area_penalty: f32,
-        screen_area_threshold: f32,
     ) -> SplatGrads<Self> {
         // The screen-area regulariser only acts in the backward kernel, so we
-        // stamp the values onto the uniforms here rather than in the forward.
+        // stamp the weight onto the uniforms here rather than in the forward.
         let mut project_uniforms = project_uniforms;
         project_uniforms.screen_area_penalty = screen_area_penalty;
-        project_uniforms.screen_area_threshold = screen_area_threshold;
 
         #[derive(Debug)]
         struct CustomOp {
@@ -504,7 +495,6 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
                     h.get_float_tensor::<MainBackendBase>(v_combined_in),
                     // Already stamped onto the uniforms by the outer project_bwd.
                     self.project_uniforms.screen_area_penalty,
-                    self.project_uniforms.screen_area_threshold,
                 );
 
                 h.register_float_tensor::<MainBackendBase>(&v_transforms.id, grads.v_transforms);

@@ -79,7 +79,6 @@ pub struct ProjectUniforms {
     pub total_splats: u32,
     pub num_visible: u32,
     pub screen_area_penalty: f32,
-    pub screen_area_threshold: f32,
 }
 
 #[cube]

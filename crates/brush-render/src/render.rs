@@ -81,11 +81,8 @@ impl SplatOps<Self> for MainBackendBase {
             sh_degree,
             total_splats,
             num_visible: 0, // num_visible — not yet known.
-            // Screen-area regulariser is a backward-only concern; the forward
-            // leaves these at 0 and `project_bwd` overwrites them with the
-            // values threaded down from the training config.
+            // Backward-only; the forward leaves it 0 and `project_bwd` sets it.
             screen_area_penalty: 0.0,
-            screen_area_threshold: 0.0,
             jacobian_clamp_limits: calculate_jacobian_clamp_limits(
                 img_size,
                 pinhole_params,

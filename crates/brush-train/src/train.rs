@@ -139,7 +139,6 @@ impl SplatTrainer {
                 img_size,
                 background,
                 self.config.screen_area_penalty,
-                self.config.screen_area_threshold,
             )
             .instrument(trace_span!("Forward"))
             .await;
@@ -373,13 +372,9 @@ impl SplatTrainer {
             .take()
             .expect("Can only refine if refine stats are initialized");
 
-        // Log per-splat screen-size distribution so we can track how
-        // many splats are visually large (and thus susceptible to the
-        // "big-low-α" failure mode). Uses `max_screen_size` (fraction of
-        // the smaller image dim covered by the larger 2D ellipse extent);
-        // area is approximated by squaring it (upper bound — exact for
-        // round splats, overestimates for needles). Cheap CPU pass on
-        // ~1M floats; gated on refine cadence anyway.
+        // Track how many splats are visually large (the "big-low-α" failure
+        // mode). `max_screen_size` is the larger 2D ellipse extent as a
+        // fraction of the image dim; area is approximated by its square.
         let ss_data = refiner
             .max_screen_size
             .clone()
@@ -397,7 +392,6 @@ impl SplatTrainer {
             let n_gt_025 = ss_data.iter().filter(|v| **v > 0.25).count();
             let n_gt_010 = ss_data.iter().filter(|v| **v > 0.10).count();
             let n_gt_005 = ss_data.iter().filter(|v| **v > 0.05).count();
-            // area fraction (upper bound) = max_dim^2
             let n_area_gt_005 = ss_data.iter().filter(|v| (*v * *v) > 0.05).count();
             let n_area_gt_010 = ss_data.iter().filter(|v| (*v * *v) > 0.10).count();
             log::info!(
@@ -604,67 +598,48 @@ impl SplatTrainer {
             let cur_sh_coeffs = splats.sh_coeffs.val().select(0, refine_inds.clone());
             let cur_raw_opac = splats.raw_opacities.val().select(0, refine_inds.clone());
 
-            // The amount to offset the scale and opacity should maybe depend on how far away we have sampled these gaussians,
-            // but a fixed amount seems to work ok. The only note is that divide by _less_ than SQRT(2) seems to exponentially
-            // blow up, as more 'mass' is added each refine.
-            // let scale_div = Tensor::ones_like(&cur_log_scale) * SQRT_2.ln();
-            //
             let cur_scales = cur_log_scale.clone().exp();
 
             let cur_opac = sigmoid(cur_raw_opac.clone());
-            let inv_opac: Tensor<1> = 1.0 - cur_opac.clone();
-            // Post-split child opacity: power law in transmittance,
-            //   a' = 1 - (1 - a)^p.
-            // Alpha compositing multiplies transmittance (1-a), so p encodes
-            // the effective overlap: p=1/2 reproduces the parent when the two
-            // children fully overlap (classic 3DGS); p=1 is full inheritance
-            // (no overlap). The covariance-aware split offsets the children
-            // ~2 child-stds apart (= 2·sqrt(1-k²)/k at k=1/√2), i.e. between 1
-            // and 2 effective overlapping copies — which is exactly where
-            // p = 1/√2 lands. A p-sweep confirmed the PSNR optimum at ~0.7
-            // with monotonically fewer low-opacity ambient splats. So p
-            // reuses the split's own constant.
+            let inv_opac: Tensor<1> = 1.0 - cur_opac;
+            // Post-split child opacity as a power law in transmittance,
+            // `a' = 1 - (1 - a)^p`. Alpha compositing multiplies transmittance
+            // (1-a), so p encodes the children's effective overlap: p=1/2
+            // recreates the parent when they fully overlap (classic 3DGS),
+            // p=1 is full inheritance (no overlap). The split offsets children
+            // ~2 child-stds apart at k=1/√2, landing p there too.
             let p = std::f32::consts::FRAC_1_SQRT_2;
             let new_opac: Tensor<1> = 1.0 - inv_opac.powf_scalar(p);
             let new_raw_opac = inv_sigmoid(new_opac.clamp(MIN_OPACITY, 1.0 - MIN_OPACITY));
 
-            // Smooth covariance-aware split. Per-axis shrink factor:
-            //   k_i = 1 - (1 - k) * (scale_i² / scale_max²)
-            // is k on the principal axis, smoothly approaching 1 on much-
-            // smaller axes. Mass-conserving on each axis independently:
-            //   new_scale_i = k_i * scale_i
-            //   offset_i    = sqrt(1 - k_i²) * scale_i (deterministic ±)
-            // Limits: isotropic → uniform shrink, diagonal offset (≈ the old
-            // iso mirror split). Needle → axial shrink + axial offset only.
-            // Pancake → in-plane shrink + offset, thin axis untouched. One
-            // function, no threshold.
-            //   k_i = 1 - (1 - k) · (s_i² / s_max²)        ∈ [k, 1]
-            //   new_scale_i = k_i · s_i
-            //   offset_i    = sqrt(1 - k_i²) · s_i         (deterministic ±)
-            // Mass-conserving on each axis: offset_i² + (k_i·s_i)² = s_i².
-            // k is pinned near 1/√2 (the variance-preserving 2-component
-            // mixture value); clamped to (0,1) for safety.
-            let k: f32 = self.config.split_anisotropic_k.max(1e-3).min(0.99);
+            // Smooth covariance-aware split. Per-axis shrink + mass-conserving
+            // offset (one child at +offset, the other at -offset):
+            //   k_i      = 1 - (1 - k) · (s_i² / s_max²)   ∈ [k, 1]
+            //   scale_i  = k_i · s_i
+            //   offset_i = sqrt(1 - k_i²) · s_i
+            // The principal axis shrinks by k while much-smaller axes are left
+            // ~unchanged, so an isotropic splat shrinks uniformly (≈ the old
+            // iso mirror split), a needle splits along its long axis, and a
+            // pancake splits in-plane. k is pinned near 1/√2 (the
+            // variance-preserving 2-component value); clamped to (0,1).
+            let k = self.config.split_anisotropic_k.clamp(1e-3, 0.99);
             let cur_scales_sq = cur_scales.clone().powi_scalar(2);
             let max_scale_sq = cur_scales_sq.clone().max_dim(1).clamp_min(1e-30);
-            // ratio_i = s_i² / s_max²  (broadcast [N,3] / [N,1])
             let ratio = cur_scales_sq / max_scale_sq;
-            // k_i = 1 - (1 - k) · ratio_i
             let one_minus_k = 1.0_f32 - k;
             let k_per_axis: Tensor<2> = -(ratio * one_minus_k) + 1.0;
             let offset_factor_per_axis = (-k_per_axis.clone().powi_scalar(2) + 1.0)
                 .clamp_min(0.0)
                 .sqrt();
-            let offset_local = offset_factor_per_axis * cur_scales.clone();
+            let offset_local = offset_factor_per_axis * cur_scales;
             let samples = quaternion_vec_multiply(cur_rots.clone(), offset_local);
-            // log_scale_diff_i = ln(k_i)  — applied additively to cur_log_scale below.
             let log_scale_diff: Tensor<2> = k_per_axis.log();
 
-            let new_log_scales = cur_log_scale.clone() + log_scale_diff.clone();
+            let new_log_scales = cur_log_scale.clone() + log_scale_diff;
 
             // Children inherit the parent's rotation; the split is expressed
             // entirely through the per-axis scale shrink + ±offset.
-            let child_rots = cur_rots.clone();
+            let child_rots = cur_rots;
 
             // Shrink & offset existing splats.
 

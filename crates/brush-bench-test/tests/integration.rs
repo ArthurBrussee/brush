@@ -170,7 +170,7 @@ async fn test_forward_rendering() {
         Pinhole,
     );
     let img_size = glam::uvec2(64, 64);
-    let result = render_splats(splats, &camera, img_size, Vec3::ZERO, 0.0, 0.0).await;
+    let result = render_splats(splats, &camera, img_size, Vec3::ZERO, 0.0).await;
     assert!(result.num_visible > 0, "no splats rendered");
     let data = result
         .img
@@ -307,7 +307,7 @@ async fn test_gradient_validation() {
     let img_size = glam::uvec2(64, 64);
 
     // Clone splats since render_splats takes ownership and we need splats for gradient validation
-    let result = render_splats(splats.clone(), &camera, img_size, Vec3::ZERO, 0.0, 0.0).await;
+    let result = render_splats(splats.clone(), &camera, img_size, Vec3::ZERO, 0.0).await;
     splats.bwd_validate(result.img.mean()).await;
 }
 

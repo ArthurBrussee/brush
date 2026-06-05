@@ -112,15 +112,13 @@ impl SplatBwdOps<Self> for MainBackendBase {
         render_mode: SplatRenderMode,
         v_combined: FloatTensor<Self>,
         screen_area_penalty: f32,
-        screen_area_threshold: f32,
     ) -> SplatGrads<Self> {
         let _span = tracing::trace_span!("project_bwd").entered();
 
         // The screen-area regulariser only acts in this backward kernel, so we
-        // stamp the values onto the uniforms here rather than in the forward.
+        // stamp the weight onto the uniforms here rather than in the forward.
         let mut project_uniforms = project_uniforms;
         project_uniforms.screen_area_penalty = screen_area_penalty;
-        project_uniforms.screen_area_threshold = screen_area_threshold;
 
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
