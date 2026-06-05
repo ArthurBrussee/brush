@@ -93,7 +93,7 @@ pub struct TrainConfig {
     /// is added to the 2D-covariance gradient and flows back to
     /// scales/rotations/means. A gentle nudge toward small on-screen
     /// footprints; `kill_at_screen_size` handles the hard outliers. 0 disables.
-    #[arg(long, help_heading = "Training options", default_value = "0.005")]
+    #[arg(long, help_heading = "Training options", default_value = "0.05")]
     pub screen_area_penalty: f32,
 
     /// Weight of SSIM loss (compared to l1 loss)
