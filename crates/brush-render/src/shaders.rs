@@ -26,6 +26,8 @@ pub mod helpers {
         pub sh_degree: u32,
         pub total_splats: u32,
         pub num_visible: u32,
+        /// Weight on the in-kernel screen-area regulariser. 0 disables.
+        pub screen_area_penalty: f32,
 
         // precomputed limits used for clamping the projection Jacobian
         pub jacobian_clamp_limits: JacobianClampLimits,
@@ -61,6 +63,7 @@ pub mod helpers {
                 self.sh_degree,
                 self.total_splats,
                 self.num_visible,
+                self.screen_area_penalty,
             )
         }
     }

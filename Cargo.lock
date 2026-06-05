@@ -1158,6 +1158,7 @@ dependencies = [
  "clap",
  "glam",
  "image",
+ "log",
  "rerun",
  "serde",
  "tokio",
