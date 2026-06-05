@@ -66,10 +66,46 @@ pub struct Splats {
     pub raw_opacities: Param<Tensor<1>>,
     #[module(skip)]
     pub render_mip: bool,
+    /// Optional per-splat world-space scale floor (Mip-Splatting's 3D filter).
+    /// Frozen, camera-derived, never optimized and never exported — a pure
+    /// training-time pressure. When set, the render path inflates each splat's
+    /// covariance to `sqrt(scale² + f²)` and energy-compensates opacity. `[N]`.
+    #[module(skip)]
+    pub min_scale: Option<Tensor<1>>,
 }
 
 pub fn inverse_sigmoid(x: f32) -> f32 {
     (x / (1.0 - x)).ln()
+}
+
+/// Mip-Splatting 3D smoothing filter: fold a per-splat world-space scale floor
+/// `f` `[N]` into the packed `transforms` `[N,10]` and `raw_opac` `[N]`. Scales
+/// become `sqrt(s² + f²)` and opacity is energy-compensated by `sqrt(det1/det2)`
+/// over the three world axes. Differentiable w.r.t. the learned scale/opacity;
+/// `f` is treated as a constant. This is the single source of truth for the
+/// floor — used by both render paths and by [`Splats::bake_min_scale`].
+pub fn fold_min_scale(
+    transforms: Tensor<2>,
+    raw_opac: Tensor<1>,
+    f: Tensor<1>,
+) -> (Tensor<2>, Tensor<1>) {
+    let n = transforms.dims()[0] as i32;
+    let log_scales = transforms.clone().slice(s![.., 7..10]); // [N,3]
+    let s2 = log_scales.mul_scalar(2.0).exp(); // s² = exp(2·log) [N,3]
+    let f2 = f.clone().mul(f).reshape([n, 1]); // [N,1]
+    let s2f = s2.clone().add(f2); // s² + f² [N,3]
+
+    let new_log = s2f.clone().log().mul_scalar(0.5); // log(sqrt(s²+f²)) [N,3]
+    let transforms = transforms.slice_assign(s![.., 7..10], new_log);
+
+    let det = |t: Tensor<2>| {
+        t.clone().slice(s![.., 0..1]) * t.clone().slice(s![.., 1..2]) * t.slice(s![.., 2..3])
+    };
+    let coef = (det(s2).div(det(s2f))).sqrt().reshape([n]); // sqrt(det1/det2) [N]
+    let opac = sigmoid(raw_opac).mul(coef).clamp(1e-6, 1.0 - 1e-6);
+    let raw_opac = opac.clone().div(opac.neg().add_scalar(1.0)).log(); // logit
+
+    (transforms, raw_opac)
 }
 
 impl Splats {
@@ -143,7 +179,16 @@ impl Splats {
             sh_coeffs: Param::initialized(ParamId::new(), sh_coeffs.detach().require_grad()),
             raw_opacities: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
             render_mip: mode == SplatRenderMode::Mip,
+            min_scale: None,
         }
+    }
+
+    /// Attach a per-splat world-space scale floor (see [`Splats::min_scale`]).
+    /// `f` must be `[num_splats]`. Training-only; cleared by refine and never
+    /// serialized.
+    pub fn with_min_scale(mut self, f: Tensor<1>) -> Self {
+        self.min_scale = Some(f);
+        self
     }
 
     /// Get means (positions) — slice of transforms columns 0..3.
@@ -161,12 +206,50 @@ impl Splats {
         self.transforms.val().slice(s![.., 7..10])
     }
 
+    /// Post-activation opacity, with the 3D-filter energy compensation folded
+    /// in when a `min_scale` floor is set (see [`fold_min_scale`]). This is the
+    /// splat's *real* opacity — callers (export, refine decisions, viewer)
+    /// should use it rather than reaching for `raw_opacities`.
     pub fn opacities(&self) -> Tensor<1> {
-        sigmoid(self.raw_opacities.val())
+        match &self.min_scale {
+            Some(f) => {
+                let (_, raw_opac) =
+                    fold_min_scale(self.transforms.val(), self.raw_opacities.val(), f.clone());
+                sigmoid(raw_opac)
+            }
+            None => sigmoid(self.raw_opacities.val()),
+        }
     }
 
+    /// World-space scales, with the 3D-filter floor folded in when `min_scale`
+    /// is set: `sqrt(scale² + f²)`. This is the splat's *real* size — the floor
+    /// is part of the splat's definition, so renders/exports use this, not the
+    /// raw `log_scales`.
     pub fn scales(&self) -> Tensor<2> {
-        self.log_scales().exp()
+        match &self.min_scale {
+            Some(f) => {
+                let (transforms, _) =
+                    fold_min_scale(self.transforms.val(), self.raw_opacities.val(), f.clone());
+                transforms.slice(s![.., 7..10]).exp()
+            }
+            None => self.log_scales().exp(),
+        }
+    }
+
+    /// Permanently fold the `min_scale` floor into the raw scale/opacity params
+    /// and clear it, yielding a plain canonical splat that renders identically.
+    /// Used at ply export so the floor is written as ordinary derived scales —
+    /// never as a separate field.
+    pub fn bake_min_scale(mut self) -> Self {
+        if let Some(f) = self.min_scale.take() {
+            let (transforms, raw_opac) =
+                fold_min_scale(self.transforms.val(), self.raw_opacities.val(), f);
+            self.transforms =
+                Param::initialized(self.transforms.id, transforms.detach().require_grad());
+            self.raw_opacities =
+                Param::initialized(self.raw_opacities.id, raw_opac.detach().require_grad());
+        }
+        self
     }
 
     pub fn num_splats(&self) -> u32 {
@@ -288,14 +371,23 @@ pub async fn render_splats(
     splats.clone().validate_values().await;
 
     let sh_coeffs = splats.sh_coeffs.into_value();
-    let raw_opacities = splats.raw_opacities.into_value();
+
+    // Fold the 3D-filter floor into scales/opacity first (the floor is part of
+    // the splat's definition, so eval/viewer render with it just like training).
+    let (transforms, raw_opacities) = match &splats.min_scale {
+        Some(f) => fold_min_scale(
+            splats.transforms.val(),
+            splats.raw_opacities.val(),
+            f.clone(),
+        ),
+        None => (splats.transforms.val(), splats.raw_opacities.val()),
+    };
 
     let transforms = if let Some(scale) = splat_scale {
-        let t = splats.transforms.into_value();
-        let adjusted = t.clone().slice(s![.., 7..10]) + scale.ln();
-        t.slice_assign(s![.., 7..10], adjusted)
+        let adjusted = transforms.clone().slice(s![.., 7..10]) + scale.ln();
+        transforms.slice_assign(s![.., 7..10], adjusted)
     } else {
-        splats.transforms.into_value()
+        transforms
     };
 
     let render_mode = if splats.render_mip {

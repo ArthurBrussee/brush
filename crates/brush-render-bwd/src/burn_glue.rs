@@ -7,7 +7,7 @@ use brush_render::burn_glue::{
 use brush_render::{
     SplatOps,
     camera::Camera,
-    gaussian_splats::{SplatRenderMode, Splats},
+    gaussian_splats::{SplatRenderMode, Splats, fold_min_scale},
     sh::sh_coeffs_for_degree,
     shaders::helpers::ProjectUniforms,
 };
@@ -212,6 +212,7 @@ pub fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
 /// instead of `splats.train()` until upstream burn-dispatch fixes `from_inner`.
 pub fn lift_splats_to_autodiff(splats: Splats) -> Splats {
     let mip = splats.render_mip;
+    let min_scale = splats.min_scale.clone();
     let (transforms_id, transforms, _) = splats.transforms.consume();
     let (sh_coeffs_id, sh_coeffs, _) = splats.sh_coeffs.consume();
     let (raw_opacity_id, raw_opacity, _) = splats.raw_opacities.consume();
@@ -223,6 +224,11 @@ pub fn lift_splats_to_autodiff(splats: Splats) -> Splats {
             lift_to_autodiff(raw_opacity).require_grad(),
         ),
         render_mip: mip,
+        // Keep the frozen floor on the inner backend. `#[module(skip)]` fields
+        // aren't converted by `.valid()`, so lifting it here would leave an
+        // autodiff `f` on an inner module after eval-strip and mix backends in
+        // `scales()`/`opacities()`. The bwd render lifts a temporary copy.
+        min_scale,
     }
 }
 
@@ -269,9 +275,21 @@ pub async fn render_splats_with_pass(
 
     let refine_weight_holder = Tensor::<1>::zeros([1], &device).require_grad();
 
-    let transforms_ad = unwrap_ad_wgpu_float(splats.transforms.val());
+    // Fold the 3D-filter floor into scales/opacity for the render. `min_scale`
+    // lives on the inner backend, so lift a temporary copy to keep the fold on
+    // the autodiff graph alongside the param values.
+    let (transforms_val, raw_opac_val) = match &splats.min_scale {
+        Some(f) => fold_min_scale(
+            splats.transforms.val(),
+            splats.raw_opacities.val(),
+            lift_to_autodiff(f.clone()),
+        ),
+        None => (splats.transforms.val(), splats.raw_opacities.val()),
+    };
+
+    let transforms_ad = unwrap_ad_wgpu_float(transforms_val);
     let sh_coeffs_ad = unwrap_ad_wgpu_float(splats.sh_coeffs.val());
-    let raw_opac_ad = unwrap_ad_wgpu_float(splats.raw_opacities.val());
+    let raw_opac_ad = unwrap_ad_wgpu_float(raw_opac_val);
     let refine_weight_ad = unwrap_ad_wgpu_float(refine_weight_holder.clone());
 
     let prep_nodes = RenderBackwards

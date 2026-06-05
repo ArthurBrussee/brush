@@ -37,7 +37,7 @@ pub struct TrainConfig {
     pub lr_opac: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "3.5e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
     pub lr_scale: f64,
 
     /// Learning rate for the rotation parameters.

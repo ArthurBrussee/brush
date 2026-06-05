@@ -173,7 +173,18 @@ pub(crate) async fn train_stream(
     let mut train_duration = Duration::from_secs(0);
     let mut dataloader = SceneLoader::new(&dataset.train, 42);
     let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
+
+    // Per-train-view (world center, focal-px at native res) for the
+    // Mip-Splatting 3D filter (always on).
+    let mut view_cams: Vec<(glam::Vec3, f32)> = Vec::with_capacity(dataset.train.views.len());
+    for view in dataset.train.views.iter() {
+        let (w, h) = view.image.dimensions().await.unwrap_or((1, 1));
+        let focal = view.camera.focal(glam::uvec2(w, h)).x;
+        view_cams.push((view.camera.position, focal));
+    }
+
     let mut trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
+    trainer.set_view_cams(view_cams.clone());
 
     // Get the dataset name from the base path (if available) for interpolation.
     let dataset_name = vfs
@@ -264,6 +275,7 @@ pub(crate) async fn train_stream(
 
             let bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
             trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
+            trainer.set_view_cams(view_cams.clone());
 
             log::info!(
                 "LOD {current_lod}/{lod_levels}: Training for {lod_refine_steps} steps (image scale {:.0}%)",
