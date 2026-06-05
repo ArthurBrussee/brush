@@ -11,6 +11,7 @@
 )]
 
 pub mod camera_model;
+pub mod geo_visualize;
 pub mod helpers;
 pub mod map_gaussians;
 pub mod project_forward;

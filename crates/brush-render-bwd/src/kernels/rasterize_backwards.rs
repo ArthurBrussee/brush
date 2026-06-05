@@ -7,6 +7,14 @@
 //! the full gradient for its splat in registers and emits a single atomic
 //! add per gradient component per batch.
 //!
+//! When `geo` is set the kernel additionally backprops the RaDe-GS geometry
+//! channels: the blended view-space normal `N` (constant per splat) and the
+//! ray-plane depth `t = grad·d + depth_c` (varies per pixel across the
+//! footprint). Both alpha-blend with the exact same weights as rgb, so the
+//! VJP mirrors the rgb path: value grads scatter into lanes 10..16
+//! `(grad_x, grad_y, depth_c, n_x, n_y, n_z)`, and a `dot_geo` term feeds the
+//! shared `v_alpha` (full analytic coupling through the weights).
+//!
 //! The atomic accumulation is parametrised by the [`AtomicAddF32`] trait:
 //! `HfAtomicAdd` (native `Atomic<f32>::fetch_add`) when the device
 //! supports it, `CasAtomicAdd` (`Atomic<u32>` + CAS over the bit pattern)
@@ -18,9 +26,9 @@ use burn_cubecl::cubecl::prelude::*;
 
 use brush_render::kernels::helpers::{
     ALPHA_CUTOFF_MID, TILE_SIZE, TILE_WIDTH, alpha_cutoff_weight, alpha_cutoff_weight_deriv,
-    read_projected_splat,
+    read_projected_geo, read_projected_splat,
 };
-use brush_render::kernels::types::{RasterizeUniforms, Splat, Sym2};
+use brush_render::kernels::types::{RasterizeUniforms, Splat, Sym2, Vec3A};
 
 // SPLAT_BATCH = 32 = one Apple-Silicon SIMD group, so the per-iter
 // sync_cube collapses to a SIMD-lockstep no-op on hardware.
@@ -39,6 +47,14 @@ pub struct SplatGrad {
     pub rgb_b: f32,
     pub alpha: f32,
     pub refine: f32,
+    // Geometry value grads (zero unless `geo`): ray-plane depth gradient
+    // (grad_x, grad_y, depth_c) then the blended normal (n_x, n_y, n_z).
+    pub gx: f32,
+    pub gy: f32,
+    pub dc: f32,
+    pub n_x: f32,
+    pub n_y: f32,
+    pub n_z: f32,
 }
 
 #[cube]
@@ -54,6 +70,12 @@ fn zero_grad() -> SplatGrad {
         rgb_b: 0.0f32,
         alpha: 0.0f32,
         refine: 0.0f32,
+        gx: 0.0f32,
+        gy: 0.0f32,
+        dc: 0.0f32,
+        n_x: 0.0f32,
+        n_y: 0.0f32,
+        n_z: 0.0f32,
     }
 }
 
@@ -98,25 +120,26 @@ impl AtomicAddF32 for CasAtomicAdd {
 }
 
 #[cube(launch)]
+#[allow(clippy::too_many_arguments)]
 pub fn rasterize_backwards_kernel<A: AtomicAddF32>(
     compact_gid_from_isect: &Tensor<u32>,
     tile_offsets: &Tensor<u32>,
     projected: &Tensor<f32>,
+    projected_geo: &Tensor<f32>,
     output: &Tensor<f32>,
     v_output: &Tensor<f32>,
     v_splats: &mut Tensor<Atomic<A::Storage>>,
     u: RasterizeUniforms,
     #[comptime] smooth_cutoff: bool,
+    #[comptime] geo: bool,
 ) {
     let (tile_id, tile_origin_x, tile_origin_y) = tile_origin(u.tile_bw);
-    // Only `pix_state` lives in shared memory — it gets read-modify-
-    // written each iteration (alpha decay) so threads need to see each
-    // other's writes. The other per-pixel inputs (`v_output`, the alpha
-    // pre-roll) are read-only post-init and L1-cached, so we re-derive
-    // them inline in the inner loop. Smaller shared footprint → more
-    // workgroup occupancy on Apple.
-    let mut pix_state = Shared::new_slice((TILE_SIZE * 4u32) as usize);
-    load_pixel_state(output, u, tile_origin_x, tile_origin_y, &mut pix_state);
+    // `pix_state` holds the per-pixel running color (and, when geo, normal
+    // + depth) remainder plus transmittance. 4 floats for rgb+T, 8 when
+    // geo adds the (Nx,Ny,Nz,depth) remainder.
+    let ps = comptime![if geo { 9u32 } else { 4u32 }];
+    let mut pix_state = Shared::new_slice((TILE_SIZE * ps) as usize);
+    load_pixel_state(output, u, tile_origin_x, tile_origin_y, &mut pix_state, geo);
     let (range_lo, range_hi) = load_range(tile_offsets, tile_id);
     let num_splats_in_tile = range_hi - range_lo;
     let rounds = (num_splats_in_tile + SPLAT_BATCH - 1u32) / SPLAT_BATCH;
@@ -130,8 +153,18 @@ pub fn rasterize_backwards_kernel<A: AtomicAddF32>(
             num_splats_in_tile,
             batch_idx,
         );
+        let (grad_depth, normal) = if comptime![geo] {
+            read_projected_geo(projected_geo, compact_gid)
+        } else {
+            (
+                Vec3A::new(0.0f32, 0.0f32, 0.0f32),
+                Vec3A::new(0.0f32, 0.0f32, 0.0f32),
+            )
+        };
         let grad = accumulate_grads_for_batch(
             splat,
+            grad_depth,
+            normal,
             splat_active,
             tile_origin_x,
             tile_origin_y,
@@ -142,9 +175,11 @@ pub fn rasterize_backwards_kernel<A: AtomicAddF32>(
             v_output,
             u,
             smooth_cutoff,
+            geo,
         );
         if splat_active {
-            let base = (compact_gid * 10u32) as usize;
+            let stride = comptime![if geo { 16u32 } else { 10u32 }];
+            let base = (compact_gid * stride) as usize;
             A::add(&v_splats[base], grad.xy_x);
             A::add(&v_splats[base + 1], grad.xy_y);
             A::add(&v_splats[base + 2], grad.conic_x);
@@ -155,6 +190,14 @@ pub fn rasterize_backwards_kernel<A: AtomicAddF32>(
             A::add(&v_splats[base + 7], grad.rgb_b);
             A::add(&v_splats[base + 8], grad.alpha);
             A::add(&v_splats[base + 9], grad.refine);
+            if comptime![geo] {
+                A::add(&v_splats[base + 10], grad.gx);
+                A::add(&v_splats[base + 11], grad.gy);
+                A::add(&v_splats[base + 12], grad.dc);
+                A::add(&v_splats[base + 13], grad.n_x);
+                A::add(&v_splats[base + 14], grad.n_y);
+                A::add(&v_splats[base + 15], grad.n_z);
+            }
         }
         batch_idx += 1u32;
     }
@@ -184,8 +227,9 @@ fn load_range(tile_offsets: &Tensor<u32>, tile_id: u32) -> (u32, u32) {
 }
 
 /// Seed `pix_state` with the post-rasterise RGB minus the bg pre-roll
-/// (so subtracting visited splats walks back to zero) and `T=1`. Pixels
-/// outside the image area get all-zero state — the inner loop's
+/// (so subtracting visited splats walks back to zero) and `T=1`. When geo,
+/// also seed the (Nx,Ny,Nz,D) remainder from the geometry channels (no bg).
+/// Pixels outside the image area get all-zero state — the inner loop's
 /// `state_w > 1.0e-4` guard then skips them.
 #[cube]
 fn load_pixel_state(
@@ -194,7 +238,10 @@ fn load_pixel_state(
     tile_origin_x: u32,
     tile_origin_y: u32,
     pix_state: &mut Shared<[f32]>,
+    #[comptime] geo: bool,
 ) {
+    let ps = comptime![if geo { 9u32 } else { 4u32 }];
+    let nchan = comptime![if geo { 9u32 } else { 4u32 }];
     let pixels_per_load = (TILE_SIZE + SPLAT_BATCH - 1u32) / SPLAT_BATCH;
     let mut p = 0u32;
     while p < pixels_per_load {
@@ -203,10 +250,10 @@ fn load_pixel_state(
             let pix_x = tile_origin_x + pix_rank % TILE_WIDTH;
             let pix_y = tile_origin_y + pix_rank / TILE_WIDTH;
             let inside = pix_x < u.img_w && pix_y < u.img_h;
-            let s = (pix_rank * 4u32) as usize;
+            let s = (pix_rank * ps) as usize;
             if inside {
                 let pix_id = pix_x + pix_y * u.img_w;
-                let base = (pix_id * 4u32) as usize;
+                let base = (pix_id * nchan) as usize;
                 let final_r = output[base];
                 let final_g = output[base + 1];
                 let final_b = output[base + 2];
@@ -216,11 +263,25 @@ fn load_pixel_state(
                 pix_state[s + 1] = final_g - t_final * u.bg_g;
                 pix_state[s + 2] = final_b - t_final * u.bg_b;
                 pix_state[s + 3] = 1.0f32;
+                if comptime![geo] {
+                    pix_state[s + 4] = output[base + 4];
+                    pix_state[s + 5] = output[base + 5];
+                    pix_state[s + 6] = output[base + 6];
+                    pix_state[s + 7] = output[base + 7];
+                    pix_state[s + 8] = output[base + 8];
+                }
             } else {
                 pix_state[s] = 0.0f32;
                 pix_state[s + 1] = 0.0f32;
                 pix_state[s + 2] = 0.0f32;
                 pix_state[s + 3] = 0.0f32;
+                if comptime![geo] {
+                    pix_state[s + 4] = 0.0f32;
+                    pix_state[s + 5] = 0.0f32;
+                    pix_state[s + 6] = 0.0f32;
+                    pix_state[s + 7] = 0.0f32;
+                    pix_state[s + 8] = 0.0f32;
+                }
             }
         }
         p += 1u32;
@@ -251,6 +312,8 @@ fn load_splat_for_batch(
 #[cube]
 fn accumulate_grads_for_batch(
     splat: Splat,
+    grad_depth: Vec3A,
+    normal: Vec3A,
     splat_active: bool,
     tile_origin_x: u32,
     tile_origin_y: u32,
@@ -261,7 +324,10 @@ fn accumulate_grads_for_batch(
     v_output: &Tensor<f32>,
     u: RasterizeUniforms,
     #[comptime] smooth_cutoff: bool,
+    #[comptime] geo: bool,
 ) -> SplatGrad {
+    let ps = comptime![if geo { 9u32 } else { 4u32 }];
+    let nchan = comptime![if geo { 9u32 } else { 4u32 }];
     let conic = Sym2 {
         c00: splat.conic_x,
         c01: splat.conic_y,
@@ -282,7 +348,7 @@ fn accumulate_grads_for_batch(
 
         if active_iter {
             let pixel_rank = i - UNIT_POS;
-            let s = (pixel_rank * 4u32) as usize;
+            let s = (pixel_rank * ps) as usize;
             let state_x = pix_state[s];
             let state_y = pix_state[s + 1];
             let state_z = pix_state[s + 2];
@@ -320,7 +386,7 @@ fn accumulate_grads_for_batch(
                         // loads for ~5 KiB of shared memory back, which
                         // recovers an Apple-GPU occupancy slot.
                         let pix_id = pix_x + pix_y * u.img_w;
-                        let pix_base = (pix_id * 4u32) as usize;
+                        let pix_base = (pix_id * nchan) as usize;
                         let v_o_x = v_output[pix_base];
                         let v_o_y = v_output[pix_base + 1];
                         let v_o_z = v_output[pix_base + 2];
@@ -344,9 +410,60 @@ fn accumulate_grads_for_batch(
                         let new_remain_x = state_x - vis * clamped_r;
                         let new_remain_y = state_y - vis * clamped_g;
                         let new_remain_z = state_z - vis * clamped_b;
+
+                        // Geometry: blends with the same weights as rgb, no
+                        // bg and no clamp. The normal is constant per splat;
+                        // the depth varies per pixel as `t = grad·d + depth_c`
+                        // (`d = (dx, dy)` already computed above). Value grads
+                        // scatter unconditionally; `dot_geo` couples into the
+                        // shared v_alpha below.
+                        let mut dot_geo = 0.0f32;
+                        if comptime![geo] {
+                            let v_n_x = v_output[pix_base + 4];
+                            let v_n_y = v_output[pix_base + 5];
+                            let v_n_z = v_output[pix_base + 6];
+                            let v_d = v_output[pix_base + 7];
+                            // zz = Sum(w*z^2): same weight as depth, but the value
+                            // z^2 itself depends on the plane params, so its value
+                            // grads carry an extra 2z chain factor.
+                            let v_zz = v_output[pix_base + 8];
+                            let t_pix = grad_depth.x() * dx + grad_depth.y() * dy + grad_depth.z();
+                            let two_z = 2.0f32 * t_pix;
+                            // Depth-plane value grads: t is linear in the plane
+                            // params, so ∂t/∂grad_x = dx, ∂t/∂grad_y = dy, ∂t/∂depth_c = 1.
+                            // The zz channel adds ∂z²/∂param = 2z·∂z/∂param.
+                            grad.gx += vis * (v_d + v_zz * two_z) * dx;
+                            grad.gy += vis * (v_d + v_zz * two_z) * dy;
+                            grad.dc += vis * (v_d + v_zz * two_z);
+                            // `t` also depends on the splat's 2D position via
+                            // `d = mean2d - pixel` (∂t/∂mean2d = (grad_x, grad_y)).
+                            grad.xy_x += vis * (v_d + v_zz * two_z) * grad_depth.x();
+                            grad.xy_y += vis * (v_d + v_zz * two_z) * grad_depth.y();
+                            grad.n_x += vis * v_n_x;
+                            grad.n_y += vis * v_n_y;
+                            grad.n_z += vis * v_n_z;
+
+                            let state_nx = pix_state[s + 4];
+                            let state_ny = pix_state[s + 5];
+                            let state_nz = pix_state[s + 6];
+                            let state_d = pix_state[s + 7];
+                            let state_zz = pix_state[s + 8];
+                            dot_geo = ((state_w * normal.x() - state_nx) * v_n_x
+                                + (state_w * normal.y() - state_ny) * v_n_y
+                                + (state_w * normal.z() - state_nz) * v_n_z
+                                + (state_w * t_pix - state_d) * v_d
+                                + (state_w * t_pix * t_pix - state_zz) * v_zz)
+                                * ra;
+                            pix_state[s + 4] = state_nx - vis * normal.x();
+                            pix_state[s + 5] = state_ny - vis * normal.y();
+                            pix_state[s + 6] = state_nz - vis * normal.z();
+                            pix_state[s + 7] = state_d - vis * t_pix;
+                            pix_state[s + 8] = state_zz - vis * t_pix * t_pix;
+                        }
+
                         // Chain through the cutoff. Hard step (production):
                         // w' = 0 and w == 1 in-branch, so the factor is 1.
-                        let v_alpha_eff = dot_rgb + v_o_w * ra;
+                        let v_alpha_eff = dot_rgb + dot_geo + v_o_w * ra;
                         let dw_dalpha = if comptime![smooth_cutoff] {
                             alpha_cutoff_weight_deriv(alpha)
                         } else {

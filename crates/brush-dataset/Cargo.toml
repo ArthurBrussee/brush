@@ -15,6 +15,7 @@ burn.workspace = true
 
 bytemuck.workspace = true
 thiserror = { workspace = true }
+anyhow.workspace = true
 image.workspace = true
 jpeg-decoder.workspace = true
 serde.workspace = true

@@ -12,10 +12,15 @@ use crate::shaders::helpers::ProjectUniforms;
 /// Internal render output used by kernel impls. Holds backend primitives.
 #[derive(Debug, Clone)]
 pub struct RenderOutput<B: Backend> {
+    /// `[H, W, 4]` (rgba) normally, or `[H, W, 8]` (`rgba` + view-space
+    /// `Nx,Ny,Nz,D`) when geometry was requested.
     pub out_img: FloatTensor<B>,
     pub aux: RenderAuxInner<B>,
     // State needed by the backward pass; non-diff callers can ignore these.
     pub projected_splats: FloatTensor<B>,
+    /// `[num_visible, 4]` view-space normal + plane distance, indexed by
+    /// `compact_gid`. A dummy `[1]` tensor when geometry was not requested.
+    pub projected_geo: FloatTensor<B>,
     pub compact_gid_from_isect: IntTensor<B>,
     pub project_uniforms: ProjectUniforms,
     pub global_from_compact_gid: IntTensor<B>,

@@ -188,6 +188,22 @@ fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
     })
 }
 
+/// Find a packed `LiDAR` depth sidecar `depth/<stem>.bin` for an image path.
+fn find_depth_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
+    let search_stem = path.file_stem()?;
+    vfs.iter_files().find(|candidate| {
+        candidate
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("bin"))
+            && candidate
+                .file_stem()
+                .is_some_and(|s| s.eq_ignore_ascii_case(search_stem))
+            && candidate
+                .components()
+                .any(|c| c.as_os_str().eq_ignore_ascii_case("depth"))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

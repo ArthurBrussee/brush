@@ -7,9 +7,9 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
-use super::types::{PixelRect, ProjectUniforms, Quat, Splat, Sym2, TileBbox, Vec3A};
+use super::types::{Mat3, PixelRect, ProjectUniforms, Quat, Splat, Sym2, TileBbox, Vec3A};
 use crate::kernels::camera_model::{CameraModel, calculate_project_jacobian};
-pub use brush_cube::{calc_sigma, is_finite_f32, sigmoid};
+pub use brush_cube::{Sym3, calc_sigma, is_finite_f32, sigmoid};
 
 pub const TILE_WIDTH: u32 = 16;
 pub const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
@@ -50,6 +50,13 @@ pub fn alpha_cutoff_weight_deriv(alpha: f32) -> f32 {
 ///   6:color_r, 7:color_g, 8:color_b.
 pub const PROJECTED_LANES: u32 = 9;
 pub const PROJECTED_LANES_USIZE: usize = PROJECTED_LANES as usize;
+
+/// `f32` lanes per projected splat in the *geometry* side-buffer (RaDe-GS).
+/// Layout: 0:grad_x, 1:grad_y, 2:depth_c (ray-plane: radial center depth +
+/// its per-pixel gradient), 3:n_x, 4:n_y, 5:n_z (view-space normal). Only
+/// written/read when geometry is requested; the color pipeline is untouched.
+pub const PROJECTED_GEO_LANES: u32 = 6;
+pub const PROJECTED_GEO_LANES_USIZE: usize = PROJECTED_GEO_LANES as usize;
 
 #[cube]
 pub fn compact_bits_16(v: u32) -> u32 {
@@ -338,4 +345,153 @@ pub fn read_quat_unorm(transforms: &Tensor<f32>, base: usize) -> Quat {
         transforms[base + 5],
         transforms[base + 6],
     )
+}
+
+/// RaDe-GS per-Gaussian ray-plane depth + covariance normal (camera space).
+///
+/// Returns `(grad_depth, normal)` where `grad_depth = (grad_x, grad_y,
+/// depth_c)` describes a depth that varies *linearly* across the splat
+/// footprint: at pixel `(px, py)` the radial depth is
+/// `grad_x·(cx-px) + grad_y·(cy-py) + depth_c` (`(cx,cy)` = 2D mean, px).
+/// `depth_c = ‖mean_c‖` is the radial center depth. The normal is derived
+/// from the camera-space inverse covariance (no min-axis flattening
+/// assumption). Follows RaDe-GS `computeCov2D` (arxiv 2406.01467).
+/// `quat` must already be normalized.
+#[cube]
+pub fn splat_view_rayplane(
+    scale: Vec3A,
+    quat: Quat,
+    mean_c: Vec3A,
+    u: ProjectUniforms,
+) -> (Vec3A, Vec3A) {
+    splat_view_rayplane_core(
+        scale,
+        quat,
+        mean_c,
+        u.view_rotation(),
+        u.pinhole_params.fx,
+        u.pinhole_params.fy,
+    )
+}
+
+/// Core of [`splat_view_rayplane`] with the camera inputs passed explicitly
+/// (so the backward finite-diff harness can drive it without a full
+/// `ProjectUniforms`).
+#[cube]
+pub fn splat_view_rayplane_core(
+    scale: Vec3A,
+    quat: Quat,
+    mean_c: Vec3A,
+    view_rot: Mat3,
+    fx: f32,
+    fy: f32,
+) -> (Vec3A, Vec3A) {
+    let tx = mean_c.x();
+    let ty = mean_c.y();
+    let tz = mean_c.z();
+    let l = mean_c.length();
+    let uu = tx / tz;
+    let vv = ty / tz;
+    let uvh = Vec3A::new(uu, vv, 1.0f32);
+
+    // Camera-space inverse covariance Σ_c⁻¹ = R_c diag(1/s²) R_cᵀ, with
+    // R_c = view_rot·R(quat). Built as M Mᵀ for M = R_c diag(1/s).
+    let r_c = view_rot.mul_mat3(quat.to_mat3());
+    // Floor `1/s` at 1e6 (i.e. s >= 1e-6). A tighter floor (1e-9) lets a
+    // flatten-collapsed axis push `1/s²` toward f32 overflow, flipping the
+    // splat between the ray-plane and the degenerate fallback frame-to-frame.
+    let inv_s = Vec3A::new(
+        f32::min(1.0f32 / scale.x(), 1e6f32),
+        f32::min(1.0f32 / scale.y(), 1e6f32),
+        f32::min(1.0f32 / scale.z(), 1e6f32),
+    );
+    let cov_cam_inv = r_c.mul_diag(inv_s).outer_product_self();
+
+    let uvh_m = cov_cam_inv.mul_vec3(uvh);
+
+    let mut grad_depth = Vec3A::new(0.0f32, 0.0f32, l);
+    let mut normal = Vec3A::new(0.0f32, 0.0f32, -1.0f32);
+    if uvh_m.is_finite() && uvh_m.length() > 1e-20f32 {
+        let uvh_mn = uvh_m.normalize();
+        let vbn = uvh_mn.dot(uvh);
+
+        let u2 = uu * uu;
+        let v2 = vv * vv;
+        let uv = uu * vv;
+        let ray_len2 = u2 + v2 + 1.0f32;
+        let factor_normal = l / ray_len2;
+
+        // plane = nJ_inv · (uvh_mn / max(vbn, eps)); nJ_inv columns below.
+        let q = uvh_mn.scale(1.0f32 / f32::max(vbn, 1e-7f32));
+        let n_j_inv = Mat3::from_cols(
+            Vec3A::new(v2 + 1.0f32, -uv, 0.0f32),
+            Vec3A::new(-uv, u2 + 1.0f32, 0.0f32),
+            Vec3A::new(-uu, -vv, 0.0f32),
+        );
+        let plane = n_j_inv.mul_vec3(q);
+
+        // Sanitize the depth gradient: fall back to a flat plane (grad 0, depth
+        // `l`) for a degenerate plane. Besides non-finite, we reject a gradient
+        // that changes depth by more than `l` per pixel: that means the plane is
+        // edge-on, or its covariance is so anisotropic (a flatten-collapsed axis
+        // hitting the `1/s` floor) that `vbn` underflows and `q` blows the plane
+        // up to ~1e7. Such a gradient is huge-but-finite, so a plain finite check
+        // misses it and the rendered depth explodes.
+        let grad_x = plane.x() * factor_normal / fx;
+        let grad_y = plane.y() * factor_normal / fy;
+        let gd_ok = is_finite_f32(grad_x)
+            && is_finite_f32(grad_y)
+            && f32::abs(grad_x) < l
+            && f32::abs(grad_y) < l;
+        grad_depth = Vec3A::new(
+            select(gd_ok, grad_x, 0.0f32),
+            select(gd_ok, grad_y, 0.0f32),
+            l,
+        );
+
+        // normal = normalize(nJ · ray_n), ray_n = (-plane.x·fn, -plane.y·fn, -1).
+        // Safe-normalize: fall back to camera-facing (0,0,-1) if `cn` ≈ 0.
+        let ray_n = Vec3A::new(
+            -plane.x() * factor_normal,
+            -plane.y() * factor_normal,
+            -1.0f32,
+        );
+        let n_j = Mat3::from_cols(
+            Vec3A::new(1.0f32 / tz, 0.0f32, -tx / (tz * tz)),
+            Vec3A::new(0.0f32, 1.0f32 / tz, -ty / (tz * tz)),
+            Vec3A::new(tx / l, ty / l, tz / l),
+        );
+        let cn = n_j.mul_vec3(ray_n);
+        let cn_len = cn.length();
+        // Also fall back to camera-facing when the depth plane was rejected, so
+        // a degenerate splat's normal stays consistent with its flat depth.
+        let n_ok = gd_ok && cn.is_finite() && cn_len > 1e-12f32;
+        let cn_unit = cn.scale(1.0f32 / f32::max(cn_len, 1e-12f32));
+        normal = Vec3A::new(
+            select(n_ok, cn_unit.x(), 0.0f32),
+            select(n_ok, cn_unit.y(), 0.0f32),
+            select(n_ok, cn_unit.z(), -1.0f32),
+        );
+    }
+    (grad_depth, normal)
+}
+
+#[cube]
+pub fn read_projected_geo(geo: &Tensor<f32>, idx: u32) -> (Vec3A, Vec3A) {
+    let b = (idx * PROJECTED_GEO_LANES) as usize;
+    (
+        Vec3A::new(geo[b], geo[b + 1], geo[b + 2]),
+        Vec3A::new(geo[b + 3], geo[b + 4], geo[b + 5]),
+    )
+}
+
+#[cube]
+pub fn write_projected_geo(geo: &mut Tensor<f32>, idx: u32, grad_depth: Vec3A, normal: Vec3A) {
+    let b = (idx * PROJECTED_GEO_LANES) as usize;
+    geo[b] = grad_depth.x();
+    geo[b + 1] = grad_depth.y();
+    geo[b + 2] = grad_depth.z();
+    geo[b + 3] = normal.x();
+    geo[b + 4] = normal.y();
+    geo[b + 5] = normal.z();
 }

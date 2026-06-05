@@ -45,6 +45,7 @@ brush-rerun = { path = "../brush-rerun" }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+env_logger.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }

@@ -9,7 +9,7 @@ use crate::{
 };
 
 use brush_dataset::scene::SceneBatch;
-use brush_loss::{ImageLossConfig, image_loss};
+use brush_loss::{ImageLossConfig, image_loss, unpack_gt_rgb};
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
@@ -187,12 +187,25 @@ impl SplatTrainer {
             // The splats already carry their 3D-filter floor (set at refine);
             // the render path folds it in. Optimizer/refine work on raw params.
             let render_input = splats.clone();
+            // `geo_from_iter` is the master switch for all geometry losses
+            // (None = off). The geometry render pass is needed by depth-normal,
+            // depth-distortion and the metric depth loss (the latter only when
+            // the view has LiDAR).
+            let geo_on = self
+                .config
+                .geo_from_iter
+                .is_some_and(|it| self.step_count >= it);
+            let want_single = geo_on && self.config.depth_normal_weight > 0.0;
+            let want_depth = geo_on && self.config.depth_loss_weight > 0.0 && batch.depth.is_some();
+            let want_distort = geo_on && self.config.distortion_weight > 0.0;
+            let want_geo = want_single || want_depth || want_distort;
             let diff_out = render_splats(
                 render_input,
                 &camera,
                 img_size,
                 background,
                 self.config.screen_area_penalty,
+                want_geo,
             )
             .instrument(trace_span!("Forward"))
             .await;
@@ -256,6 +269,59 @@ impl SplatTrainer {
                         pred_image.clone().slice(s![.., .., 0..3]).unsqueeze_dim(0),
                         gt_rgb_diff.unsqueeze_dim(0),
                     ) * self.config.lpips_loss_weight;
+            }
+
+            // Flattening regularizer (PGSR L_s): mean of the minimum (linear)
+            // scale over *visible* splats, so Gaussians commit to planes.
+            // Pure autodiff on the log-scale param; shares geo_from_iter.
+            if self.config.flatten_weight > 0.0 && geo_on {
+                let min_scale = splats.log_scales().min_dim(1).exp(); // [N, 1]
+                // `visible` is on the inner backend; lift it onto the autodiff
+                // graph (as a constant mask) so it shares min_scale's backend.
+                let vis =
+                    brush_render_bwd::burn_glue::lift_to_autodiff(visible.clone()).unsqueeze_dim(1); // [N, 1] constant mask
+                let denom = vis.clone().sum().clamp_min(1.0);
+                loss = loss + (min_scale * vis).sum() / denom * self.config.flatten_weight;
+            }
+
+            // Coverage alpha shared by the geometry losses below.
+            let geo_alpha = pred_image.clone().slice(s![.., .., 3..4]);
+
+            // Single-view depth-normal consistency on the RaDe-GS geometry.
+            if let Some(geo) = diff_out.geo.clone().filter(|_| want_single) {
+                // Edge-aware weight from the (constant) GT image, à la PGSR.
+                let gt_rgb: Tensor<3> =
+                    Tensor::from_inner(unpack_gt_rgb(gt_packed.clone(), composite_bg));
+                let dn = brush_render::geo::depth_normal_consistency(
+                    geo,
+                    geo_alpha.clone(),
+                    gt_rgb,
+                    &camera,
+                    img_size,
+                );
+                loss = loss + dn.mean() * self.config.depth_normal_weight;
+            }
+
+            // Depth-distortion (2DGS L_d, squared form): concentrate each ray's
+            // weight onto a single depth via the rendered depth moments.
+            if let Some(geo) = diff_out.geo.clone().filter(|_| want_distort) {
+                let dist = brush_render::geo::depth_distortion(geo, geo_alpha.clone());
+                loss = loss + dist.mean() * self.config.distortion_weight;
+            }
+
+            // Metric depth supervision against the per-view LiDAR depth.
+            let depth_geo = diff_out.geo.clone().filter(|_| want_depth);
+            if let (Some(geo), Some(gt_depth)) = (depth_geo, &batch.depth) {
+                let dev_inner = device.clone().inner();
+                let gt_z: Tensor<3> =
+                    Tensor::from_inner(Tensor::from_data(gt_depth.depth.clone(), &dev_inner));
+                let gt_conf: Tensor<3> =
+                    Tensor::from_inner(Tensor::from_data(gt_depth.conf.clone(), &dev_inner));
+                let (weighted, mask) = brush_render::geo::depth_l1_loss(
+                    geo, geo_alpha, gt_z, gt_conf, &camera, img_size,
+                );
+                let denom = mask.sum().clamp_min(1.0);
+                loss = loss + weighted.sum() / denom * self.config.depth_loss_weight;
             }
 
             // Strip the autodiff graph off the loss so consumers can read the

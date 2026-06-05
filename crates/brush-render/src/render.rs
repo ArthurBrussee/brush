@@ -45,6 +45,7 @@ impl SplatOps<Self> for MainBackendBase {
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: RasterPass,
+        geometry: bool,
     ) -> RenderOutput<Self> {
         assert!(
             img_size[0] > 0 && img_size[1] > 0,
@@ -52,6 +53,8 @@ impl SplatOps<Self> for MainBackendBase {
         );
         let bwd_info = pass.bwd_info();
         let smooth_cutoff = pass.smooth_cutoff();
+        // Geometry (PGSR normal+distance) only rides the f32/backward path.
+        let geo = geometry && bwd_info;
 
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
@@ -191,6 +194,14 @@ impl SplatOps<Self> for MainBackendBase {
             &device,
             DType::F32,
         );
+        let projected_geo = create_tensor(
+            [
+                if geo { num_visible_sz } else { 1 },
+                kernels::helpers::PROJECTED_GEO_LANES_USIZE,
+            ],
+            &device,
+            DType::F32,
+        );
         tracing::trace_span!("ProjectVisible").in_scope(|| {
             let uniforms = project_uniforms.to_launch_object();
             kernels::project_visible::project_visible_kernel::launch::<WgpuRuntime>(
@@ -202,10 +213,12 @@ impl SplatOps<Self> for MainBackendBase {
                 raw_opacities.into_tensor_arg(),
                 global_from_compact_gid.clone().into_tensor_arg(),
                 projected_splats.clone().into_tensor_arg(),
+                projected_geo.clone().into_tensor_arg(),
                 uniforms,
                 mip_splat,
                 sh_degree,
                 camera.camera_model,
+                geo,
             );
         });
         let num_tiles = tile_bounds.x * tile_bounds.y;
@@ -246,7 +259,13 @@ impl SplatOps<Self> for MainBackendBase {
                 tile_offsets.clone().into_tensor_arg(),
             );
         });
-        let out_dim = if bwd_info { 4 } else { 1 };
+        let out_dim = if geo {
+            crate::geo::GEO_CHANNELS
+        } else if bwd_info {
+            4
+        } else {
+            1
+        };
         let out_img = create_tensor(
             [img_size.y as usize, img_size.x as usize, out_dim],
             &device,
@@ -285,6 +304,7 @@ impl SplatOps<Self> for MainBackendBase {
                 compact_gid_from_isect.clone().into_tensor_arg(),
                 tile_offsets.clone().into_tensor_arg(),
                 projected_splats.clone().into_tensor_arg(),
+                projected_geo.clone().into_tensor_arg(),
                 out_packed_arg.into_tensor_arg(),
                 out_f32_arg.into_tensor_arg(),
                 global_from_compact_gid.clone().into_tensor_arg(),
@@ -292,6 +312,7 @@ impl SplatOps<Self> for MainBackendBase {
                 uniforms,
                 bwd_info,
                 smooth_cutoff,
+                geo,
             );
         });
         RenderOutput {
@@ -305,6 +326,7 @@ impl SplatOps<Self> for MainBackendBase {
                 img_size,
             },
             projected_splats,
+            projected_geo,
             compact_gid_from_isect,
             project_uniforms,
             global_from_compact_gid,

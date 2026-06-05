@@ -137,6 +137,7 @@ fn generate_training_batch(resolution: (u32, u32), camera_pos: Vec3) -> SceneBat
         has_alpha: false,
         alpha_mode: AlphaMode::Transparent,
         camera,
+        depth: None,
     }
 }
 
@@ -168,6 +169,7 @@ pub async fn run_forward_render(
             Vec3::ZERO,
             None,
             TextureMode::Float,
+            false,
         )
         .await;
     }
@@ -189,6 +191,7 @@ pub async fn run_backward_render(
             glam::uvec2(resolution.0, resolution.1),
             Vec3::ZERO,
             0.0,
+            false,
         )
         .await;
         let _ = diff_out.img.mean().backward();

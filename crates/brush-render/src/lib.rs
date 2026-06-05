@@ -26,6 +26,7 @@ mod tests;
 pub mod bounding_box;
 pub mod camera;
 pub mod gaussian_splats;
+pub mod geo;
 #[doc(hidden)]
 pub mod get_tile_offset;
 pub mod render;
@@ -66,6 +67,7 @@ pub trait SplatOps<B: Backend> {
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: gaussian_splats::RasterPass,
+        geometry: bool,
     ) -> impl Future<Output = RenderOutput<B>>;
 }
 

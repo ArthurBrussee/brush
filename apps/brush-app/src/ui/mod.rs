@@ -1,5 +1,6 @@
 pub mod app;
 pub mod camera_controls;
+mod geo_view;
 
 pub mod ui_process;
 

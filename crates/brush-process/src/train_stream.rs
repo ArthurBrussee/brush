@@ -98,6 +98,33 @@ pub(crate) async fn train_stream(
     log::info!("Loading initial splats if any.");
     let estimated_up = dataset.estimate_up();
 
+    // Init priority: explicit point cloud (SfM / init.ply) > LiDAR depth
+    // (metric, on-surface) > random frustum fallback. LiDAR is used whenever
+    // the dataset has depth and no explicit cloud was provided.
+    let lidar_data = if load_result.init_splat.is_none()
+        && dataset.train.views.iter().any(|v| v.depth.is_some())
+    {
+        match brush_dataset::lidar_init::lidar_init_splats(
+            dataset.train.views.as_slice(),
+            train_stream_config.train_config.lidar_voxel_size,
+            train_stream_config.train_config.lidar_min_confidence as u8,
+        )
+        .await
+        {
+            Ok(d) => d,
+            Err(error) => {
+                emitter
+                    .emit(ProcessMessage::Warning {
+                        error: error.context("LiDAR init failed; falling back"),
+                    })
+                    .await;
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Convert SplatData to Splats using KNN initialization
     let (up_axis, init_splats) = if let Some(msg) = load_result.init_splat {
         // Use loaded splats with KNN init
@@ -121,6 +148,18 @@ pub(crate) async fn train_stream(
         }
         let splats = to_init_splats(data, render_mode, &device);
         (msg.meta.up_axis, splats)
+    } else if let Some(data) = lidar_data {
+        let render_mode = train_stream_config
+            .train_config
+            .render_mode
+            .unwrap_or(SplatRenderMode::Default);
+        let max_splats = train_stream_config.train_config.max_splats as usize;
+        log::info!(
+            "Initializing {} splats from LiDAR depth.",
+            data.num_splats()
+        );
+        let splats = to_init_splats(data.subsample(max_splats), render_mode, &device);
+        (None, splats)
     } else {
         // Default: just use random splats
         let render_mode = train_stream_config

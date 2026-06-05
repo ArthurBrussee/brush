@@ -46,6 +46,67 @@ fn estimate_scene_scale(cameras: &[Camera]) -> f32 {
     (avg_nn * 3.0).max(1.0)
 }
 
+/// Sample `num_points` world positions inside the camera frustums, returning
+/// `(flattened xyz, scene_scale)`. Depth is bracketed around the scene center
+/// as seen from each camera — a minimum standoff out to `d_center +
+/// scene_scale` — and sampled uniformly, so splats are spread through the
+/// scene volume rather than packed against the lenses. Device-free for testing.
+fn sample_frustum_positions(
+    cameras: &[Camera],
+    scene_scale_override: Option<f32>,
+    num_points: usize,
+    rng: &mut impl Rng,
+) -> (Vec<f32>, f32) {
+    // Scene center + radius from the camera rig. For object-centric captures
+    // the cameras orbit the scene, so the centroid is ~the scene center and
+    // the mean camera-to-centroid distance is ~the scene radius. Fall back to
+    // the camera-spacing estimate for degenerate / forward-facing rigs.
+    let center =
+        cameras.iter().fold(Vec3::ZERO, |acc, c| acc + c.position) / cameras.len().max(1) as f32;
+    let mean_radius = cameras
+        .iter()
+        .map(|c| c.position.distance(center))
+        .sum::<f32>()
+        / cameras.len().max(1) as f32;
+    // The orbit radius is the scene scale for object-centric rigs; only fall
+    // back to the camera-spacing estimate when the cameras are ~coincident.
+    let scene_scale = scene_scale_override.unwrap_or_else(|| {
+        if mean_radius > 1.0 {
+            mean_radius
+        } else {
+            estimate_scene_scale(cameras)
+        }
+    });
+
+    let min_standoff = scene_scale * 0.2;
+    let positions: Vec<f32> = (0..num_points)
+        .flat_map(|_| {
+            let cam = &cameras[rng.random_range(0..cameras.len())];
+            let local_to_world = cam.local_to_world();
+
+            // Random direction within the camera's FOV
+            let half_fov_x = (cam.fov_x * 0.5) as f32;
+            let half_fov_y = (cam.fov_y * 0.5) as f32;
+            let dx = rng.random_range(-half_fov_x..half_fov_x).tan();
+            let dy = rng.random_range(-half_fov_y..half_fov_y).tan();
+
+            let d_center = cam.position.distance(center).max(scene_scale);
+            let near = (d_center - scene_scale).max(min_standoff);
+            let far = d_center + scene_scale;
+            let depth = rng.random_range(near..far);
+
+            // Camera looks along +Z in local space (front splats have
+            // positive cam-z; negative-z is culled behind the camera).
+            let local_point = Vec3::new(dx * depth, dy * depth, depth);
+            let world_point = local_to_world.transform_point3(local_point);
+
+            [world_point.x, world_point.y, world_point.z]
+        })
+        .collect();
+
+    (positions, scene_scale)
+}
+
 /// Create initial splats by sampling random points inside camera frustums.
 ///
 /// For each splat, a random camera is chosen, then a random ray direction
@@ -60,35 +121,8 @@ pub fn create_random_splats(
     device: &Device,
 ) -> Splats {
     let num_points = config.init_count;
-    let scene_scale = scene_scale_override.unwrap_or_else(|| estimate_scene_scale(cameras));
-
-    let near = scene_scale * 0.05;
-    let far = scene_scale;
-    let ln_near = near.ln();
-    let ln_far = far.ln();
-
-    // Sample points in camera frustums
-    let positions: Vec<f32> = (0..num_points)
-        .flat_map(|_| {
-            let cam = &cameras[rng.random_range(0..cameras.len())];
-            let local_to_world = cam.local_to_world();
-
-            // Random direction within the camera's FOV
-            let half_fov_x = (cam.fov_x * 0.5) as f32;
-            let half_fov_y = (cam.fov_y * 0.5) as f32;
-            let dx = rng.random_range(-half_fov_x..half_fov_x).tan();
-            let dy = rng.random_range(-half_fov_y..half_fov_y).tan();
-
-            // Log-uniform depth so we don't over-pack near the camera
-            let depth = (rng.random_range(ln_near..ln_far)).exp();
-
-            // Camera looks along -Z in local space
-            let local_point = Vec3::new(dx * depth, dy * depth, -depth);
-            let world_point = local_to_world.transform_point3(local_point);
-
-            [world_point.x, world_point.y, world_point.z]
-        })
-        .collect();
+    let (positions, scene_scale) =
+        sample_frustum_positions(cameras, scene_scale_override, num_points, rng);
 
     // Random colors
     let sh_coeffs: Vec<f32> = (0..num_points)
@@ -244,6 +278,55 @@ pub fn to_init_splats(data: SplatData, mode: SplatRenderMode, device: &Device) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn random_init_brackets_scene_center() {
+        use glam::Quat;
+        use rand::SeedableRng;
+
+        // 12 cameras orbiting the origin on a radius-4 ring, all looking in.
+        let r = 4.0_f32;
+        let cams: Vec<Camera> = (0..12)
+            .map(|i| {
+                let a = i as f32 / 12.0 * std::f32::consts::TAU;
+                let pos = Vec3::new(r * a.cos(), r * a.sin(), 0.0);
+                let forward = (-pos).normalize();
+                // brush cameras look along +Z in local space.
+                let rot = Quat::from_rotation_arc(Vec3::Z, forward);
+                Camera::new(
+                    pos,
+                    rot,
+                    0.8,
+                    0.8,
+                    glam::vec2(0.5, 0.5),
+                    brush_render::kernels::camera_model::CameraModel::Pinhole,
+                )
+            })
+            .collect();
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let (pos, scene_scale) = sample_frustum_positions(&cams, None, 5000, &mut rng);
+
+        // Scene scale ≈ the orbit radius.
+        assert!(
+            (scene_scale - r).abs() < 1.5,
+            "scene_scale {scene_scale} should be ~{r}"
+        );
+
+        // Splats should bracket the scene center, not pile up out at the
+        // cameras (the old log-uniform init put the mean near `r`).
+        let n = pos.len() / 3;
+        let mean_d = pos
+            .chunks_exact(3)
+            .map(|c| Vec3::new(c[0], c[1], c[2]).length())
+            .sum::<f32>()
+            / n as f32;
+        assert!(
+            mean_d < 0.75 * r,
+            "mean splat distance from center {mean_d} too large (≥ 0.75·{r}) — init not centered"
+        );
+        assert!(pos.iter().all(|v| v.is_finite()), "non-finite positions");
+    }
 
     #[test]
     fn bounds_from_pos_all_nan_does_not_panic() {

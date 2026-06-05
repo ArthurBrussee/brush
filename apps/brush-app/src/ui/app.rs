@@ -143,6 +143,23 @@ impl egui_tiles::Behavior<PaneRef> for AppTree {
     }
 }
 
+/// Which rendered channel the viewer displays.
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
+pub enum ViewChannel {
+    #[default]
+    Rgb,
+    /// PGSR unbiased depth, jet-colormapped over `[0, max_meters]` (scene
+    /// units, treated as meters).
+    Depth { max_meters: f32 },
+    /// Rendered view-space normal, hemisphere-mapped to RGB.
+    Normal,
+}
+
+impl ViewChannel {
+    /// Default far end of the depth colormap ramp.
+    pub const DEFAULT_DEPTH_METERS: f32 = 5.0;
+}
+
 #[derive(Clone, PartialEq, Default)]
 pub struct CameraSettings {
     pub speed_scale: Option<f32>,
@@ -150,6 +167,7 @@ pub struct CameraSettings {
     pub background: Option<Vec3>,
     pub grid_enabled: Option<bool>,
     pub clamping: CameraClamping,
+    pub view_channel: ViewChannel,
 }
 
 const TREE_STORAGE_KEY: &str = "brush_tile_tree_v3";

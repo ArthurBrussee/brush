@@ -8,7 +8,7 @@ use super::{DatasetLoadResult, FormatError};
 use crate::{
     Dataset,
     config::LoadDataseConfig,
-    formats::{find_image_by_name, find_mask_path, split_eval_every},
+    formats::{find_depth_path, find_image_by_name, find_mask_path, split_eval_every},
     scene::{LoadImage, SceneView},
 };
 use brush_render::kernels::camera_model::CameraModel;
@@ -192,6 +192,8 @@ async fn load_dataset_inner(
             };
 
             let mask_path = find_mask_path(&vfs, path);
+            let depth = find_depth_path(&vfs, path)
+                .map(|p| crate::scene::LoadDepth::new(vfs.clone(), p.to_path_buf()));
 
             // Convert w2c to c2w.
             let world_to_cam =
@@ -217,7 +219,16 @@ async fn load_dataset_inner(
                 load_args.alpha_mode,
             );
 
-            views.push(SceneView { camera, image });
+            views.push(SceneView {
+                camera,
+                image,
+                depth,
+            });
+        }
+
+        let with_depth = views.iter().filter(|v| v.depth.is_some()).count();
+        if with_depth > 0 {
+            log::info!("Found LiDAR depth for {with_depth}/{} views", views.len());
         }
 
         let (train_views, eval_views) = split_eval_every(views, load_args.eval_split_every);

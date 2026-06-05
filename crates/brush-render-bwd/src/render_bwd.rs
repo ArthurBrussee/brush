@@ -22,12 +22,14 @@ impl SplatBwdOps<Self> for MainBackendBase {
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
         projected_splats: FloatTensor<Self>,
+        projected_geo: FloatTensor<Self>,
         compact_gid_from_isect: IntTensor<Self>,
         tile_offsets: IntTensor<Self>,
         background: Vec3,
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
+        geo: bool,
     ) -> RasterizeGrads<Self> {
         let _span = tracing::trace_span!("rasterize_bwd").entered();
 
@@ -36,8 +38,13 @@ impl SplatBwdOps<Self> for MainBackendBase {
         let num_visible = projected_splats.shape()[0].max(1);
         let client = projected_splats.client.clone();
 
-        // Sparse [num_visible, 10] indexed by compact_gid.
-        let v_combined = Self::float_zeros([num_visible, 10].into(), &device, FloatDType::F32);
+        // Sparse [num_visible, 10] (or 16 with geo) indexed by compact_gid.
+        let combined_lanes = if geo { 16 } else { 10 };
+        let v_combined = Self::float_zeros(
+            [num_visible, combined_lanes].into(),
+            &device,
+            FloatDType::F32,
+        );
 
         let tile_bounds = uvec2(
             img_size
@@ -76,11 +83,13 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     compact_gid_from_isect.into_tensor_arg(),
                     tile_offsets.into_tensor_arg(),
                     projected_splats.into_tensor_arg(),
+                    projected_geo.into_tensor_arg(),
                     out_img.into_tensor_arg(),
                     v_output.into_tensor_arg(),
                     v_combined.clone().into_tensor_arg(),
                     uniforms,
                     smooth_cutoff,
+                    geo,
                 );
             } else {
                 rasterize_backwards_kernel::launch::<CasAtomicAdd, WgpuRuntime>(
@@ -90,11 +99,13 @@ impl SplatBwdOps<Self> for MainBackendBase {
                     compact_gid_from_isect.into_tensor_arg(),
                     tile_offsets.into_tensor_arg(),
                     projected_splats.into_tensor_arg(),
+                    projected_geo.into_tensor_arg(),
                     out_img.into_tensor_arg(),
                     v_output.into_tensor_arg(),
                     v_combined.clone().into_tensor_arg(),
                     uniforms,
                     smooth_cutoff,
+                    geo,
                 );
             }
         });
@@ -112,6 +123,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
         render_mode: SplatRenderMode,
         v_combined: FloatTensor<Self>,
         screen_area_penalty: f32,
+        geo: bool,
     ) -> SplatGrads<Self> {
         let _span = tracing::trace_span!("project_bwd").entered();
 
@@ -167,6 +179,7 @@ impl SplatBwdOps<Self> for MainBackendBase {
                 mip_splat,
                 project_uniforms.sh_degree,
                 project_uniforms.camera_model,
+                geo,
             );
         });
 

@@ -83,6 +83,19 @@ pub fn create_tensor_from_slice<T: Pod>(
     )
 }
 
+/// Upload a slice of POD data to the GPU as a `CubeTensor` with an explicit
+/// (contiguous, row-major) shape.
+pub fn create_tensor_from_slice_shaped<T: Pod, const D: usize>(
+    data: &[T],
+    shape: [usize; D],
+    device: &WgpuDevice,
+    dtype: DType,
+) -> CubeTensor<WgpuRuntime<AutoCompiler>> {
+    let client = WgpuRuntime::client(device);
+    let handle = client.create_from_slice(bytemuck::cast_slice(data));
+    CubeTensor::new_contiguous(client, device.clone(), Shape::new(shape), handle, dtype)
+}
+
 pub fn create_meta_binding<T: NoUninit>(val: T) -> MetadataBindingInfo {
     // Copy data to u64. If length of T is not % 8, this will correctly
     // pad with zeros.

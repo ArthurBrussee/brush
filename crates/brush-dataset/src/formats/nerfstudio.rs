@@ -170,6 +170,14 @@ async fn read_transforms_file(
             .expect("Transforms path must be a filename")
             .join(&frame.file_path);
 
+        // Blender / NeRF-synthetic frames reference images without an
+        // extension (e.g. `"./train/r_0"`); default to png *before* the
+        // existence check, since the VFS only indexes files by their real
+        // (extensioned) name.
+        if path.extension().is_none() {
+            path = path.with_extension("png");
+        }
+
         // Check if path exists.
         if vfs.reader_at_path(&path).await.is_err() {
             warnings.push(format!(
@@ -177,11 +185,6 @@ async fn read_transforms_file(
                 frame.file_path
             ));
             continue;
-        }
-
-        // Assume png's by default if no extension is specified.
-        if path.extension().is_none() {
-            path = path.with_extension("png");
         }
         let mask_path = find_mask_path(&vfs, &path).map(|p| p.to_path_buf());
         let image = LoadImage::new(
@@ -260,7 +263,11 @@ async fn read_transforms_file(
             continue;
         }
 
-        let view = SceneView { image, camera };
+        let view = SceneView {
+            image,
+            camera,
+            depth: None,
+        };
         results.push(view);
     }
     Ok(results)

@@ -5,6 +5,9 @@ use brush_render::{
     render_splats,
 };
 use burn::tensor::Tensor;
+
+use crate::ui::app::ViewChannel;
+use crate::ui::geo_view::render_geo_channel;
 use egui::Rect;
 use glam::{UVec2, Vec3};
 
@@ -23,6 +26,7 @@ struct LastRenderState {
     camera: Camera,
     background: Vec3,
     splat_scale: Option<f32>,
+    view_channel: ViewChannel,
     img_size: UVec2,
 }
 
@@ -45,16 +49,33 @@ impl SplatBackbuffer {
         let pipe = AsyncMap::new(
             actor,
             async move |req: &RenderRequest| {
-                let (image, _) = render_splats(
-                    req.splats.get(req.state.frame).unwrap(),
-                    &req.state.camera,
-                    req.state.img_size,
-                    req.state.background,
-                    req.state.splat_scale,
-                    TextureMode::Packed,
-                )
-                .await;
-                image
+                let splats = req.splats.get(req.state.frame).unwrap();
+                match req.state.view_channel {
+                    ViewChannel::Rgb => {
+                        let (image, _) = render_splats(
+                            splats,
+                            &req.state.camera,
+                            req.state.img_size,
+                            req.state.background,
+                            req.state.splat_scale,
+                            TextureMode::Packed,
+                            false,
+                        )
+                        .await;
+                        image
+                    }
+                    channel @ (ViewChannel::Depth { .. } | ViewChannel::Normal) => {
+                        render_geo_channel(
+                            splats,
+                            &req.state.camera,
+                            req.state.img_size,
+                            req.state.background,
+                            req.state.splat_scale,
+                            channel,
+                        )
+                        .await
+                    }
+                }
             },
             |req: &RenderRequest| req.ctx.request_repaint(),
         );
@@ -71,6 +92,7 @@ impl SplatBackbuffer {
         frame: usize,
         background: Vec3,
         splat_scale: Option<f32>,
+        view_channel: ViewChannel,
         splats_dirty: bool,
     ) {
         // Calculate pixel size for rendering
@@ -86,6 +108,7 @@ impl SplatBackbuffer {
             camera: *camera,
             background,
             splat_scale,
+            view_channel,
             img_size,
         };
 

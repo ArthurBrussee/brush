@@ -540,6 +540,24 @@ impl Sym3 {
             c22: m.col2().dot(sc2),
         }
     }
+
+    /// Inverse of the symmetric 3×3 matrix via cofactors. Caller ensures
+    /// non-singular (positive-definite covariance here).
+    pub fn inverse(self) -> Sym3 {
+        let a00 = self.c11 * self.c22 - self.c12 * self.c12;
+        let a01 = self.c02 * self.c12 - self.c01 * self.c22;
+        let a02 = self.c01 * self.c12 - self.c02 * self.c11;
+        let det = self.c00 * a00 + self.c01 * a01 + self.c02 * a02;
+        let inv = 1.0 / det;
+        Sym3 {
+            c00: a00 * inv,
+            c01: a01 * inv,
+            c02: a02 * inv,
+            c11: (self.c00 * self.c22 - self.c02 * self.c02) * inv,
+            c12: (self.c01 * self.c02 - self.c00 * self.c12) * inv,
+            c22: (self.c00 * self.c11 - self.c01 * self.c01) * inv,
+        }
+    }
 }
 
 /// 2D bbox in tile coords (inclusive min, exclusive max).

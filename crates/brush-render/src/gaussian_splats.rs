@@ -360,6 +360,11 @@ impl Splats {
 }
 
 /// Render splats on a non-differentiable device.
+///
+/// When `geo` is set the renderer also emits the PGSR geometry channels, so
+/// `out_img` is `[H, W, 8]` (`rgba` then view-space blended `Nx,Ny,Nz,D`)
+/// instead of `[H, W, 4]`. Geometry needs the f32/backward path, so it
+/// forces `TextureMode::Float` semantics regardless of `texture_mode`.
 pub async fn render_splats(
     splats: Splats,
     camera: &Camera,
@@ -367,6 +372,7 @@ pub async fn render_splats(
     background: Vec3,
     splat_scale: Option<f32>,
     texture_mode: TextureMode,
+    geo: bool,
 ) -> (Tensor<3>, RenderAux) {
     splats.clone().validate_values().await;
 
@@ -396,7 +402,7 @@ pub async fn render_splats(
         SplatRenderMode::Default
     };
 
-    let use_float = matches!(texture_mode, TextureMode::Float);
+    let use_float = geo || matches!(texture_mode, TextureMode::Float);
 
     let transforms_p = unwrap_wgpu_float(transforms);
     let sh_coeffs_p = unwrap_wgpu_float(sh_coeffs);
@@ -419,22 +425,19 @@ pub async fn render_splats(
         render_mode,
         background,
         pass,
+        geo,
     )
     .await;
 
     output.clone().validate().await;
 
-    let img_size = output.aux.img_size;
-    let num_visible = output.aux.num_visible;
-    let num_intersections = output.aux.num_intersections;
-
     let aux = RenderAux {
-        num_visible,
-        num_intersections,
+        num_visible: output.aux.num_visible,
+        num_intersections: output.aux.num_intersections,
         visible: wrap_wgpu_float(output.aux.visible),
         max_radius: wrap_wgpu_float(output.aux.max_radius),
         tile_offsets: wrap_wgpu_int(output.aux.tile_offsets),
-        img_size,
+        img_size: output.aux.img_size,
     };
 
     (wrap_wgpu_float(output.out_img), aux)

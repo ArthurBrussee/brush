@@ -187,6 +187,7 @@ async fn render_raw(
         mode,
         glam::Vec3::ZERO,
         brush_render::gaussian_splats::RasterPass::Forward,
+        false,
     )
     .await
 }
@@ -505,9 +506,15 @@ async fn fuzz_bwd_random_scenes_gradients_are_finite() {
 
         let device_d = burn::tensor::Device::from(device.clone()).autodiff();
         let splats = Splats::from_raw(means, rots, ls, dc, opac, mode, &device_d);
-        let diff =
-            brush_render_bwd::render_splats(splats.clone(), &cam, img_size, glam::Vec3::ZERO, 0.0)
-                .await;
+        let diff = brush_render_bwd::render_splats(
+            splats.clone(),
+            &cam,
+            img_size,
+            glam::Vec3::ZERO,
+            0.0,
+            false,
+        )
+        .await;
         splats.bwd_validate(diff.img.mean()).await;
     }
 }
@@ -548,6 +555,7 @@ async fn fuzz_bwd_extreme_inputs_stay_finite() {
                 img_size,
                 glam::Vec3::ZERO,
                 0.0,
+                false,
             )
             .await;
             splats.bwd_validate(diff.img.mean()).await;
