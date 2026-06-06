@@ -134,27 +134,6 @@ fn orient3d_filter(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
     ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)
 }
 
-/// SOS tie-break for `orient3d`. Returns the sign of the perturbed
-/// determinant when the unperturbed one is exactly zero. The lexicographic
-/// perturbation `ε_v = (v + 1) * ε`, with ε → 0, picks a definite side based
-/// on the *largest* vertex index — see Edelsbrunner & Mücke 1990,
-/// "Simulation of Simplicity". For our purposes, when the filter returns
-/// zero, we fall through and let the caller treat it as a real zero (a
-/// genuinely cospherical configuration is broken instead by `insphere_sos`,
-/// which is what actually decides Delaunay status). We keep the function
-/// signature here mainly to document intent.
-#[inline]
-fn orient3d_sign(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> i32 {
-    let det = orient3d_filter(a, b, c, d);
-    if det > 0.0 {
-        1
-    } else if det < 0.0 {
-        -1
-    } else {
-        0
-    }
-}
-
 /// `insphere`: sign of the determinant deciding whether `p` is inside the
 /// circumsphere of `(a, b, c, d)`, assuming `(a, b, c, d)` is positively
 /// oriented (`orient3d(a,b,c,d) > 0`).
@@ -192,21 +171,22 @@ fn insphere_oriented(a: DVec3, b: DVec3, c: DVec3, d: DVec3, p: DVec3) -> f64 {
 /// box is sized large enough (10× the data extent, see [`delaunay_3d`])
 /// that all real points land strictly inside it; the bounding vertices
 /// themselves never sit inside another tet's circumsphere.
+///
+/// All stored tets are positively oriented by construction — the bounding
+/// tet is built positive in `delaunay_3d`, and `fill_cavity` substitutes
+/// `pid` at a single vertex slot of an already-positive tet, which
+/// preserves orientation. We skip re-checking the orientation in release
+/// to halve the per-call math on the cavity-flood-fill hot path.
 fn in_circumsphere(tri: &Triangulation, verts: [u32; 4], p: DVec3) -> bool {
     let a = tri.coord(verts[0]);
     let b = tri.coord(verts[1]);
     let c = tri.coord(verts[2]);
     let d = tri.coord(verts[3]);
-    let s = orient3d_sign(a, b, c, d);
-    if s == 0 {
-        // Degenerate tet — treat as "not in sphere" so we don't cascade.
-        // Shouldn't happen with Hilbert-ordered inputs; if it does, the
-        // resulting triangulation may have gaps that downstream marching
-        // tets will silently ignore.
-        return false;
-    }
-    let det = insphere_oriented(a, b, c, d, p);
-    if s > 0 { det < 0.0 } else { det > 0.0 }
+    debug_assert!(
+        orient3d_filter(a, b, c, d) > 0.0,
+        "stored tets must be positively oriented",
+    );
+    insphere_oriented(a, b, c, d, p) < 0.0
 }
 
 /// Build a Delaunay 3D triangulation. Returns a list of tetrahedra
@@ -253,13 +233,19 @@ pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
 
     let mut tri = Triangulation::new(dpoints, virtuals);
 
-    // Hilbert-sort the insertion order. Bucketize the points to a small grid
-    // and visit buckets in Hilbert order — this is enough to localize the
-    // walk-locate, much cheaper than computing a full curve key per point.
+    // Hilbert-sort the insertion order so consecutive insertions are
+    // spatially close — keeps `walk_locate`'s expected hop count bounded.
     let order: Vec<u32> = hilbert_order(points, min, max);
 
+    // One shared scratch reused across every insertion — see the
+    // `Scratch` docstring for why this matters.
+    let mut scr = Scratch::default();
     for &pid in &order {
-        insert_point(&mut tri, pid);
+        let p = tri.coord(pid);
+        scr.clear();
+        let start = walk_locate(&tri, p);
+        collect_cavity(&mut tri, start, p, &mut scr);
+        fill_cavity(&mut tri, pid, &mut scr);
     }
 
     // Extract real tets.
@@ -276,27 +262,31 @@ pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
     out
 }
 
-/// Compute a Hilbert-curve insertion order for `points`. Implementation
-/// detail: project each point onto a 64³ grid and key by a 18-bit Hilbert
-/// index along that grid. Stable sort keeps within-bucket order, which is
-/// fine since same-bucket points are spatially close anyway.
+/// Compute a Hilbert-curve insertion order for `points`. We quantise each
+/// axis at the full 21-bit resolution (2²¹ = ~2M values per axis,
+/// finer than f32 can distinguish), so each point gets a unique key and
+/// there's no bucket-tied tie-breaking — within-bucket order was the
+/// hidden source of long walk_locate hops as N grew. The 3-axis Hilbert
+/// key fits in 63 bits.
 fn hilbert_order(points: &[glam::Vec3], min: DVec3, max: DVec3) -> Vec<u32> {
-    const RES: u32 = 64;
+    const RES: u32 = 1 << 21;
     let inv_size = (max - min).recip_or_zero();
-    let mut keyed: Vec<(u64, u32)> = points
+    // Pre-compute keys; sort an indices vec by key. Avoids the
+    // Vec<(u64,u32)> → Vec<u32> reshape after sort.
+    let keys: Vec<u64> = points
         .iter()
-        .enumerate()
-        .map(|(i, p)| {
+        .map(|p| {
             let dp = DVec3::new(p.x as f64, p.y as f64, p.z as f64);
             let u = ((dp - min) * inv_size).clamp(DVec3::ZERO, DVec3::splat(1.0 - 1e-9));
             let x = (u.x * RES as f64) as u32;
             let y = (u.y * RES as f64) as u32;
             let z = (u.z * RES as f64) as u32;
-            (hilbert3_key(x, y, z, RES), i as u32)
+            hilbert3_key(x, y, z, RES)
         })
         .collect();
-    keyed.sort_unstable_by_key(|&(k, _)| k);
-    keyed.into_iter().map(|(_, i)| i).collect()
+    let mut order: Vec<u32> = (0..points.len() as u32).collect();
+    order.sort_unstable_by_key(|&i| keys[i as usize]);
+    order
 }
 
 trait DVec3Ext {
@@ -338,10 +328,10 @@ fn hilbert3_key(x: u32, y: u32, z: u32, res: u32) -> u64 {
     // <https://github.com/galtay/hilbertcurve/blob/master/hilbertcurve/hilbertcurve.py>.
     let mut bit = 1u32 << (bits - 1);
     while bit > 0 {
-        let rx = if x & bit > 0 { 1 } else { 0 };
+        // Skilling's transform only branches on ry/rz; rx is implicit in
+        // the bit-pattern of x and doesn't need its own variable.
         let ry = if y & bit > 0 { 1 } else { 0 };
         let rz = if z & bit > 0 { 1 } else { 0 };
-        // Gray-code along the curve depending on (rx, ry, rz).
         if ry == 0 {
             if rz == 1 {
                 x = bit.wrapping_sub(1).wrapping_sub(x);
@@ -353,7 +343,6 @@ fn hilbert3_key(x: u32, y: u32, z: u32, res: u32) -> u64 {
             z ^= bit.wrapping_sub(1);
             std::mem::swap(&mut x, &mut y);
         }
-        let _ = (rx, ry, rz);
         bit >>= 1;
     }
     // Interleave bits low→high. With `bits ≤ 21` (i.e. res ≤ 2²¹) the
@@ -367,27 +356,9 @@ fn hilbert3_key(x: u32, y: u32, z: u32, res: u32) -> u64 {
     key
 }
 
-/// Insert one real point `pid` into the triangulation.
-///
-/// Bowyer–Watson:
-/// 1. Find a tet whose circumsphere contains `pid` (the "conflict tet").
-/// 2. Flood-fill from that tet across faces, adding every tet whose
-///    circumsphere also contains `pid`. The union is the "cavity".
-/// 3. The cavity's boundary is a star-shaped polyhedron around `pid`. Fill
-///    it by joining each boundary face to `pid` to form new tets.
-fn insert_point(tri: &mut Triangulation, pid: u32) {
-    let p = tri.coord(pid);
-
-    let start = walk_locate(tri, p);
-    debug_assert!(tri.tets[start as usize].alive);
-
-    let cavity = collect_cavity(tri, start, p);
-
-    fill_cavity(tri, &cavity, pid);
-}
-
-/// Find any tet containing `p`. Walks neighbour links — for Hilbert-ordered
-/// inserts the previous tet is almost always a good starting point.
+/// Find any tet containing `p`. Walks neighbour links from the last
+/// live tet — for Hilbert-ordered inserts the previous tet is almost
+/// always a good starting point.
 fn walk_locate(tri: &Triangulation, p: DVec3) -> u32 {
     // Start from the last live tet.
     let mut current = (tri.tets.len() - 1) as u32;
@@ -401,7 +372,7 @@ fn walk_locate(tri: &Triangulation, p: DVec3) -> u32 {
     // across to the neighbour. Bounded by tet count + slack.
     let mut visited = 0u32;
     loop {
-        let t = tri.tets[current as usize];
+        let t = &tri.tets[current as usize];
         debug_assert!(t.alive, "walk landed on a dead tet");
         let v = [
             tri.coord(t.verts[0]),
@@ -411,8 +382,7 @@ fn walk_locate(tri: &Triangulation, p: DVec3) -> u32 {
         ];
         let mut step_to = u32::MAX;
         for i in 0..4 {
-            let s = orient3d_subst(v, p, i);
-            if s < 0.0 {
+            if orient3d_subst(&v, p, i) < 0.0 {
                 step_to = t.neighbors[i];
                 break;
             }
@@ -434,9 +404,9 @@ fn walk_locate(tri: &Triangulation, p: DVec3) -> u32 {
 /// `orient3d` for the tet `v` with `p` substituted at position `slot`.
 /// For a positively oriented input tet, this is positive iff `p` is on the
 /// same side of face `slot` as the original vertex `v[slot]` — i.e. inside
-/// the tet through that face. Used by both `walk_locate` and `point_in_tet`.
+/// the tet through that face. Used by `walk_locate`.
 #[inline]
-fn orient3d_subst(v: [DVec3; 4], p: DVec3, slot: usize) -> f64 {
+fn orient3d_subst(v: &[DVec3; 4], p: DVec3, slot: usize) -> f64 {
     match slot {
         0 => orient3d_filter(p, v[1], v[2], v[3]),
         1 => orient3d_filter(v[0], p, v[2], v[3]),
@@ -470,7 +440,7 @@ fn linear_find(tri: &Triangulation, p: DVec3) -> u32 {
         ];
         let mut min_sign = f64::INFINITY;
         for slot in 0..4 {
-            let s = orient3d_subst(v, p, slot);
+            let s = orient3d_subst(&v, p, slot);
             if s < min_sign {
                 min_sign = s;
             }
@@ -487,91 +457,92 @@ fn linear_find(tri: &Triangulation, p: DVec3) -> u32 {
     best_idx
 }
 
-fn point_in_tet(tri: &Triangulation, verts: [u32; 4], p: DVec3) -> bool {
-    let v = [
-        tri.coord(verts[0]),
-        tri.coord(verts[1]),
-        tri.coord(verts[2]),
-        tri.coord(verts[3]),
-    ];
-    // Tet is positively oriented; p is inside iff substituting p for every
-    // vertex slot yields a non-negative orient3d.
-    for i in 0..4 {
-        if orient3d_subst(v, p, i) < 0.0 {
-            return false;
-        }
-    }
-    true
-}
-
+/// Per-insertion scratch state. Allocated once at the top of
+/// [`delaunay_3d`] and reused across every Bowyer–Watson insertion via
+/// [`Scratch::clear`]. Hoisting these out of the inner loop was the
+/// single biggest win on the 2M-point profile: HashMap/HashSet/Vec
+/// allocs and frees were dominating `fill_cavity` and meaningfully
+/// hurting `collect_cavity`.
 #[derive(Default)]
-struct Cavity {
-    /// Tets to be removed (all already collected in the conflict region).
+struct Scratch {
+    /// Indices of removed tets in the current cavity.
     removed: Vec<u32>,
-    /// Boundary faces. Each entry: `(verts, slot, opposite_tet)` where
-    /// `verts` is the full 4-vertex array of the cavity tet that owned this
-    /// face, `slot` is which local vertex of that tet is opposite the
-    /// boundary face (i.e. is "facing into the cavity" relative to this
-    /// face), and `opposite_tet` is the live tet outside the cavity that
-    /// shares this face (or `u32::MAX`).
+    /// Boundary faces of the current cavity. Each entry:
+    /// `(verts, slot, opposite_tet)` where `verts` is the full 4-vertex
+    /// array of the cavity tet that owned this face, `slot` is which
+    /// local vertex of that tet is opposite the boundary face, and
+    /// `opposite_tet` is the live tet outside the cavity that shares
+    /// this face (or `u32::MAX`).
     ///
-    /// Storing the full vertex array + slot — rather than just the face
-    /// triangle — lets `fill_cavity` build the new tet by substituting
-    /// `pid` at position `slot`, which guarantees the result is positively
-    /// oriented without any further parity bookkeeping.
+    /// Storing the full vertex array + slot — rather than just the
+    /// face triangle — lets `fill_cavity` build the new tet by
+    /// substituting `pid` at position `slot`, which guarantees the
+    /// result is positively oriented without parity bookkeeping.
     boundary: Vec<([u32; 4], usize, u32)>,
+    /// BFS frontier in `collect_cavity`.
+    stack: Vec<u32>,
+    /// "Already in current cavity" set. `hashbrown::HashSet<u32>`
+    /// beats `std::HashSet<u32>` materially on this access pattern
+    /// (insert + contains per neighbour walk).
+    in_cavity: HashSet<u32>,
+    /// Face-key → (new tet index, local slot). Used by `fill_cavity`
+    /// to stitch the side faces of new tets to each other.
+    face_owner: HashMap<[u32; 3], (u32, usize)>,
 }
 
-fn collect_cavity(tri: &mut Triangulation, start: u32, p: DVec3) -> Cavity {
-    let mut cav = Cavity::default();
-    let mut stack: Vec<u32> = Vec::with_capacity(32);
-    // `HashSet` (hashbrown / foldhash) is materially faster than std
-    // `HashMap<u32, ()>` here — the hot loop walks neighbour links and
-    // does an `insert + contains` per tet, which adds up at 13M+ tets
-    // for the typical garden-scale Delaunay.
-    let mut in_cavity: HashSet<u32> = HashSet::new();
-    stack.push(start);
-    in_cavity.insert(start);
+impl Scratch {
+    fn clear(&mut self) {
+        self.removed.clear();
+        self.boundary.clear();
+        self.stack.clear();
+        self.in_cavity.clear();
+        self.face_owner.clear();
+    }
+}
 
-    while let Some(idx) = stack.pop() {
+fn collect_cavity(tri: &mut Triangulation, start: u32, p: DVec3, scr: &mut Scratch) {
+    scr.stack.push(start);
+    scr.in_cavity.insert(start);
+
+    while let Some(idx) = scr.stack.pop() {
         let t = tri.tets[idx as usize];
         debug_assert!(t.alive);
-        cav.removed.push(idx);
+        scr.removed.push(idx);
         for i in 0..4 {
             let nb = t.neighbors[i];
             if nb != u32::MAX && tri.tets[nb as usize].alive {
-                if in_cavity.contains(&nb) {
+                if scr.in_cavity.contains(&nb) {
                     continue;
                 }
                 let nb_verts = tri.tets[nb as usize].verts;
                 if in_circumsphere(tri, nb_verts, p) {
-                    in_cavity.insert(nb);
-                    stack.push(nb);
+                    scr.in_cavity.insert(nb);
+                    scr.stack.push(nb);
                     continue;
                 }
             }
-            // The face opposite local vertex `i` of this tet is on the
-            // cavity boundary. Store the whole tet + slot so fill_cavity
-            // can build the new tet by substitution.
-            cav.boundary.push((t.verts, i, nb));
+            // Face opposite local vertex `i` is on the cavity boundary.
+            scr.boundary.push((t.verts, i, nb));
         }
     }
-
-    cav
 }
 
-fn fill_cavity(tri: &mut Triangulation, cav: &Cavity, pid: u32) {
+fn fill_cavity(tri: &mut Triangulation, pid: u32, scr: &mut Scratch) {
+    // Split-borrow disjoint scratch fields so we can iterate `boundary`
+    // while mutating `face_owner` inside the loop.
+    let Scratch {
+        removed,
+        boundary,
+        face_owner,
+        ..
+    } = scr;
+
     // Kill removed tets first so the freelist can be reused for the new ones.
-    for &idx in &cav.removed {
+    for &idx in &*removed {
         tri.kill(idx);
     }
 
-    // Face-key → (new tet index, local slot). Used to stitch the side
-    // faces of the new tets to each other.
-    let mut face_owner: HashMap<[u32; 3], (u32, usize)> =
-        HashMap::with_capacity(cav.boundary.len() * 3);
-
-    for &(orig_verts, slot, outside_nb) in &cav.boundary {
+    for &(orig_verts, slot, outside_nb) in &*boundary {
         // Substitute pid for the removed vertex at `slot`. Because the
         // original tet was positively oriented and we're swapping one
         // coordinate (not a permutation), the new tet is also positively
