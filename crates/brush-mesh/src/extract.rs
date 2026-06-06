@@ -227,7 +227,12 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         };
         phases.push((name, phase_start.elapsed()));
         phase_start = std::time::Instant::now();
-        log::info!("Binary search step {}/{} done", step + 1, N_STEPS);
+        log::info!(
+            "Binary search step {}/{} done ({} crossings still active)",
+            step + 1,
+            N_STEPS,
+            state.active_count(),
+        );
     }
     let refined = state.finish();
 
