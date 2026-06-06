@@ -89,6 +89,9 @@ pub fn fold_min_scale(
     raw_opac: Tensor<1>,
     f: Tensor<1>,
 ) -> (Tensor<2>, Tensor<1>) {
+    // `f` is stored on the inner backend but the params may be lifted to
+    // autodiff; align it so the elementwise mix below stays on one backend.
+    let f = crate::burn_glue::match_backend(f, &transforms);
     let n = transforms.dims()[0] as i32;
     let log_scales = transforms.clone().slice(s![.., 7..10]); // [N,3]
     let s2 = log_scales.mul_scalar(2.0).exp(); // s² = exp(2·log) [N,3]
