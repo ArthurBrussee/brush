@@ -114,9 +114,61 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         }
     }
     log::info!(
-        "Using {} views (train + eval) for opacity integration",
+        "Loaded {} views (train + eval) before coverage filter",
         views.len()
     );
+
+    // Optional greedy view-subset selection. With --view-coverage < 1
+    // we sample splat centres as seed points, build a per-view
+    // frustum-visibility bitset, and keep only the views needed to
+    // cover the requested fraction. Big-dataset escape hatch.
+    if cli.view_coverage < 1.0 {
+        let n_splats = splats.num_splats() as usize;
+        // Cap the seed-point sample so coverage stays cheap on big
+        // splats; 10k is plenty for the greedy selector's accuracy.
+        let seed_stride = (n_splats / 10_000).max(1);
+        let means_t = splats.means();
+        let means: Vec<f32> = means_t
+            .into_data_async()
+            .await
+            .context("read splat means")?
+            .into_vec::<f32>()
+            .map_err(|e| anyhow::anyhow!("means f32 cast: {:?}", e))?;
+        let mut seed_points: Vec<glam::Vec3> = Vec::with_capacity(n_splats / seed_stride + 1);
+        for i in (0..n_splats).step_by(seed_stride) {
+            seed_points.push(glam::Vec3::new(
+                means[3 * i],
+                means[3 * i + 1],
+                means[3 * i + 2],
+            ));
+        }
+        log::info!(
+            "View coverage: sampling {} splat centres for greedy selection (target coverage={:.2})",
+            seed_points.len(),
+            cli.view_coverage,
+        );
+        let t0 = std::time::Instant::now();
+        let kept = brush_mesh::view_select::select_views_by_coverage(
+            &seed_points,
+            &views,
+            cli.view_coverage,
+        );
+        log::info!(
+            "View coverage: kept {}/{} views in {:.2}s",
+            kept.len(),
+            views.len(),
+            t0.elapsed().as_secs_f64(),
+        );
+        let kept_set: std::collections::HashSet<usize> = kept.into_iter().collect();
+        views = views
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| kept_set.contains(i))
+            .map(|(_, v)| v)
+            .collect();
+    }
+
+    log::info!("Using {} views for opacity integration", views.len());
 
     // Log a few training-camera poses in f3d-compatible form. Brush's view
     // frame is +X right, +Y down, +Z forward; f3d expects the world-space

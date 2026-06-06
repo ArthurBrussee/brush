@@ -88,6 +88,15 @@ pub struct Cli {
     #[arg(long, help_heading = "Mesh extraction", default_value = "0")]
     pub eval_views: usize,
 
+    /// Fraction of the scene's seed points that the chosen view subset
+    /// must collectively cover, in `[0, 1]`. Defaults to `1.0` (use
+    /// every view). Lower it for big datasets — `0.9` typically drops
+    /// a third of redundant views with no visible quality change.
+    /// Implemented via greedy set-cover on splat-centre frustum
+    /// visibility (see `brush_mesh::view_select`).
+    #[arg(long, help_heading = "Mesh extraction", default_value = "1.0")]
+    pub view_coverage: f32,
+
     #[clap(flatten)]
     pub train_stream: TrainStreamConfig,
 }
