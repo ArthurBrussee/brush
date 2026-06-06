@@ -62,6 +62,18 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         views.len()
     );
 
+    // Whole-pipeline profile. Each phase ends with a `client.sync()` so
+    // any GPU work queued during the phase gets billed to *that* phase
+    // and not silently pushed to the next host call. Otherwise burn's
+    // async launches make the breakdown unreadable — work shows up
+    // wherever the queue happens to flush (typically the next big
+    // allocation or readback).
+    let sync_client = resolve_to_cube_float(splats.transforms.val())
+        .client
+        .clone();
+    let mut phases: Vec<(&'static str, std::time::Duration)> = Vec::new();
+    let mut phase_start = std::time::Instant::now();
+
     // 1. Pull splat tensors back to host for seed-point sampling.
     let means_t = splats.transforms.val().slice(s![.., 0..3]);
     let quats_t = splats.transforms.val().slice(s![.., 3..7]);
@@ -85,19 +97,27 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         .into_vec::<f32>()
         .expect("scales f32");
 
+    sync_client.sync().await.expect("sync");
+    phases.push(("load_tensors", phase_start.elapsed()));
+    phase_start = std::time::Instant::now();
+
     let cams: Vec<Camera> = views.iter().map(|(c, _)| *c).collect();
     let img_sizes: Vec<UVec2> = views.iter().map(|(_, s)| *s).collect();
 
-    // GOF's 3D filter: per-Gaussian isotropic minimum half-extent based
-    // on the closest training camera. Inflates the effective scale and
-    // (in the integrate kernel) is paired with an opacity-compensation
-    // coefficient to preserve the density's integral.
-    let filter_3d = crate::filter_3d::compute_filter_3d(&means, &cams, &img_sizes);
-    if !filter_3d.is_empty() {
-        let max_f = filter_3d.iter().copied().fold(0.0_f32, f32::max);
-        let mean_f = filter_3d.iter().sum::<f32>() / filter_3d.len() as f32;
-        log::info!("filter_3d: mean={mean_f:.4}, max={max_f:.4}");
-    }
+    // GOF's `filter_3D` is brush's `min_scale` floor — read it
+    // *directly* from the splats if it's still attached (training-time
+    // splats), else pass empty (the floor was already baked into
+    // log_scales by PLY export). See `build_tetra_points` docstring.
+    let min_scale_vec: Vec<f32> = match &splats.min_scale {
+        Some(t) => t
+            .clone()
+            .into_data_async()
+            .await
+            .expect("read min_scale")
+            .into_vec::<f32>()
+            .expect("min_scale f32"),
+        None => Vec::new(),
+    };
 
     // Compare bboxes: splat means → seed points → (later) mesh. If seed
     // bbox is much tighter than splat-mean bbox, frustum cull is the
@@ -121,7 +141,7 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         &means,
         &quats,
         &log_scales,
-        &filter_3d,
+        &min_scale_vec,
         &cams,
         &img_sizes,
         &cfg.tetra_points,
@@ -144,6 +164,9 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         log::warn!("Too few seed points to triangulate; returning empty mesh");
         return Mesh::default();
     }
+
+    phases.push(("build_seeds", phase_start.elapsed()));
+    phase_start = std::time::Instant::now();
 
     // 2 + 3. CPU Delaunay and the per-view splat pre-render are
     // independent — Delaunay only needs `pts.points` and the renders
@@ -180,6 +203,9 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     let ((view_cache, alpha), tets_result) = tokio::join!(gpu_block, delaunay_handle);
     let tets = tets_result.expect("delaunay task panicked");
     log::info!("Delaunay tets: {}", tets.len());
+    sync_client.sync().await.expect("sync");
+    phases.push(("delaunay_and_initial_alpha", phase_start.elapsed()));
+    phase_start = std::time::Instant::now();
     let sdf: Vec<f32> = alpha.iter().map(|a| a - cfg.iso_value).collect();
 
     // 4. Marching tets.
@@ -194,7 +220,12 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         return Mesh::default();
     }
 
-    // 5. Binary search refinement.
+    phases.push(("marching_tets", phase_start.elapsed()));
+    phase_start = std::time::Instant::now();
+
+    // 5. Binary search refinement. Each iter is its own phase entry —
+    // there's typically no meaningful variation across iters, but if
+    // anything regresses we want to see which step.
     let mut state = RefineState::new(&mt.crossings, &pts.points, &sdf);
     for step in 0..N_STEPS {
         let mids = state.midpoints();
@@ -203,6 +234,16 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
             .alpha;
         let mid_sdf: Vec<f32> = mid_alpha.iter().map(|a| a - cfg.iso_value).collect();
         state.step(&mid_sdf);
+        sync_client.sync().await.expect("sync");
+        let name: &'static str = match step {
+            0 => "  bs_step_1",
+            1 => "  bs_step_2",
+            2 => "  bs_step_3",
+            3 => "  bs_step_4",
+            _ => "  bs_step_N",
+        };
+        phases.push((name, phase_start.elapsed()));
+        phase_start = std::time::Instant::now();
         log::info!("Binary search step {}/{} done", step + 1, N_STEPS);
     }
     let refined = state.finish();
@@ -234,6 +275,10 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     // surface so each view samples a pixel that shows the actual
     // surface material rather than whatever was in front.
     let final_eval = evaluate_alpha(&splats, &refined, &view_cache, true).await;
+    sync_client.sync().await.expect("sync");
+    phases.push(("final_color_eval", phase_start.elapsed()));
+    phase_start = std::time::Instant::now();
+
     let vertex_colors: Vec<[u8; 3]> = final_eval
         .color
         .iter()
@@ -298,6 +343,19 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         mesh_bbox.1.y - mesh_bbox.0.y,
         mesh_bbox.1.z - mesh_bbox.0.z,
     );
+
+    phases.push(("filter_and_crop", phase_start.elapsed()));
+    let total: std::time::Duration = phases.iter().map(|(_, d)| *d).sum();
+    log::info!("=== EXTRACT PROFILE ===");
+    for (name, d) in &phases {
+        let pct = if total.is_zero() {
+            0.0
+        } else {
+            d.as_secs_f64() / total.as_secs_f64() * 100.0
+        };
+        log::info!("  {:>28}: {:>7.2}s ({:>4.1}%)", name, d.as_secs_f64(), pct);
+    }
+    log::info!("  {:>28}: {:>7.2}s", "TOTAL", total.as_secs_f64());
 
     mesh
 }

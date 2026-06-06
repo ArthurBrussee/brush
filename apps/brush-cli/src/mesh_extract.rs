@@ -170,9 +170,11 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             mesh.faces.len()
         );
     } else {
+        let t_write = std::time::Instant::now();
         write_mesh(&mesh, &cli.out_mesh)?;
         log::info!(
-            "Wrote {} verts, {} faces → {}",
+            "mesh_write: {:.2}s ({} verts, {} faces → {})",
+            t_write.elapsed().as_secs_f64(),
             mesh.vertices.len(),
             mesh.faces.len(),
             cli.out_mesh.display()

@@ -80,13 +80,15 @@ mod tests {
     use super::*;
 
     /// Converges to the analytic zero of a linear SDF: f(x) = x.
+    /// Uses 8 steps (independent of the production `N_STEPS`) to keep
+    /// the convergence-tolerance assertion meaningful.
     #[test]
     fn linear_sdf_converges() {
         let positions = vec![Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)];
         let sdf = vec![-1.0, 1.0];
         let crossings = vec![Crossing { a: 0, b: 1 }];
         let mut state = RefineState::new(&crossings, &positions, &sdf);
-        for _ in 0..N_STEPS {
+        for _ in 0..8 {
             let mids = state.midpoints();
             let mid_sdf: Vec<f32> = mids.iter().map(|p| p.x).collect();
             state.step(&mid_sdf);

@@ -13,7 +13,6 @@ pub mod binary_search;
 pub mod delaunay;
 pub mod extract;
 pub mod filter;
-pub mod filter_3d;
 pub mod marching_tet;
 pub mod ply;
 pub mod tetra_points;
