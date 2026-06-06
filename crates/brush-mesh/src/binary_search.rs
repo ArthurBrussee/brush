@@ -25,7 +25,7 @@ use glam::Vec3;
 
 use crate::marching_tet::Crossing;
 
-pub const N_STEPS: usize = 4;
+pub const N_STEPS: usize = 8;
 
 /// A crossing whose mid-SDF lies within this tolerance of zero is locked
 /// at its current midpoint and skipped on subsequent steps. SDF here is

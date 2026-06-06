@@ -223,6 +223,10 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
             1 => "  bs_step_2",
             2 => "  bs_step_3",
             3 => "  bs_step_4",
+            4 => "  bs_step_5",
+            5 => "  bs_step_6",
+            6 => "  bs_step_7",
+            7 => "  bs_step_8",
             _ => "  bs_step_N",
         };
         phases.push((name, phase_start.elapsed()));
