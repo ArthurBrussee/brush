@@ -33,11 +33,117 @@ fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
     }
 }
 
-/// State of a cache slot: still being decoded on a pool actor, or already
-/// resolved and ready to display.
 enum LoadState {
     Pending(oneshot::Receiver<TexHandle>),
     Ready(TexHandle),
+}
+
+struct PreviewJob {
+    view: SceneView,
+    ctx: egui::Context,
+    preview_edge: u32,
+    reply: oneshot::Sender<TexHandle>,
+}
+
+struct PreviewLoader {
+    jobs: async_channel::Sender<PreviewJob>,
+    _workers: Vec<Actor>,
+    cache: VecDeque<(LoadImage, LoadState)>,
+    target_res: u32,
+}
+
+impl PreviewLoader {
+    fn new() -> Self {
+        let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let (jobs, rx) = async_channel::unbounded::<PreviewJob>();
+        let workers = (0..workers)
+            .map(|i| {
+                let actor = Actor::new(&format!("dataset-preview-{i}"));
+                let rx = rx.clone();
+                actor
+                    .run(move || async move {
+                        while let Ok(job) = rx.recv().await {
+                            if let Some(tex) =
+                                load_preview(job.view, job.ctx.clone(), job.preview_edge).await
+                            {
+                                let _ = job.reply.send(tex);
+                                job.ctx.request_repaint();
+                            }
+                        }
+                    })
+                    .detach();
+                actor
+            })
+            .collect();
+        Self {
+            jobs,
+            _workers: workers,
+            cache: VecDeque::with_capacity(TEX_CACHE_LIMIT),
+            target_res: 0,
+        }
+    }
+
+    fn set_target_res(&mut self, edge: u32) {
+        let (lo, hi) = (edge.min(self.target_res), edge.max(self.target_res));
+        if hi * 10 > lo * 11 {
+            self.target_res = edge;
+            self.cache.clear();
+        }
+    }
+
+    /// Get a ready texture for `view`, queuing a decode on a miss. Returns
+    /// `Some` only once the texture is uploaded.
+    fn request(&mut self, view: &SceneView, ctx: &egui::Context) -> Option<TexHandle> {
+        if let Some(tex) = self.cache_get(&view.image) {
+            return Some(tex);
+        }
+        self.spawn_load(view, ctx);
+        None
+    }
+
+    /// Look up a target in the cache. Returns `Some(tex)` when ready.
+    fn cache_get(&mut self, target: &LoadImage) -> Option<TexHandle> {
+        let pos = self.cache.iter().position(|(img, _)| img == target)?;
+
+        if let LoadState::Pending(rx) = &mut self.cache[pos].1 {
+            match rx.try_recv() {
+                Ok(tex) => self.cache[pos].1 = LoadState::Ready(tex),
+                Err(oneshot::error::TryRecvError::Empty) => return None,
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    // Load failed (sender dropped without sending). Drop the slot
+                    // so the caller can re-spawn.
+                    self.cache.remove(pos);
+                    return None;
+                }
+            }
+        }
+        let LoadState::Ready(tex) = &self.cache[pos].1 else {
+            unreachable!()
+        };
+        let tex = tex.clone();
+        let entry = self.cache.remove(pos)?;
+        self.cache.push_front(entry);
+        Some(tex)
+    }
+
+    /// Queue a load on the shared pool.
+    fn spawn_load(&mut self, view: &SceneView, ctx: &egui::Context) {
+        if self.cache.iter().any(|(i, _)| *i == view.image) {
+            return;
+        }
+        let (reply, rx) = oneshot::channel();
+        let _ = self.jobs.try_send(PreviewJob {
+            view: view.clone(),
+            ctx: ctx.clone(),
+            preview_edge: self.target_res,
+            reply,
+        });
+        self.cache
+            .push_front((view.image.clone(), LoadState::Pending(rx)));
+        if self.cache.len() > TEX_CACHE_LIMIT {
+            self.cache.pop_back();
+        }
+    }
 }
 
 pub struct DatasetPanel {
@@ -46,40 +152,20 @@ pub struct DatasetPanel {
 
     current_view_index: Option<usize>,
     loading_start: Option<web_time::Instant>,
+    loader: PreviewLoader,
 
-    /// MRU-ordered cache. Each slot is either Pending (decode in flight on a
-    /// pool actor) or Ready (texture uploaded, ready to draw). On eviction the
-    /// `oneshot::Sender` in the spawned task drops harmlessly.
-    cache: VecDeque<(LoadImage, LoadState)>,
-
-    /// The view currently on screen (kept until a cache hit or new load replaces it).
     displayed: Option<(SceneView, TexHandle)>,
-
-    /// Pool of decode actors. Round-robin via `next_actor`.
-    actors: Vec<Actor>,
-    next_actor: usize,
-
-    /// Edge length (physical px) the cached previews were decoded for; tracks
-    /// the panel size so resizing reloads at a matching resolution.
-    preview_edge: u32,
 }
 
 impl Default for DatasetPanel {
     fn default() -> Self {
-        let actors = (0..TEX_CACHE_LIMIT)
-            .map(|i| Actor::new(&format!("dataset-preview-{i}")))
-            .collect();
-
         Self {
             view_type: ViewType::Train,
             cur_dataset: Dataset::empty(),
             current_view_index: None,
             loading_start: None,
-            cache: VecDeque::with_capacity(TEX_CACHE_LIMIT),
             displayed: None,
-            actors,
-            next_actor: 0,
-            preview_edge: 0,
+            loader: PreviewLoader::new(),
         }
     }
 }
@@ -116,59 +202,6 @@ async fn load_preview(view: SceneView, ctx: egui::Context, preview_edge: u32) ->
 }
 
 impl DatasetPanel {
-    /// Look up a target in the cache. Advances `Pending → Ready` opportunistically
-    /// and bumps the entry to MRU. Returns `Some(tex)` only when ready.
-    fn cache_get(&mut self, target: &LoadImage) -> Option<TexHandle> {
-        let pos = self.cache.iter().position(|(img, _)| img == target)?;
-
-        if let LoadState::Pending(rx) = &mut self.cache[pos].1 {
-            match rx.try_recv() {
-                Ok(tex) => self.cache[pos].1 = LoadState::Ready(tex),
-                Err(oneshot::error::TryRecvError::Empty) => return None,
-                Err(oneshot::error::TryRecvError::Closed) => {
-                    // Load failed (sender dropped without sending). Drop the slot
-                    // so the caller can re-spawn.
-                    self.cache.remove(pos);
-                    return None;
-                }
-            }
-        }
-
-        let LoadState::Ready(tex) = &self.cache[pos].1 else {
-            unreachable!()
-        };
-        let tex = tex.clone();
-        let entry = self.cache.remove(pos)?;
-        self.cache.push_front(entry);
-        Some(tex)
-    }
-
-    /// Queue a load on the next pool actor, unless an entry (pending or ready)
-    /// already exists for this image. Inserts a Pending placeholder at the MRU
-    /// position so subsequent calls dedup against it.
-    fn spawn_load(&mut self, view: SceneView, ctx: egui::Context) {
-        if self.cache.iter().any(|(i, _)| *i == view.image) {
-            return;
-        }
-        let (tx, rx) = oneshot::channel();
-        let actor = &self.actors[self.next_actor];
-        self.next_actor = (self.next_actor + 1) % self.actors.len();
-        let view_for_task = view.clone();
-        let preview_edge = self.preview_edge;
-        actor
-            .run(move || async move {
-                if let Some(tex) = load_preview(view_for_task, ctx.clone(), preview_edge).await {
-                    let _ = tx.send(tex);
-                    ctx.request_repaint();
-                }
-            })
-            .detach();
-        self.cache.push_front((view.image, LoadState::Pending(rx)));
-        if self.cache.len() > TEX_CACHE_LIMIT {
-            self.cache.pop_back();
-        }
-    }
-
     fn focus_picked(&self, process: &UiProcess) {
         let pick_scene = selected_scene(self.view_type, &self.cur_dataset);
 
@@ -236,9 +269,7 @@ impl AppPane for DatasetPanel {
                     process.focus_view(&view.camera);
                 }
                 self.cur_dataset = dataset.clone();
-                // Drop cached entries. Any in-flight Pending receivers go with
-                // them — their tasks' senders error silently on send.
-                self.cache.clear();
+                self.loader = PreviewLoader::new();
                 self.displayed = None;
             }
             ProcessMessage::SplatsUpdated { up_axis, .. } => {
@@ -281,33 +312,25 @@ impl AppPane for DatasetPanel {
         // windows.
         let needed =
             ((ui.available_size().max_elem() * ui.ctx().pixels_per_point()).ceil() as u32).max(32);
+        self.loader.set_target_res(needed);
 
-        let (lo, hi) = (needed.min(self.preview_edge), needed.max(self.preview_edge));
-        if hi * 10 > lo * 11 {
-            self.preview_edge = needed;
-            self.cache.clear();
-        }
-
-        // Cache hit (Ready) → swap display. Pending/Miss → ensure a load is in
-        // flight; spawn_load no-ops if an entry already exists.
-        if let Some(tex) = self.cache_get(&target_view.image) {
+        // Hit → swap display. Miss → the loader has queued a decode; show the
+        // stale image until it lands.
+        if let Some(tex) = self.loader.request(&target_view, ui.ctx()) {
             self.displayed = Some((target_view.clone(), tex));
             self.loading_start = None;
 
-            // Speculative prefetch of immediate neighbors so sequential nav is
-            // instant. spawn_load no-ops if already in cache.
+            // Also load neighbours as those are often nearby / and makes the arrow
+            // keys smoother.
             let n = pick_scene.views.len();
             if n > 1 {
                 let next = (*nearest + 1) % n;
                 let prev = (*nearest + n - 1) % n;
-                self.spawn_load(pick_scene.views[next].clone(), ui.ctx().clone());
-                self.spawn_load(pick_scene.views[prev].clone(), ui.ctx().clone());
+                self.loader.spawn_load(&pick_scene.views[next], ui.ctx());
+                self.loader.spawn_load(&pick_scene.views[prev], ui.ctx());
             }
-        } else {
-            if self.loading_start.is_none() {
-                self.loading_start = Some(web_time::Instant::now());
-            }
-            self.spawn_load(target_view.clone(), ui.ctx().clone());
+        } else if self.loading_start.is_none() {
+            self.loading_start = Some(web_time::Instant::now());
         }
 
         let Some((view, tex)) = self.displayed.clone() else {
