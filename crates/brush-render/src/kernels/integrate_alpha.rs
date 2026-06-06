@@ -43,6 +43,10 @@ const ALPHA_CUTOFF: f32 = 1.0 / 255.0;
 const ALPHA_CLAMP: f32 = 0.999;
 const T_EARLY_OUT: f32 = 1.0e-4;
 
+/// Visibility-weight exponent for the colour blend. Must stay in sync
+/// with `COLOR_BLEND_POWER` in `crates/brush-mesh/src/extract.rs`.
+const COLOR_BLEND_POWER: f32 = 8.0;
+
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 pub fn integrate_alpha_kernel(
@@ -53,11 +57,15 @@ pub fn integrate_alpha_kernel(
     global_from_compact_gid: &Tensor<u32>,
     rendered_image: &Tensor<f32>,
     points: &Tensor<f32>,
-    out_alpha: &mut Tensor<f32>,
-    out_rgb: &mut Tensor<f32>,
+    // Running aggregators (fused — was a separate `aggregate_alpha`
+    // kernel before). Each thread owns one `pid` slot so no atomics.
+    min_alpha: &mut Tensor<f32>,
+    color_sum: &mut Tensor<f32>,
+    weight_sum: &mut Tensor<f32>,
     num_points: u32,
     u: ProjectUniforms,
     #[comptime] camera_model: CameraModel,
+    #[comptime] track_color: bool,
 ) {
     let pid = ABSOLUTE_POS as u32;
     if pid >= num_points {
@@ -68,22 +76,13 @@ pub fn integrate_alpha_kernel(
     let p_world = Vec3A::new(points[pidx3], points[pidx3 + 1], points[pidx3 + 2]);
     let p_cam = world_to_cam(p_world, u);
 
-    let out_rgb_base = (pid * 3u32) as usize;
-
     let depth = p_cam.z();
     if !(depth > NEAR_PLANE) {
-        // Point is behind the near plane of this view — the view has no
-        // line of sight to it. Write 1.0 ("fully occluded") to match
-        // GOF's `out_alpha_integrated = torch.full({PN}, 1.0)`
-        // initialization, which their integrate kernel leaves untouched
-        // for points that don't project into any pixel. The host's
-        // `min(α_int)` aggregation then ignores this view's vote, which
-        // is the correct semantic — a view that can't see the point
-        // shouldn't get to claim a clear line of sight to it.
-        out_alpha[pid as usize] = 1.0f32;
-        out_rgb[out_rgb_base] = 0.0f32;
-        out_rgb[out_rgb_base + 1] = 0.0f32;
-        out_rgb[out_rgb_base + 2] = 0.0f32;
+        // Behind near plane — this view has no line of sight. Skip
+        // entirely: not touching `min_alpha` leaves prior views' votes
+        // (or the host's +∞ init, which the host maps to alpha = 1.0
+        // "open space") in place. Equivalent to GOF's untouched-pixel
+        // semantic without the redundant 1.0 write.
         terminate!();
     }
 
@@ -99,12 +98,8 @@ pub fn integrate_alpha_kernel(
     let (px, py) = project(p_cam, u.pinhole_params, camera_model);
     if !(px >= 0.0f32 && px < u.img_w as f32 && py >= 0.0f32 && py < u.img_h as f32) {
         // Off-screen — same semantic as the behind-near-plane case
-        // above. 1.0 means "fully occluded" so the host's min() ignores
-        // this view's vote; matches GOF's full-1.0 buffer init pattern.
-        out_alpha[pid as usize] = 1.0f32;
-        out_rgb[out_rgb_base] = 0.0f32;
-        out_rgb[out_rgb_base + 1] = 0.0f32;
-        out_rgb[out_rgb_base + 2] = 0.0f32;
+        // above. Leaving the aggregators untouched means the host's
+        // +∞ init (mapped to alpha = 1.0) wins if every view skips.
         terminate!();
     }
     let tx = (px as u32) / TILE_WIDTH;
@@ -128,9 +123,9 @@ pub fn integrate_alpha_kernel(
     let r_u = pix_u32 & 0xFFu32;
     let g_u = (pix_u32 >> 8u32) & 0xFFu32;
     let b_u = (pix_u32 >> 16u32) & 0xFFu32;
-    out_rgb[out_rgb_base] = f32::cast_from(r_u) / 255.0f32;
-    out_rgb[out_rgb_base + 1] = f32::cast_from(g_u) / 255.0f32;
-    out_rgb[out_rgb_base + 2] = f32::cast_from(b_u) / 255.0f32;
+    let rgb_r = f32::cast_from(r_u) / 255.0f32;
+    let rgb_g = f32::cast_from(g_u) / 255.0f32;
+    let rgb_b = f32::cast_from(b_u) / 255.0f32;
 
     let range_lo = tile_offsets[(tile_id * 2u32) as usize];
     let range_hi = tile_offsets[(tile_id * 2u32 + 1u32) as usize];
@@ -149,16 +144,13 @@ pub fn integrate_alpha_kernel(
         let g_scale = read_scale(transforms, base);
         let g_quat = read_quat_unorm(transforms, base).normalize();
 
-        // Note: GOF additionally applies a per-Gaussian `filter_3D` here —
-        // scales get inflated as `√(s² + filter_3D²)` and opacity is
-        // scaled by `√(det(S²) / det(S_eff²))` to preserve the density's
-        // integral. That formulation only matches the rendered 2D alpha
-        // when splats are *trained* against the same filter; applying it
-        // to brush splats trained without it (raw opacity ≡ rendered
-        // opacity) zeros out sub-`filter_3D` Gaussians one-sidedly and
-        // collapses the iso-surface. We instead use `filter_3D` upstream
-        // only to inflate seed-point spacing (improves Delaunay coverage)
-        // and leave the kernel reading raw scales / raw opacity here.
+        // Scales and opacity are already *effective*: `extract_mesh`
+        // calls `splats.bake_min_scale()` up front so the mip 3D-filter
+        // floor (`sqrt(s² + f²)` for scales, `sqrt(det/det)` for
+        // opacity — see `fold_min_scale`) is folded into the raw
+        // tensors. Reading `transforms` / `raw_opacities` directly here
+        // therefore matches what brush's renderer uses, with no risk of
+        // under- or double-counting the filter.
         let g_mean_c = world_to_cam(g_mean_w, u);
         let r_gv = u.view_rotation().mul_mat3(g_quat.to_mat3());
 
@@ -207,5 +199,23 @@ pub fn integrate_alpha_kernel(
         k += 1u32;
     }
 
-    out_alpha[pid as usize] = 1.0f32 - t_acc;
+    // Fold this view's contribution into the running per-point
+    // aggregators. Each `pid` is owned by a single thread (one thread
+    // per query point), so the read-modify-writes are race-free across
+    // views (every view = a separate sequential kernel launch).
+    let alpha = 1.0f32 - t_acc;
+    if alpha < min_alpha[pid as usize] {
+        min_alpha[pid as usize] = alpha;
+    }
+    if track_color {
+        let vis = max(1.0f32 - alpha, 0.0f32);
+        let w = f32::powf(vis, COLOR_BLEND_POWER);
+        if w > 0.0f32 {
+            let base = (pid * 3u32) as usize;
+            color_sum[base] += w * rgb_r;
+            color_sum[base + 1] += w * rgb_g;
+            color_sum[base + 2] += w * rgb_b;
+            weight_sum[pid as usize] += w;
+        }
+    }
 }

@@ -63,23 +63,15 @@ pub struct TetraPoints {
 /// arrays are flat `[N*3]`, `[N*4]` (wxyz), `[N*3]`. `cameras` /
 /// `image_sizes` drive frustum culling.
 ///
-/// `min_scale` is brush's per-splat mip 3D filter floor `[N]`, the
-/// authoritative source of GOF's `filter_3D`. Pass an **empty slice**
-/// when the splats already had the floor baked into `log_scales` (the
-/// PLY-export path: `bake_min_scale` folds the floor and clears
-/// `min_scale`). Pass a length-N slice when the source splats still
-/// hold a separate `min_scale` (i.e. directly from training): we then
-/// inflate scales as `√(s² + f²)` per axis, matching
-/// `get_scaling_with_3D_filter` from GOF and the brush render path.
-///
-/// Empty / `None` is the correct path for PLY-loaded splats: the
-/// scales already contain the floor and the inflation would
-/// double-count.
+/// The caller is expected to pass *baked* scales — i.e. the mip 3D
+/// filter floor already folded in via [`Splats::bake_min_scale`]
+/// (which `extract_mesh` does up front). No per-Gaussian inflation
+/// happens here, which keeps the seed sampler in sync with the
+/// integrate kernel that also reads baked transforms.
 pub fn build_tetra_points(
     means: &[f32],
     quats_wxyz: &[f32],
     log_scales: &[f32],
-    min_scale: &[f32],
     cameras: &[Camera],
     image_sizes: &[glam::UVec2],
     cfg: &TetraPointsConfig,
@@ -88,11 +80,6 @@ pub fn build_tetra_points(
     let n = means.len() / 3;
     assert_eq!(quats_wxyz.len(), n * 4);
     assert_eq!(log_scales.len(), n * 3);
-    assert!(
-        min_scale.is_empty() || min_scale.len() == n,
-        "min_scale must be empty (= already baked into scales) or length N",
-    );
-    let has_filter = !min_scale.is_empty();
 
     // 9 points per Gaussian, parallel over Gaussians. The frustum cull is
     // folded in so we don't materialise a 9× temporary.
@@ -107,21 +94,11 @@ pub fn build_tetra_points(
                 quats_wxyz[4 * i],
             )
             .normalize();
-            let raw = Vec3::new(
+            let scale = Vec3::new(
                 log_scales[3 * i].exp(),
                 log_scales[3 * i + 1].exp(),
                 log_scales[3 * i + 2].exp(),
             );
-            let scale = if has_filter {
-                let f2 = min_scale[i] * min_scale[i];
-                Vec3::new(
-                    (raw.x * raw.x + f2).sqrt(),
-                    (raw.y * raw.y + f2).sqrt(),
-                    (raw.z * raw.z + f2).sqrt(),
-                )
-            } else {
-                raw
-            };
             // Stored per-point scale: `3 · max_axis_effective`. This is
             // the 3σ half-extent of the Gaussian along its widest axis,
             // and matches GOF's `vertices_scale` storage so the filter
@@ -205,12 +182,10 @@ mod tests {
         let means = vec![0.0, 0.0, 0.0];
         let quats = vec![1.0, 0.0, 0.0, 0.0];
         let log_scales = vec![-2.0; 3];
-        // No min_scale: scales used directly.
         let out = build_tetra_points(
             &means,
             &quats,
             &log_scales,
-            &[],
             &[cam],
             &[sz],
             &TetraPointsConfig::default(),
@@ -233,7 +208,7 @@ mod tests {
             far: 100.0,
             ..Default::default()
         };
-        let out = build_tetra_points(&means, &quats, &log_scales, &[], &[cam], &[sz], &cfg);
+        let out = build_tetra_points(&means, &quats, &log_scales, &[cam], &[sz], &cfg);
         assert!(out.points.is_empty());
     }
 }

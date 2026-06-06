@@ -2,7 +2,7 @@
 //! Delaunay, per-view GPU opacity integration, marching tets, and binary
 //! search refinement.
 
-use brush_cube::{MainBackendBase, calc_cube_count_1d, create_tensor};
+use brush_cube::{MainBackendBase, calc_cube_count_1d};
 use brush_render::SplatOps;
 use brush_render::burn_glue::resolve_to_cube_float;
 use brush_render::camera::Camera;
@@ -10,7 +10,7 @@ use brush_render::gaussian_splats::{RasterPass, SplatRenderMode, Splats};
 use brush_render::kernels;
 use burn::backend::ops::{FloatTensorOps, TransactionOps, TransactionPrimitive};
 use burn::backend::tensor::FloatTensor;
-use burn::tensor::{DType, s};
+use burn::tensor::s;
 use burn_cubecl::cubecl::CubeDim;
 use burn_wgpu::WgpuRuntime;
 use glam::{UVec2, Vec3};
@@ -41,21 +41,20 @@ impl Default for ExtractConfig {
     }
 }
 
-/// Visibility weight exponent for per-vertex colour blending. Each view
-/// contributes its rgb weighted by `(1 − α_int)^COLOR_BLEND_POWER`.
-/// Higher = more bias to best-vis views (sharper, more like GOF's
-/// best-view convention but with smooth fallback for ties); lower =
-/// more averaging across moderately-visible views (more robust but
-/// blurrier). Empirically k=2 wins the PSNR-vs-splat metric on bonsai,
-/// but visually that's a soft blur of view-dependent SH — colours
-/// look "smeared". k=8 puts most weight on the top ~2 views per
-/// vertex, sharper at the cost of more per-view appearance variance.
-const COLOR_BLEND_POWER: f32 = 8.0;
-
 /// Extract a triangle mesh from `splats`. `views` carries the per-view
 /// `(camera, image_size)` pairs used for both frustum-culling the seed
 /// points and integrating the opacity along rays.
 pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &ExtractConfig) -> Mesh {
+    // Fold any `min_scale` floor into the raw transforms + opacities up
+    // front so the entire downstream pipeline sees a single canonical
+    // splat representation. With `min_scale = None`, `bake_min_scale` is
+    // a no-op; with it set (training-time splats), it inflates scales
+    // and energy-compensates opacity exactly once. Doing this here means
+    // the seed-point sampler and the integrate kernel both work off the
+    // same effective values the renderer uses — no chance of either one
+    // under- or double-correcting.
+    let splats = splats.bake_min_scale();
+
     let n_splats = splats.num_splats() as usize;
     log::info!(
         "Extracting mesh from {n_splats} splats across {} views",
@@ -104,21 +103,6 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     let cams: Vec<Camera> = views.iter().map(|(c, _)| *c).collect();
     let img_sizes: Vec<UVec2> = views.iter().map(|(_, s)| *s).collect();
 
-    // GOF's `filter_3D` is brush's `min_scale` floor — read it
-    // *directly* from the splats if it's still attached (training-time
-    // splats), else pass empty (the floor was already baked into
-    // log_scales by PLY export). See `build_tetra_points` docstring.
-    let min_scale_vec: Vec<f32> = match &splats.min_scale {
-        Some(t) => t
-            .clone()
-            .into_data_async()
-            .await
-            .expect("read min_scale")
-            .into_vec::<f32>()
-            .expect("min_scale f32"),
-        None => Vec::new(),
-    };
-
     // Compare bboxes: splat means → seed points → (later) mesh. If seed
     // bbox is much tighter than splat-mean bbox, frustum cull is the
     // bottleneck. If they agree but the mesh is much smaller, the alpha
@@ -141,7 +125,6 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         &means,
         &quats,
         &log_scales,
-        &min_scale_vec,
         &cams,
         &img_sizes,
         &cfg.tetra_points,
@@ -497,11 +480,10 @@ async fn evaluate_alpha(
     for (view_idx, view_render) in view_renders.iter().enumerate() {
         // The render has already been done once during pre-render; we
         // clone the tensor handles (Arc-backed in burn, so cheap) and
-        // hand them straight to the integrate kernel. No project +
-        // rasterize per call.
+        // hand them straight to the integrate kernel, which folds
+        // directly into the running per-point aggregators. No per-view
+        // scratch tensor, no separate aggregate launch.
         let out = view_render.render.clone();
-        let out_alpha: FloatTensor<B> = create_tensor::<1>([n], &device, DType::F32);
-        let out_rgb: FloatTensor<B> = create_tensor::<2>([n, 3], &device, DType::F32);
         let uniforms = out.project_uniforms.to_launch_object();
         let camera_model = view_render.camera_model;
 
@@ -516,24 +498,12 @@ async fn evaluate_alpha(
             out.global_from_compact_gid.into_tensor_arg(),
             out.out_img.into_tensor_arg(),
             pts_tensor.clone().into_tensor_arg(),
-            out_alpha.clone().into_tensor_arg(),
-            out_rgb.clone().into_tensor_arg(),
-            n as u32,
-            uniforms,
-            camera_model,
-        );
-
-        // Fold this view into the running aggregators on the GPU.
-        kernels::aggregate_alpha::aggregate_alpha_kernel::launch::<WgpuRuntime>(
-            &client,
-            calc_cube_count_1d(n as u32, kernels::aggregate_alpha::WG_SIZE),
-            CubeDim::new_1d(kernels::aggregate_alpha::WG_SIZE),
-            out_alpha.clone().into_tensor_arg(),
-            out_rgb.clone().into_tensor_arg(),
             min_alpha_t.clone().into_tensor_arg(),
             color_sum_t.clone().into_tensor_arg(),
             weight_sum_t.clone().into_tensor_arg(),
             n as u32,
+            uniforms,
+            camera_model,
             track_color,
         );
 

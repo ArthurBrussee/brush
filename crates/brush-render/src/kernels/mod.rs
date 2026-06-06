@@ -10,7 +10,6 @@
     clippy::similar_names
 )]
 
-pub mod aggregate_alpha;
 pub mod camera_model;
 pub mod geo_visualize;
 pub mod helpers;
