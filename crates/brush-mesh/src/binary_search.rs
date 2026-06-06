@@ -158,9 +158,11 @@ mod tests {
         }
         let refined = state.finish();
         assert_eq!(refined.len(), 1);
+        // Position precision is bounded by `CONVERGE_EPS` (since the
+        // SDF for f(x)=x equals the position offset from the zero).
         assert!(
-            (refined[0].x - 0.3).abs() < 0.01,
-            "expected x ≈ 0.3, got {}",
+            (refined[0].x - 0.3).abs() < CONVERGE_EPS,
+            "expected x ≈ 0.3 within CONVERGE_EPS, got {}",
             refined[0].x
         );
     }

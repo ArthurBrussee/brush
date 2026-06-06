@@ -16,10 +16,10 @@ use burn_wgpu::WgpuRuntime;
 use glam::{UVec2, Vec3};
 
 use crate::Mesh;
-use crate::binary_search::{N_STEPS, RefineState};
 use crate::delaunay::delaunay_3d;
 use crate::filter::filter_mesh_with_keep;
 use crate::marching_tet::marching_tets;
+use crate::refine::{N_STEPS, RefineState};
 use crate::tetra_points::{TetraPointsConfig, build_tetra_points};
 
 /// User-facing extraction config.
@@ -206,17 +206,22 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     phases.push(("marching_tets", phase_start.elapsed()));
     phase_start = std::time::Instant::now();
 
-    // 5. Binary search refinement. Each iter is its own phase entry —
-    // there's typically no meaningful variation across iters, but if
-    // anything regresses we want to see which step.
-    let mut state = RefineState::new(&mt.crossings, &pts.points, &sdf);
+    // 5. Binary search refinement, with the bracket state living on
+    // the GPU. Each iter dispatches: compute_midpoints → 292 integrate
+    // launches → bracket_update. The only per-step CPU↔GPU traffic is
+    // a 4-byte readback of the new active count.
+    let device = resolve_to_cube_float(splats.transforms.val())
+        .device
+        .clone();
+    let mut state = RefineState::new(&mt.crossings, &pts.points, &sdf, device);
     for step in 0..N_STEPS {
-        let mids = state.midpoints();
-        let mid_alpha = evaluate_alpha(&splats, &mids, &view_cache, false)
-            .await
-            .alpha;
-        let mid_sdf: Vec<f32> = mid_alpha.iter().map(|a| a - cfg.iso_value).collect();
-        state.step(&mid_sdf);
+        if state.n_active() == 0 {
+            break;
+        }
+        let mid_pos_t = state.compute_midpoints_t();
+        let min_alpha_t =
+            integrate_alpha_tiled_min_t(&splats, mid_pos_t, state.n_active(), &view_cache);
+        state.update_bracket_t(min_alpha_t, cfg.iso_value).await;
         sync_client.sync().await.expect("sync");
         let name: &'static str = match step {
             0 => "  bs_step_1",
@@ -235,10 +240,10 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
             "Binary search step {}/{} done ({} crossings still active)",
             step + 1,
             N_STEPS,
-            state.active_count(),
+            state.n_active(),
         );
     }
-    let refined = state.finish();
+    let refined = state.finish().await;
 
     // 6. Per-crossing keep mask. Matches GOF's `filter_mesh` step
     // (`extract_mesh.py`): for each crossing, keep iff the *original
@@ -446,6 +451,147 @@ async fn pre_render_views(
         }
     }
     cache
+}
+
+/// Per-view tile-cooperative ray-gaussian integrate.
+///
+/// Per view, instead of dispatching one thread per query vertex over the
+/// untouched gaussian list, we:
+/// 1. project all vertices to `(tile_id, ray_dir_xy, depth, pix_xy)`
+/// 2. histogram the tile_ids → exclusive prefix sum → `vertex_tile_offsets`
+/// 3. atomic-scatter vertex ids into `sorted_indices`, grouped by tile
+/// 4. dispatch `integrate_alpha_tiled_kernel` with one workgroup per
+///    tile, each workgroup cooperatively streaming the tile's gaussians
+///    through shared memory while every thread evaluates its own
+///    vertex.
+///
+/// This matches the structure of brush's rasterize kernel (and GOF's
+/// `IntegrateGaussianAlphaToPoints`) — the win is shared-memory reuse
+/// of gaussian data across all threads in a workgroup, instead of every
+/// thread independently fetching from global memory.
+fn integrate_alpha_tiled_min_t(
+    splats: &Splats,
+    pts_tensor: FloatTensor<MainBackendBase>,
+    n: usize,
+    view_renders: &[ViewRender],
+) -> FloatTensor<MainBackendBase> {
+    type B = MainBackendBase;
+    use brush_cube::{create_tensor, create_tensor_from_slice};
+    use brush_render::kernels::integrate_tiled;
+    use burn::tensor::DType;
+
+    let transforms_p = resolve_to_cube_float(splats.transforms.val());
+    let raw_opacities_p = resolve_to_cube_float(splats.raw_opacities.val());
+    let device = transforms_p.device.clone();
+    let client = transforms_p.client.clone();
+
+    // Aggregator: lives across all 292 view kernels.
+    let min_alpha_t: FloatTensor<B> = B::float_from_data(
+        burn::tensor::TensorData::new(vec![f32::INFINITY; n], [n]),
+        &device,
+    );
+    // Dummy colour tensors (kernel won't write since track_color = false).
+    let color_sum_t: FloatTensor<B> = B::float_from_data(
+        burn::tensor::TensorData::new(vec![0.0f32; 3], [1, 3]),
+        &device,
+    );
+    let weight_sum_t: FloatTensor<B> =
+        B::float_from_data(burn::tensor::TensorData::new(vec![0.0f32; 1], [1]), &device);
+
+    // Per-view scratch tensors — sized at construction, reused across
+    // all 292 views. The kernel inputs are `&mut Tensor<_>` so the
+    // contents are overwritten each view; nothing carries between
+    // views except the running aggregators.
+    let tile_ids_t = create_tensor::<1>([n], &device, DType::U32);
+    let depths_t = create_tensor::<1>([n], &device, DType::F32);
+    let ray_dir_xy_t = create_tensor::<2>([n, 2], &device, DType::F32);
+    let pix_x_t = create_tensor::<1>([n], &device, DType::U32);
+    let pix_y_t = create_tensor::<1>([n], &device, DType::U32);
+    let sorted_indices_t = create_tensor::<1>([n], &device, DType::U32);
+
+    for view_render in view_renders {
+        let out = view_render.render.clone();
+        let camera_model = view_render.camera_model;
+        let tile_bw = out.project_uniforms.tile_bounds[0];
+        let tile_bh = out.project_uniforms.tile_bounds[1];
+        let n_tiles = (tile_bw * tile_bh) as usize;
+
+        // 1) Project every vertex to (tile_id, depth, ray_dir, pix).
+        integrate_tiled::project_vertices_kernel::launch::<WgpuRuntime>(
+            &client,
+            calc_cube_count_1d(n as u32, integrate_tiled::TILE_SIZE),
+            CubeDim::new_1d(integrate_tiled::TILE_SIZE),
+            pts_tensor.clone().into_tensor_arg(),
+            tile_ids_t.clone().into_tensor_arg(),
+            depths_t.clone().into_tensor_arg(),
+            ray_dir_xy_t.clone().into_tensor_arg(),
+            pix_x_t.clone().into_tensor_arg(),
+            pix_y_t.clone().into_tensor_arg(),
+            n as u32,
+            out.project_uniforms.to_launch_object(),
+            camera_model,
+        );
+
+        // 2) Shifted histogram → exclusive prefix sum for vertex_tile_offsets.
+        // Allocate fresh per view (cheap; ~16 KB).
+        let counts_t = create_tensor_from_slice(&vec![0u32; n_tiles + 1], &device, DType::U32);
+        integrate_tiled::histogram_tile_ids_kernel::launch::<WgpuRuntime>(
+            &client,
+            calc_cube_count_1d(n as u32, integrate_tiled::TILE_SIZE),
+            CubeDim::new_1d(integrate_tiled::TILE_SIZE),
+            tile_ids_t.clone().into_tensor_arg(),
+            counts_t.clone().into_tensor_arg(),
+            n as u32,
+            (tile_bw * tile_bh),
+        );
+        let vertex_tile_offsets_t = brush_prefix_sum::prefix_sum(counts_t);
+
+        // 3) Atomic-scatter into sorted_indices, with per-tile write
+        // counters (one u32 per tile — bounded contention).
+        let write_counters_t = create_tensor_from_slice(&vec![0u32; n_tiles], &device, DType::U32);
+        integrate_tiled::scatter_vertices_kernel::launch::<WgpuRuntime>(
+            &client,
+            calc_cube_count_1d(n as u32, integrate_tiled::TILE_SIZE),
+            CubeDim::new_1d(integrate_tiled::TILE_SIZE),
+            tile_ids_t.clone().into_tensor_arg(),
+            vertex_tile_offsets_t.clone().into_tensor_arg(),
+            write_counters_t.clone().into_tensor_arg(),
+            sorted_indices_t.clone().into_tensor_arg(),
+            n as u32,
+            (tile_bw * tile_bh),
+        );
+
+        // 4) Tile-cooperative integrate. Dispatch one WG per tile in 1D
+        // (rasterize uses the same pattern — `CUBE_POS` is the tile id).
+        let num_tiles_u32 = (tile_bw * tile_bh) as u32;
+        integrate_tiled::integrate_alpha_tiled_kernel::launch::<WgpuRuntime>(
+            &client,
+            calc_cube_count_1d(
+                num_tiles_u32 * integrate_tiled::TILE_SIZE,
+                integrate_tiled::TILE_SIZE,
+            ),
+            CubeDim::new_1d(integrate_tiled::TILE_SIZE),
+            transforms_p.clone().into_tensor_arg(),
+            raw_opacities_p.clone().into_tensor_arg(),
+            out.compact_gid_from_isect.into_tensor_arg(),
+            out.aux.tile_offsets.into_tensor_arg(),
+            out.global_from_compact_gid.into_tensor_arg(),
+            out.out_img.into_tensor_arg(),
+            sorted_indices_t.clone().into_tensor_arg(),
+            vertex_tile_offsets_t.into_tensor_arg(),
+            depths_t.clone().into_tensor_arg(),
+            ray_dir_xy_t.clone().into_tensor_arg(),
+            pix_x_t.clone().into_tensor_arg(),
+            pix_y_t.clone().into_tensor_arg(),
+            min_alpha_t.clone().into_tensor_arg(),
+            color_sum_t.clone().into_tensor_arg(),
+            weight_sum_t.clone().into_tensor_arg(),
+            out.project_uniforms.to_launch_object(),
+            false, // track_color
+        );
+    }
+
+    min_alpha_t
 }
 
 async fn evaluate_alpha(

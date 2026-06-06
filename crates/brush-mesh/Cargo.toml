@@ -9,6 +9,7 @@ license.workspace = true
 brush-render.path = "../brush-render"
 brush-cube.path = "../brush-cube"
 brush-dataset.path = "../brush-dataset"
+brush-prefix-sum.path = "../brush-prefix-sum"
 
 hashbrown.workspace = true
 

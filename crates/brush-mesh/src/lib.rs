@@ -15,6 +15,7 @@ pub mod extract;
 pub mod filter;
 pub mod marching_tet;
 pub mod ply;
+pub mod refine;
 pub mod tetra_points;
 
 pub use extract::{ExtractConfig, extract_mesh};

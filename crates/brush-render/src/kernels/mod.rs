@@ -10,10 +10,12 @@
     clippy::similar_names
 )]
 
+pub mod bisect;
 pub mod camera_model;
 pub mod geo_visualize;
 pub mod helpers;
 pub mod integrate_alpha;
+pub mod integrate_tiled;
 pub mod map_gaussians;
 pub mod project_forward;
 pub mod project_visible;
