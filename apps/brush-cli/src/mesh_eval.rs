@@ -1,14 +1,16 @@
 //! Mesh evaluation: render the extracted mesh at training-camera
 //! viewpoints with an in-process wgpu renderer
-//! ([`crate::mesh_render::MeshRenderer`]) and report PSNR + coverage.
+//! ([`crate::mesh_render::MeshRenderer`]) and report PSNR vs the
+//! re-rendered splat appearance at each view. Only the mesh-vs-splat
+//! PSNR is reported — mesh-vs-photo mixes extractor error with splat-
+//! vs-photo error and isn't useful for iterating on the extractor.
 //!
-//! Two comparison targets:
-//! - **Photo GT** (always): the dataset's recorded image. Mixes
-//!   *mesh-vs-splat* error with *splat-vs-photo* error.
-//! - **Splat render** (when splats passed): re-render the splats at the
-//!   same camera and compare to that. Isolates mesh quality from splat
-//!   reconstruction quality, so any regression points squarely at the
-//!   extractor.
+//! Both the splat-render *and* the mesh-render use a pinhole camera so
+//! the SBS panels are pixel-aligned. The mesh wgpu rasterizer is
+//! intrinsically pinhole (no distortion model in the shader); forcing
+//! the splat render to also be pinhole keeps the comparison honest and
+//! the SBS frames aligned (otherwise distorted-camera scenes show a
+//! visible "jump" between the two halves).
 //!
 //! The renderer is unlit (rendered RGB = barycentric vertex-color
 //! interpolation), so PSNR reflects mesh fidelity rather than any
@@ -18,7 +20,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use brush_dataset::scene::SceneView;
+use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
+use brush_render::kernels::camera_model::CameraModel;
 use brush_render::{TextureMode, render_splats};
 use burn::tensor::s;
 use glam::{UVec2, Vec3};
@@ -26,11 +30,8 @@ use image::{ImageBuffer, Rgb};
 
 pub struct ViewEval {
     pub view_idx: usize,
-    /// PSNR of mesh-render vs the splat render at this view (when splats
-    /// were provided). Falls back to photo PSNR otherwise.
+    /// PSNR of mesh-render vs the splat render (at a pinhole camera).
     pub psnr: f64,
-    /// PSNR of mesh-render vs the dataset photo (always computed).
-    pub psnr_vs_photo: f64,
     pub coverage: f64,
     pub rendered_path: PathBuf,
 }
@@ -38,7 +39,7 @@ pub struct ViewEval {
 pub async fn eval_psnr(
     mesh: &brush_mesh::Mesh,
     train_views: &[SceneView],
-    splats: Option<&Splats>,
+    splats: &Splats,
     n: usize,
     out_dir: &Path,
 ) -> anyhow::Result<Vec<ViewEval>> {
@@ -53,55 +54,41 @@ pub async fn eval_psnr(
             .image
             .output_dimensions()
             .await
-            .context("read GT dims")?;
+            .context("read view dims")?;
         let img_size = UVec2::new(w, h);
-        let gt = view.image.load().await.context("load GT image")?.to_rgb8();
 
-        let rendered = renderer.render(mesh, &view.camera, img_size);
+        // Force a pinhole camera for both renders so the SBS panels line
+        // up pixel-exact regardless of the dataset's distortion model.
+        let pin_cam = with_pinhole(&view.camera);
+
+        let rendered = renderer.render(mesh, &pin_cam, img_size);
         let rendered_path = out_dir.join(format!("view_{i:04}.png"));
         rendered
             .save(&rendered_path)
-            .with_context(|| format!("saving rendered view to {}", rendered_path.display()))?;
-        let gt_path = out_dir.join(format!("view_{i:04}_gt.png"));
-        gt.save(&gt_path)
-            .with_context(|| format!("saving GT to {}", gt_path.display()))?;
+            .with_context(|| format!("saving mesh render to {}", rendered_path.display()))?;
 
-        let psnr_vs_photo = crate::mesh_render::psnr(&rendered, &gt);
+        let splat_img = render_splats_to_rgb(splats, &pin_cam, img_size).await?;
+        let splat_path = out_dir.join(format!("view_{i:04}_splat.png"));
+        splat_img
+            .save(&splat_path)
+            .with_context(|| format!("saving splat render to {}", splat_path.display()))?;
+
+        let psnr = crate::mesh_render::psnr(&rendered, &splat_img);
         let coverage = compute_coverage(&rendered);
 
-        // Splat-render comparison: re-render splats at this camera and use
-        // as the per-pixel target. PSNR vs splat-render is the headline
-        // metric — it isolates extractor error from splat reconstruction
-        // error, which is the meaningful number when iterating on the
-        // mesh pipeline alone.
-        let (psnr, sbs) = if let Some(splats) = splats {
-            let splat_img = render_splats_to_rgb(splats, &view.camera, img_size).await?;
-            let splat_path = out_dir.join(format!("view_{i:04}_splat.png"));
-            splat_img
-                .save(&splat_path)
-                .with_context(|| format!("saving splat render to {}", splat_path.display()))?;
-            let psnr_vs_splat = crate::mesh_render::psnr(&rendered, &splat_img);
-            let sbs = three_panel(&gt, &splat_img, &rendered);
-            (psnr_vs_splat, sbs)
-        } else {
-            let sbs = side_by_side(&gt, &rendered);
-            (psnr_vs_photo, sbs)
-        };
-
+        let sbs = side_by_side(&splat_img, &rendered);
         let sbs_path = out_dir.join(format!("view_{i:04}_sbs.png"));
         sbs.save(&sbs_path)
             .with_context(|| format!("saving SBS to {}", sbs_path.display()))?;
 
         log::info!(
-            "view[{i:04}]: PSNR(mesh vs splat)={psnr:.2} PSNR(mesh vs photo)={psnr_vs_photo:.2} \
-             coverage={:.1}%",
+            "view[{i:04}]: PSNR(mesh vs splat)={psnr:.2} coverage={:.1}%",
             coverage * 100.0
         );
 
         results.push(ViewEval {
             view_idx: i,
             psnr,
-            psnr_vs_photo,
             coverage,
             rendered_path,
         });
@@ -109,12 +96,9 @@ pub async fn eval_psnr(
 
     if !results.is_empty() {
         let mean_psnr = results.iter().map(|r| r.psnr).sum::<f64>() / results.len() as f64;
-        let mean_photo =
-            results.iter().map(|r| r.psnr_vs_photo).sum::<f64>() / results.len() as f64;
         let mean_cov = results.iter().map(|r| r.coverage).sum::<f64>() / results.len() as f64;
         log::info!(
-            "PSNR over {} views: mean_vs_splat={mean_psnr:.3} mean_vs_photo={mean_photo:.3} \
-             coverage={:.1}%",
+            "PSNR over {} views: mean_vs_splat={mean_psnr:.3} coverage={:.1}%",
             results.len(),
             mean_cov * 100.0
         );
@@ -123,13 +107,22 @@ pub async fn eval_psnr(
     Ok(results)
 }
 
-/// Render the splats at `camera` to an 8-bit RGB image, applying the
-/// same 8-bit roundtrip as the training eval pipeline (`*255`, round,
-/// `/255`) so the mesh-render bytes and splat-render bytes are
-/// quantised consistently before PSNR.
+/// Build a copy of `cam` with the camera model swapped to `Pinhole` and
+/// the existing intrinsics (focal + center) re-derived through it. For
+/// pinhole-source cameras this is a no-op; for distorted cameras it
+/// removes the distortion so the splat-render and our wgpu mesh-render
+/// share the same projection.
+fn with_pinhole(cam: &Camera) -> Camera {
+    Camera {
+        camera_model: CameraModel::Pinhole,
+        ..*cam
+    }
+}
+
+/// Render the splats at `camera` to an 8-bit RGB image.
 async fn render_splats_to_rgb(
     splats: &Splats,
-    camera: &brush_render::camera::Camera,
+    camera: &Camera,
     img_size: UVec2,
 ) -> anyhow::Result<ImageBuffer<Rgb<u8>, Vec<u8>>> {
     let (img, _aux) = render_splats(
@@ -163,7 +156,7 @@ async fn render_splats_to_rgb(
     Ok(out)
 }
 
-/// Horizontal concat: GT on the left, mesh render on the right.
+/// Horizontal concat: splat render on the left, mesh render on the right.
 fn side_by_side(
     left: &ImageBuffer<Rgb<u8>, Vec<u8>>,
     right: &ImageBuffer<Rgb<u8>, Vec<u8>>,
@@ -173,21 +166,6 @@ fn side_by_side(
     let mut out = ImageBuffer::from_pixel(w, h, Rgb([0u8, 0, 0]));
     image::imageops::overlay(&mut out, left, 0, 0);
     image::imageops::overlay(&mut out, right, left.width() as i64, 0);
-    out
-}
-
-/// 3-panel: photo | splat render | mesh render.
-fn three_panel(
-    a: &ImageBuffer<Rgb<u8>, Vec<u8>>,
-    b: &ImageBuffer<Rgb<u8>, Vec<u8>>,
-    c: &ImageBuffer<Rgb<u8>, Vec<u8>>,
-) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
-    let w = a.width() + b.width() + c.width();
-    let h = a.height().max(b.height()).max(c.height());
-    let mut out = ImageBuffer::from_pixel(w, h, Rgb([0u8, 0, 0]));
-    image::imageops::overlay(&mut out, a, 0, 0);
-    image::imageops::overlay(&mut out, b, a.width() as i64, 0);
-    image::imageops::overlay(&mut out, c, (a.width() + b.width()) as i64, 0);
     out
 }
 

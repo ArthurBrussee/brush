@@ -16,7 +16,7 @@ use burn_wgpu::WgpuRuntime;
 use glam::{UVec2, Vec3};
 
 use crate::Mesh;
-use crate::binary_search::RefineState;
+use crate::binary_search::{N_STEPS, RefineState};
 use crate::delaunay::delaunay_3d;
 use crate::filter::filter_mesh_with_keep;
 use crate::marching_tet::marching_tets;
@@ -26,37 +26,31 @@ use crate::tetra_points::{TetraPointsConfig, build_tetra_points};
 #[derive(Debug, Clone)]
 pub struct ExtractConfig {
     pub tetra_points: TetraPointsConfig,
-    /// If true, drop faces whose vertices straddle empty space (see
-    /// [`crate::filter::filter_mesh`]).
-    pub filter_mesh: bool,
-    /// Iso-value for the level set. GOF uses 0.5; brush splats (no
-    /// surface regularization in training) need ~0.95.
+    /// Iso-value for the level set. GOF default 0.5 — carves the
+    /// surface at half-transmittance, the principled "material
+    /// boundary" choice.
     pub iso_value: f32,
-    /// Binary-search refinement steps along each crossing edge. Each
-    /// step halves the remaining error and triggers a full per-view
-    /// integrate-alpha eval, so cost is linear in `n_steps`. GOF's
-    /// default 8 → edge precision ~0.4% of the original Delaunay edge.
-    pub bin_search_steps: usize,
-    /// Per-vertex colour blending exponent. Each view contributes its
-    /// rgb weighted by `(1 − α_int)^k`. `k=0` ≈ uniform average across
-    /// in-view samples; `k=∞` ≈ GOF's "best view only". Default 2
-    /// (visibility-squared) closes ~+1.5 PSNR vs splat-render on bonsai
-    /// compared to best-view, by averaging out view-dependent SH
-    /// variation that the unlit mesh-render can't reproduce.
-    pub color_blend_power: f32,
 }
 
 impl Default for ExtractConfig {
     fn default() -> Self {
         Self {
             tetra_points: TetraPointsConfig::default(),
-            filter_mesh: true,
             iso_value: 0.5,
-            bin_search_steps: crate::binary_search::N_STEPS,
-            color_blend_power: 2.0,
         }
     }
 }
+
+/// Visibility weight exponent for per-vertex colour blending. Each view
+/// contributes its rgb weighted by `(1 − α_int)^COLOR_BLEND_POWER`.
+/// Higher = more bias to best-vis views (sharper, more like GOF's
+/// best-view convention but with smooth fallback for ties); lower =
+/// more averaging across moderately-visible views (more robust but
+/// blurrier). Empirically k=2 wins the PSNR-vs-splat metric on bonsai,
+/// but visually that's a soft blur of view-dependent SH — colours
+/// look "smeared". k=8 puts most weight on the top ~2 views per
+/// vertex, sharper at the cost of more per-view appearance variance.
+const COLOR_BLEND_POWER: f32 = 8.0;
 
 /// Extract a triangle mesh from `splats`. `views` carries the per-view
 /// `(camera, image_size)` pairs used for both frustum-culling the seed
@@ -163,7 +157,7 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     } else {
         SplatRenderMode::Default
     };
-    let alpha = evaluate_alpha(&splats, &pts.points, views, render_mode, false, 0.0)
+    let alpha = evaluate_alpha(&splats, &pts.points, views, render_mode, false)
         .await
         .alpha;
     let sdf: Vec<f32> = alpha.iter().map(|a| a - cfg.iso_value).collect();
@@ -182,18 +176,14 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
 
     // 5. Binary search refinement.
     let mut state = RefineState::new(&mt.crossings, &pts.points, &sdf);
-    for step in 0..cfg.bin_search_steps {
+    for step in 0..N_STEPS {
         let mids = state.midpoints();
-        let mid_alpha = evaluate_alpha(&splats, &mids, views, render_mode, false, 0.0)
+        let mid_alpha = evaluate_alpha(&splats, &mids, views, render_mode, false)
             .await
             .alpha;
         let mid_sdf: Vec<f32> = mid_alpha.iter().map(|a| a - cfg.iso_value).collect();
         state.step(&mid_sdf);
-        log::info!(
-            "Binary search step {}/{} done",
-            step + 1,
-            cfg.bin_search_steps
-        );
+        log::info!("Binary search step {}/{} done", step + 1, N_STEPS);
     }
     let refined = state.finish();
 
@@ -223,15 +213,7 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     // contributing views' RGB. Vertex positions are now on the iso-
     // surface so each view samples a pixel that shows the actual
     // surface material rather than whatever was in front.
-    let final_eval = evaluate_alpha(
-        &splats,
-        &refined,
-        views,
-        render_mode,
-        true,
-        cfg.color_blend_power,
-    )
-    .await;
+    let final_eval = evaluate_alpha(&splats, &refined, views, render_mode, true).await;
     let vertex_colors: Vec<[u8; 3]> = final_eval
         .color
         .iter()
@@ -251,9 +233,42 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         faces: mt.faces,
     };
 
-    if cfg.filter_mesh {
-        mesh = filter_mesh_with_keep(&mesh, &keep_crossing);
+    mesh = filter_mesh_with_keep(&mesh, &keep_crossing);
+
+    // Drop vertices outside the splat-means bbox + margin. These are
+    // outlier verts produced when binary search refines a crossing
+    // along a Delaunay edge that spans the empty far field — e.g.
+    // billboard splats whose 3σ corners stretch tens of units beyond
+    // the actual scene. They don't represent any surface, just noise
+    // in the alpha field at the bbox boundary. The edge-length filter
+    // above doesn't catch them because their parent Gaussians are
+    // huge, so `scale_a + scale_b` is huge too. Cropping in world space
+    // does.
+    let margin = 0.1 * (splat_bbox.1 - splat_bbox.0).length();
+    let crop_lo = splat_bbox.0 - Vec3::splat(margin);
+    let crop_hi = splat_bbox.1 + Vec3::splat(margin);
+    let inside: Vec<bool> = mesh
+        .vertices
+        .iter()
+        .map(|v| {
+            v.x >= crop_lo.x
+                && v.x <= crop_hi.x
+                && v.y >= crop_lo.y
+                && v.y <= crop_hi.y
+                && v.z >= crop_lo.z
+                && v.z <= crop_hi.z
+        })
+        .collect();
+    let n_dropped = inside.iter().filter(|&&k| !k).count();
+    if n_dropped > 0 {
+        log::info!(
+            "Cropping {n_dropped} verts outside splat-bbox+10% margin ({:.2} of {})",
+            n_dropped as f32 / inside.len() as f32 * 100.0,
+            inside.len()
+        );
+        mesh = filter_mesh_with_keep(&mesh, &inside);
     }
+
     let mesh_bbox = bbox_from_vec3(&mesh.vertices);
     log::info!(
         "Final mesh: {} verts, {} faces, bbox extent ({:.2}x{:.2}x{:.2})",
@@ -323,7 +338,6 @@ async fn evaluate_alpha(
     views: &[(Camera, UVec2)],
     render_mode: SplatRenderMode,
     track_color: bool,
-    color_blend_power: f32,
 ) -> EvaluateOut {
     type B = MainBackendBase;
     let n = points.len();
@@ -432,10 +446,10 @@ async fn evaluate_alpha(
             }
             if track_color {
                 // Visibility = 1 − α_int (line-of-sight openness). Raise
-                // to `color_blend_power` so the most-visible views
+                // to `COLOR_BLEND_POWER` so the most-visible views
                 // dominate the bake without being a hard winner-takes-all.
                 let vis = (1.0 - a).max(0.0);
-                let w = vis.powf(color_blend_power);
+                let w = vis.powf(COLOR_BLEND_POWER);
                 if w > 0.0 {
                     color_sum[i][0] += w * rgb_flat[3 * i];
                     color_sum[i][1] += w * rgb_flat[3 * i + 1];

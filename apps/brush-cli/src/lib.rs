@@ -50,12 +50,6 @@ pub struct Cli {
     #[arg(long, help_heading = "Mesh extraction", default_value = "mesh.ply")]
     pub out_mesh: std::path::PathBuf,
 
-    /// Keep all faces, including those whose edges span empty space.
-    /// By default the GOF-style long-edge filter is on; pass this to
-    /// disable it.
-    #[arg(long, help_heading = "Mesh extraction")]
-    pub no_filter_mesh: bool,
-
     /// Near plane for frustum culling seed points.
     #[arg(long, help_heading = "Mesh extraction", default_value = "0.02")]
     pub mesh_near: f32,
@@ -78,28 +72,6 @@ pub struct Cli {
     /// geometry into a speckled halo, so PSNR can be misleading.
     #[arg(long, help_heading = "Mesh extraction", default_value = "0.5")]
     pub iso_value: f32,
-
-    /// Binary-search refinement steps along each crossing edge. GOF
-    /// uses 8 (default). Each step doubles edge precision and triggers
-    /// a full alpha eval, so cost is linear in this number.
-    #[arg(long, help_heading = "Mesh extraction", default_value = "8")]
-    pub bin_search_steps: usize,
-
-    /// Per-vertex colour blending exponent across views. Each view
-    /// contributes its rgb weighted by `(1 − α_int)^k`. `k=0` averages
-    /// all views equally; `k=2` (default) is a smooth visibility weight
-    /// that closes ~+1.5 PSNR vs splat-render on bonsai vs GOF's
-    /// best-view-only convention; `k=∞` recovers GOF behaviour.
-    #[arg(long, help_heading = "Mesh extraction", default_value = "2.0")]
-    pub color_blend_power: f32,
-
-    /// Drop Gaussians whose max-axis is at or above this percentile of
-    /// the per-Gaussian max-axis distribution (0..1). brush trains a long
-    /// tail of "billboard" splats for distant appearance; their huge
-    /// scales blow out the mesh bbox and defeat the edge-length filter.
-    /// 0.999 = drop top 0.1%. 1.0 = keep all.
-    #[arg(long, help_heading = "Mesh extraction", default_value = "0.999")]
-    pub max_axis_pct: f32,
 
     /// Skip writing the extracted mesh as PLY to disk. The mesh PLY for
     /// a 10M-face garden is ~30 MB and even with buffering takes a few

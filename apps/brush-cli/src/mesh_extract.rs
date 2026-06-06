@@ -77,6 +77,23 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
     // (we need access to the GT image bytes via SceneView::image).
     let train_scene_views: Vec<brush_dataset::scene::SceneView> =
         dataset.dataset.train.views.iter().cloned().collect();
+    // Force pinhole cameras for the entire extraction pipeline. The
+    // mesh wgpu rasterizer is intrinsically pinhole (no per-pixel
+    // distortion in the shader), so if the dataset cameras have any
+    // distortion model (KB4, RT8, …) the alpha integration & colour
+    // sampling would happen against a distorted render but the
+    // mesh-render at eval time would be undistorted — producing the
+    // "frame jump" between the splat and mesh panels. Re-deriving the
+    // camera with `CameraModel::Pinhole` keeps the focal proportional
+    // to the same fov (so the framing is right) and just drops the
+    // distortion polynomial. Pinhole-source datasets like bonsai are
+    // unaffected; distorted datasets get a slight crop/stretch that's
+    // identical across both renderers.
+    use brush_render::kernels::camera_model::CameraModel;
+    let to_pinhole = |mut c: brush_render::camera::Camera| {
+        c.camera_model = CameraModel::Pinhole;
+        c
+    };
     let mut views: Vec<(brush_render::camera::Camera, UVec2)> = Vec::new();
     for v in dataset.dataset.train.views.iter() {
         let (w, h) = v
@@ -84,7 +101,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             .output_dimensions()
             .await
             .context("failed to read image dims for camera")?;
-        views.push((v.camera, UVec2::new(w, h)));
+        views.push((to_pinhole(v.camera), UVec2::new(w, h)));
     }
     if let Some(eval) = dataset.dataset.eval.as_ref() {
         for v in eval.views.iter() {
@@ -93,7 +110,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
                 .output_dimensions()
                 .await
                 .context("failed to read eval image dims")?;
-            views.push((v.camera, UVec2::new(w, h)));
+            views.push((to_pinhole(v.camera), UVec2::new(w, h)));
         }
     }
     log::info!(
@@ -134,13 +151,9 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         tetra_points: TetraPointsConfig {
             near: cli.mesh_near,
             far: cli.mesh_far,
-            max_axis_pct: cli.max_axis_pct,
             ..Default::default()
         },
-        filter_mesh: !cli.no_filter_mesh,
         iso_value: cli.iso_value,
-        bin_search_steps: cli.bin_search_steps,
-        color_blend_power: cli.color_blend_power,
     };
     // Clone splats before extraction consumes them — we need a handle
     // for the splat-render-vs-mesh PSNR comparison below. Splats is a
@@ -183,7 +196,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         crate::mesh_eval::eval_psnr(
             &mesh,
             &train_scene_views,
-            Some(&splats_for_eval),
+            &splats_for_eval,
             cli.eval_views,
             &eval_dir,
         )

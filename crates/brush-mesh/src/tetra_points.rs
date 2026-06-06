@@ -42,13 +42,6 @@ pub struct TetraPointsConfig {
     /// value keeps boundary points that would otherwise create gaps along
     /// the image edges. Default 0 matches GOF.
     pub frustum_margin: f32,
-    /// Skip Gaussians whose largest axis is at or above this percentile
-    /// of the per-Gaussian max-axis distribution (0..1, default 0.999
-    /// = top 0.1%). Such outliers are typically "sky" / billboard splats
-    /// brush trains for distant appearance — they're not surfaces, and
-    /// their huge scales produce mega-tets that defeat the edge-length
-    /// filter downstream. Set to 1.0 to disable.
-    pub max_axis_pct: f32,
 }
 
 impl Default for TetraPointsConfig {
@@ -57,7 +50,6 @@ impl Default for TetraPointsConfig {
             near: 0.02,
             far: 1e6,
             frustum_margin: 0.0,
-            max_axis_pct: 0.999,
         }
     }
 }
@@ -87,35 +79,6 @@ pub fn build_tetra_points(
     assert_eq!(log_scales.len(), n * 3);
     assert_eq!(filter_3d.len(), n);
 
-    // Determine the per-Gaussian max-axis cutoff. A brush splat scene
-    // typically has a long tail of "billboard" / sky Gaussians whose
-    // max-axis is orders of magnitude larger than the median surface
-    // splat. They cover huge spatial extents, produce mega-seeds, and
-    // hand the edge-length mesh filter a `scale_a + scale_b` budget so
-    // large that real spurious mega-tets pass through. Drop them.
-    let max_axis_cutoff: f32 = if cfg.max_axis_pct >= 1.0 {
-        f32::INFINITY
-    } else {
-        let mut max_axes: Vec<f32> = (0..n)
-            .into_par_iter()
-            .map(|i| {
-                let sx = log_scales[3 * i].exp();
-                let sy = log_scales[3 * i + 1].exp();
-                let sz = log_scales[3 * i + 2].exp();
-                sx.max(sy).max(sz)
-            })
-            .collect();
-        max_axes.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let idx = ((n as f32 * cfg.max_axis_pct) as usize).min(n.saturating_sub(1));
-        let cutoff = max_axes[idx];
-        let dropped = n - idx;
-        log::info!(
-            "max_axis cutoff = {cutoff:.4} (drops top {dropped} of {n} splats, {:.3}%)",
-            (dropped as f32 / n as f32) * 100.0
-        );
-        cutoff
-    };
-
     // 9 points per Gaussian, parallel over Gaussians. The frustum cull is
     // folded in so we don't materialise a 9× temporary.
     let chunks: Vec<(Vec<Vec3>, Vec<f32>)> = (0..n)
@@ -134,9 +97,6 @@ pub fn build_tetra_points(
                 log_scales[3 * i + 1].exp(),
                 log_scales[3 * i + 2].exp(),
             );
-            if raw_scale.max_element() >= max_axis_cutoff {
-                return (Vec::new(), Vec::new());
-            }
             // Inflated scale: `sqrt(scale² + filter_3D²)` per axis. This
             // matches GOF's `get_scaling_with_3D_filter` — the effective
             // Gaussian for sampling purposes has at least the
@@ -232,16 +192,17 @@ mod tests {
         let quats = vec![1.0, 0.0, 0.0, 0.0];
         let log_scales = vec![-2.0; 3];
         let filter = vec![0.0_f32; 1];
-        // max_axis_pct default trims the top 0.1% which for N=1 rounds
-        // down to the single splat. Disable for this test.
-        let cfg = TetraPointsConfig {
-            max_axis_pct: 1.0,
-            ..Default::default()
-        };
-        let out = build_tetra_points(&means, &quats, &log_scales, &filter, &[cam], &[sz], &cfg);
+        let out = build_tetra_points(
+            &means,
+            &quats,
+            &log_scales,
+            &filter,
+            &[cam],
+            &[sz],
+            &TetraPointsConfig::default(),
+        );
         assert_eq!(out.points.len(), 9);
         assert_eq!(out.scales.len(), 9);
-        // s_max = max_axis · 3σ (filter_3D = 0 ⇒ effective scale = raw scale)
         let s = (-2.0f32).exp() * SIGMA_SCALE;
         for sc in &out.scales {
             assert!((sc - s).abs() < 1e-6);
