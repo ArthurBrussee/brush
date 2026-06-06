@@ -244,7 +244,7 @@ pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
         let p = tri.coord(pid);
         scr.clear();
         let start = walk_locate(&tri, p);
-        collect_cavity(&mut tri, start, p, &mut scr);
+        collect_cavity(&tri, start, p, &mut scr);
         fill_cavity(&mut tri, pid, &mut scr);
     }
 
@@ -500,7 +500,7 @@ impl Scratch {
     }
 }
 
-fn collect_cavity(tri: &mut Triangulation, start: u32, p: DVec3, scr: &mut Scratch) {
+fn collect_cavity(tri: &Triangulation, start: u32, p: DVec3, scr: &mut Scratch) {
     scr.stack.push(start);
     scr.in_cavity.insert(start);
 
