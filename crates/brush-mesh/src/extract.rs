@@ -1,0 +1,429 @@
+//! Top-level mesh-extraction driver. Glues tetra-point sampling, CPU
+//! Delaunay, per-view GPU opacity integration, marching tets, and binary
+//! search refinement.
+
+use brush_cube::{MainBackendBase, calc_cube_count_1d, create_tensor};
+use brush_render::SplatOps;
+use brush_render::burn_glue::resolve_to_cube_float;
+use brush_render::camera::Camera;
+use brush_render::gaussian_splats::{RasterPass, SplatRenderMode, Splats};
+use brush_render::kernels;
+use burn::backend::ops::{FloatTensorOps, TransactionOps, TransactionPrimitive};
+use burn::backend::tensor::FloatTensor;
+use burn::tensor::{DType, s};
+use burn_cubecl::cubecl::CubeDim;
+use burn_wgpu::WgpuRuntime;
+use glam::{UVec2, Vec3};
+
+use crate::Mesh;
+use crate::binary_search::{N_STEPS, RefineState};
+use crate::delaunay::delaunay_3d;
+use crate::filter::filter_mesh_with_keep;
+use crate::marching_tet::marching_tets;
+use crate::tetra_points::{TetraPointsConfig, build_tetra_points};
+
+/// User-facing extraction config.
+#[derive(Debug, Clone)]
+pub struct ExtractConfig {
+    pub tetra_points: TetraPointsConfig,
+    /// If true, drop faces whose vertices straddle empty space (see
+    /// [`crate::filter::filter_mesh`]).
+    pub filter_mesh: bool,
+    /// Iso-value for the level set. GOF uses 0.5; brush splats (no
+    /// surface regularization in training) need ~0.95.
+    pub iso_value: f32,
+}
+
+impl Default for ExtractConfig {
+    fn default() -> Self {
+        Self {
+            tetra_points: TetraPointsConfig::default(),
+            filter_mesh: true,
+            iso_value: 0.5,
+        }
+    }
+}
+
+/// Extract a triangle mesh from `splats`. `views` carries the per-view
+/// `(camera, image_size)` pairs used for both frustum-culling the seed
+/// points and integrating the opacity along rays.
+pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &ExtractConfig) -> Mesh {
+    let n_splats = splats.num_splats() as usize;
+    log::info!(
+        "Extracting mesh from {n_splats} splats across {} views",
+        views.len()
+    );
+
+    // 1. Pull splat tensors back to host for seed-point sampling.
+    let means_t = splats.transforms.val().slice(s![.., 0..3]);
+    let quats_t = splats.transforms.val().slice(s![.., 3..7]);
+    let log_scales_t = splats.transforms.val().slice(s![.., 7..10]);
+    let means: Vec<f32> = means_t
+        .into_data_async()
+        .await
+        .expect("read means")
+        .into_vec::<f32>()
+        .expect("means f32");
+    let quats: Vec<f32> = quats_t
+        .into_data_async()
+        .await
+        .expect("read quats")
+        .into_vec::<f32>()
+        .expect("quats f32");
+    let log_scales: Vec<f32> = log_scales_t
+        .into_data_async()
+        .await
+        .expect("read scales")
+        .into_vec::<f32>()
+        .expect("scales f32");
+
+    let cams: Vec<Camera> = views.iter().map(|(c, _)| *c).collect();
+    let img_sizes: Vec<UVec2> = views.iter().map(|(_, s)| *s).collect();
+
+    // GOF's 3D filter: per-Gaussian isotropic minimum half-extent based
+    // on the closest training camera. Inflates the effective scale and
+    // (in the integrate kernel) is paired with an opacity-compensation
+    // coefficient to preserve the density's integral.
+    let filter_3d = crate::filter_3d::compute_filter_3d(&means, &cams, &img_sizes);
+    if !filter_3d.is_empty() {
+        let max_f = filter_3d.iter().copied().fold(0.0_f32, f32::max);
+        let mean_f = filter_3d.iter().sum::<f32>() / filter_3d.len() as f32;
+        log::info!("filter_3d: mean={mean_f:.4}, max={max_f:.4}");
+    }
+
+    // Compare bboxes: splat means → seed points → (later) mesh. If seed
+    // bbox is much tighter than splat-mean bbox, frustum cull is the
+    // bottleneck. If they agree but the mesh is much smaller, the alpha
+    // field is the bottleneck (no transitions in background).
+    let splat_bbox = bbox_from_flat3(&means);
+    log::info!(
+        "splat means bbox: min ({:.2},{:.2},{:.2}) max ({:.2},{:.2},{:.2}) extent ({:.2}x{:.2}x{:.2})",
+        splat_bbox.0.x,
+        splat_bbox.0.y,
+        splat_bbox.0.z,
+        splat_bbox.1.x,
+        splat_bbox.1.y,
+        splat_bbox.1.z,
+        splat_bbox.1.x - splat_bbox.0.x,
+        splat_bbox.1.y - splat_bbox.0.y,
+        splat_bbox.1.z - splat_bbox.0.z,
+    );
+
+    let pts = build_tetra_points(
+        &means,
+        &quats,
+        &log_scales,
+        &filter_3d,
+        &cams,
+        &img_sizes,
+        &cfg.tetra_points,
+    );
+    log::info!("Seed points (frustum-culled): {}", pts.points.len());
+    let seed_bbox = bbox_from_vec3(&pts.points);
+    log::info!(
+        "seed bbox:        min ({:.2},{:.2},{:.2}) max ({:.2},{:.2},{:.2}) extent ({:.2}x{:.2}x{:.2})",
+        seed_bbox.0.x,
+        seed_bbox.0.y,
+        seed_bbox.0.z,
+        seed_bbox.1.x,
+        seed_bbox.1.y,
+        seed_bbox.1.z,
+        seed_bbox.1.x - seed_bbox.0.x,
+        seed_bbox.1.y - seed_bbox.0.y,
+        seed_bbox.1.z - seed_bbox.0.z,
+    );
+    if pts.points.len() < 4 {
+        log::warn!("Too few seed points to triangulate; returning empty mesh");
+        return Mesh::default();
+    }
+
+    // 2. CPU Delaunay 3D.
+    let span = tracing::trace_span!("delaunay_3d").entered();
+    let tets = delaunay_3d(&pts.points);
+    drop(span);
+    log::info!("Delaunay tets: {}", tets.len());
+
+    // 3. Evaluate per-vertex alpha across all views (min-T accumulation).
+    let render_mode = if splats.render_mip {
+        SplatRenderMode::Mip
+    } else {
+        SplatRenderMode::Default
+    };
+    let alpha = evaluate_alpha(&splats, &pts.points, views, render_mode, false)
+        .await
+        .alpha;
+    let sdf: Vec<f32> = alpha.iter().map(|a| a - cfg.iso_value).collect();
+
+    // 4. Marching tets.
+    let mt = marching_tets(&tets, &sdf);
+    log::info!(
+        "Crossings: {}, faces: {}",
+        mt.crossings.len(),
+        mt.faces.len()
+    );
+    if mt.crossings.is_empty() {
+        log::warn!("No iso-surface crossings; nothing to refine. Returning empty mesh.");
+        return Mesh::default();
+    }
+
+    // 5. Binary search refinement.
+    let mut state = RefineState::new(&mt.crossings, &pts.points, &sdf);
+    for step in 0..N_STEPS {
+        let mids = state.midpoints();
+        let mid_alpha = evaluate_alpha(&splats, &mids, views, render_mode, false)
+            .await
+            .alpha;
+        let mid_sdf: Vec<f32> = mid_alpha.iter().map(|a| a - cfg.iso_value).collect();
+        state.step(&mid_sdf);
+        log::info!("Binary search step {}/{} done", step + 1, N_STEPS);
+    }
+    let refined = state.finish();
+
+    // 6. Per-crossing keep mask. Matches GOF's `filter_mesh` step
+    // (`extract_mesh.py`): for each crossing, keep iff the *original
+    // Delaunay edge length* is ≤ the *sum of the two endpoint Gaussian
+    // scales*. Faces are then kept only if all three crossings survive.
+    // We use the *Delaunay* edge, not the refined mesh-edge — bisection-
+    // refined positions sit between the endpoints, so mesh edges are
+    // always shorter. Filtering on the original Delaunay edge length is
+    // the principled test for "this crossing bridges two Gaussians that
+    // don't really touch."
+    let keep_crossing: Vec<bool> = mt
+        .crossings
+        .iter()
+        .map(|c| {
+            let pa = pts.points[c.a as usize];
+            let pb = pts.points[c.b as usize];
+            let d = (pa - pb).length();
+            let scale_sum = pts.scales[c.a as usize] + pts.scales[c.b as usize];
+            d <= scale_sum
+        })
+        .collect();
+
+    // Per-vertex colour: evaluate alpha+RGB once more at the *refined*
+    // vertex positions and keep the colour from the best-visibility view
+    // (GOF's `where(α_int < final_α, color, final_α)`). Vertex positions
+    // are now on the iso-surface so the best view samples a pixel that
+    // shows the actual surface material rather than whatever was in front.
+    let final_eval = evaluate_alpha(&splats, &refined, views, render_mode, true).await;
+    let vertex_colors: Vec<[u8; 3]> = final_eval
+        .color
+        .iter()
+        .map(|c| {
+            [
+                (c[0].clamp(0.0, 1.0) * 255.0) as u8,
+                (c[1].clamp(0.0, 1.0) * 255.0) as u8,
+                (c[2].clamp(0.0, 1.0) * 255.0) as u8,
+            ]
+        })
+        .collect();
+
+    let mut mesh = Mesh {
+        vertices: refined,
+        vertex_scales: Vec::new(),
+        vertex_colors,
+        faces: mt.faces,
+    };
+
+    if cfg.filter_mesh {
+        mesh = filter_mesh_with_keep(&mesh, &keep_crossing);
+    }
+    let mesh_bbox = bbox_from_vec3(&mesh.vertices);
+    log::info!(
+        "Final mesh: {} verts, {} faces, bbox extent ({:.2}x{:.2}x{:.2})",
+        mesh.vertices.len(),
+        mesh.faces.len(),
+        mesh_bbox.1.x - mesh_bbox.0.x,
+        mesh_bbox.1.y - mesh_bbox.0.y,
+        mesh_bbox.1.z - mesh_bbox.0.z,
+    );
+
+    mesh
+}
+
+fn bbox_from_flat3(xs: &[f32]) -> (Vec3, Vec3) {
+    let n = xs.len() / 3;
+    let mut mn = Vec3::splat(f32::INFINITY);
+    let mut mx = Vec3::splat(f32::NEG_INFINITY);
+    for i in 0..n {
+        let p = Vec3::new(xs[3 * i], xs[3 * i + 1], xs[3 * i + 2]);
+        mn = mn.min(p);
+        mx = mx.max(p);
+    }
+    (mn, mx)
+}
+
+fn bbox_from_vec3(xs: &[Vec3]) -> (Vec3, Vec3) {
+    let mut mn = Vec3::splat(f32::INFINITY);
+    let mut mx = Vec3::splat(f32::NEG_INFINITY);
+    for &p in xs {
+        mn = mn.min(p);
+        mx = mx.max(p);
+    }
+    (mn, mx)
+}
+
+/// Per-point alpha integration across all views.
+///
+/// Matches GOF's `evaluage_alpha`: `final_alpha = min_views(α_int_view)`,
+/// returned `α(p) = 1 − final_alpha = max_views(T_view(p))` where
+/// `α_int_view` is the kernel's volume-integrated absorption from the
+/// camera to `p` for that view and `T_view = 1 − α_int_view` is the
+/// surviving transmittance to `p`.
+///
+/// The "max over views" reading of T is the carving rule: a point is
+/// labeled "open" (α → 1) as soon as **any** view has a clear line of
+/// sight to it, and "solid" (α → 0) only when **every** view is blocked
+/// by intervening Gaussians. Using min(T) instead would label a point
+/// "solid" if even one view is blocked, producing the union of all
+/// camera shadow volumes — i.e. fattening every object by the silhouette
+/// extruded from every camera.
+///
+/// The iso-surface `α = 0.5` then sits where "the best view sees half-
+/// transmittance," which is the actual material boundary.
+/// Output of [`evaluate_alpha`]: max-transmittance alpha per query point,
+/// plus (when `track_color = true`) the RGB sample from whichever view
+/// gave that max transmittance. Colours are linear [0, 1] floats; the
+/// caller is expected to clamp + quantise for PLY output.
+pub struct EvaluateOut {
+    pub alpha: Vec<f32>,
+    /// One RGB triple per point. Empty when `track_color = false`.
+    pub color: Vec<[f32; 3]>,
+}
+
+async fn evaluate_alpha(
+    splats: &Splats,
+    points: &[Vec3],
+    views: &[(Camera, UVec2)],
+    render_mode: SplatRenderMode,
+    track_color: bool,
+) -> EvaluateOut {
+    type B = MainBackendBase;
+    let n = points.len();
+    if n == 0 {
+        return EvaluateOut {
+            alpha: Vec::new(),
+            color: Vec::new(),
+        };
+    }
+
+    let transforms_p = resolve_to_cube_float(splats.transforms.val());
+    let sh_coeffs_p = resolve_to_cube_float(splats.sh_coeffs.val());
+    let raw_opacities_p = resolve_to_cube_float(splats.raw_opacities.val());
+    let device = transforms_p.device.clone();
+    let client = transforms_p.client.clone();
+
+    let pts_flat: Vec<f32> = points.iter().flat_map(|p| [p.x, p.y, p.z]).collect();
+    let pts_tensor: FloatTensor<B> =
+        B::float_from_data(burn::tensor::TensorData::new(pts_flat, [n, 3]), &device);
+
+    // Track the *smallest* α_int seen across views (= the view with the
+    // best line of sight). Init to `+∞` so any real value wins on the
+    // first view. The matching colour is captured from that same view
+    // per GOF's `where(α < final_α, color, final_α)` rule.
+    let mut min_alpha_int = vec![f32::INFINITY; n];
+    // Init to WHITE (matches GOF's `torch.ones(...)`): vertices that no
+    // view ever sees keep this init, so they render as white rather than
+    // black holes. Cosmetic for the rare "never seen by any camera"
+    // vertex (binary-search refinement can push positions just outside
+    // the original frustum-culled seed envelope).
+    let mut best_color: Vec<[f32; 3]> = if track_color {
+        vec![[1.0; 3]; n]
+    } else {
+        Vec::new()
+    };
+
+    for (view_idx, (cam, sz)) in views.iter().enumerate() {
+        // Use Forward pass: produces a `[H, W]` packed-u32 RGBA image
+        // (the kernel below bitcasts and unpacks it for colour sampling)
+        // and crucially leaves `tile_offsets[1]` un-truncated. Backward
+        // would shrink it to the *pixel-centre* `last_useful_isect`,
+        // which can be tighter than GOF's 5-sub-pixel-corner contributor
+        // range — i.e. a sub-pixel splat that contributes at a corner
+        // but not the centre is past brush's center-only cutoff. Using
+        // Forward keeps every tile gaussian in scope for the kernel's
+        // per-query-point walk and matches GOF's broader contributor
+        // set semantically (we just iterate everything; GOF prunes
+        // contributed_ids[] for perf, not correctness).
+        let out = <B as SplatOps<B>>::render(
+            cam,
+            *sz,
+            transforms_p.clone(),
+            sh_coeffs_p.clone(),
+            raw_opacities_p.clone(),
+            render_mode,
+            Vec3::ZERO,
+            RasterPass::Forward,
+        )
+        .await;
+
+        let out_alpha: FloatTensor<B> = create_tensor::<1>([n], &device, DType::F32);
+        let out_rgb: FloatTensor<B> = create_tensor::<2>([n, 3], &device, DType::F32);
+        let uniforms = out.project_uniforms.to_launch_object();
+        let camera_model = cam.camera_model;
+
+        kernels::integrate_alpha::integrate_alpha_kernel::launch::<WgpuRuntime>(
+            &client,
+            calc_cube_count_1d(n as u32, kernels::integrate_alpha::WG_SIZE),
+            CubeDim::new_1d(kernels::integrate_alpha::WG_SIZE),
+            transforms_p.clone().into_tensor_arg(),
+            raw_opacities_p.clone().into_tensor_arg(),
+            out.compact_gid_from_isect.into_tensor_arg(),
+            out.aux.tile_offsets.into_tensor_arg(),
+            out.global_from_compact_gid.into_tensor_arg(),
+            out.out_img.into_tensor_arg(),
+            pts_tensor.clone().into_tensor_arg(),
+            out_alpha.clone().into_tensor_arg(),
+            out_rgb.clone().into_tensor_arg(),
+            n as u32,
+            uniforms,
+            camera_model,
+        );
+
+        let alpha_int = read_back_f32(out_alpha).await;
+        let rgb_flat = if track_color {
+            read_back_f32(out_rgb).await
+        } else {
+            Vec::new()
+        };
+        debug_assert_eq!(alpha_int.len(), n);
+        for i in 0..n {
+            let a = alpha_int[i];
+            if a < min_alpha_int[i] {
+                min_alpha_int[i] = a;
+                if track_color {
+                    best_color[i] = [rgb_flat[3 * i], rgb_flat[3 * i + 1], rgb_flat[3 * i + 2]];
+                }
+            }
+        }
+
+        if (view_idx + 1).is_multiple_of(8) || view_idx + 1 == views.len() {
+            log::info!("integrated view {}/{}", view_idx + 1, views.len());
+        }
+    }
+
+    // Points that were outside every camera's frustum get α_int = +∞ →
+    // emit α = 1 (no occlusion) and black RGB. This matches GOF's
+    // boundary behaviour where "never seen" defaults to "open space".
+    let alpha = min_alpha_int
+        .iter()
+        .map(|&a| if a.is_finite() { 1.0 - a } else { 1.0 })
+        .collect();
+
+    EvaluateOut {
+        alpha,
+        color: best_color,
+    }
+}
+
+/// Drain a 1-D `f32` tensor from the GPU into host memory.
+async fn read_back_f32(t: FloatTensor<MainBackendBase>) -> Vec<f32> {
+    let tp = TransactionPrimitive::<MainBackendBase>::new(vec![t], vec![], vec![], vec![]);
+    let data = <MainBackendBase as TransactionOps<MainBackendBase>>::tr_execute(tp)
+        .await
+        .expect("read alpha");
+    data.read_floats[0]
+        .clone()
+        .into_vec::<f32>()
+        .expect("alpha f32")
+}

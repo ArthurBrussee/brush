@@ -12,6 +12,7 @@
 
 pub mod camera_model;
 pub mod helpers;
+pub mod integrate_alpha;
 pub mod map_gaussians;
 pub mod project_forward;
 pub mod project_visible;

@@ -46,7 +46,17 @@ fn main() -> Result<(), anyhow::Error> {
         .build()
         .expect("Failed to initialize tokio runtime")
         .block_on(async move {
-            let init_process = args.source.map(|source| {
+            // Mesh extraction skips the trainer/viewer entirely — it loads the
+            // splat PLY + dataset cameras itself, runs GOF-style extraction,
+            // and writes the result to `--out-mesh`.
+            if args.extract_mesh {
+                env_logger::Builder::from_default_env()
+                    .target(env_logger::Target::Stdout)
+                    .init();
+                return brush_cli::mesh_extract::run(&args).await;
+            }
+
+            let init_process = args.source.clone().map(|source| {
                 create_process(source, {
                     let cli_config = args.train_stream.clone();
                     async move |init| {

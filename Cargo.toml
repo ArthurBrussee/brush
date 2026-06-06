@@ -10,6 +10,7 @@ members = [
     "crates/brush-cube",
     "crates/brush-dataset",
     "crates/brush-loss",
+    "crates/brush-mesh",
     "crates/brush-prefix-sum",
     "crates/brush-process",
     "crates/brush-render",

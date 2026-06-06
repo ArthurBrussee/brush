@@ -16,7 +16,11 @@ use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::trace_span;
 
-#[derive(Parser)]
+pub mod mesh_eval;
+pub mod mesh_extract;
+pub mod mesh_render;
+
+#[derive(Parser, Clone)]
 #[command(
     author,
     version,
@@ -36,12 +40,80 @@ pub struct Cli {
     )]
     pub with_viewer: bool,
 
+    /// Extract a triangle mesh from a trained splat (GOF-style mesh
+    /// extraction). Loads the dataset's cameras and the splat PLY, then
+    /// writes the mesh to `--out-mesh`.
+    #[arg(long, help_heading = "Mesh extraction", conflicts_with = "with_viewer")]
+    pub extract_mesh: bool,
+
+    /// Output path for the extracted mesh (binary PLY).
+    #[arg(long, help_heading = "Mesh extraction", default_value = "mesh.ply")]
+    pub out_mesh: std::path::PathBuf,
+
+    /// Keep all faces, including those whose edges span empty space.
+    /// By default the GOF-style long-edge filter is on; pass this to
+    /// disable it.
+    #[arg(long, help_heading = "Mesh extraction")]
+    pub no_filter_mesh: bool,
+
+    /// Near plane for frustum culling seed points.
+    #[arg(long, help_heading = "Mesh extraction", default_value = "0.02")]
+    pub mesh_near: f32,
+
+    /// Far plane for frustum culling seed points.
+    #[arg(long, help_heading = "Mesh extraction", default_value = "1e6")]
+    pub mesh_far: f32,
+
+    /// Subsample the input splat PLY by this stride before extracting.
+    /// Each Gaussian produces 9 seed points; with ~1M splats and stride 1
+    /// the CPU Delaunay handles 9M points, which is workable but slow —
+    /// use a higher stride for fast iteration.
+    #[arg(long, help_heading = "Mesh extraction")]
+    pub splat_subsample: Option<u32>,
+
+    /// Iso-value for the level set. GOF default 0.5 — carves the surface
+    /// where transmittance has dropped to half, the principled "actual
+    /// material boundary" choice. Higher values (0.9+) fill more
+    /// background on diffuse-trained splats but fatten foreground
+    /// geometry into a speckled halo, so PSNR can be misleading.
+    #[arg(long, help_heading = "Mesh extraction", default_value = "0.5")]
+    pub iso_value: f32,
+
+    /// Drop Gaussians whose max-axis is at or above this percentile of
+    /// the per-Gaussian max-axis distribution (0..1). brush trains a long
+    /// tail of "billboard" splats for distant appearance; their huge
+    /// scales blow out the mesh bbox and defeat the edge-length filter.
+    /// 0.999 = drop top 0.1%. 1.0 = keep all.
+    #[arg(long, help_heading = "Mesh extraction", default_value = "0.999")]
+    pub max_axis_pct: f32,
+
+    /// Skip writing the extracted mesh as PLY to disk. The mesh PLY for
+    /// a 10M-face garden is ~30 MB and even with buffering takes a few
+    /// seconds to flush; when iterating on the renderer / colour eval
+    /// we just want the eval-render PNGs, not the PLY.
+    #[arg(long, help_heading = "Mesh extraction")]
+    pub skip_mesh_write: bool,
+
+    /// After extracting the mesh, render it at each training-camera
+    /// viewpoint via `f3d` and report mean PSNR vs the ground-truth
+    /// images. Renders land in `{out-mesh dir}/eval_renders/`. Set
+    /// `--eval-views=N` to evaluate just the first N views (default 0
+    /// = skip eval).
+    #[arg(long, help_heading = "Mesh extraction", default_value = "0")]
+    pub eval_views: usize,
+
     #[clap(flatten)]
     pub train_stream: TrainStreamConfig,
 }
 
 impl Cli {
     pub fn validate(self) -> Result<Self, Error> {
+        if self.extract_mesh && self.source.is_none() {
+            return Err(Error::raw(
+                ErrorKind::MissingRequiredArgument,
+                "--extract-mesh requires a --source pointing at a dataset directory containing a PLY",
+            ));
+        }
         if !self.with_viewer && self.source.is_none() {
             return Err(Error::raw(
                 ErrorKind::MissingRequiredArgument,

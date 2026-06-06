@@ -967,17 +967,28 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "brush-async",
+ "brush-dataset",
+ "brush-mesh",
  "brush-process",
+ "brush-render",
+ "brush-serde",
+ "brush-vfs",
+ "burn",
+ "bytemuck",
  "clap",
  "env_logger",
  "getrandom 0.4.2",
+ "glam",
  "humantime",
+ "image",
  "indicatif",
  "indicatif-log-bridge",
  "log",
+ "pollster",
  "tokio",
  "tokio-stream",
  "tracing",
+ "wgpu",
 ]
 
 [[package]]
@@ -1057,6 +1068,27 @@ dependencies = [
  "glam",
  "tokio",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "brush-mesh"
+version = "0.3.0"
+dependencies = [
+ "brush-cube",
+ "brush-dataset",
+ "brush-render",
+ "brush-serde",
+ "burn",
+ "burn-cubecl",
+ "burn-wgpu",
+ "glam",
+ "hashbrown 0.16.1",
+ "log",
+ "rand 0.10.1",
+ "rayon",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

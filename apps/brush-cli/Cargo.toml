@@ -8,6 +8,17 @@ license.workspace = true
 [dependencies]
 brush-async.path = "../../crates/brush-async"
 brush-process.path = "../../crates/brush-process"
+brush-dataset.path = "../../crates/brush-dataset"
+brush-mesh.path = "../../crates/brush-mesh"
+brush-render.path = "../../crates/brush-render"
+brush-serde.path = "../../crates/brush-serde"
+brush-vfs.path = "../../crates/brush-vfs"
+burn.workspace = true
+glam.workspace = true
+image.workspace = true
+wgpu.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
+pollster = "0.4"
 
 indicatif.workspace = true
 indicatif-log-bridge = "0.2"
