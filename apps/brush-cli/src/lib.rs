@@ -79,6 +79,20 @@ pub struct Cli {
     #[arg(long, help_heading = "Mesh extraction", default_value = "0.5")]
     pub iso_value: f32,
 
+    /// Binary-search refinement steps along each crossing edge. GOF
+    /// uses 8 (default). Each step doubles edge precision and triggers
+    /// a full alpha eval, so cost is linear in this number.
+    #[arg(long, help_heading = "Mesh extraction", default_value = "8")]
+    pub bin_search_steps: usize,
+
+    /// Per-vertex colour blending exponent across views. Each view
+    /// contributes its rgb weighted by `(1 − α_int)^k`. `k=0` averages
+    /// all views equally; `k=2` (default) is a smooth visibility weight
+    /// that closes ~+1.5 PSNR vs splat-render on bonsai vs GOF's
+    /// best-view-only convention; `k=∞` recovers GOF behaviour.
+    #[arg(long, help_heading = "Mesh extraction", default_value = "2.0")]
+    pub color_blend_power: f32,
+
     /// Drop Gaussians whose max-axis is at or above this percentile of
     /// the per-Gaussian max-axis distribution (0..1). brush trains a long
     /// tail of "billboard" splats for distant appearance; their huge

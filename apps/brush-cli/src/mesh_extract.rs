@@ -139,7 +139,14 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
         },
         filter_mesh: !cli.no_filter_mesh,
         iso_value: cli.iso_value,
+        bin_search_steps: cli.bin_search_steps,
+        color_blend_power: cli.color_blend_power,
     };
+    // Clone splats before extraction consumes them — we need a handle
+    // for the splat-render-vs-mesh PSNR comparison below. Splats is a
+    // burn Module so the clone is shallow (tensor handle copies, not
+    // a deep GPU buffer copy).
+    let splats_for_eval = splats.clone();
     let mesh = extract_mesh(splats, &views, &cfg).await;
 
     // 4. Optionally write the mesh PLY.
@@ -173,7 +180,14 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             "Evaluating {} train views with wgpu unlit renderer",
             cli.eval_views.min(train_scene_views.len()),
         );
-        crate::mesh_eval::eval_psnr(&mesh, &train_scene_views, cli.eval_views, &eval_dir).await?;
+        crate::mesh_eval::eval_psnr(
+            &mesh,
+            &train_scene_views,
+            Some(&splats_for_eval),
+            cli.eval_views,
+            &eval_dir,
+        )
+        .await?;
     }
 
     Ok(())
