@@ -426,7 +426,6 @@ pub async fn render_splats(
         background,
         pass,
         geo,
-        false,
     )
     .await;
 
