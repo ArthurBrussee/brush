@@ -1,3 +1,5 @@
+use std::f32::consts::FRAC_1_SQRT_2;
+
 use crate::{
     adam_scaled::{AdamScaled, AdamScaledConfig, AdamState},
     config::TrainConfig,
@@ -7,7 +9,6 @@ use crate::{
     splat_init::bounds_from_pos,
     stats::RefineRecord,
 };
-
 use brush_dataset::scene::SceneBatch;
 use brush_loss::{ImageLossConfig, image_loss};
 use brush_render::gaussian_splats::Splats;
@@ -564,11 +565,6 @@ impl SplatTrainer {
             split_inds.extend(resampled_inds);
         }
 
-        // Big splats are no longer force-split in place — they're killed and
-        // resampled via `kill_at_screen_size` (the prune path above), so the
-        // "oversized split" count is always 0 now.
-        let num_split_oversized = 0u32;
-
         let pre_high_grad = split_inds.len();
         if iter < self.config.growth_stop_iter {
             let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
@@ -634,7 +630,6 @@ impl SplatTrainer {
             splats,
             RefineStats {
                 num_added: refine_count as u32,
-                num_split_oversized,
                 num_split_high_grad,
                 num_pruned: pruned_count,
                 num_pruned_non_finite,
@@ -676,28 +671,19 @@ impl SplatTrainer {
             let cur_opac = sigmoid(cur_raw_opac.clone());
             let inv_opac: Tensor<1> = 1.0 - cur_opac;
             // Post-split child opacity as a power law in transmittance,
-            // `a' = 1 - (1 - a)^p`. Alpha compositing multiplies transmittance
-            // (1-a), so p encodes the children's effective overlap: p=1/2
-            // recreates the parent when they fully overlap (classic 3DGS),
-            // p=1 is full inheritance (no overlap). The split offsets children
-            // ~2 child-stds apart at k=1/√2, landing p there too.
-            let p = std::f32::consts::FRAC_1_SQRT_2;
-            let new_opac: Tensor<1> = 1.0 - inv_opac.powf_scalar(p);
+            // p = 0.5 would keep the transmittance for cloning splats but as we offset them
+            // choose a higher p.
+            let new_opac: Tensor<1> = 1.0 - inv_opac.powf_scalar(FRAC_1_SQRT_2);
             let new_raw_opac = inv_sigmoid(new_opac.clamp(MIN_OPACITY, 1.0 - MIN_OPACITY));
 
             // Smooth covariance-aware split. Per-axis shrink + mass-conserving
-            // deterministic offset (one child at +offset, the other at -offset):
-            //   k_i      = 1 - (1 - k) · (s_i² / s_max²)   ∈ [k, 1]
-            //   scale_i  = k_i · s_i ;  offset_i = sqrt(1 - k_i²) · s_i
-            // Principal axis shrinks by k, much-smaller axes ~unchanged: an
-            // isotropic splat shrinks uniformly, a needle splits along its long
-            // axis, a pancake in-plane. k pinned near 1/√2. Children inherit the
+            // deterministic offset (one child at +offset, the other at -offset).
+            // Children inherit the
             // parent's rotation; the split is the scale shrink + ±offset.
-            let k = self.config.split_anisotropic_k.clamp(1e-3, 0.99);
             let cur_scales_sq = cur_scales.clone().powi_scalar(2);
             let max_scale_sq = cur_scales_sq.clone().max_dim(1).clamp_min(1e-30);
             let ratio = cur_scales_sq / max_scale_sq;
-            let k_per_axis: Tensor<2> = -(ratio * (1.0_f32 - k)) + 1.0;
+            let k_per_axis: Tensor<2> = -(ratio * (1.0_f32 - FRAC_1_SQRT_2)) + 1.0;
             let offset_factor = (-k_per_axis.clone().powi_scalar(2) + 1.0)
                 .clamp_min(0.0)
                 .sqrt();
@@ -705,8 +691,6 @@ impl SplatTrainer {
             let samples = quaternion_vec_multiply(cur_rots.clone(), offset_local);
             let new_log_scales = cur_log_scale.clone() + k_per_axis.log();
             let child_rots = cur_rots;
-
-            // Shrink & offset existing splats.
 
             // Scatter into transforms: build a [refine_count, 10] update tensor
             // with means offset in cols 0..3 and log_scales difference in cols 7..10
@@ -732,11 +716,14 @@ impl SplatTrainer {
             // Build new transforms row: means(3) + rotations(4) + log_scales(3)
             let new_transforms =
                 Tensor::cat(vec![cur_means + samples, child_rots, new_log_scales], 1);
+
             // Optimizer state lives on the inner (non-autodiff) device.
             let opt_device = device.clone().inner();
             let refine_inds_opt = refine_inds.to_device(&opt_device);
-            // Both halves of a split start with zero Adam moments; only the
-            // ±sample position offset tells them apart. Burn's scatter bridge
+
+            // Both halves of a split start with zero Adam moments.
+            //
+            // Burn's scatter bridge
             // only implements Add, so we add the negated parent value to zero
             // it out instead of using Assign.
             splats = map_splats_and_opt(

@@ -7,6 +7,7 @@ use brush_dataset::{
 use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_render::AlphaMode;
 use egui::{Color32, Slider, TextureOptions, pos2};
+use image::GenericImageView;
 use tokio::sync::oneshot;
 
 use brush_async::Actor;
@@ -18,13 +19,6 @@ use crate::ui::{
 };
 
 const TEX_CACHE_LIMIT: usize = 16;
-/// Floor for the preview edge so a collapsed/tiny panel still decodes a usable
-/// image. There's no ceiling: the preview is sized to the panel (see `ui`), and
-/// `load()` never upscales past the source anyway.
-const PREVIEW_MIN_EDGE: u32 = 32;
-/// Concurrent decode actors. Sized to the cache so a full burst of distinct
-/// requests can each get their own actor instead of queuing.
-const LOAD_POOL_SIZE: usize = TEX_CACHE_LIMIT;
 
 fn selected_scene(t: ViewType, dataset: &Dataset) -> &Scene {
     match t {
@@ -57,6 +51,7 @@ pub struct DatasetPanel {
     /// pool actor) or Ready (texture uploaded, ready to draw). On eviction the
     /// `oneshot::Sender` in the spawned task drops harmlessly.
     cache: VecDeque<(LoadImage, LoadState)>,
+
     /// The view currently on screen (kept until a cache hit or new load replaces it).
     displayed: Option<(SceneView, TexHandle)>,
 
@@ -71,7 +66,7 @@ pub struct DatasetPanel {
 
 impl Default for DatasetPanel {
     fn default() -> Self {
-        let actors = (0..LOAD_POOL_SIZE)
+        let actors = (0..TEX_CACHE_LIMIT)
             .map(|i| Actor::new(&format!("dataset-preview-{i}")))
             .collect();
 
@@ -84,7 +79,7 @@ impl Default for DatasetPanel {
             displayed: None,
             actors,
             next_actor: 0,
-            preview_edge: PREVIEW_MIN_EDGE,
+            preview_edge: 0,
         }
     }
 }
@@ -93,13 +88,10 @@ async fn load_preview(view: SceneView, ctx: egui::Context, preview_edge: u32) ->
     // The preview texture is capped to the panel size for GPU/memory reasons,
     // but report the resolution training actually uses (read from the header,
     // no full decode) so the panel doesn't claim a misleadingly small size.
-    let (tw, th) = view.image.output_dimensions().await.ok()?;
-    let train_size = [tw as usize, th as usize];
 
     let preview_load = view.image.clone().with_max_resolution(preview_edge);
     let image = preview_load.load().await.ok()?;
-
-    brush_async::yield_now().await;
+    let train_size = image.dimensions();
 
     let has_alpha = image.color().has_alpha();
     let img_size = [image.width() as usize, image.height() as usize];
@@ -219,7 +211,7 @@ impl AppPane for DatasetPanel {
         job.append(
             &format!(
                 "  |  {}x{} {}",
-                tex.train_size[0], tex.train_size[1], mask_info
+                tex.train_size.0, tex.train_size.1, mask_info
             ),
             0.0,
             egui::TextFormat {
@@ -287,8 +279,9 @@ impl AppPane for DatasetPanel {
         // Size previews to the panel in physical pixels, so we neither waste
         // memory on oversized textures nor visibly downscale on large/hi-DPI
         // windows.
-        let needed = ((ui.available_size().max_elem() * ui.ctx().pixels_per_point()).ceil() as u32)
-            .max(PREVIEW_MIN_EDGE);
+        let needed =
+            ((ui.available_size().max_elem() * ui.ctx().pixels_per_point()).ceil() as u32).max(32);
+
         let (lo, hi) = (needed.min(self.preview_edge), needed.max(self.preview_edge));
         if hi * 10 > lo * 11 {
             self.preview_edge = needed;

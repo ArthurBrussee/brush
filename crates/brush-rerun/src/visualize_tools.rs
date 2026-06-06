@@ -641,10 +641,6 @@ mod visualize_tools_impl {
                 &rerun::Scalars::new(vec![refine.num_added as f64]),
             )?;
             self.rec.log(
-                "refine/num_split_oversized",
-                &rerun::Scalars::new(vec![refine.num_split_oversized as f64]),
-            )?;
-            self.rec.log(
                 "refine/num_split_high_grad",
                 &rerun::Scalars::new(vec![refine.num_split_high_grad as f64]),
             )?;

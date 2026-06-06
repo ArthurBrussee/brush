@@ -49,7 +49,6 @@ fn parse_header(line: &str) -> Option<HashMap<String, usize>> {
 }
 
 fn col<'a>(fields: &'a [&'a str], header: &HashMap<String, usize>, name: &str) -> Option<&'a str> {
-    // Copied to go from a ref-ref t
     header.get(name).and_then(|&i| fields.get(i)).copied()
 }
 

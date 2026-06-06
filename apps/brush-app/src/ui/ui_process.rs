@@ -40,8 +40,8 @@ pub enum BackgroundStyle {
 pub struct TexHandle {
     pub handle: TextureHandle,
     pub has_alpha: bool,
-    /// Resolution the image trains at (preview texture is capped lower).
-    pub train_size: [usize; 2],
+    /// resolution of the source view.
+    pub train_size: (u32, u32),
 }
 
 impl UiProcess {
