@@ -18,7 +18,7 @@ use glam::Vec3;
 
 use crate::marching_tet::Crossing;
 
-pub const N_STEPS: usize = 8;
+pub const N_STEPS: usize = 4;
 
 pub struct RefineState {
     left_pos: Vec<Vec3>,
