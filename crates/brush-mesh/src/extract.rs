@@ -145,21 +145,30 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         return Mesh::default();
     }
 
-    // 2. CPU Delaunay 3D.
-    let span = tracing::trace_span!("delaunay_3d").entered();
-    let tets = delaunay_3d(&pts.points);
-    drop(span);
-    log::info!("Delaunay tets: {}", tets.len());
-
-    // 3. Evaluate per-vertex alpha across all views (min-T accumulation).
+    // 2 + 3. CPU Delaunay and initial GPU alpha-eval are independent —
+    // both only need `pts.points`. Run them concurrently so the slower
+    // of the two sets the wall-clock cost (typically Delaunay on bonsai-
+    // scale point sets, ~52 s on a single core vs ~25 s GPU for the
+    // alpha pass). `spawn_blocking` parks Delaunay on a thread-pool
+    // thread so the async runtime keeps making progress on the alpha
+    // future.
     let render_mode = if splats.render_mip {
         SplatRenderMode::Mip
     } else {
         SplatRenderMode::Default
     };
-    let alpha = evaluate_alpha(&splats, &pts.points, views, render_mode, false)
-        .await
-        .alpha;
+    let pts_for_delaunay = pts.points.clone();
+    let delaunay_handle = tokio::task::spawn_blocking(move || {
+        let span = tracing::trace_span!("delaunay_3d").entered();
+        let tets = delaunay_3d(&pts_for_delaunay);
+        drop(span);
+        tets
+    });
+    let alpha_fut = evaluate_alpha(&splats, &pts.points, views, render_mode, false);
+    let (alpha_out, tets_result) = tokio::join!(alpha_fut, delaunay_handle);
+    let tets = tets_result.expect("delaunay task panicked");
+    log::info!("Delaunay tets: {}", tets.len());
+    let alpha = alpha_out.alpha;
     let sdf: Vec<f32> = alpha.iter().map(|a| a - cfg.iso_value).collect();
 
     // 4. Marching tets.

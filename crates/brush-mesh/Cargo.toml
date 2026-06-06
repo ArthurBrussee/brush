@@ -20,7 +20,7 @@ rayon.workspace = true
 log.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["io-util"] }
+tokio = { workspace = true, features = ["io-util", "rt"] }
 
 [dev-dependencies]
 brush-cube = { path = "../brush-cube", features = [] }

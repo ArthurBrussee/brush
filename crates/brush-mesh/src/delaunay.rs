@@ -120,6 +120,7 @@ impl Triangulation {
 ///
 /// Positive = `a` is above the plane of `b, c, d` when looking from outside.
 /// Zero ties are resolved by [`orient3d_sos`].
+#[inline]
 fn orient3d_filter(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
     let ax = a.x - d.x;
     let ay = a.y - d.y;
