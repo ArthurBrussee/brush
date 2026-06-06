@@ -57,6 +57,13 @@ pub trait SplatOps<B: Backend> {
     /// Full forward pipeline: cull, depth sort, readback, project, rasterize.
     /// `pass` picks forward-only vs. forward+backward-bookkeeping, and (only
     /// for tests) toggles the C^1 smoothstep around the alpha cutoff.
+    /// `skip_rasterize` lets callers (mesh extraction's alpha-only
+    /// integration passes) skip the final per-pixel SH eval + alpha
+    /// composite — `out_img` is allocated at the right shape but never
+    /// written. Tile layout, projection, and the per-intersection lists
+    /// are still produced because downstream kernels need them. Net
+    /// per-view saving: roughly the entire rasterise phase (typically
+    /// the dominant cost of a render).
     #[allow(clippy::too_many_arguments)]
     fn render(
         camera: &Camera,
@@ -68,6 +75,7 @@ pub trait SplatOps<B: Backend> {
         background: Vec3,
         pass: gaussian_splats::RasterPass,
         geometry: bool,
+        skip_rasterize: bool,
     ) -> impl Future<Output = RenderOutput<B>>;
 }
 

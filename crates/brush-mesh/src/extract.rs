@@ -164,22 +164,18 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         drop(span);
         tets
     });
-    // Pre-render + initial alpha eval together as one async unit so
-    // they share the parallel slot with Delaunay. Initial alpha can't
-    // start until pre-render is done (it reads the cache), but both
-    // together run in parallel with Delaunay.
-    let splats_ref = &splats;
-    let pts_ref = &pts.points;
-    let gpu_block = async move {
-        let cache = pre_render_views(splats_ref, views, render_mode).await;
-        let alpha = evaluate_alpha(splats_ref, pts_ref, &cache, false)
-            .await
-            .alpha;
-        (cache, alpha)
-    };
-    let ((view_cache, alpha), tets_result) = tokio::join!(gpu_block, delaunay_handle);
+    let alpha_fut = evaluate_alpha(
+        &splats,
+        &pts.points,
+        views,
+        render_mode,
+        /* skip_rasterize */ true,
+        false,
+    );
+    let (alpha_out, tets_result) = tokio::join!(alpha_fut, delaunay_handle);
     let tets = tets_result.expect("delaunay task panicked");
     log::info!("Delaunay tets: {}", tets.len());
+    let alpha = alpha_out.alpha;
     let sdf: Vec<f32> = alpha.iter().map(|a| a - cfg.iso_value).collect();
 
     // 4. Marching tets.
@@ -198,9 +194,16 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     let mut state = RefineState::new(&mt.crossings, &pts.points, &sdf);
     for step in 0..N_STEPS {
         let mids = state.midpoints();
-        let mid_alpha = evaluate_alpha(&splats, &mids, &view_cache, false)
-            .await
-            .alpha;
+        let mid_alpha = evaluate_alpha(
+            &splats,
+            &mids,
+            views,
+            render_mode,
+            /* skip_rasterize */ true,
+            false,
+        )
+        .await
+        .alpha;
         let mid_sdf: Vec<f32> = mid_alpha.iter().map(|a| a - cfg.iso_value).collect();
         state.step(&mid_sdf);
         log::info!("Binary search step {}/{} done", step + 1, N_STEPS);
@@ -233,7 +236,15 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     // contributing views' RGB. Vertex positions are now on the iso-
     // surface so each view samples a pixel that shows the actual
     // surface material rather than whatever was in front.
-    let final_eval = evaluate_alpha(&splats, &refined, &view_cache, true).await;
+    let final_eval = evaluate_alpha(
+        &splats,
+        &refined,
+        views,
+        render_mode,
+        /* skip_rasterize */ false,
+        true,
+    )
+    .await;
     let vertex_colors: Vec<[u8; 3]> = final_eval
         .color
         .iter()
@@ -352,56 +363,23 @@ pub struct EvaluateOut {
     pub color: Vec<[f32; 3]>,
 }
 
-/// Cached splat-forward-pass output for one view, reused across the
-/// initial alpha eval, all binary-search iters, and the final colour
-/// eval. The render is the dominant per-view cost (project + sort +
-/// tile + rasterize on ~750k splats) and is identical across these
-/// calls — caching cuts ~75% of repeated work.
-pub struct ViewRender {
-    pub render: brush_render::RenderOutput<MainBackendBase>,
-    pub camera_model: brush_render::kernels::camera_model::CameraModel,
-}
-
-/// Render every training view once and stash the output. Caller hands
-/// the resulting slice to each `evaluate_alpha` call below.
-async fn pre_render_views(
-    splats: &Splats,
-    views: &[(Camera, UVec2)],
-    render_mode: SplatRenderMode,
-) -> Vec<ViewRender> {
-    type B = MainBackendBase;
-    let transforms_p = resolve_to_cube_float(splats.transforms.val());
-    let sh_coeffs_p = resolve_to_cube_float(splats.sh_coeffs.val());
-    let raw_opacities_p = resolve_to_cube_float(splats.raw_opacities.val());
-    let mut cache = Vec::with_capacity(views.len());
-    for (view_idx, (cam, sz)) in views.iter().enumerate() {
-        let out = <B as SplatOps<B>>::render(
-            cam,
-            *sz,
-            transforms_p.clone(),
-            sh_coeffs_p.clone(),
-            raw_opacities_p.clone(),
-            render_mode,
-            Vec3::ZERO,
-            RasterPass::Forward,
-            false,
-        )
-        .await;
-        cache.push(ViewRender {
-            render: out,
-            camera_model: cam.camera_model,
-        });
-        if (view_idx + 1).is_multiple_of(32) || view_idx + 1 == views.len() {
-            log::info!("pre-rendered view {}/{}", view_idx + 1, views.len());
-        }
-    }
-    cache
-}
-
+/// Evaluate per-point alpha (and, when `track_color`, baked RGB) across
+/// all views, with per-view aggregation kept entirely on the GPU.
+///
+/// When `skip_rasterize` is true, the per-view splat-forward pass skips
+/// the rasterize kernel — `out_img` is allocated at the right shape
+/// but never written. The integrate-alpha kernel still walks the
+/// tile-sorted gaussian list per query point, so per-point alpha is
+/// unchanged. `out_rgb` becomes garbage that's ignored downstream
+/// (only `track_color = true` would read it). Safe to set whenever the
+/// caller doesn't read colour back; saves the bulk of per-view render
+/// cost (per-pixel SH eval + alpha composite is typically dominant).
 async fn evaluate_alpha(
     splats: &Splats,
     points: &[Vec3],
-    view_renders: &[ViewRender],
+    views: &[(Camera, UVec2)],
+    render_mode: SplatRenderMode,
+    skip_rasterize: bool,
     track_color: bool,
 ) -> EvaluateOut {
     type B = MainBackendBase;
@@ -414,6 +392,7 @@ async fn evaluate_alpha(
     }
 
     let transforms_p = resolve_to_cube_float(splats.transforms.val());
+    let sh_coeffs_p = resolve_to_cube_float(splats.sh_coeffs.val());
     let raw_opacities_p = resolve_to_cube_float(splats.raw_opacities.val());
     let device = transforms_p.device.clone();
     let client = transforms_p.client.clone();
@@ -436,16 +415,27 @@ async fn evaluate_alpha(
     let weight_sum_t: FloatTensor<B> =
         B::float_from_data(burn::tensor::TensorData::zeros::<f32, _>([n]), &device);
 
-    for (view_idx, view_render) in view_renders.iter().enumerate() {
-        // The render has already been done once during pre-render; we
-        // clone the tensor handles (Arc-backed in burn, so cheap) and
-        // hand them straight to the integrate kernel. No project +
-        // rasterize per call.
-        let out = view_render.render.clone();
+    for (view_idx, (cam, sz)) in views.iter().enumerate() {
+        // Forward render; if the caller doesn't need RGB, ask the
+        // pipeline to skip the rasterize kernel — typically the bulk
+        // of per-view cost.
+        let out = <B as SplatOps<B>>::render(
+            cam,
+            *sz,
+            transforms_p.clone(),
+            sh_coeffs_p.clone(),
+            raw_opacities_p.clone(),
+            render_mode,
+            Vec3::ZERO,
+            RasterPass::Forward,
+            false, // no geometry render
+            skip_rasterize,
+        )
+        .await;
         let out_alpha: FloatTensor<B> = create_tensor::<1>([n], &device, DType::F32);
         let out_rgb: FloatTensor<B> = create_tensor::<2>([n, 3], &device, DType::F32);
         let uniforms = out.project_uniforms.to_launch_object();
-        let camera_model = view_render.camera_model;
+        let camera_model = cam.camera_model;
 
         kernels::integrate_alpha::integrate_alpha_kernel::launch::<WgpuRuntime>(
             &client,
@@ -479,8 +469,8 @@ async fn evaluate_alpha(
             track_color,
         );
 
-        if (view_idx + 1).is_multiple_of(32) || view_idx + 1 == view_renders.len() {
-            log::info!("integrated view {}/{}", view_idx + 1, view_renders.len());
+        if (view_idx + 1).is_multiple_of(32) || view_idx + 1 == views.len() {
+            log::info!("integrated view {}/{}", view_idx + 1, views.len());
         }
     }
 

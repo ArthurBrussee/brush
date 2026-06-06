@@ -46,6 +46,7 @@ impl SplatOps<Self> for MainBackendBase {
         background: Vec3,
         pass: RasterPass,
         geometry: bool,
+        skip_rasterize: bool,
     ) -> RenderOutput<Self> {
         assert!(
             img_size[0] > 0 && img_size[1] > 0,
@@ -285,36 +286,47 @@ impl SplatOps<Self> for MainBackendBase {
             // Using `float_zeros` makes that read a well-defined no-op.
             Self::float_zeros([1].into(), &device, FloatDType::F32)
         };
-        tracing::trace_span!("Rasterize").in_scope(|| {
-            let uniforms = RasterizeUniformsLaunch::new(
-                project_uniforms.tile_bounds[0],
-                project_uniforms.img_size[0],
-                project_uniforms.img_size[1],
-                background.x,
-                background.y,
-                background.z,
-            );
-            kernels::rasterize::rasterize_kernel::launch::<WgpuRuntime>(
-                &client,
-                calc_cube_count_1d(
-                    num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
-                    shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
-                ),
-                CubeDim::new_1d(shaders::helpers::TILE_SIZE),
-                compact_gid_from_isect.clone().into_tensor_arg(),
-                tile_offsets.clone().into_tensor_arg(),
-                projected_splats.clone().into_tensor_arg(),
-                projected_geo.clone().into_tensor_arg(),
-                out_packed_arg.into_tensor_arg(),
-                out_f32_arg.into_tensor_arg(),
-                global_from_compact_gid.clone().into_tensor_arg(),
-                visible.clone().into_tensor_arg(),
-                uniforms,
-                bwd_info,
-                smooth_cutoff,
-                geo,
-            );
-        });
+        if !skip_rasterize {
+            tracing::trace_span!("Rasterize").in_scope(|| {
+                let uniforms = RasterizeUniformsLaunch::new(
+                    project_uniforms.tile_bounds[0],
+                    project_uniforms.img_size[0],
+                    project_uniforms.img_size[1],
+                    background.x,
+                    background.y,
+                    background.z,
+                );
+                kernels::rasterize::rasterize_kernel::launch::<WgpuRuntime>(
+                    &client,
+                    calc_cube_count_1d(
+                        num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
+                        shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
+                    ),
+                    CubeDim::new_1d(shaders::helpers::TILE_SIZE),
+                    compact_gid_from_isect.clone().into_tensor_arg(),
+                    tile_offsets.clone().into_tensor_arg(),
+                    projected_splats.clone().into_tensor_arg(),
+                    projected_geo.clone().into_tensor_arg(),
+                    out_packed_arg.into_tensor_arg(),
+                    out_f32_arg.into_tensor_arg(),
+                    global_from_compact_gid.clone().into_tensor_arg(),
+                    visible.clone().into_tensor_arg(),
+                    uniforms,
+                    bwd_info,
+                    smooth_cutoff,
+                    geo,
+                );
+            });
+        } else {
+            // Caller asked for project+tile only. The rasterize kernel
+            // never runs and `out_img` stays at the zero-initialised
+            // shape from `create_tensor`. Downstream alpha-only readers
+            // (e.g. mesh-extraction's integrate_alpha during binary
+            // search) compute their own per-point alpha from the splat
+            // list and ignore the RGB image entirely. The `out_packed_arg`
+            // / `out_f32_arg` bindings just drop here.
+            let _ = (out_packed_arg, out_f32_arg);
+        }
         RenderOutput {
             out_img,
             aux: RenderAuxInner {

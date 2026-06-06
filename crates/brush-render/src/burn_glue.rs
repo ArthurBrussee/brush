@@ -275,6 +275,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         background: Vec3,
         pass: crate::gaussian_splats::RasterPass,
         geometry: bool,
+        skip_rasterize: bool,
     ) -> RenderOutput<Self> {
         let client = transforms.client.clone();
 
@@ -301,6 +302,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             background,
             pass,
             geometry,
+            skip_rasterize,
         )
         .await;
 

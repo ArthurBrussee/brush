@@ -341,6 +341,7 @@ pub async fn render_splats_with_pass(
         background,
         pass,
         geometry,
+        false,
     )
     .await;
 
