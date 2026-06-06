@@ -127,6 +127,7 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
         has_alpha: false,
         alpha_mode: AlphaMode::Transparent,
         camera,
+        depth: None,
     }
 }
 
@@ -170,7 +171,7 @@ async fn test_forward_rendering() {
         Pinhole,
     );
     let img_size = glam::uvec2(64, 64);
-    let result = render_splats(splats, &camera, img_size, Vec3::ZERO).await;
+    let result = render_splats(splats, &camera, img_size, Vec3::ZERO, 0.0, false).await;
     assert!(result.num_visible > 0, "no splats rendered");
     let data = result
         .img
@@ -197,6 +198,81 @@ async fn test_training_step() {
     let (final_splats, _stats) = trainer.step(batch, splats).await;
 
     assert!(final_splats.num_splats() > 0);
+}
+
+// Training must actually move the parameters — guards against a broken
+// gradient path (e.g. params not require_grad, or grads not registered),
+// which would otherwise pass `test_training_step` (it only checks count).
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn training_updates_params() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let batch = generate_test_batch((64, 64));
+    let splats = generate_test_splats(&device, 200);
+    let config = TrainConfig::default();
+
+    let means0: Vec<f32> = splats
+        .means()
+        .into_data_async()
+        .await
+        .expect("rb")
+        .into_vec::<f32>()
+        .expect("vec");
+    let sh0: Vec<f32> = splats
+        .sh_coeffs
+        .val()
+        .into_data_async()
+        .await
+        .expect("rb")
+        .into_vec::<f32>()
+        .expect("vec");
+
+    let mut trainer = SplatTrainer::new(
+        &config,
+        &device,
+        BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+    );
+    // Mirror the real loop in train_stream: lift inner splats onto the
+    // autodiff graph each step, train, then `.valid()` back to inner.
+    let mut splats = splats;
+    for _ in 0..3 {
+        let diff = brush_render_bwd::burn_glue::lift_splats_to_autodiff(splats.clone());
+        let (s, _) = trainer.step(batch.clone(), diff).await;
+        splats = burn::module::AutodiffModule::valid(&s);
+    }
+
+    let means1: Vec<f32> = splats
+        .means()
+        .into_data_async()
+        .await
+        .expect("rb")
+        .into_vec::<f32>()
+        .expect("vec");
+    let sh1: Vec<f32> = splats
+        .sh_coeffs
+        .val()
+        .into_data_async()
+        .await
+        .expect("rb")
+        .into_vec::<f32>()
+        .expect("vec");
+
+    let max_delta = |a: &[f32], b: &[f32]| -> f32 {
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0, f32::max)
+    };
+    let d_means = max_delta(&means0, &means1);
+    let d_sh = max_delta(&sh0, &sh1);
+    assert!(
+        d_means > 1e-6,
+        "means did not move after 3 steps (Δ={d_means:.2e}) — mean gradient/LR path broken"
+    );
+    assert!(
+        d_sh > 1e-6,
+        "SH color did not move after 3 steps (Δ={d_sh:.2e}) — gradient path broken"
+    );
 }
 
 #[wasm_bindgen_test(unsupported = test)]
@@ -228,6 +304,115 @@ async fn test_multi_step_training() {
     assert!(splats.num_splats() > 0);
 }
 
+// End-to-end PGSR geometry training: a non-zero `depth_normal_weight`
+// auto-enables the geometry render pass, and the flattening + depth-normal
+// consistency regularizers must produce a finite loss and backprop without
+// crashing across several steps.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn train_with_geometry_losses() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let batch = generate_test_batch((64, 64));
+    let mut config = TrainConfig::default();
+    config.flatten_weight = 0.1;
+    config.depth_normal_weight = 0.05;
+    config.geo_from_iter = Some(0); // exercise the geometry path immediately
+    assert!(config.needs_geometry());
+
+    let mut splats = generate_test_splats(&device, 200);
+    let mut trainer = SplatTrainer::new(
+        &config,
+        &device,
+        BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+    );
+
+    for step in 0..5 {
+        let (new_splats, stats) = trainer.step(batch.clone(), splats).await;
+        splats = new_splats;
+        let loss = stats
+            .loss
+            .into_scalar_async::<f32>()
+            .await
+            .expect("loss readback");
+        assert!(loss.is_finite(), "non-finite loss at step {step}: {loss}");
+    }
+    assert!(splats.num_splats() > 0);
+}
+
+// End-to-end depth-distortion (2DGS L_d, squared form): a non-zero
+// `distortion_weight` auto-enables the geometry pass and adds the depth-moment
+// variance term. Must stay finite and backprop without crashing (exercises the
+// new zz render channel + its VJP).
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn train_with_distortion_loss() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let batch = generate_test_batch((64, 64));
+    let mut config = TrainConfig::default();
+    config.distortion_weight = 0.1;
+    config.geo_from_iter = Some(0);
+    assert!(config.needs_geometry());
+
+    let mut splats = generate_test_splats(&device, 200);
+    let mut trainer = SplatTrainer::new(
+        &config,
+        &device,
+        BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+    );
+
+    for step in 0..5 {
+        let (new_splats, stats) = trainer.step(batch.clone(), splats).await;
+        splats = new_splats;
+        let loss = stats
+            .loss
+            .into_scalar_async::<f32>()
+            .await
+            .expect("loss readback");
+        assert!(loss.is_finite(), "non-finite loss at step {step}: {loss}");
+    }
+    assert!(splats.num_splats() > 0);
+}
+
+// End-to-end metric depth supervision: a batch carrying a (synthetic) low-res
+// LiDAR depth + confidence drives the depth loss against the RaDe-GS rendered
+// depth. Must stay finite and backprop without crashing (exercises the GT
+// upsample + z->radial conversion + masked L1).
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn train_with_depth_loss() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let mut batch = generate_test_batch((64, 64));
+    let n = 16 * 16;
+    batch.depth = Some(brush_dataset::scene::DepthSample {
+        depth: TensorData::new(vec![2.0f32; n], [16, 16, 1]),
+        conf: TensorData::new(vec![1.0f32; n], [16, 16, 1]),
+    });
+
+    let mut config = TrainConfig::default();
+    config.depth_loss_weight = 0.5;
+    config.geo_from_iter = Some(0);
+    assert!(config.needs_geometry());
+
+    let mut splats = generate_test_splats(&device, 200);
+    let mut trainer = SplatTrainer::new(
+        &config,
+        &device,
+        BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+    );
+
+    for step in 0..5 {
+        let (new_splats, stats) = trainer.step(batch.clone(), splats).await;
+        splats = new_splats;
+        let loss = stats
+            .loss
+            .into_scalar_async::<f32>()
+            .await
+            .expect("loss readback");
+        assert!(loss.is_finite(), "non-finite loss at step {step}: {loss}");
+    }
+    assert!(splats.num_splats() > 0);
+}
+
 // Training with a camera pointing away from every splat — num_visible == 0
 // every step. The training loop must not crash on this; all gradients should
 // be zero (or at least finite) and the optimizer step should be a no-op.
@@ -253,6 +438,7 @@ async fn train_with_zero_visible_does_not_crash() {
         has_alpha: false,
         alpha_mode: AlphaMode::Transparent,
         camera,
+        depth: None,
     };
 
     let config = TrainConfig::default();
@@ -307,7 +493,7 @@ async fn test_gradient_validation() {
     let img_size = glam::uvec2(64, 64);
 
     // Clone splats since render_splats takes ownership and we need splats for gradient validation
-    let result = render_splats(splats.clone(), &camera, img_size, Vec3::ZERO).await;
+    let result = render_splats(splats.clone(), &camera, img_size, Vec3::ZERO, 0.0, false).await;
     splats.bwd_validate(result.img.mean()).await;
 }
 
@@ -373,6 +559,7 @@ async fn stress_concurrent_train_and_view() {
                     Vec3::ZERO,
                     None,
                     TextureMode::Float,
+                    false,
                 )
                 .await;
             }

@@ -1008,6 +1008,7 @@ dependencies = [
 name = "brush-dataset"
 version = "0.3.0"
 dependencies = [
+ "anyhow",
  "brush-async",
  "brush-render",
  "brush-serde",
@@ -1124,6 +1125,7 @@ dependencies = [
  "burn-cubecl",
  "burn-wgpu",
  "clap",
+ "env_logger",
  "getrandom 0.4.2",
  "glam",
  "log",
@@ -1190,6 +1192,7 @@ dependencies = [
  "clap",
  "glam",
  "image",
+ "log",
  "rerun",
  "serde",
  "tokio",

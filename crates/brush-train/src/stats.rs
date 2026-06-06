@@ -28,13 +28,6 @@ impl RefineRecord {
             .bool_and(self.vis_mask())
     }
 
-    pub(crate) fn above_screen_size(&self, threshold: f32) -> Tensor<1, Bool> {
-        self.max_screen_size
-            .clone()
-            .greater_elem(threshold)
-            .bool_and(self.vis_mask())
-    }
-
     pub(crate) fn gather_stats(
         &mut self,
         refine_weight: Tensor<1>,

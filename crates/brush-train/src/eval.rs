@@ -33,8 +33,16 @@ pub async fn eval_stats(
     let gt_packed: Tensor<2, Int> = Tensor::from_data(gt_packed_data, device);
 
     // Render on reference black background.
-    let (img, render_aux) =
-        render_splats(splats, gt_cam, res, Vec3::ZERO, None, TextureMode::Float).await;
+    let (img, render_aux) = render_splats(
+        splats,
+        gt_cam,
+        res,
+        Vec3::ZERO,
+        None,
+        TextureMode::Float,
+        false,
+    )
+    .await;
     let render_rgb = img.slice(s![.., .., 0..3]);
 
     // Simulate an 8-bit roundtrip for fair comparison.

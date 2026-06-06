@@ -109,6 +109,28 @@ impl SceneLoader {
     }
 }
 
+/// Load (or fetch from cache) and pack a view's image to `[H, W]` u32.
+async fn load_packed(
+    views: &Arc<Vec<crate::scene::SceneView>>,
+    cache: &Arc<Mutex<ImageCache>>,
+    index: usize,
+) -> (burn::tensor::TensorData, bool) {
+    let view = &views[index];
+    let sample = if let Some(image) = cache.lock().await.get(index) {
+        image
+    } else {
+        let raw = view
+            .image
+            .load()
+            .await
+            .expect("Scene loader failed to load an image");
+        let sample = Arc::new(view_to_sample_image(raw, view.image.alpha_mode()));
+        cache.lock().await.insert(index, sample.clone());
+        sample
+    };
+    sample_to_packed_data(sample.as_ref().clone())
+}
+
 async fn run_loader(
     views: Arc<Vec<crate::scene::SceneView>>,
     cache: Arc<Mutex<ImageCache>>,
@@ -126,25 +148,25 @@ async fn run_loader(
         let index = shuffled.pop().expect("Need at least one view in dataset");
         let view = &views[index];
 
-        let sample = if let Some(image) = cache.lock().await.get(index) {
-            image
-        } else {
-            let raw = view
-                .image
-                .load()
-                .await
-                .expect("Scene loader failed to load an image");
-            let sample = Arc::new(view_to_sample_image(raw, view.image.alpha_mode()));
-            cache.lock().await.insert(index, sample.clone());
-            sample
+        let (img_packed, has_alpha) = load_packed(&views, &cache, index).await;
+        let depth = match &view.depth {
+            Some(d) => d.load().await.ok().map(|dd| crate::scene::DepthSample {
+                depth: burn::tensor::TensorData::new(dd.depth, [dd.height, dd.width, 1]),
+                // ARKit confidence 0/1/2 -> [0, 1], used as a per-pixel weight
+                // in the depth loss (no hard threshold).
+                conf: burn::tensor::TensorData::new(
+                    dd.conf.iter().map(|&c| c as f32 / 2.0).collect::<Vec<_>>(),
+                    [dd.height, dd.width, 1],
+                ),
+            }),
+            None => None,
         };
-
-        let (img_packed, has_alpha) = sample_to_packed_data(sample.as_ref().clone());
         let batch = SceneBatch {
             img_packed,
             has_alpha,
             alpha_mode: view.image.alpha_mode(),
             camera: view.camera,
+            depth,
         };
 
         if tx.send(batch).await.is_err() {

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use web_time::Instant;
 
+use crate::ui::app::ViewChannel;
 use crate::ui::panels::AppPane;
 use crate::ui::settings_popup::SettingsPopup;
 use crate::ui::splat_backbuffer::SplatBackbuffer;
@@ -530,6 +531,50 @@ impl ScenePanel {
 
         if response.changed() {
             settings.splat_scale = Some(scale);
+            process.set_cam_settings(&settings);
+        }
+
+        // View channel selector (rgb / unbiased depth / normal).
+        ui.label(RichText::new("View").size(12.0));
+        let mut settings = process.get_cam_settings();
+        let mut channel = settings.view_channel;
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(matches!(channel, ViewChannel::Rgb), "RGB")
+                .clicked()
+            {
+                channel = ViewChannel::Rgb;
+            }
+            if ui
+                .selectable_label(matches!(channel, ViewChannel::Depth { .. }), "Depth")
+                .clicked()
+                && !matches!(channel, ViewChannel::Depth { .. })
+            {
+                channel = ViewChannel::Depth {
+                    max_meters: ViewChannel::DEFAULT_DEPTH_METERS,
+                };
+            }
+            if ui
+                .selectable_label(matches!(channel, ViewChannel::Normal), "Normal")
+                .clicked()
+            {
+                channel = ViewChannel::Normal;
+            }
+        });
+
+        // Absolute depth colormap range, carried in the Depth variant.
+        if let ViewChannel::Depth { max_meters } = &mut channel {
+            ui.label(RichText::new("Depth range (m)").size(12.0));
+            ui.add(
+                Slider::new(max_meters, 0.1..=100.0)
+                    .logarithmic(true)
+                    .show_value(true)
+                    .custom_formatter(|val, _| format!("{val:.1}m")),
+            );
+        }
+
+        if channel != settings.view_channel {
+            settings.view_channel = channel;
             process.set_cam_settings(&settings);
         }
 
@@ -1067,6 +1112,7 @@ impl AppPane for ScenePanel {
                         self.frame as usize,
                         settings.background.unwrap_or(Vec3::ZERO),
                         settings.splat_scale,
+                        settings.view_channel,
                         self.splats_dirty,
                     );
                     self.splats_dirty = false;

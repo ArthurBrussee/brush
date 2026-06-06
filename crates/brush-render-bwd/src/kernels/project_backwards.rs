@@ -96,6 +96,202 @@ fn inverse2x2_vjp(minv: Sym2, v_minv: Sym2) -> Sym2 {
     }
 }
 
+/// VJP of `y = x / |x|` for 3-vectors: `v_x = (v_y - y(y·v_y)) / |x|`. The
+/// length is floored so a near-zero input never produces a non-finite grad.
+#[cube]
+fn vec_normalize_vjp(x: Vec3A, v_y: Vec3A) -> Vec3A {
+    let len = f32::max(x.length(), 1e-12f32);
+    let y = x.scale(1.0f32 / len);
+    v_y.sub(y.scale(y.dot(v_y))).scale(1.0f32 / len)
+}
+
+/// Analytic VJP of the RaDe-GS `splat_view_rayplane` forward (see
+/// `helpers::splat_view_rayplane`): given upstream grads of the ray-plane
+/// `(grad_x, grad_y, depth_c)` and the camera-space normal, returns the
+/// gradient w.r.t. the camera-space mean, the world rotation matrix `R(quat)`,
+/// and the (log-)scale. Mirrors the forward exactly and re-derives every
+/// intermediate; the degenerate guard matches the forward's.
+#[cube]
+fn rayplane_vjp(
+    view_rot: Mat3,
+    mean_c: Vec3A,
+    quat: Quat,
+    scale: Vec3A,
+    fx: f32,
+    fy: f32,
+    v_gd: Vec3A,
+    v_nrm: Vec3A,
+) -> (Vec3A, Mat3, Vec3A) {
+    let tx = mean_c.x();
+    let ty = mean_c.y();
+    let tz = mean_c.z();
+    let l = mean_c.length();
+    let uu = tx / tz;
+    let vv = ty / tz;
+    let a = Vec3A::new(uu, vv, 1.0f32);
+
+    let r_c = view_rot.mul_mat3(quat.to_mat3());
+    // Matches the forward's `min(1/s, 1e6)` floor (see `splat_view_rayplane_core`).
+    let inv_s = Vec3A::new(
+        f32::min(1.0f32 / scale.x(), 1e6f32),
+        f32::min(1.0f32 / scale.y(), 1e6f32),
+        f32::min(1.0f32 / scale.z(), 1e6f32),
+    );
+    let m_geo = r_c.mul_diag(inv_s);
+    let b = m_geo.transpose_mul_vec3(a); // M^T a
+    let w = m_geo.mul_vec3(b); // (M M^T) a = uvh_m
+
+    // Branch-free: floor |w| so `wn` stays finite when w ≈ 0, compute the full
+    // VJP unconditionally, then mask it out in the degenerate case (matching the
+    // forward's `is_finite && |w|>1e-20` guard). cube can't reassign a `Mat3`,
+    // so we avoid an `if/else` here.
+    let wlen = w.length();
+    let ok = w.is_finite() && wlen > 1e-20f32;
+    let mask = select(ok, 1.0f32, 0.0f32);
+    let wn = w.scale(1.0f32 / f32::max(wlen, 1e-20f32));
+
+    let vbn = wn.dot(a);
+    let u2 = uu * uu;
+    let v2 = vv * vv;
+    let uv = uu * vv;
+    let ray_len2 = u2 + v2 + 1.0f32;
+    let fn_ = l / ray_len2;
+    let denom = f32::max(vbn, 1e-7f32);
+    let q = wn.scale(1.0f32 / denom);
+    let px = (v2 + 1.0f32) * q.x() - uv * q.y() - uu * q.z();
+    let py = -uv * q.x() + (u2 + 1.0f32) * q.y() - vv * q.z();
+    let rn = Vec3A::new(-px * fn_, -py * fn_, -1.0f32);
+    let n_j = Mat3::from_cols(
+        Vec3A::new(1.0f32 / tz, 0.0f32, -tx / (tz * tz)),
+        Vec3A::new(0.0f32, 1.0f32 / tz, -ty / (tz * tz)),
+        Vec3A::new(tx / l, ty / l, tz / l),
+    );
+    let cn = n_j.mul_vec3(rn);
+
+    // --- reverse ---
+    let v_gx = v_gd.x();
+    let v_gy = v_gd.y();
+    let v_dc = v_gd.z();
+
+    // normal = normalize(cn); matches the forward's safe-normalize fallback —
+    // a near-zero `cn` used the constant (0,0,-1) normal, so no grad flows.
+    let cn_mask = select(cn.is_finite() && cn.length() > 1e-12f32, 1.0f32, 0.0f32);
+    let v_cn = vec_normalize_vjp(cn, v_nrm).scale(cn_mask);
+    // cn = n_j · rn
+    let v_rn = n_j.transpose_mul_vec3(v_cn);
+
+    // rn = (-px·fn, -py·fn, -1)
+    let mut v_px = v_rn.x() * (-fn_);
+    let mut v_py = v_rn.y() * (-fn_);
+    let mut v_fn = v_rn.x() * (-px) + v_rn.y() * (-py);
+    // gd: gx = px·fn/fx, gy = py·fn/fy, dc = l
+    v_px += v_gx * fn_ / fx;
+    v_py += v_gy * fn_ / fy;
+    v_fn += v_gx * px / fx + v_gy * py / fy;
+    let mut v_l = v_dc;
+
+    // fn = l / ray_len2
+    v_l += v_fn / ray_len2;
+    let v_ray_len2 = v_fn * (-l / (ray_len2 * ray_len2));
+    let mut v_u = v_ray_len2 * 2.0f32 * uu;
+    let mut v_v = v_ray_len2 * 2.0f32 * vv;
+
+    // plane → v_q, and v_u/v_v through nJ_inv(u,v)
+    let v_q = Vec3A::new(
+        v_px * (v2 + 1.0f32) + v_py * (-uv),
+        v_px * (-uv) + v_py * (u2 + 1.0f32),
+        v_px * (-uu) + v_py * (-vv),
+    );
+    v_u += v_px * (-vv * q.y() - q.z()) + v_py * (-vv * q.x() + 2.0f32 * uu * q.y());
+    v_v += v_px * (2.0f32 * vv * q.x() - uu * q.y()) + v_py * (-uu * q.x() - q.z());
+
+    // q = wn / denom
+    let mut v_wn = v_q.scale(1.0f32 / denom);
+    let v_denom = -(v_q.dot(wn)) / (denom * denom);
+    let v_vbn = select(vbn > 1e-7f32, v_denom, 0.0f32);
+    // vbn = wn · a
+    v_wn = v_wn.add(a.scale(v_vbn));
+    let mut v_a = wn.scale(v_vbn);
+
+    // wn = normalize(w)
+    let v_w = vec_normalize_vjp(w, v_wn);
+    // w = M (M^T a); b = M^T a, c = M^T v_w
+    let c = m_geo.transpose_mul_vec3(v_w);
+    v_a = v_a.add(m_geo.mul_vec3(c));
+    // a = (u, v, 1)
+    v_u += v_a.x();
+    v_v += v_a.y();
+
+    // v_M = outer(v_w, b) + outer(a, c); columns:
+    let v_m0 = v_w.scale(b.x()).add(a.scale(c.x()));
+    let v_m1 = v_w.scale(b.y()).add(a.scale(c.y()));
+    let v_m2 = v_w.scale(b.z()).add(a.scale(c.z()));
+    // M = R_c diag(inv_s): v_R_c.col_i = v_M.col_i · inv_s_i
+    let v_r_c = Mat3::from_cols(
+        v_m0.scale(inv_s.x()),
+        v_m1.scale(inv_s.y()),
+        v_m2.scale(inv_s.z()),
+    );
+    // v_inv_s_i = R_c.col_i · v_M.col_i; inv_s = 1/s → v_logs = -v_inv_s/s.
+    // Zero where 1/s is clamped (s <= 1e-6), matching the forward's floor.
+    let v_inv_sx = r_c.col0().dot(v_m0);
+    let v_inv_sy = r_c.col1().dot(v_m1);
+    let v_inv_sz = r_c.col2().dot(v_m2);
+    let v_scale_log_full = Vec3A::new(
+        select(scale.x() > 1e-6f32, -v_inv_sx / scale.x(), 0.0f32),
+        select(scale.y() > 1e-6f32, -v_inv_sy / scale.y(), 0.0f32),
+        select(scale.z() > 1e-6f32, -v_inv_sz / scale.z(), 0.0f32),
+    );
+    // R_c = view_rot · R_world → v_R_world = view_rot^T · v_R_c
+    let v_r_world_full = Mat3::from_cols(
+        view_rot.transpose_mul_vec3(v_r_c.col0()),
+        view_rot.transpose_mul_vec3(v_r_c.col1()),
+        view_rot.transpose_mul_vec3(v_r_c.col2()),
+    );
+
+    // v_nj entries = outer(v_cn, rn): v_nj[i][j] = v_cn_i · rn_j
+    let inv_tz2 = 1.0f32 / (tz * tz);
+    let inv_tz3 = inv_tz2 / tz;
+    let inv_l = 1.0f32 / l;
+    let inv_l2 = inv_l * inv_l;
+    let v_nj_00 = v_cn.x() * rn.x();
+    let v_nj_20 = v_cn.z() * rn.x();
+    let v_nj_11 = v_cn.y() * rn.y();
+    let v_nj_21 = v_cn.z() * rn.y();
+    let v_nj_02 = v_cn.x() * rn.z();
+    let v_nj_12 = v_cn.y() * rn.z();
+    let v_nj_22 = v_cn.z() * rn.z();
+    let v_tx_nj = v_nj_20 * (-inv_tz2) + v_nj_02 * inv_l;
+    let v_ty_nj = v_nj_21 * (-inv_tz2) + v_nj_12 * inv_l;
+    let v_tz_nj = v_nj_00 * (-inv_tz2)
+        + v_nj_20 * (2.0f32 * tx * inv_tz3)
+        + v_nj_11 * (-inv_tz2)
+        + v_nj_21 * (2.0f32 * ty * inv_tz3)
+        + v_nj_22 * inv_l;
+    v_l += v_nj_02 * (-tx * inv_l2) + v_nj_12 * (-ty * inv_l2) + v_nj_22 * (-tz * inv_l2);
+
+    // u = tx/tz, v = ty/tz, l = |mean_c|
+    let v_tx = v_u / tz + v_tx_nj + (tx * inv_l) * v_l;
+    let v_ty = v_v / tz + v_ty_nj + (ty * inv_l) * v_l;
+    let v_tz = v_u * (-tx * inv_tz2) + v_v * (-ty * inv_tz2) + v_tz_nj + (tz * inv_l) * v_l;
+    let v_mean_c_full = Vec3A::new(v_tx, v_ty, v_tz);
+
+    // Degenerate fallback: grad_depth = (0, 0, l), normal = (0, 0, -1), so only
+    // depth_c = l carries gradient.
+    let v_mean_c_deg = mean_c.scale(v_gd.z() * inv_l);
+
+    let v_mean_c = v_mean_c_full
+        .scale(mask)
+        .add(v_mean_c_deg.scale(1.0f32 - mask));
+    let v_scale_log = v_scale_log_full.scale(mask);
+    let v_r_world = Mat3::from_cols(
+        v_r_world_full.col0().scale(mask),
+        v_r_world_full.col1().scale(mask),
+        v_r_world_full.col2().scale(mask),
+    );
+    (v_mean_c, v_r_world, v_scale_log)
+}
+
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 pub fn project_backwards_kernel(
@@ -112,6 +308,7 @@ pub fn project_backwards_kernel(
     #[comptime] mip_splatting: bool,
     #[comptime] sh_degree: u32,
     #[comptime] camera_model: CameraModel,
+    #[comptime] geo: bool,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
     if compact_gid >= u.num_visible {
@@ -124,7 +321,8 @@ pub fn project_backwards_kernel(
     // splats that contributed to a pixel; non-contributing splats leave
     // v_rasterize_grads at zero and (since the dense outputs are zero-
     // init) we can return without writing anything at all.
-    let rg_base = (compact_gid * 10u32) as usize;
+    let rg_stride = comptime![if geo { 16u32 } else { 10u32 }];
+    let rg_base = (compact_gid * rg_stride) as usize;
     let v_mean2d_x = v_rasterize_grads[rg_base];
     let v_mean2d_y = v_rasterize_grads[rg_base + 1];
     let v_conics_x = v_rasterize_grads[rg_base + 2];
@@ -136,6 +334,21 @@ pub fn project_backwards_kernel(
     let v_alpha_in = v_rasterize_grads[rg_base + 8];
     let v_refine_in = v_rasterize_grads[rg_base + 9];
 
+    let mut v_geo_gd = Vec3A::new(0.0f32, 0.0f32, 0.0f32);
+    let mut v_geo_n = Vec3A::new(0.0f32, 0.0f32, 0.0f32);
+    if comptime![geo] {
+        v_geo_gd = Vec3A::new(
+            v_rasterize_grads[rg_base + 10],
+            v_rasterize_grads[rg_base + 11],
+            v_rasterize_grads[rg_base + 12],
+        );
+        v_geo_n = Vec3A::new(
+            v_rasterize_grads[rg_base + 13],
+            v_rasterize_grads[rg_base + 14],
+            v_rasterize_grads[rg_base + 15],
+        );
+    }
+
     let any_grad = v_mean2d_x != 0.0f32
         || v_mean2d_y != 0.0f32
         || v_conics_x != 0.0f32
@@ -145,7 +358,13 @@ pub fn project_backwards_kernel(
         || v_color_g != 0.0f32
         || v_color_b != 0.0f32
         || v_alpha_in != 0.0f32
-        || v_refine_in != 0.0f32;
+        || v_refine_in != 0.0f32
+        || v_geo_gd.x() != 0.0f32
+        || v_geo_gd.y() != 0.0f32
+        || v_geo_gd.z() != 0.0f32
+        || v_geo_n.x() != 0.0f32
+        || v_geo_n.y() != 0.0f32
+        || v_geo_n.z() != 0.0f32;
     if !any_grad {
         terminate!();
     }
@@ -193,7 +412,29 @@ pub fn project_backwards_kernel(
         c01: v_conics_y * 0.5f32,
         c11: v_conics_z,
     };
-    let v_cov2d = inverse2x2_vjp(conic_inv, v_inv);
+    let v_cov2d_image = inverse2x2_vjp(conic_inv, v_inv);
+
+    // Differentiable per-splat screen-area regulariser. The 1σ ellipse area
+    // as a fraction of the image is `area_frac = π·sqrt(det(cov)) / (W·H)`, and
+    // the loss contribution is `weight · area_frac² / num_visible`. The gradient
+    // flows analytically into v_cov2d through `d(sqrt(det))/d(cov.*)`. With
+    // weight=0 the contribution is 0 (branch-free).
+    let det = cov.c00 * cov.c11 - cov.c01 * cov.c01;
+    let sqrt_det = f32::sqrt(f32::max(det, 1.0e-20f32));
+    let pi = core::f32::consts::PI;
+    let img_w_f = u.img_w as f32;
+    let img_h_f = u.img_h as f32;
+    let area_frac = pi * sqrt_det / (img_w_f * img_h_f);
+    let dloss_darea =
+        2.0f32 * u.screen_area_penalty * area_frac / f32::max(u.num_visible as f32, 1.0f32);
+    let inv_imghw = 1.0f32 / (img_w_f * img_h_f);
+    let half_pi_over_sqrtdet = pi * 0.5f32 / sqrt_det * inv_imghw;
+    let pi_over_sqrtdet = pi / sqrt_det * inv_imghw;
+    let v_cov2d = Sym2 {
+        c00: v_cov2d_image.c00 + dloss_darea * cov.c11 * half_pi_over_sqrtdet,
+        c01: v_cov2d_image.c01 + dloss_darea * (-cov.c01) * pi_over_sqrtdet,
+        c11: v_cov2d_image.c11 + dloss_darea * cov.c00 * half_pi_over_sqrtdet,
+    };
 
     // covar = M * M^T (symmetric).
     let covar = m.outer_product_self();
@@ -221,14 +462,14 @@ pub fn project_backwards_kernel(
     // v_covar_c = J^T * v_cov2d * J (2x2 sym → 3x3 sym).
     let vcc = cam_jac.transpose_congruence_sym2(v_cov2d);
 
-    let v_mean = view_rot.transpose_mul_vec3(v_mean_c).add(v_mean_from_sh);
+    let mut v_mean = view_rot.transpose_mul_vec3(v_mean_c).add(v_mean_from_sh);
 
     // v_covar = R^T * v_covar_c * R (symmetric).
     // v_M = (v_covar + v_covar^T) * M = 2 * v_covar * M.
     let v_m = vcc.transpose_congruence(view_rot).scale(2.0f32).mul_mat3(m);
 
     // v_scale = (R[i] dot v_M[i]) * exp(log_scale).
-    let v_scale_exp = Vec3A::new(
+    let mut v_scale_exp = Vec3A::new(
         r.col0().dot(v_m.col0()) * scale.x(),
         r.col1().dot(v_m.col1()) * scale.y(),
         r.col2().dot(v_m.col2()) * scale.z(),
@@ -237,7 +478,33 @@ pub fn project_backwards_kernel(
     // grad for quat from covar: v_quat = normalize_vjp(quat) *
     // quat_to_mat_vjp(quat, v_M * diag(scale)).
     let q_grad = quat_to_mat_vjp(quat, v_m.mul_diag(scale));
-    let v_q = apply_normalize_vjp(quat_unorm, q_grad);
+    let mut v_q = apply_normalize_vjp(quat_unorm, q_grad);
+
+    // RaDe-GS geometry VJP: the ray-plane depth gradient + covariance normal
+    // contribute gradient to the mean, rotation, and scale. The full analytic
+    // VJP of `splat_view_rayplane` lives in `rayplane_vjp`.
+    if comptime![geo] {
+        let (v_mean_c_geo, v_r_world_geo, v_scale_log_geo) = rayplane_vjp(
+            view_rot,
+            mean_c,
+            quat,
+            scale,
+            u.pinhole_params.fx,
+            u.pinhole_params.fy,
+            v_geo_gd,
+            v_geo_n,
+        );
+        let q_grad_geo = quat_to_mat_vjp(quat, v_r_world_geo);
+        let v_q_geo = apply_normalize_vjp(quat_unorm, q_grad_geo);
+        v_q = Quat::new(
+            v_q.w() + v_q_geo.w(),
+            v_q.x() + v_q_geo.x(),
+            v_q.y() + v_q_geo.y(),
+            v_q.z() + v_q_geo.z(),
+        );
+        v_scale_exp = v_scale_exp.add(v_scale_log_geo);
+        v_mean = v_mean.add(view_rot.transpose_mul_vec3(v_mean_c_geo));
+    }
 
     // Write gradients to dense v_transforms.
     let vbase = (global_gid * 10u32) as usize;

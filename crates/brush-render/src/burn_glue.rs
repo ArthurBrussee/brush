@@ -6,7 +6,8 @@ use burn::backend::{
     TensorMetadata,
     tensor::{FloatTensor, IntTensor},
 };
-use burn::tensor::{DType, Int, Tensor};
+use burn::tensor::{DType, Int, Shape, Tensor};
+use burn_cubecl::cubecl::CubeDim;
 use burn_cubecl::fusion::FusionCubeRuntime;
 use burn_cubecl::tensor::CubeTensor;
 use burn_fusion::{
@@ -171,6 +172,98 @@ pub fn resolve_to_cube_float<const D: usize>(tensor: Tensor<D>) -> CubeTensor<Wg
     client.resolve_tensor_float::<MainBackendBase>(fusion)
 }
 
+/// Colormap the PGSR depth / normal maps into a packed RGBA8 `[H, W, 1]`
+/// image for the viewer. The output dtype is `u32` (packed) but it is
+/// wrapped as a float `Tensor` so the display path can read its buffer
+/// directly, matching the packed-rgb render path. `normal_mode` selects the
+/// normal hemisphere map; otherwise depth is jet-colored over `[dmin, dmax]`.
+pub fn geo_colormap_pack(
+    depth: Tensor<3>,
+    normal: Tensor<3>,
+    alpha: Tensor<3>,
+    dmin: f32,
+    dmax: f32,
+    normal_mode: bool,
+) -> Tensor<3> {
+    let [h, w, _] = depth.dims();
+    let dinv_range = if dmax > dmin {
+        1.0 / (dmax - dmin)
+    } else {
+        0.0
+    };
+
+    let depth = unwrap_wgpu_float(depth);
+    let normal = unwrap_wgpu_float(normal);
+    let alpha = unwrap_wgpu_float(alpha);
+
+    #[derive(Debug)]
+    struct Op {
+        desc: CustomOpIr,
+        dmin: f32,
+        dinv_range: f32,
+        h: usize,
+        w: usize,
+        normal_mode: bool,
+    }
+
+    impl Operation<FusionCubeRuntime<WgpuRuntime>> for Op {
+        fn execute(&self, h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime>>>) {
+            let (inputs, outputs) = self.desc.as_fixed::<3, 1>();
+            let [depth, normal, alpha] = inputs;
+            let [out] = outputs;
+
+            let depth = h.get_float_tensor::<MainBackendBase>(depth);
+            let normal = h.get_float_tensor::<MainBackendBase>(normal);
+            let alpha = h.get_float_tensor::<MainBackendBase>(alpha);
+
+            let device = depth.device.clone();
+            let client = depth.client.clone();
+            let num_pixels = (self.h * self.w) as u32;
+            let out_t = brush_cube::create_tensor([self.h, self.w, 1], &device, DType::U32);
+
+            crate::kernels::geo_visualize::colormap_pack_kernel::launch::<WgpuRuntime>(
+                &client,
+                brush_cube::calc_cube_count_1d(num_pixels, crate::kernels::geo_visualize::WG_SIZE),
+                CubeDim::new_1d(crate::kernels::geo_visualize::WG_SIZE),
+                depth.into_tensor_arg(),
+                normal.into_tensor_arg(),
+                alpha.into_tensor_arg(),
+                out_t.clone().into_tensor_arg(),
+                self.dmin,
+                self.dinv_range,
+                num_pixels,
+                self.normal_mode,
+            );
+
+            h.register_float_tensor::<MainBackendBase>(&out.id, out_t);
+        }
+    }
+
+    let client = depth.client.clone();
+    let inputs = [depth, normal, alpha];
+    // Declared F32 so wrap_wgpu_float treats the packed-u32 buffer as a
+    // float tensor (same trick as the packed-rgb render output).
+    let out_ir = TensorIr::uninit(
+        client.create_empty_handle(),
+        Shape::new([h, w, 1]),
+        DType::F32,
+    );
+    let stream = StreamId::current();
+    let desc = CustomOpIr::new("geo_colormap_pack", &inputs.map(|t| t.into_ir()), &[out_ir]);
+    let op = Op {
+        desc: desc.clone(),
+        dmin,
+        dinv_range,
+        h,
+        w,
+        normal_mode,
+    };
+    let [out] = client
+        .register(stream, OperationIr::Custom(desc), op)
+        .outputs();
+    wrap_wgpu_float(out)
+}
+
 impl SplatOps<Self> for Fusion<MainBackendBase> {
     async fn render(
         camera: &Camera,
@@ -181,6 +274,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: crate::gaussian_splats::RasterPass,
+        geometry: bool,
     ) -> RenderOutput<Self> {
         let client = transforms.client.clone();
 
@@ -206,6 +300,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             render_mode,
             background,
             pass,
+            geometry,
         )
         .await;
 
@@ -217,6 +312,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             visible: FloatTensor<MainBackendBase>,
             max_radius: FloatTensor<MainBackendBase>,
             projected_splats: FloatTensor<MainBackendBase>,
+            projected_geo: FloatTensor<MainBackendBase>,
             tile_offsets: IntTensor<MainBackendBase>,
             compact_gid_from_isect: IntTensor<MainBackendBase>,
             global_from_compact_gid: IntTensor<MainBackendBase>,
@@ -227,12 +323,13 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 &self,
                 h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime>>>,
             ) {
-                let (_, outputs) = self.desc.as_fixed::<0, 7>();
+                let (_, outputs) = self.desc.as_fixed::<0, 8>();
                 let [
                     out_img,
                     visible,
                     max_radius,
                     projected_splats,
+                    projected_geo,
                     tile_offsets,
                     compact_gid_from_isect,
                     global_from_compact_gid,
@@ -244,6 +341,10 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 h.register_float_tensor::<MainBackendBase>(
                     &projected_splats.id,
                     self.projected_splats.clone(),
+                );
+                h.register_float_tensor::<MainBackendBase>(
+                    &projected_geo.id,
+                    self.projected_geo.clone(),
                 );
                 h.register_int_tensor::<MainBackendBase>(
                     &tile_offsets.id,
@@ -280,6 +381,11 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             out.projected_splats.shape(),
             DType::F32,
         );
+        let projected_geo_ir = TensorIr::uninit(
+            client.create_empty_handle(),
+            out.projected_geo.shape(),
+            DType::F32,
+        );
         let tile_offsets_ir = TensorIr::uninit(
             client.create_empty_handle(),
             out.aux.tile_offsets.shape(),
@@ -305,6 +411,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 visible_ir,
                 max_radius_ir,
                 projected_splats_ir,
+                projected_geo_ir,
                 tile_offsets_ir,
                 compact_gid_from_isect_ir,
                 global_from_compact_gid_ir,
@@ -316,6 +423,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             visible: out.aux.visible,
             max_radius: out.aux.max_radius,
             projected_splats: out.projected_splats,
+            projected_geo: out.projected_geo,
             tile_offsets: out.aux.tile_offsets,
             compact_gid_from_isect: out.compact_gid_from_isect,
             global_from_compact_gid: out.global_from_compact_gid,
@@ -330,6 +438,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             visible,
             max_radius,
             projected_splats,
+            projected_geo,
             tile_offsets,
             compact_gid_from_isect,
             global_from_compact_gid,
@@ -346,6 +455,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
                 img_size: out.aux.img_size,
             },
             projected_splats,
+            projected_geo,
             compact_gid_from_isect,
             project_uniforms: out.project_uniforms,
             global_from_compact_gid,

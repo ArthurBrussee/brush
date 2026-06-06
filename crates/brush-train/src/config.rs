@@ -37,7 +37,7 @@ pub struct TrainConfig {
     pub lr_opac: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "7e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
     pub lr_scale: f64,
 
     /// Learning rate for the rotation parameters.
@@ -71,10 +71,30 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "15000")]
     pub growth_stop_iter: u32,
 
-    /// Force-split any splat whose screen-space extent exceeds this fraction of the
-    /// image dimension in any training view since the last refine. 0 disables.
-    #[arg(long, help_heading = "Refine options", default_value = "0.25")]
-    pub split_at_screen_size: f32,
+    /// Per-axis shrink ratio for the covariance-aware split. Each child axis
+    /// shrinks by `k_i = 1 - (1-k)·(s_i²/s_max²)`: the principal axis shrinks
+    /// by `k`, much-smaller axes are left ~unchanged. Offsets are
+    /// mass-conserving per axis (`±sqrt(1-k_i²)·s_i`). The natural value is
+    /// 1/√2 ≈ 0.707 (matches the variance-preserving 2-component mixture);
+    /// lower over-shrinks and triggers compensatory over-densification.
+    #[arg(long, help_heading = "Refine options", default_value = "0.707")]
+    pub split_anisotropic_k: f32,
+
+    /// Prune-and-resample any splat whose max screen-space extent exceeds this
+    /// fraction of the image dimension. The splat is treated as "poisoned":
+    /// killed, and the freed budget is re-sampled elsewhere. Runs every refine
+    /// (including post-growth). 0 disables.
+    #[arg(long, help_heading = "Refine options", default_value = "0.5")]
+    pub kill_at_screen_size: f32,
+
+    /// Weight on the differentiable per-splat screen-area penalty, applied in
+    /// the `project_backwards` kernel: the analytic gradient of
+    /// `weight·area_frac² / num_visible` (`area_frac` = `π·sqrt(det(cov_2d))/(W·H)`)
+    /// is added to the 2D-covariance gradient and flows back to
+    /// scales/rotations/means. A gentle nudge toward small on-screen
+    /// footprints; `kill_at_screen_size` handles the hard outliers. 0 disables.
+    #[arg(long, help_heading = "Training options", default_value = "0.05")]
+    pub screen_area_penalty: f32,
 
     /// Weight of SSIM loss (compared to l1 loss)
     #[clap(long, help_heading = "Training options", default_value = "0.2")]
@@ -91,6 +111,36 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "0.0")]
     pub lpips_loss_weight: f32,
 
+    /// Weight of the flattening regularizer (PGSR `L_s`): penalizes each splat's
+    /// smallest scale axis so Gaussians commit to planes. Scene-scale dependent.
+    #[arg(long, help_heading = "Geometry options", default_value = "10.0")]
+    pub flatten_weight: f32,
+
+    /// Weight of the single-view depth↔normal consistency loss (PGSR `L_svgeo`).
+    /// Unitless (normal agreement), so scene-independent.
+    #[arg(long, help_heading = "Geometry options", default_value = "0.05")]
+    pub depth_normal_weight: f32,
+
+    /// Weight of the metric depth supervision loss: L1 between the RaDe-GS
+    /// rendered depth and the per-view `LiDAR` depth (when the dataset provides
+    /// it), per-pixel weighted by `ARKit` confidence. No-op without depth data.
+    #[arg(long, help_heading = "Geometry options", default_value = "0.2")]
+    pub depth_loss_weight: f32,
+
+    /// Weight of the depth-distortion loss (2DGS `L_d`, squared form): penalizes
+    /// each ray's weighted depth variance, concentrating its weight onto a single
+    /// depth so the surface stops being a fuzzy shell. Scene-scale dependent.
+    #[arg(long, help_heading = "Geometry options", default_value = "0.1")]
+    pub distortion_weight: f32,
+
+    /// Master switch for the geometry losses: the iteration to turn them on at.
+    /// Unset = geometry off (the weights above are ignored). Set it to enable
+    /// flatten + depth-normal + depth-distortion + metric depth from that
+    /// iteration onward (they want a settled-enough reconstruction first; PGSR
+    /// uses ~7000). An individual loss can still be disabled with its weight = 0.
+    #[arg(long, help_heading = "Geometry options")]
+    pub geo_from_iter: Option<u32>,
+
     /// Base background color (R,G,B) used during training.
     #[arg(
         long,
@@ -103,7 +153,7 @@ pub struct TrainConfig {
 
     /// Strength of random noise added to the background color each step.
     /// Noise is uniform in [-strength, +strength], clamped to [0, 1].
-    #[arg(long, help_heading = "Training options", default_value = "0.1")]
+    #[arg(long, help_heading = "Training options", default_value = "1.0")]
     pub background_noise_strength: f32,
 
     /// Number of LOD levels to generate after initial training (0 = disabled).
@@ -122,12 +172,25 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "LOD options", default_value = "50")]
     pub lod_image_scale: u32,
 
-    /// Scene scale used for random splat initialization.
-    /// When no init is provided, splats are randomly placed
-    /// inside camera frustums up to this depth. By default this is
-    /// estimated from the camera spacing (with a 1m minimum).
+    /// Scene radius used for random splat initialization (the half-extent of
+    /// the scene around its center). When no point-cloud init is provided,
+    /// splats are sampled in camera frustums at depths bracketing the scene
+    /// center (min standoff `0.2·scale`, out to `d_center + scale`). By
+    /// default this is the mean camera-to-centroid distance (floored by the
+    /// camera-spacing estimate).
     #[arg(long, help_heading = "Training options")]
     pub random_init_scene_scale: Option<f32>,
+
+    /// Voxel size (metres) for `LiDAR`-init downsampling. `0` (default)
+    /// auto-derives it from the cloud extent (scene-relative density); a
+    /// positive value forces a fixed metric size.
+    #[arg(long, help_heading = "Init options", default_value = "0.0")]
+    pub lidar_voxel_size: f32,
+
+    /// Minimum `ARKit` confidence (0=low,1=med,2=high) for a `LiDAR` point to be
+    /// used at init.
+    #[arg(long, help_heading = "Init options", default_value = "2")]
+    pub lidar_min_confidence: u32,
 }
 
 impl Default for TrainConfig {
@@ -139,5 +202,15 @@ impl Default for TrainConfig {
 impl TrainConfig {
     pub fn total_iters(&self) -> u32 {
         self.total_train_iters + self.lod_levels * self.lod_refine_steps
+    }
+
+    /// Whether any active loss needs the PGSR geometry render pass (blended
+    /// normal + plane distance). Enabled on demand so the geometry cost is
+    /// only paid when something consumes it.
+    pub fn needs_geometry(&self) -> bool {
+        self.geo_from_iter.is_some()
+            && (self.depth_normal_weight > 0.0
+                || self.depth_loss_weight > 0.0
+                || self.distortion_weight > 0.0)
     }
 }

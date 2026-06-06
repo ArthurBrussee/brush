@@ -128,6 +128,7 @@ async fn test_reference() -> anyhow::Result<()> {
             glam::Vec3::ZERO,
             None,
             TextureMode::Float,
+            false,
         )
         .await;
 

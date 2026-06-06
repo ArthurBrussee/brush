@@ -16,8 +16,8 @@ use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
 use super::helpers::{
-    ALPHA_CUTOFF_MID, PROJECTED_LANES, PROJECTED_LANES_USIZE, TILE_SIZE, TILE_WIDTH,
-    alpha_cutoff_weight, calc_sigma, map_1d_to_2d,
+    ALPHA_CUTOFF_MID, PROJECTED_GEO_LANES, PROJECTED_LANES, PROJECTED_LANES_USIZE, TILE_SIZE,
+    TILE_WIDTH, alpha_cutoff_weight, calc_sigma, map_1d_to_2d,
 };
 use super::types::{RasterizeUniforms, Sym2};
 
@@ -27,6 +27,7 @@ pub fn rasterize_kernel(
     compact_gid_from_isect: &Tensor<u32>,
     tile_offsets: &mut Tensor<u32>,
     projected: &Tensor<f32>,
+    projected_geo: &Tensor<f32>,
     out_img_packed: &mut Tensor<u32>,
     out_img_f32: &mut Tensor<f32>,
     global_from_compact_gid: &Tensor<u32>,
@@ -34,6 +35,7 @@ pub fn rasterize_kernel(
     u: RasterizeUniforms,
     #[comptime] bwd_info: bool,
     #[comptime] smooth_cutoff: bool,
+    #[comptime] geo: bool,
 ) {
     let global_id = ABSOLUTE_POS as u32;
     let (pix_x, pix_y) = map_1d_to_2d(global_id, u.tile_bw);
@@ -75,6 +77,14 @@ pub fn rasterize_kernel(
     let mut pix_r = 0.0f32;
     let mut pix_g = 0.0f32;
     let mut pix_b = 0.0f32;
+    // RaDe-GS geometry accumulators: alpha-blended view-space normal + the
+    // per-pixel ray-plane depth (depth varies across each splat footprint).
+    let mut pix_nx = 0.0f32;
+    let mut pix_ny = 0.0f32;
+    let mut pix_nz = 0.0f32;
+    let mut pix_depth = 0.0f32;
+    // Second depth moment Sum(w*z^2), for the depth-distortion (variance) loss.
+    let mut pix_zz = 0.0f32;
     let mut done = !inside;
     let mut last_useful_isect = range_lo;
 
@@ -145,6 +155,23 @@ pub fn rasterize_kernel(
                     pix_r += max(local_batch[dst_base + 6], 0.0f32) * vis;
                     pix_g += max(local_batch[dst_base + 7], 0.0f32) * vis;
                     pix_b += max(local_batch[dst_base + 8], 0.0f32) * vis;
+                    if comptime![geo] {
+                        // Read geo from global (not staged in shared — the 6
+                        // lanes would push workgroup shared past wgpu's 16 KiB
+                        // default limit). `projected_geo` is L1-cached.
+                        let gid_t = compact_gid_from_isect[(batch_start + t) as usize];
+                        let geo_base = (gid_t * PROJECTED_GEO_LANES) as usize;
+                        let off_x = xy_x - pixel_coord_x;
+                        let off_y = xy_y - pixel_coord_y;
+                        let t_pix = projected_geo[geo_base] * off_x
+                            + projected_geo[geo_base + 1] * off_y
+                            + projected_geo[geo_base + 2];
+                        pix_depth += t_pix * vis;
+                        pix_zz += t_pix * t_pix * vis;
+                        pix_nx += projected_geo[geo_base + 3] * vis;
+                        pix_ny += projected_geo[geo_base + 4] * vis;
+                        pix_nz += projected_geo[geo_base + 5] * vis;
+                    }
                     t_acc = next_t;
                     last_useful_isect = batch_start + t + 1u32;
                 }
@@ -163,11 +190,20 @@ pub fn rasterize_kernel(
         let final_b = pix_b + t_acc * u.bg_b;
         let final_a = 1.0f32 - t_acc;
         if comptime![bwd_info] {
-            let base = (pix_id * 4u32) as usize;
+            let nchan = comptime![if geo { 9u32 } else { 4u32 }];
+            let base = (pix_id * nchan) as usize;
             out_img_f32[base] = final_r;
             out_img_f32[base + 1] = final_g;
             out_img_f32[base + 2] = final_b;
             out_img_f32[base + 3] = final_a;
+            if comptime![geo] {
+                // Geometry has no background; leftover transmittance contributes 0.
+                out_img_f32[base + 4] = pix_nx;
+                out_img_f32[base + 5] = pix_ny;
+                out_img_f32[base + 6] = pix_nz;
+                out_img_f32[base + 7] = pix_depth;
+                out_img_f32[base + 8] = pix_zz;
+            }
         } else {
             let r = clamp(final_r * 255.0f32, 0.0f32, 255.0f32) as u32;
             let g = clamp(final_g * 255.0f32, 0.0f32, 255.0f32) as u32;
