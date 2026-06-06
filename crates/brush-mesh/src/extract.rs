@@ -358,31 +358,19 @@ async fn evaluate_alpha(
     let pts_tensor: FloatTensor<B> =
         B::float_from_data(burn::tensor::TensorData::new(pts_flat, [n, 3]), &device);
 
-    // Track the *smallest* α_int seen across views (= the view with the
-    // best line of sight). Init to `+∞` so any real value wins on the
-    // first view. Used for the SDF aggregation.
-    let mut min_alpha_int = vec![f32::INFINITY; n];
-
-    // Colour: GOF's reference takes "best view's RGB" (where(α<final_α,
-    // color, final_color)). For the mesh-render-vs-splat-render PSNR
-    // metric we instead accumulate a *visibility-weighted* mean — each
-    // view contributes its rgb weighted by `(1 − α_int)²`, so the
-    // best-visibility view dominates but moderately-visible views
-    // smooth out per-view SH variation. The mesh is unlit + per-vertex
-    // colour, so its single baked-in colour has to approximate the
-    // splat appearance from *all* views simultaneously; a weighted mean
-    // does that better than one specific view's snapshot. Off by ~+0.3
-    // PSNR(mesh vs splat) on bonsai vs the best-view variant.
-    let mut color_sum: Vec<[f32; 3]> = if track_color {
-        vec![[0.0; 3]; n]
-    } else {
-        Vec::new()
-    };
-    let mut weight_sum: Vec<f32> = if track_color {
-        vec![0.0; n]
-    } else {
-        Vec::new()
-    };
+    // Running aggregators live on the GPU so we never round-trip per
+    // view: min_alpha holds the per-point running min across all
+    // visited views (init +∞), color_sum / weight_sum accumulate the
+    // visibility-weighted blend (init 0). Read back exactly once at
+    // the end of the per-view loop.
+    let min_alpha_t: FloatTensor<B> = B::float_from_data(
+        burn::tensor::TensorData::new(vec![f32::INFINITY; n], [n]),
+        &device,
+    );
+    let color_sum_t: FloatTensor<B> =
+        B::float_from_data(burn::tensor::TensorData::zeros::<f32, _>([n, 3]), &device);
+    let weight_sum_t: FloatTensor<B> =
+        B::float_from_data(burn::tensor::TensorData::zeros::<f32, _>([n]), &device);
 
     for (view_idx, (cam, sz)) in views.iter().enumerate() {
         // Use Forward pass: produces a `[H, W]` packed-u32 RGBA image
@@ -432,37 +420,35 @@ async fn evaluate_alpha(
             camera_model,
         );
 
-        let alpha_int = read_back_f32(out_alpha).await;
-        let rgb_flat = if track_color {
-            read_back_f32(out_rgb).await
-        } else {
-            Vec::new()
-        };
-        debug_assert_eq!(alpha_int.len(), n);
-        for i in 0..n {
-            let a = alpha_int[i];
-            if a < min_alpha_int[i] {
-                min_alpha_int[i] = a;
-            }
-            if track_color {
-                // Visibility = 1 − α_int (line-of-sight openness). Raise
-                // to `COLOR_BLEND_POWER` so the most-visible views
-                // dominate the bake without being a hard winner-takes-all.
-                let vis = (1.0 - a).max(0.0);
-                let w = vis.powf(COLOR_BLEND_POWER);
-                if w > 0.0 {
-                    color_sum[i][0] += w * rgb_flat[3 * i];
-                    color_sum[i][1] += w * rgb_flat[3 * i + 1];
-                    color_sum[i][2] += w * rgb_flat[3 * i + 2];
-                    weight_sum[i] += w;
-                }
-            }
-        }
+        // Fold this view into the running aggregators on the GPU.
+        kernels::aggregate_alpha::aggregate_alpha_kernel::launch::<WgpuRuntime>(
+            &client,
+            calc_cube_count_1d(n as u32, kernels::aggregate_alpha::WG_SIZE),
+            CubeDim::new_1d(kernels::aggregate_alpha::WG_SIZE),
+            out_alpha.clone().into_tensor_arg(),
+            out_rgb.clone().into_tensor_arg(),
+            min_alpha_t.clone().into_tensor_arg(),
+            color_sum_t.clone().into_tensor_arg(),
+            weight_sum_t.clone().into_tensor_arg(),
+            n as u32,
+            track_color,
+        );
 
-        if (view_idx + 1).is_multiple_of(8) || view_idx + 1 == views.len() {
+        if (view_idx + 1).is_multiple_of(32) || view_idx + 1 == views.len() {
             log::info!("integrated view {}/{}", view_idx + 1, views.len());
         }
     }
+
+    // Single readback of the running aggregators after all views are folded.
+    let min_alpha_int = read_back_f32(min_alpha_t).await;
+    let (color_sum_flat, weight_sum) = if track_color {
+        (
+            read_back_f32(color_sum_t).await,
+            read_back_f32(weight_sum_t).await,
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
 
     // Points that were outside every camera's frustum get α_int = +∞ →
     // emit α = 1 (no occlusion) and black RGB. This matches GOF's
@@ -477,12 +463,15 @@ async fn evaluate_alpha(
     // but possible after binary-search refinement) fall back to white
     // — matches GOF's `torch.ones(...)` init.
     let color: Vec<[f32; 3]> = if track_color {
-        color_sum
-            .into_iter()
-            .zip(weight_sum.into_iter())
-            .map(|(c, w)| {
+        (0..n)
+            .map(|i| {
+                let w = weight_sum[i];
                 if w > 1.0e-6 {
-                    [c[0] / w, c[1] / w, c[2] / w]
+                    [
+                        color_sum_flat[3 * i] / w,
+                        color_sum_flat[3 * i + 1] / w,
+                        color_sum_flat[3 * i + 2] / w,
+                    ]
                 } else {
                     [1.0, 1.0, 1.0]
                 }
