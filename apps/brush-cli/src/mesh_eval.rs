@@ -61,7 +61,19 @@ pub async fn eval_psnr(
         // up pixel-exact regardless of the dataset's distortion model.
         let pin_cam = with_pinhole(&view.camera);
 
-        let rendered = renderer.render(mesh, &pin_cam, img_size);
+        // 2× supersample the mesh-render then bilinear-downsample to GT
+        // resolution. Effective 4× MSAA — removes the per-face barycentric
+        // edge stairstepping that's visible on bike spokes / bonsai
+        // silhouettes. The splat-render is already continuous-density and
+        // doesn't alias, so this closes some of the SBS pixel-mismatch.
+        const SS: u32 = 2;
+        let big = renderer.render(mesh, &pin_cam, img_size * SS);
+        let rendered = image::imageops::resize(
+            &big,
+            img_size.x,
+            img_size.y,
+            image::imageops::FilterType::Triangle,
+        );
         let rendered_path = out_dir.join(format!("view_{i:04}.png"));
         rendered
             .save(&rendered_path)
