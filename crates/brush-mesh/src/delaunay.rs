@@ -231,16 +231,22 @@ pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
         "bounding tet not positively oriented"
     );
 
-    let mut tri = Triangulation::new(dpoints, virtuals);
-
     // Hilbert-sort the insertion order so consecutive insertions are
     // spatially close — keeps `walk_locate`'s expected hop count bounded.
+    // Then *physically* reorder the points so the vertex indices stored
+    // in tets are themselves Hilbert-sorted. That way `walk_locate`
+    // reads from a spatially-coherent region of `tri.points` on each
+    // step, slashing L3 misses at the 6-9M-point scale where the points
+    // array (~160 MB) dwarfs cache. We map vertex ids back to caller-
+    // visible indices at output time via `order[..]`.
     let order: Vec<u32> = hilbert_order(points, min, max);
+    let reordered: Vec<DVec3> = order.iter().map(|&i| dpoints[i as usize]).collect();
+    let mut tri = Triangulation::new(reordered, virtuals);
 
     // One shared scratch reused across every insertion — see the
     // `Scratch` docstring for why this matters.
     let mut scr = Scratch::default();
-    for &pid in &order {
+    for pid in 0..points.len() as u32 {
         let p = tri.coord(pid);
         scr.clear();
         let start = walk_locate(&tri, p);
@@ -248,7 +254,8 @@ pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
         fill_cavity(&mut tri, pid, &mut scr);
     }
 
-    // Extract real tets.
+    // Extract real tets, remapping each Hilbert-indexed vertex back to
+    // the caller's original index space.
     let mut out = Vec::with_capacity(tri.tets.len());
     for t in &tri.tets {
         if !t.alive {
@@ -257,7 +264,12 @@ pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
         if t.verts.iter().any(|&v| is_virtual(v)) {
             continue;
         }
-        out.push(t.verts);
+        out.push([
+            order[t.verts[0] as usize],
+            order[t.verts[1] as usize],
+            order[t.verts[2] as usize],
+            order[t.verts[3] as usize],
+        ]);
     }
     out
 }
@@ -505,20 +517,25 @@ fn collect_cavity(tri: &Triangulation, start: u32, p: DVec3, scr: &mut Scratch) 
     scr.in_cavity.insert(start);
 
     while let Some(idx) = scr.stack.pop() {
-        let t = tri.tets[idx as usize];
+        let t = &tri.tets[idx as usize];
         debug_assert!(t.alive);
         scr.removed.push(idx);
         for i in 0..4 {
             let nb = t.neighbors[i];
-            if nb != u32::MAX && tri.tets[nb as usize].alive {
-                if scr.in_cavity.contains(&nb) {
-                    continue;
-                }
-                let nb_verts = tri.tets[nb as usize].verts;
-                if in_circumsphere(tri, nb_verts, p) {
-                    scr.in_cavity.insert(nb);
-                    scr.stack.push(nb);
-                    continue;
+            if nb != u32::MAX {
+                // Single read of the neighbour tet — both `.alive` and
+                // `.verts` come from the same struct, so this saves a
+                // re-load when the alive branch is taken.
+                let nb_tet = &tri.tets[nb as usize];
+                if nb_tet.alive {
+                    if scr.in_cavity.contains(&nb) {
+                        continue;
+                    }
+                    if in_circumsphere(tri, nb_tet.verts, p) {
+                        scr.in_cavity.insert(nb);
+                        scr.stack.push(nb);
+                        continue;
+                    }
                 }
             }
             // Face opposite local vertex `i` is on the cavity boundary.
