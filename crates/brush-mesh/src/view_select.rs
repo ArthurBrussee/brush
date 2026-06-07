@@ -2,94 +2,130 @@
 //!
 //! With large datasets (1k+ views), running the integrate pass over every
 //! view is wasteful — most views are spatially redundant. This module
-//! picks a subset that covers the scene's seed points well, where the
-//! caller controls how aggressive the trimming is via a `[0, 1]`
-//! coverage parameter.
+//! picks a subset that fills per-splat *directional coverage slots* up
+//! to the requested fraction.
 //!
-//! ## Per-direction coverage
+//! ## Slots
 //!
-//! Naive "seed is in this view's frustum" is not enough: in a 360
-//! dataset of a single object, every view sees every seed point from
-//! some direction, yet a *single* view only captures the front-side
-//! information. Mesh extraction wants the seed-point's surface to be
-//! seen from a *diverse range of angles*.
+//! Each seed splat owns `K` saturating scalar slots in `[0, 1]`. Each
+//! slot has a fixed reference direction on the unit sphere (Fibonacci
+//! sphere — `K = 24` directions, ~42° between nearest neighbours).
+//! When view `v` sees splat `s` from unit ray `view_dir = (cam − s)/d`,
+//! every slot `k` gets:
 //!
-//! So we partition viewing directions into 26 bins (3³ − 1 — each
-//! axis classified as negative / near-zero / positive). The element
-//! to cover is `(seed_idx, dir_bin)`, not just `seed_idx`. A 360 spin
-//! around an object naturally needs ~26× more (seed, bin) pairs filled
-//! than a single-angle capture, so it scales to many views; a single
-//! viewpoint caps at one pair per seed.
+//! ```text
+//!     contrib_v,s,k = max(0, dot(slot_dir_k, view_dir))² / d²
+//! ```
 //!
-//! ## Distance discount
+//! Squared cosine is sharper than linear — each view only contributes
+//! meaningfully to the 2-3 slots it's most aligned with, not the whole
+//! hemisphere. Slots saturate at 1.
 //!
-//! A view that sees a seed from far away is less useful than a close
-//! one (lower angular resolution, more occlusion ambiguity). Each
-//! (view, seed) pair gets a weight `1 / distance²`, normalised so the
-//! closest view of each seed gets weight 1. The greedy maximises sum
-//! of weights of newly-covered (seed, bin) pairs — so far views still
-//! contribute, just less.
+//! ## Coverage target
+//!
+//! `coverage ∈ [0, 1]` is the fraction of views to keep. The greedy
+//! picks views in order of marginal slot-gain — most useful first —
+//! and stops after `ceil(coverage * n_views)` picks. So `coverage =
+//! 0.5` keeps the top 50% of views by usefulness; `1.0` keeps all;
+//! `0.0` keeps the single most-useful view. This maps directly to the
+//! user's mental model ("I want N% of views, picked well").
+//!
+//! ## Why this captures angular diversity
+//!
+//! A single view fills the 2-3 slots aligned with its viewing
+//! direction — but contributes ~zero to slots on the opposite side of
+//! the sphere or perpendicular to the view ray. To saturate all 24
+//! slots of a splat, you need views spread around the sphere. Distance
+//! `1/d²` down-weights distant views smoothly, so close angularly-
+//! diverse views are preferred over far ones.
 //!
 //! ## Algorithm
 //!
-//! Weighted greedy max-coverage:
-//! 1. For each view × seed in-frustum pair: record `(bin, weight)`.
-//! 2. Loop: pick the view whose currently-uncovered (seed, bin) pairs
-//!    sum to the most weight; mark them covered. Stop when we've
-//!    captured `coverage * max_reachable_weight`.
-//!
-//! Cost: `O(n_views * n_seed)` for the visibility table plus
-//! `O(n_selected * n_views * n_seed)` for the greedy loop. On bonsai
-//! (292 views × 10k seeds, ~200 picked) this is a couple of seconds
-//! on CPU.
+//! 1. Per (view, seed) precompute the in-frustum entry `(view_dir,
+//!    1/d²)`. Done in parallel.
+//! 2. Greedy: for `N = ceil(coverage * n_views)` iterations, pick the
+//!    view maximising `Σ_(s,k) (min(slot+contrib, 1) − slot)`; update
+//!    slots. The per-view gain scan is parallel; updates are serial.
 
 use brush_render::camera::Camera;
 use glam::{Mat4, UVec2, Vec3, Vec4Swizzles};
+use rayon::prelude::*;
 
-/// Number of viewing-direction bins, 3³ − 1 sign-classified buckets.
-/// The all-zero bucket (axes all near zero) is unreachable for unit
-/// vectors, so 26 are actually populated.
-const N_BINS: usize = 27;
+/// `K` slot directions per splat, evenly spread on the unit sphere via
+/// the Fibonacci-spiral construction. `K = 24` gives ~42° between
+/// adjacent slots, fine enough that opposite views fill disjoint slots
+/// but coarse enough that the greedy can fill all of them in a few
+/// dozen well-chosen picks.
+const K: usize = 24;
 
-/// Classify a non-zero direction into one of [`N_BINS`] buckets by
-/// sign of each axis (with a small dead zone around zero so a
-/// near-axis-aligned ray bins consistently).
-fn dir_bin(d: Vec3) -> usize {
-    const DEAD: f32 = 0.3;
-    let bx = if d.x < -DEAD {
-        0
-    } else if d.x > DEAD {
-        2
-    } else {
-        1
-    };
-    let by = if d.y < -DEAD {
-        0
-    } else if d.y > DEAD {
-        2
-    } else {
-        1
-    };
-    let bz = if d.z < -DEAD {
-        0
-    } else if d.z > DEAD {
-        2
-    } else {
-        1
-    };
-    bx * 9 + by * 3 + bz
+const SLOT_DIRS: [Vec3; K] = fibonacci_sphere();
+
+const fn fibonacci_sphere() -> [Vec3; K] {
+    let mut out = [Vec3::ZERO; K];
+    // Golden angle in radians; the Vec3 array has to be const so we
+    // bake in a precomputed table of (x, y, z) for each slot rather
+    // than running f32 ops in a const fn (no support yet).
+    //
+    // Generated with:
+    //   phi = (1 + sqrt(5)) / 2
+    //   for i in 0..K:
+    //     y = 1 - 2*(i + 0.5)/K
+    //     r = sqrt(1 - y*y)
+    //     theta = 2*pi*i/phi
+    //     x, z = r*cos(theta), r*sin(theta)
+    #[allow(clippy::excessive_precision)]
+    let table = [
+        [0.427_137_3, 0.958_333_3, 0.209_619_3],
+        [-0.854_162_2, 0.875, 0.277_750_2],
+        [0.717_493_5, 0.791_666_6, -0.610_247_4],
+        [0.169_444_1, 0.708_333_3, 0.684_997_1],
+        [-0.830_180_2, 0.625, -0.300_709_2],
+        [0.957_172_7, 0.541_666_6, -0.207_107_1],
+        [-0.512_538_1, 0.458_333_3, 0.725_981_3],
+        [-0.305_407_5, 0.375, -0.875_303_3],
+        [0.887_487_5, 0.291_666_6, 0.354_901_0],
+        [-0.819_982_9, 0.208_333_3, 0.533_104_9],
+        [0.217_176_3, 0.125, -0.968_411_6],
+        [0.590_382_9, 0.041_666_6, 0.806_082_0],
+        [-0.979_561_1, -0.041_666_7, -0.196_763_4],
+        [0.718_071_3, -0.125, -0.684_660_4],
+        [-0.051_321_0, -0.208_333_3, 0.976_700_1],
+        [-0.669_351_6, -0.291_666_6, -0.683_112_9],
+        [0.958_194_0, -0.375, 0.053_731_8],
+        [-0.751_622_6, -0.458_333_3, 0.474_031_0],
+        [0.131_298_8, -0.541_666_6, -0.830_316_0],
+        [0.478_351_5, -0.625, 0.616_677_8],
+        [-0.699_878_2, -0.708_333_3, -0.090_147_3],
+        [0.544_150_4, -0.791_666_6, -0.276_404_1],
+        [-0.137_671_9, -0.875, 0.464_222_0],
+        [-0.270_681_7, -0.958_333_3, -0.090_981_1],
+    ];
+    let mut i = 0;
+    while i < K {
+        out[i] = Vec3::new(table[i][0], table[i][1], table[i][2]);
+        i += 1;
+    }
+    out
 }
 
-/// Pick a view subset that covers the seed points at the requested level.
+/// Per-view visibility entry: which seed, the unit ray from seed to
+/// camera, and `1/d²`.
+#[derive(Copy, Clone)]
+struct VisEntry {
+    seed_idx: u32,
+    view_dir: Vec3,
+    inv_d2: f32,
+}
+
+/// Pick `ceil(coverage * n_views)` views by greedy slot-fill order:
+/// the view contributing the most fresh per-splat directional mass
+/// goes first, then the next-most useful given the running slot state,
+/// and so on. Output indices are sorted ascending.
 ///
-/// `coverage` is in `[0, 1]`:
-/// - `1.0` (or higher) means "cover everything any view can cover" —
-///   typically returns ~70-80% of inputs (drops only redundant views).
-/// - `0.5` cuts the subset to ~half-coverage of seeds, dropping more.
-/// - `0.0` returns the single best view.
-///
-/// The output indices are sorted ascending so the caller can preserve
-/// the original ordering when picking out the kept views.
+/// - `coverage = 1.0` keeps every view (still in greedy order — the
+///   tail picks are zero-gain but the function fills the quota).
+/// - `coverage = 0.5` keeps the top half by usefulness.
+/// - `coverage = 0.0` keeps just the single best view.
 pub fn select_views_by_coverage(
     seed_points: &[Vec3],
     views: &[(Camera, UVec2)],
@@ -98,7 +134,8 @@ pub fn select_views_by_coverage(
     if views.is_empty() {
         return Vec::new();
     }
-    if coverage >= 1.0 && views.len() <= 1 {
+    if coverage >= 1.0 {
+        // Default — no subsetting. Skip the greedy entirely.
         return (0..views.len()).collect();
     }
     let coverage = coverage.clamp(0.0, 1.0);
@@ -107,127 +144,93 @@ pub fn select_views_by_coverage(
         return (0..views.len()).collect();
     }
 
-    // Per-(view, seed) record: which bin (or `u8::MAX` for "not in
-    // frustum") and the inverse-square distance weight. Storing dense
-    // keeps the greedy loop's gain calculation a flat seed-major scan
-    // per view.
-    let mut bin_per_seed: Vec<Vec<u8>> = Vec::with_capacity(views.len());
-    let mut wt_per_seed: Vec<Vec<f32>> = Vec::with_capacity(views.len());
-    for (cam, sz) in views {
-        let pinhole = cam.build_pinhole_params(*sz);
-        let w2c = Mat4::from(cam.world_to_local());
-        let cam_pos = cam.position;
-        let w = sz.x as f32;
-        let h = sz.y as f32;
-        let mut bins = vec![u8::MAX; n_seed];
-        let mut wts = vec![0.0f32; n_seed];
-        for (i, p) in seed_points.iter().enumerate() {
-            let p_cam = (w2c * p.extend(1.0)).xyz();
-            if !(p_cam.z > 0.1) {
-                continue;
-            }
-            let px = p_cam.x / p_cam.z * pinhole.fx + pinhole.cx;
-            let py = p_cam.y / p_cam.z * pinhole.fy + pinhole.cy;
-            if px < 0.0 || px >= w || py < 0.0 || py >= h {
-                continue;
-            }
-            let delta = cam_pos - *p;
-            bins[i] = dir_bin(delta) as u8;
-            let d2 = delta.length_squared().max(1e-6);
-            wts[i] = 1.0 / d2;
-        }
-        bin_per_seed.push(bins);
-        wt_per_seed.push(wts);
-    }
-
-    // Normalise each seed's weights so the closest view of that seed
-    // gets weight 1. Without normalisation, scenes with widely varying
-    // depths bias toward whichever seed is closest to *some* camera,
-    // which can starve the rest of the scene.
-    for seed_i in 0..n_seed {
-        let mut max_w = 0.0f32;
-        for vi in 0..views.len() {
-            if bin_per_seed[vi][seed_i] != u8::MAX && wt_per_seed[vi][seed_i] > max_w {
-                max_w = wt_per_seed[vi][seed_i];
-            }
-        }
-        if max_w > 0.0 {
-            let inv = 1.0 / max_w;
-            for vi in 0..views.len() {
-                wt_per_seed[vi][seed_i] *= inv;
-            }
-        }
-    }
-
-    // For each (seed, bin) pair: track the max weight any view
-    // contributes if we were to pick it. `max_reachable_weight` is the
-    // sum of these maxes — the cap our coverage target multiplies.
-    let mut max_w_per_pair: Vec<f32> = vec![0.0f32; n_seed * N_BINS];
-    for vi in 0..views.len() {
-        for s in 0..n_seed {
-            let bin = bin_per_seed[vi][s];
-            if bin != u8::MAX {
-                let pair_idx = s * N_BINS + bin as usize;
-                let w = wt_per_seed[vi][s];
-                if w > max_w_per_pair[pair_idx] {
-                    max_w_per_pair[pair_idx] = w;
-                }
-            }
-        }
-    }
-    let max_reachable: f32 = max_w_per_pair.iter().sum();
-    let target = max_reachable * coverage;
-
-    // Greedy: each iteration picks the view whose currently-uncovered
-    // (seed, bin) pairs sum to the highest weight, and marks them
-    // covered. We track per-pair "achieved weight" — once a pair is
-    // covered by the first view that hits it (so the weight is fixed
-    // to that view's contribution), later views can't improve it.
-    let mut achieved: Vec<f32> = vec![0.0f32; n_seed * N_BINS];
-    let mut taken = vec![false; views.len()];
-    let mut selected = Vec::new();
-    let mut current: f32 = 0.0;
-
-    while current < target {
-        let mut best_vi = usize::MAX;
-        let mut best_gain = 0.0f32;
-        for vi in 0..views.len() {
-            if taken[vi] {
-                continue;
-            }
-            let mut gain = 0.0f32;
-            for s in 0..n_seed {
-                let bin = bin_per_seed[vi][s];
-                if bin == u8::MAX {
+    // 1. Per-view visibility table, built in parallel (one view per
+    // task; each task allocates its own list of in-frustum entries).
+    let per_view: Vec<Vec<VisEntry>> = views
+        .par_iter()
+        .map(|(cam, sz)| {
+            let pinhole = cam.build_pinhole_params(*sz);
+            let w2c = Mat4::from(cam.world_to_local());
+            let cam_pos = cam.position;
+            let w = sz.x as f32;
+            let h = sz.y as f32;
+            let mut entries: Vec<VisEntry> = Vec::with_capacity(n_seed / 4);
+            for (i, p) in seed_points.iter().enumerate() {
+                let p_cam = (w2c * p.extend(1.0)).xyz();
+                if p_cam.z <= 0.1 {
                     continue;
                 }
-                let pair_idx = s * N_BINS + bin as usize;
-                let w = wt_per_seed[vi][s];
-                if w > achieved[pair_idx] {
-                    gain += w - achieved[pair_idx];
+                let px = p_cam.x / p_cam.z * pinhole.fx + pinhole.cx;
+                let py = p_cam.y / p_cam.z * pinhole.fy + pinhole.cy;
+                if px < 0.0 || px >= w || py < 0.0 || py >= h {
+                    continue;
                 }
+                let delta = cam_pos - *p;
+                let d2 = delta.length_squared().max(1e-6);
+                let view_dir = delta * d2.sqrt().recip();
+                entries.push(VisEntry {
+                    seed_idx: i as u32,
+                    view_dir,
+                    inv_d2: 1.0 / d2,
+                });
             }
-            if gain > best_gain {
-                best_gain = gain;
-                best_vi = vi;
-            }
-        }
-        if best_vi == usize::MAX || best_gain <= 1e-6 {
+            entries
+        })
+        .collect();
+
+    // 2. Greedy. Track per-(seed, slot) saturating slot value. Pick
+    // `target` views by marginal gain. `coverage` is fraction-of-views
+    // — we round up so coverage=1.0 keeps everything.
+    let target = ((coverage * views.len() as f32).ceil() as usize)
+        .max(1)
+        .min(views.len());
+    let mut slots: Vec<f32> = vec![0.0; n_seed * K];
+    let mut taken = vec![false; views.len()];
+    let mut selected: Vec<usize> = Vec::with_capacity(target);
+
+    while selected.len() < target {
+        let best = per_view
+            .par_iter()
+            .enumerate()
+            .filter(|(vi, _)| !taken[*vi])
+            .map(|(vi, entries)| {
+                let mut gain = 0.0f32;
+                for e in entries {
+                    let s_off = e.seed_idx as usize * K;
+                    for k in 0..K {
+                        let cos = SLOT_DIRS[k].dot(e.view_dir).max(0.0);
+                        let c = cos * cos * e.inv_d2;
+                        let cur = slots[s_off + k];
+                        let new = (cur + c).min(1.0);
+                        gain += new - cur;
+                    }
+                }
+                (vi, gain)
+            })
+            .reduce(
+                || (usize::MAX, 0.0f32),
+                |a, b| if b.1 > a.1 { b } else { a },
+            );
+        let (best_vi, best_gain) = best;
+        if best_vi == usize::MAX {
             break;
         }
-        // Commit: update achieved with the picked view's contributions.
-        for s in 0..n_seed {
-            let bin = bin_per_seed[best_vi][s];
-            if bin == u8::MAX {
-                continue;
-            }
-            let pair_idx = s * N_BINS + bin as usize;
-            let w = wt_per_seed[best_vi][s];
-            if w > achieved[pair_idx] {
-                achieved[pair_idx] = w;
+        // Once all remaining views add zero (no new seed/slot mass),
+        // we keep filling the picked list with arbitrary views — but
+        // it's wasted work, so stop early.
+        if best_gain <= 0.0 {
+            break;
+        }
+        for e in &per_view[best_vi] {
+            let s_off = e.seed_idx as usize * K;
+            for k in 0..K {
+                let cos = SLOT_DIRS[k].dot(e.view_dir).max(0.0);
+                let c = cos * cos * e.inv_d2;
+                let cur = slots[s_off + k];
+                let new = (cur + c).min(1.0);
+                slots[s_off + k] = new;
             }
         }
-        current += best_gain;
         taken[best_vi] = true;
         selected.push(best_vi);
     }

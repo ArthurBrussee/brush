@@ -7,6 +7,9 @@ target/
 brush_data/
 images/
 
+# Mesh extraction eval renders
+eval_renders/
+
 # Trunk outputs
 **/trunk_dist/**
 

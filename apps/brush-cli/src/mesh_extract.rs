@@ -119,14 +119,16 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
     );
 
     // Optional greedy view-subset selection. With --view-coverage < 1
-    // we sample splat centres as seed points, build a per-view
-    // frustum-visibility bitset, and keep only the views needed to
-    // cover the requested fraction. Big-dataset escape hatch.
+    // we sample splat centres as seed points, then pick the most
+    // useful `ceil(coverage * n_views)` views by greedy directional
+    // coverage. Big-dataset escape hatch; see
+    // [`brush_mesh::view_select`].
     if cli.view_coverage < 1.0 {
         let n_splats = splats.num_splats() as usize;
-        // Cap the seed-point sample so coverage stays cheap on big
-        // splats; 10k is plenty for the greedy selector's accuracy.
-        let seed_stride = (n_splats / 10_000).max(1);
+        // Seed budget = 10% of splats, capped at 100k so the greedy
+        // stays under a few seconds on big scenes.
+        let target_seeds = (n_splats / 10).min(100_000).max(1);
+        let seed_stride = (n_splats / target_seeds).max(1);
         let means_t = splats.means();
         let means: Vec<f32> = means_t
             .into_data_async()
