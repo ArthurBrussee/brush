@@ -5,6 +5,7 @@ use brush_async::Actor;
 use brush_process::DataSource;
 use brush_process::RunningProcess;
 use brush_process::config::TrainStreamConfig;
+use brush_process::create_process;
 use brush_process::message::ProcessMessage;
 use brush_process::message::TrainMessage;
 
@@ -116,6 +117,25 @@ impl Cli {
         }
         Ok(self)
     }
+}
+
+/// Build the training process described by `args`, or `None` if no source was
+/// given. Shared by the standalone CLI binary and brush-app's headless path.
+pub fn build_process(args: &Cli) -> Option<RunningProcess> {
+    let source = args.source.clone()?;
+    let cli_config = args.train_stream.clone();
+    Some(create_process(source, async move |init| {
+        Some(brush_process::args_file::merge_configs(&init, &cli_config))
+    }))
+}
+
+/// Initialize the backend, then drive `process` to completion on the CLI UI.
+pub async fn run_headless(
+    process: RunningProcess,
+    train_stream_config: TrainStreamConfig,
+) -> Result<(), anyhow::Error> {
+    brush_process::burn_init_setup().await;
+    run_cli_ui(process, train_stream_config).await
 }
 
 /// Run the CLI: pin the trainer stream to a dedicated [`Actor`] thread,

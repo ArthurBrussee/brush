@@ -870,6 +870,7 @@ version = "0.3.0"
 dependencies = [
  "android_logger",
  "anyhow",
+ "async-channel",
  "brush-async",
  "brush-cli",
  "brush-dataset",

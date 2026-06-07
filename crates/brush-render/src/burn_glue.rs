@@ -2,8 +2,8 @@
 
 use brush_cube::{MainBackend, MainBackendBase};
 use burn::backend::{
-    Autodiff, BackendTensor, CheckpointingStrategy, DispatchTensor, DispatchTensorKind,
-    TensorMetadata,
+    Autodiff, AutodiffBackend, BackendTensor, CheckpointingStrategy, DispatchTensor,
+    DispatchTensorKind, TensorMetadata,
     tensor::{FloatTensor, IntTensor},
 };
 use burn::tensor::{DType, Int, Shape, Tensor};
@@ -148,6 +148,44 @@ pub fn detach_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
         kind,
         checkpointing: None,
     })
+}
+
+/// Lift a non-autodiff `Tensor<D>` into the autodiff graph as a constant.
+/// Equivalent to `Tensor::from_inner` but also sets the `checkpointing` field
+/// that upstream burn-dispatch's `from_inner` leaves at `None` (without it,
+/// ops on the result hit `unreachable!("Should only be called with autodiff.")`).
+/// A no-op if `t` is already autodiff.
+pub fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
+    let dispatch: DispatchTensor = t.into_primitive();
+    match dispatch.kind {
+        wgpu_kind!(BackendTensor::Float(inner)) => {
+            wrap_ad_wgpu_float(<AutodiffMain as AutodiffBackend>::from_inner(inner))
+        }
+        DispatchTensorKind::Autodiff(_) => Tensor::from_primitive(dispatch),
+        _ => panic!("expected Wgpu tensor to lift to autodiff"),
+    }
+}
+
+fn is_autodiff<const D: usize>(t: &Tensor<D>) -> bool {
+    matches!(
+        t.clone().into_primitive().kind,
+        DispatchTensorKind::Autodiff(_)
+    )
+}
+
+/// Put `t` on the same autodiff/inner backend variant as `reference`. Brush
+/// keeps some frozen tensors (e.g. the 3D-filter floor) on the inner backend
+/// but folds them against params that may be lifted to autodiff; this aligns
+/// both operands so dispatch ops don't trip a cross-backend assertion.
+pub fn match_backend<const D: usize, const DR: usize>(
+    t: Tensor<D>,
+    reference: &Tensor<DR>,
+) -> Tensor<D> {
+    if is_autodiff(reference) {
+        lift_to_autodiff(t)
+    } else {
+        detach_autodiff(t)
+    }
 }
 
 /// Like [`detach_autodiff`] for `Tensor<D, Int>`.

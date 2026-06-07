@@ -2,7 +2,7 @@
 
 use brush_cube::{MainBackend, MainBackendBase};
 use brush_render::burn_glue::{
-    AutodiffMain, unwrap_ad_wgpu_float, wrap_ad_wgpu_float, wrap_wgpu_float,
+    AutodiffMain, lift_to_autodiff, unwrap_ad_wgpu_float, wrap_ad_wgpu_float, wrap_wgpu_float,
 };
 use brush_render::{
     SplatOps,
@@ -13,8 +13,7 @@ use brush_render::{
 };
 use burn::{
     backend::{
-        AutodiffBackend, Backend, BackendTensor, DispatchTensor, DispatchTensorKind,
-        TensorMetadata,
+        Backend, TensorMetadata,
         autodiff::{
             checkpoint::{base::Checkpointer, strategy::NoCheckpointing},
             grads::Gradients,
@@ -202,23 +201,6 @@ pub struct SplatOutputDiff {
     pub refine_weight_holder: Tensor<1>,
 }
 
-/// Lift a non-autodiff `Tensor<D>` (on a Wgpu device) into the autodiff
-/// graph. Equivalent to `Tensor::from_inner` but additionally sets the
-/// `checkpointing` field that upstream burn-dispatch's `from_inner` leaves
-/// at `None`. Without that field set, ops on the resulting tensor hit
-/// `unreachable!("Should only be called with autodiff.")`.
-pub fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
-    let dispatch: DispatchTensor = t.into_primitive();
-    match dispatch.kind {
-        brush_render::wgpu_kind!(BackendTensor::Float(inner)) => {
-            wrap_ad_wgpu_float(<AutodiffMain as AutodiffBackend>::from_inner(inner))
-        }
-        // Already autodiff — no-op.
-        DispatchTensorKind::Autodiff(_) => Tensor::from_primitive(dispatch),
-        _ => panic!("expected Wgpu tensor to lift to autodiff"),
-    }
-}
-
 /// Equivalent to `Module::train()` for [`Splats`], routing through
 /// [`lift_to_autodiff`] so the autodiff `checkpointing` field is set. Use this
 /// instead of `splats.train()` until upstream burn-dispatch fixes `from_inner`.
@@ -291,13 +273,13 @@ pub async fn render_splats_with_pass(
     let refine_weight_holder = Tensor::<1>::zeros([1], &device).require_grad();
 
     // Fold the 3D-filter floor into scales/opacity for the render. `min_scale`
-    // lives on the inner backend, so lift a temporary copy to keep the fold on
-    // the autodiff graph alongside the param values.
+    // lives on the inner backend; `fold_min_scale` lifts it onto the autodiff
+    // graph to match the param values.
     let (transforms_val, raw_opac_val) = match &splats.min_scale {
         Some(f) => fold_min_scale(
             splats.transforms.val(),
             splats.raw_opacities.val(),
-            lift_to_autodiff(f.clone()),
+            f.clone(),
         ),
         None => (splats.transforms.val(), splats.raw_opacities.val()),
     };

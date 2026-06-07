@@ -5,6 +5,11 @@ version.workspace = true
 readme.workspace = true
 license.workspace = true
 
+# Library used by brush-app, plus a lean headless binary for quick iteration.
+[[bin]]
+name = "brush-cli"
+path = "src/main.rs"
+
 [dependencies]
 brush-async.path = "../../crates/brush-async"
 brush-process.path = "../../crates/brush-process"
@@ -30,6 +35,10 @@ humantime.workspace = true
 log.workspace = true
 env_logger.workspace = true
 anyhow.workspace = true
+
+# The binary needs a multi-thread runtime; the lib alone doesn't.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }

@@ -9,7 +9,6 @@ mod ui;
 #[allow(clippy::unnecessary_wraps)]
 fn main() -> Result<(), anyhow::Error> {
     use brush_cli::Cli;
-    use brush_process::create_process;
     use clap::Parser;
 
     let args = Cli::parse().validate()?;
@@ -56,14 +55,7 @@ fn main() -> Result<(), anyhow::Error> {
                 return brush_cli::mesh_extract::run(&args).await;
             }
 
-            let init_process = args.source.clone().map(|source| {
-                create_process(source, {
-                    let cli_config = args.train_stream.clone();
-                    async move |init| {
-                        Some(brush_process::args_file::merge_configs(&init, &cli_config))
-                    }
-                })
-            });
+            let init_process = brush_cli::build_process(&args);
 
             if args.with_viewer {
                 use crate::ui::app::App;
@@ -101,9 +93,8 @@ fn main() -> Result<(), anyhow::Error> {
                     Box::new(move |cc| Ok(Box::new(App::new(cc, init_process)))),
                 )?;
             } else {
-                brush_process::burn_init_setup().await;
                 let process = init_process.expect("Must provide a source");
-                brush_cli::run_cli_ui(process, args.train_stream).await?;
+                brush_cli::run_headless(process, args.train_stream).await?;
             }
 
             anyhow::Result::<(), anyhow::Error>::Ok(())

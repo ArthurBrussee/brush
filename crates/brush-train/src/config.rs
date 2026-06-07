@@ -71,28 +71,13 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "15000")]
     pub growth_stop_iter: u32,
 
-    /// Per-axis shrink ratio for the covariance-aware split. Each child axis
-    /// shrinks by `k_i = 1 - (1-k)·(s_i²/s_max²)`: the principal axis shrinks
-    /// by `k`, much-smaller axes are left ~unchanged. Offsets are
-    /// mass-conserving per axis (`±sqrt(1-k_i²)·s_i`). The natural value is
-    /// 1/√2 ≈ 0.707 (matches the variance-preserving 2-component mixture);
-    /// lower over-shrinks and triggers compensatory over-densification.
-    #[arg(long, help_heading = "Refine options", default_value = "0.707")]
-    pub split_anisotropic_k: f32,
-
     /// Prune-and-resample any splat whose max screen-space extent exceeds this
-    /// fraction of the image dimension. The splat is treated as "poisoned":
-    /// killed, and the freed budget is re-sampled elsewhere. Runs every refine
-    /// (including post-growth). 0 disables.
+    /// fraction of the image dimension.
     #[arg(long, help_heading = "Refine options", default_value = "0.5")]
     pub kill_at_screen_size: f32,
 
-    /// Weight on the differentiable per-splat screen-area penalty, applied in
-    /// the `project_backwards` kernel: the analytic gradient of
-    /// `weight·area_frac² / num_visible` (`area_frac` = `π·sqrt(det(cov_2d))/(W·H)`)
-    /// is added to the 2D-covariance gradient and flows back to
-    /// scales/rotations/means. A gentle nudge toward small on-screen
-    /// footprints; `kill_at_screen_size` handles the hard outliers. 0 disables.
+    /// Weight of the per-splat screen-area loss. Works as a nudge toward small on-screen
+    /// footprints.
     #[arg(long, help_heading = "Training options", default_value = "0.05")]
     pub screen_area_penalty: f32,
 

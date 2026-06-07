@@ -64,6 +64,7 @@ winapi = { version = "0.3", features = ["wincon"] }
 tokio = { version = "1.42.0", default-features = false }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7.13", features = ["io"] }
+async-channel = "2.5.0"
 
 anyhow = "1.0.94"
 thiserror = "2.0"
