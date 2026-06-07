@@ -88,14 +88,12 @@ pub struct Cli {
     #[arg(long, help_heading = "Mesh extraction", default_value = "0")]
     pub eval_views: usize,
 
-    /// Fraction of dataset views to use for opacity integration, in
-    /// `[0, 1]`. Defaults to `1.0` (use every view). The kept views
-    /// are picked by greedy directional coverage of the splats (see
-    /// `brush_mesh::view_select`), so the most informative ones come
-    /// first. Big-dataset escape hatch: on MipNeRF-360-style captures
-    /// `0.25` already gives full quality, and 10k-view datasets can
-    /// drop to a hundred-view subset.
-    #[arg(long, help_heading = "Mesh extraction", default_value = "1.0")]
+    /// Target fraction of the scene's all-views directional coverage
+    /// to fill before stopping view subsetting, in `[0, 1]`. Default
+    /// `0.8` — heavily-redundant captures drop most views, near-
+    /// optimal ones drop only a few. See `brush_mesh::view_select`.
+    /// Set to `1.0` to disable subsetting entirely.
+    #[arg(long, help_heading = "Mesh extraction", default_value = "0.8")]
     pub view_coverage: f32,
 
     #[clap(flatten)]

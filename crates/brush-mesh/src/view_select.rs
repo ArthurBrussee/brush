@@ -23,12 +23,18 @@
 //!
 //! ## Coverage target
 //!
-//! `coverage ∈ [0, 1]` is the fraction of views to keep. The greedy
-//! picks views in order of marginal slot-gain — most useful first —
-//! and stops after `ceil(coverage * n_views)` picks. So `coverage =
-//! 0.5` keeps the top 50% of views by usefulness; `1.0` keeps all;
-//! `0.0` keeps the single most-useful view. This maps directly to the
-//! user's mental model ("I want N% of views, picked well").
+//! The all-views saturated mass — the sum of slot values when *every*
+//! view is selected (with slots clamped at 1) — is the natural
+//! ceiling. `coverage ∈ [0, 1]` is interpreted as a fraction of that:
+//! `1.0` means "fill until you reach all-views saturation", `0.5`
+//! means "halfway there". This is intentionally non-linear in view
+//! count: the greedy's first picks fill mass fast (each contributes
+//! to many empty slots), the tail-end picks add only fractions of
+//! slots. So a heavily-redundant 10k-view dataset drops to far below
+//! 10% kept at `coverage = 0.5`, while a 292-view orbit (already
+//! near-optimal) only loses ~25% of views at the same target. The
+//! point of the param is to express "how much quality do I want" in
+//! a dataset-independent way.
 //!
 //! ## Why this captures angular diversity
 //!
@@ -43,9 +49,11 @@
 //!
 //! 1. Per (view, seed) precompute the in-frustum entry `(view_dir,
 //!    1/d²)`. Done in parallel.
-//! 2. Greedy: for `N = ceil(coverage * n_views)` iterations, pick the
-//!    view maximising `Σ_(s,k) (min(slot+contrib, 1) − slot)`; update
-//!    slots. The per-view gain scan is parallel; updates are serial.
+//! 2. Compute per-(seed, slot) all-views saturated value. Sum =
+//!    target denominator.
+//! 3. Greedy: while filled mass < `coverage × target`, pick the view
+//!    maximising `Σ_(s,k) (min(slot+contrib, 1) − slot)`; update
+//!    slots. Gain scan is parallel; updates are serial.
 
 use brush_render::camera::Camera;
 use glam::{Mat4, UVec2, Vec3, Vec4Swizzles};
@@ -117,15 +125,20 @@ struct VisEntry {
     inv_d2: f32,
 }
 
-/// Pick `ceil(coverage * n_views)` views by greedy slot-fill order:
-/// the view contributing the most fresh per-splat directional mass
-/// goes first, then the next-most useful given the running slot state,
-/// and so on. Output indices are sorted ascending.
+/// Pick views by greedy slot-fill until the running per-splat
+/// directional mass reaches `coverage × all-views mass`. The first
+/// pick is the single most-useful view; each subsequent pick adds
+/// the most marginal gain given the running slot state. Output
+/// indices are sorted ascending.
 ///
-/// - `coverage = 1.0` keeps every view (still in greedy order — the
-///   tail picks are zero-gain but the function fills the quota).
-/// - `coverage = 0.5` keeps the top half by usefulness.
-/// - `coverage = 0.0` keeps just the single best view.
+/// The mapping from `coverage` to view count is intentionally
+/// non-linear and dataset-dependent: heavily-redundant captures drop
+/// far more views than near-optimal ones at the same target.
+///
+/// - `coverage = 1.0` → no subsetting (returns all views verbatim).
+/// - `coverage = 0.8` → typically a few percent off all-views mass;
+///   the default for the CLI.
+/// - `coverage = 0.0` → just the single best view.
 pub fn select_views_by_coverage(
     seed_points: &[Vec3],
     views: &[(Camera, UVec2)],
@@ -178,17 +191,35 @@ pub fn select_views_by_coverage(
         })
         .collect();
 
-    // 2. Greedy. Track per-(seed, slot) saturating slot value. Pick
-    // `target` views by marginal gain. `coverage` is fraction-of-views
-    // — we round up so coverage=1.0 keeps everything.
-    let target = ((coverage * views.len() as f32).ceil() as usize)
-        .max(1)
-        .min(views.len());
+    // 2. All-views saturated mass per (seed, slot) — the upper bound
+    // the coverage target is expressed against.
+    let mut all_views_slot: Vec<f32> = vec![0.0; n_seed * K];
+    for entries in &per_view {
+        for e in entries {
+            let s_off = e.seed_idx as usize * K;
+            for k in 0..K {
+                let cos = SLOT_DIRS[k].dot(e.view_dir).max(0.0);
+                let c = cos * cos * e.inv_d2;
+                let v = &mut all_views_slot[s_off + k];
+                *v = (*v + c).min(1.0);
+            }
+        }
+    }
+    let total_mass: f32 = all_views_slot.iter().sum();
+    if total_mass <= 0.0 {
+        return Vec::new();
+    }
+    let target_mass = coverage * total_mass;
+
+    // 3. Greedy. Score gain in parallel across views per iteration;
+    // pick the best, update slots, repeat until filled mass hits the
+    // target (or remaining gain underflows to zero).
     let mut slots: Vec<f32> = vec![0.0; n_seed * K];
     let mut taken = vec![false; views.len()];
-    let mut selected: Vec<usize> = Vec::with_capacity(target);
+    let mut selected: Vec<usize> = Vec::new();
+    let mut filled_mass: f32 = 0.0;
 
-    while selected.len() < target {
+    while filled_mass < target_mass {
         let best = per_view
             .par_iter()
             .enumerate()
@@ -212,13 +243,7 @@ pub fn select_views_by_coverage(
                 |a, b| if b.1 > a.1 { b } else { a },
             );
         let (best_vi, best_gain) = best;
-        if best_vi == usize::MAX {
-            break;
-        }
-        // Once all remaining views add zero (no new seed/slot mass),
-        // we keep filling the picked list with arbitrary views — but
-        // it's wasted work, so stop early.
-        if best_gain <= 0.0 {
+        if best_vi == usize::MAX || best_gain <= 1e-6 {
             break;
         }
         for e in &per_view[best_vi] {
@@ -228,6 +253,7 @@ pub fn select_views_by_coverage(
                 let c = cos * cos * e.inv_d2;
                 let cur = slots[s_off + k];
                 let new = (cur + c).min(1.0);
+                filled_mass += new - cur;
                 slots[s_off + k] = new;
             }
         }
