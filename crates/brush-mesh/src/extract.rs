@@ -210,9 +210,7 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     // the GPU. Each iter dispatches: compute_midpoints → 292 integrate
     // launches → bracket_update. The only per-step CPU↔GPU traffic is
     // a 4-byte readback of the new active count.
-    let device = resolve_to_cube_float(splats.transforms.val())
-        .device
-        .clone();
+    let device = resolve_to_cube_float(splats.transforms.val()).device;
     let mut state = RefineState::new(&mt.crossings, &pts.points, &sdf, device);
     for step in 0..N_STEPS {
         if state.n_active() == 0 {
@@ -220,7 +218,7 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         }
         let mid_pos_t = state.compute_midpoints_t();
         let min_alpha_t =
-            integrate_alpha_tiled_min_t(&splats, mid_pos_t, state.n_active(), &view_cache);
+            integrate_alpha_tiled_min_t(&splats, &mid_pos_t, state.n_active(), &view_cache);
         state.update_bracket_t(min_alpha_t, cfg.iso_value).await;
         sync_client.sync().await.expect("sync");
         let name: &'static str = match step {
@@ -458,7 +456,7 @@ async fn pre_render_views(
 /// Per view, instead of dispatching one thread per query vertex over the
 /// untouched gaussian list, we:
 /// 1. project all vertices to `(tile_id, ray_dir_xy, depth, pix_xy)`
-/// 2. histogram the tile_ids → exclusive prefix sum → `vertex_tile_offsets`
+/// 2. histogram the `tile_ids` → exclusive prefix sum → `vertex_tile_offsets`
 /// 3. atomic-scatter vertex ids into `sorted_indices`, grouped by tile
 /// 4. dispatch `integrate_alpha_tiled_kernel` with one workgroup per
 ///    tile, each workgroup cooperatively streaming the tile's gaussians
@@ -471,7 +469,7 @@ async fn pre_render_views(
 /// thread independently fetching from global memory.
 fn integrate_alpha_tiled_min_t(
     splats: &Splats,
-    pts_tensor: FloatTensor<MainBackendBase>,
+    pts_tensor: &FloatTensor<MainBackendBase>,
     n: usize,
     view_renders: &[ViewRender],
 ) -> FloatTensor<MainBackendBase> {
@@ -542,7 +540,7 @@ fn integrate_alpha_tiled_min_t(
             tile_ids_t.clone().into_tensor_arg(),
             counts_t.clone().into_tensor_arg(),
             n as u32,
-            (tile_bw * tile_bh),
+            tile_bw * tile_bh,
         );
         let vertex_tile_offsets_t = brush_prefix_sum::prefix_sum(counts_t);
 
@@ -558,12 +556,12 @@ fn integrate_alpha_tiled_min_t(
             write_counters_t.clone().into_tensor_arg(),
             sorted_indices_t.clone().into_tensor_arg(),
             n as u32,
-            (tile_bw * tile_bh),
+            tile_bw * tile_bh,
         );
 
         // 4) Tile-cooperative integrate. Dispatch one WG per tile in 1D
         // (rasterize uses the same pattern — `CUBE_POS` is the tile id).
-        let num_tiles_u32 = (tile_bw * tile_bh) as u32;
+        let num_tiles_u32 = tile_bw * tile_bh;
         integrate_tiled::integrate_alpha_tiled_kernel::launch::<WgpuRuntime>(
             &client,
             calc_cube_count_1d(

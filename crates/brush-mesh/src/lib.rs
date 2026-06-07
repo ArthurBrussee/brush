@@ -9,7 +9,6 @@
 //!
 //! Reference: <https://github.com/autonomousvision/gaussian-opacity-fields>.
 
-pub mod binary_search;
 pub mod delaunay;
 pub mod extract;
 pub mod filter;

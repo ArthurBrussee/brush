@@ -278,7 +278,7 @@ pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
 /// axis at the full 21-bit resolution (2²¹ = ~2M values per axis,
 /// finer than f32 can distinguish), so each point gets a unique key and
 /// there's no bucket-tied tie-breaking — within-bucket order was the
-/// hidden source of long walk_locate hops as N grew. The 3-axis Hilbert
+/// hidden source of long `walk_locate` hops as N grew. The 3-axis Hilbert
 /// key fits in 63 bits.
 fn hilbert_order(points: &[glam::Vec3], min: DVec3, max: DVec3) -> Vec<u32> {
     const RES: u32 = 1 << 21;
@@ -307,7 +307,7 @@ trait DVec3Ext {
 
 impl DVec3Ext for DVec3 {
     fn recip_or_zero(self) -> Self {
-        DVec3::new(
+        Self::new(
             if self.x.abs() > 1e-30 {
                 1.0 / self.x
             } else {
@@ -342,8 +342,8 @@ fn hilbert3_key(x: u32, y: u32, z: u32, res: u32) -> u64 {
     while bit > 0 {
         // Skilling's transform only branches on ry/rz; rx is implicit in
         // the bit-pattern of x and doesn't need its own variable.
-        let ry = if y & bit > 0 { 1 } else { 0 };
-        let rz = if z & bit > 0 { 1 } else { 0 };
+        let ry = i32::from(y & bit > 0);
+        let rz = i32::from(z & bit > 0);
         if ry == 0 {
             if rz == 1 {
                 x = bit.wrapping_sub(1).wrapping_sub(x);
@@ -661,8 +661,7 @@ mod tests {
                 // must not happen for any non-vertex.
                 assert!(
                     det >= -1e-6,
-                    "Delaunay property violated: vertex {i} inside circumsphere of tet {:?}",
-                    t
+                    "Delaunay property violated: vertex {i} inside circumsphere of tet {t:?}"
                 );
             }
         }
@@ -713,7 +712,7 @@ mod tests {
         let tets = delaunay_3d(&pts);
         let mut seen = vec![false; pts.len()];
         for t in &tets {
-            for &v in t.iter() {
+            for &v in t {
                 seen[v as usize] = true;
             }
         }

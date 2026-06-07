@@ -5,7 +5,7 @@
 //!
 //! Edges are deduplicated by sorted-pair vertex id so a single crossing point
 //! is shared between all tets that touch the edge. Downstream
-//! [`crate::binary_search`] refines each crossing.
+//! [`crate::refine`] refines each crossing on the GPU.
 
 use hashbrown::HashMap;
 
@@ -38,7 +38,7 @@ const NUM_TRIS: [u8; 16] = [0, 1, 1, 2, 1, 2, 2, 1, 1, 2, 2, 1, 2, 1, 1, 0];
 
 /// A single edge of the input tet mesh that crosses the iso-surface. `(a, b)`
 /// are vertex indices into the seed-point set; the crossing point will be
-/// found by [`crate::binary_search`] somewhere on the segment.
+/// found by [`crate::refine`] somewhere on the segment.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Crossing {
     pub a: u32,
@@ -89,14 +89,13 @@ pub fn marching_tets(tets: &[[u32; 4]], sdf: &[f32]) -> MarchingTetResult {
             let va = tet[ea as usize];
             let vb = tet[eb as usize];
             let key = if va < vb { (va, vb) } else { (vb, va) };
-            let idx = match crossing_map.get(&key) {
-                Some(&i) => i,
-                None => {
-                    let i = crossings.len() as u32;
-                    crossings.push(Crossing { a: key.0, b: key.1 });
-                    crossing_map.insert(key, i);
-                    i
-                }
+            let idx = if let Some(&i) = crossing_map.get(&key) {
+                i
+            } else {
+                let i = crossings.len() as u32;
+                crossings.push(Crossing { a: key.0, b: key.1 });
+                crossing_map.insert(key, i);
+                i
             };
             edge_idx[k] = idx;
         }

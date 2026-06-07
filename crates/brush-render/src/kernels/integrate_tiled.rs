@@ -237,7 +237,7 @@ pub fn integrate_alpha_tiled_kernel(
     let mut my_ray = Vec3A::new(0.0f32, 0.0f32, 1.0f32);
     let mut my_px = 0u32;
     let mut my_py = 0u32;
-    let mut active = local_idx < n_verts_in_tile;
+    let active = local_idx < n_verts_in_tile;
     if active {
         my_vidx = sorted_indices[my_sorted_pos as usize];
         let vidx_u = my_vidx as usize;
