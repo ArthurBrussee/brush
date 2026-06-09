@@ -12,6 +12,7 @@ brush-dataset.path = "../brush-dataset"
 brush-prefix-sum.path = "../brush-prefix-sum"
 
 hashbrown.workspace = true
+rustc-hash = "1.1"
 
 burn.workspace = true
 burn-cubecl.workspace = true

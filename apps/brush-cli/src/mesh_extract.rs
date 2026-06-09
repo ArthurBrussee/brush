@@ -21,6 +21,12 @@ use tokio_stream::StreamExt;
 use crate::Cli;
 
 pub async fn run(cli: &Cli) -> anyhow::Result<()> {
+    // The extract path has no indicatif UI, so init a plain logger here
+    // (otherwise progress + PSNR log lines go nowhere). Honors RUST_LOG,
+    // defaults to info.
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_target(false)
+        .try_init();
     brush_process::burn_init_setup().await;
     let device = brush_process::wait_for_device().await.clone();
     let device: burn::tensor::Device = device.into();
@@ -66,7 +72,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
     // the camera intrinsics/extrinsics and image resolutions.
     let load_cfg = LoadDataseConfig {
         max_frames: None,
-        max_resolution: 1920,
+        max_resolution: cli.eval_resolution,
         eval_split_every: None,
         subsample_frames: None,
         subsample_points: None,
@@ -77,6 +83,38 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
     // (we need access to the GT image bytes via SceneView::image).
     let train_scene_views: Vec<brush_dataset::scene::SceneView> =
         dataset.dataset.train.views.iter().cloned().collect();
+
+    // Reuse path: load the mesh from disk and skip the Delaunay entirely,
+    // then go straight to the eval render.
+    if cli.reuse_mesh {
+        log::info!("Reusing mesh from {}", cli.out_mesh.display());
+        let file = std::fs::File::open(&cli.out_mesh)
+            .with_context(|| format!("open mesh {}", cli.out_mesh.display()))?;
+        let mut r = std::io::BufReader::new(file);
+        let mesh = ply::read_ply(&mut r).context("read mesh ply")?;
+        log::info!(
+            "Loaded mesh: {} verts, {} faces",
+            mesh.vertices.len(),
+            mesh.faces.len()
+        );
+        if cli.eval_views > 0 {
+            let eval_dir = cli
+                .out_mesh
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("eval_renders");
+            crate::mesh_eval::eval_psnr(
+                &mesh,
+                &train_scene_views,
+                &splats,
+                cli.eval_views,
+                cli.eval_zoomed_out,
+                &eval_dir,
+            )
+            .await?;
+        }
+        return Ok(());
+    }
     // Force pinhole cameras for the entire extraction pipeline. The
     // mesh wgpu rasterizer is intrinsically pinhole (no per-pixel
     // distortion in the shader), so if the dataset cameras have any
@@ -254,6 +292,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
             &train_scene_views,
             &splats_for_eval,
             cli.eval_views,
+            cli.eval_zoomed_out,
             &eval_dir,
         )
         .await?;

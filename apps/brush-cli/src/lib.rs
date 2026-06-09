@@ -81,13 +81,30 @@ pub struct Cli {
     #[arg(long, help_heading = "Mesh extraction")]
     pub skip_mesh_write: bool,
 
-    /// After extracting the mesh, render it at each training-camera
-    /// viewpoint via `f3d` and report mean PSNR vs the ground-truth
-    /// images. Renders land in `{out-mesh dir}/eval_renders/`. Set
-    /// `--eval-views=N` to evaluate just the first N views (default 0
-    /// = skip eval).
+    /// After extracting the mesh, render it at `--eval-views` camera
+    /// viewpoints spread evenly across the capture and report mean PSNR
+    /// vs the ground-truth images. Renders land in `{out-mesh dir}/
+    /// eval_renders/` as a labeled `GT | splat | mesh | depth` grid
+    /// (default 0 = skip eval).
     #[arg(long, help_heading = "Mesh extraction", default_value = "0")]
     pub eval_views: usize,
+
+    /// Skip extraction and load the mesh from `--out-mesh` instead, then
+    /// only run the eval render. Lets you re-render the eval grid (more
+    /// views, higher res) without paying for the Delaunay again.
+    #[arg(long, help_heading = "Mesh extraction")]
+    pub reuse_mesh: bool,
+
+    /// Max image resolution for the eval render panels (GT + splat +
+    /// mesh + depth). Higher = sharper, larger grid. Default 1920.
+    #[arg(long, help_heading = "Mesh extraction", default_value = "1920")]
+    pub eval_resolution: u32,
+
+    /// Pick the most pulled-back eval views (cameras farthest from the
+    /// mesh centroid), spread across the capture, instead of an even
+    /// spread over all frames. Favors wide context shots over close-ups.
+    #[arg(long, help_heading = "Mesh extraction")]
+    pub eval_zoomed_out: bool,
 
     /// Target fraction of the scene's all-views directional coverage
     /// to fill before stopping view subsetting, in `[0, 1]`. Default
@@ -103,10 +120,10 @@ pub struct Cli {
 
 impl Cli {
     pub fn validate(self) -> Result<Self, Error> {
-        if self.extract_mesh && self.source.is_none() {
+        if (self.extract_mesh || self.reuse_mesh) && self.source.is_none() {
             return Err(Error::raw(
                 ErrorKind::MissingRequiredArgument,
-                "--extract-mesh requires a --source pointing at a dataset directory containing a PLY",
+                "--extract-mesh/--reuse-mesh require a --source pointing at a dataset directory containing a PLY",
             ));
         }
         if !self.with_viewer && self.source.is_none() {

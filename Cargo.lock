@@ -1089,6 +1089,7 @@ dependencies = [
  "log",
  "rand 0.10.1",
  "rayon",
+ "rustc-hash 1.1.0",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

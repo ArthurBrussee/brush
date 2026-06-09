@@ -3,9 +3,95 @@
 //! mesh output gets its own short writer since the schema is just
 //! `vertex { x y z }` + `face { vertex_indices [3] }`.
 
-use std::io::Write;
+use std::io::{BufRead, Write};
 
 use crate::Mesh;
+
+/// Read a binary little-endian PLY produced by [`write_ply`] back into a
+/// [`Mesh`]. Parses the `vertex { x y z [red green blue] }` +
+/// `face { list uchar uint vertex_indices }` schema this module writes;
+/// `vertex_scales` is left empty (not persisted by the writer). Faces with
+/// a vertex count other than 3 are truncated/zero-padded to a triangle.
+pub fn read_ply<R: BufRead>(reader: &mut R) -> std::io::Result<Mesh> {
+    let mut n_verts = 0usize;
+    let mut n_faces = 0usize;
+    let mut has_colors = false;
+    let mut in_vertex = false;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "PLY: header ended before end_header",
+            ));
+        }
+        let l = line.trim_end();
+        if l == "end_header" {
+            break;
+        }
+        let mut it = l.split_whitespace();
+        match it.next() {
+            Some("element") => match it.next() {
+                Some("vertex") => {
+                    n_verts = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                    in_vertex = true;
+                }
+                Some("face") => {
+                    n_faces = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                    in_vertex = false;
+                }
+                _ => in_vertex = false,
+            },
+            Some("property") if in_vertex => {
+                // property uchar red — colour block present.
+                if it.last() == Some("red") {
+                    has_colors = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut vertices = Vec::with_capacity(n_verts);
+    let mut vertex_colors = Vec::with_capacity(if has_colors { n_verts } else { 0 });
+    let mut xyz = [0u8; 12];
+    let mut rgb = [0u8; 3];
+    for _ in 0..n_verts {
+        reader.read_exact(&mut xyz)?;
+        vertices.push(glam::Vec3::new(
+            f32::from_le_bytes([xyz[0], xyz[1], xyz[2], xyz[3]]),
+            f32::from_le_bytes([xyz[4], xyz[5], xyz[6], xyz[7]]),
+            f32::from_le_bytes([xyz[8], xyz[9], xyz[10], xyz[11]]),
+        ));
+        if has_colors {
+            reader.read_exact(&mut rgb)?;
+            vertex_colors.push(rgb);
+        }
+    }
+
+    let mut faces = Vec::with_capacity(n_faces);
+    let mut cnt = [0u8; 1];
+    let mut idx = [0u8; 4];
+    for _ in 0..n_faces {
+        reader.read_exact(&mut cnt)?;
+        let mut tri = [0u32; 3];
+        for j in 0..cnt[0] as usize {
+            reader.read_exact(&mut idx)?;
+            if j < 3 {
+                tri[j] = u32::from_le_bytes(idx);
+            }
+        }
+        faces.push(tri);
+    }
+
+    Ok(Mesh {
+        vertices,
+        vertex_scales: Vec::new(),
+        vertex_colors,
+        faces,
+    })
+}
 
 /// Write `mesh` to `out` as a binary little-endian PLY. Per-vertex u8
 /// `red/green/blue` properties are emitted when `mesh.vertex_colors` is

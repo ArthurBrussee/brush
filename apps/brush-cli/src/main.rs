@@ -16,20 +16,18 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("Failed to initialize tokio runtime");
 
-    // --extract-mesh is a standalone path: load the splat PLY from the source
-    // and extract a mesh, no training.
-    if args.extract_mesh {
-        return runtime.block_on(mesh_extract::run(&args));
+    if args.extract_mesh || args.reuse_mesh {
+        return rt.block_on(mesh_extract::run(&args));
     }
 
     // `validate` guarantees a source is present when the viewer is off.
     let process = build_process(&args).expect("source must be present");
-    runtime.block_on(run_headless(process, args.train_stream))
+    rt.block_on(run_headless(process, args.train_stream))
 }
 
 #[cfg(target_family = "wasm")]

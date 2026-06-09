@@ -145,28 +145,30 @@ impl MeshRenderer {
     }
 
     pub fn render(&self, mesh: &Mesh, camera: &Camera, img_size: UVec2) -> RgbImage {
-        let n_verts = mesh.vertices.len();
-        let has_color = mesh.vertex_colors.len() == n_verts;
+        let (color, _) = self.render_inner(mesh, camera, img_size, false);
+        color
+    }
 
-        // Pack vertex positions + colors into a single buffer.
-        let mut verts: Vec<Vertex> = Vec::with_capacity(n_verts);
-        for i in 0..n_verts {
-            let p = mesh.vertices[i];
-            let c = if has_color {
-                let c = mesh.vertex_colors[i];
-                [
-                    c[0] as f32 / 255.0,
-                    c[1] as f32 / 255.0,
-                    c[2] as f32 / 255.0,
-                ]
-            } else {
-                [0.5, 0.5, 0.5]
-            };
-            verts.push(Vertex {
-                pos: [p.x, p.y, p.z],
-                color: c,
-            });
-        }
+    /// Render color plus mesh depth (linear view-z). Background depth
+    /// pixels are filled with `f32::NAN`.
+    pub fn render_with_depth(
+        &self,
+        mesh: &Mesh,
+        camera: &Camera,
+        img_size: UVec2,
+    ) -> (RgbImage, Vec<f32>) {
+        let (color, depth) = self.render_inner(mesh, camera, img_size, true);
+        (color, depth.expect("requested depth"))
+    }
+
+    fn render_inner(
+        &self,
+        mesh: &Mesh,
+        camera: &Camera,
+        img_size: UVec2,
+        read_depth: bool,
+    ) -> (RgbImage, Option<Vec<f32>>) {
+        let (verts, indices) = build_verts(mesh);
         let vb = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -174,11 +176,6 @@ impl MeshRenderer {
                 contents: bytemuck::cast_slice(&verts),
                 usage: wgpu::BufferUsages::VERTEX,
             });
-
-        let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces.len() * 3);
-        for f in &mesh.faces {
-            indices.extend_from_slice(f);
-        }
         let ib = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -222,6 +219,11 @@ impl MeshRenderer {
             view_formats: &[],
         });
         let color_view = color_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_usage = if read_depth {
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC
+        } else {
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+        };
         let depth_tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("mesh-depth"),
             size: wgpu::Extent3d {
@@ -233,22 +235,31 @@ impl MeshRenderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FMT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: depth_usage,
             view_formats: &[],
         });
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Buffer rows must be 256-byte aligned for copy_texture_to_buffer.
-        let bytes_per_pixel = 4u32;
-        let unpadded_row = w * bytes_per_pixel;
+        // Color readback buffer (256-byte row alignment).
         let row_align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_row = unpadded_row.div_ceil(row_align) * row_align;
-        let read_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-read"),
-            size: (padded_row as u64) * (h as u64),
+        let color_padded_row = (w * 4).div_ceil(row_align) * row_align;
+        let color_read = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-read-color"),
+            size: (color_padded_row as u64) * (h as u64),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let depth_padded_row = (w * 4).div_ceil(row_align) * row_align;
+        let depth_read = if read_depth {
+            Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mesh-read-depth"),
+                size: (depth_padded_row as u64) * (h as u64),
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }))
+        } else {
+            None
+        };
 
         let mut encoder = self
             .device
@@ -256,6 +267,11 @@ impl MeshRenderer {
                 label: Some("mesh-encoder"),
             });
         {
+            let depth_store = if read_depth {
+                wgpu::StoreOp::Store
+            } else {
+                wgpu::StoreOp::Discard
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mesh-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -271,7 +287,7 @@ impl MeshRenderer {
                     view: &depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                        store: depth_store,
                     }),
                     stencil_ops: None,
                 }),
@@ -293,10 +309,10 @@ impl MeshRenderer {
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::TexelCopyBufferInfo {
-                buffer: &read_buf,
+                buffer: &color_read,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(padded_row),
+                    bytes_per_row: Some(color_padded_row),
                     rows_per_image: Some(h),
                 },
             },
@@ -306,37 +322,141 @@ impl MeshRenderer {
                 depth_or_array_layers: 1,
             },
         );
+        if let Some(buf) = &depth_read {
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &depth_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::DepthOnly,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: buf,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(depth_padded_row),
+                        rows_per_image: Some(h),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         self.queue.submit([encoder.finish()]);
 
-        // Read back. `map_async` returns a future that fires when the
-        // GPU work is done; we block here because the eval pipeline is
-        // synchronous downstream and this is small.
-        let slice = read_buf.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
+        let rgb = map_and_unpack_rgb(&self.device, &color_read, w, h, color_padded_row);
+        let depth_lin = depth_read.map(|buf| {
+            let raw = map_and_unpack_f32(&self.device, &buf, w, h, depth_padded_row);
+            let z_scale = FAR_PLANE / (FAR_PLANE - NEAR_PLANE);
+            let z_bias = -NEAR_PLANE * FAR_PLANE / (FAR_PLANE - NEAR_PLANE);
+            raw.into_iter()
+                .map(|d| {
+                    if d >= 1.0 - 1e-6 {
+                        f32::NAN
+                    } else {
+                        z_bias / (d - z_scale)
+                    }
+                })
+                .collect::<Vec<f32>>()
         });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("buffer map");
-        rx.recv().expect("map channel").expect("map async result");
 
-        let raw = slice.get_mapped_range().expect("get_mapped_range");
-        let mut rgb = Vec::with_capacity((w * h * 3) as usize);
-        for row in 0..h {
-            let row_start = (row as usize) * (padded_row as usize);
-            for col in 0..w {
-                let base = row_start + (col as usize) * 4;
-                rgb.push(raw[base]);
-                rgb.push(raw[base + 1]);
-                rgb.push(raw[base + 2]);
-            }
-        }
-        drop(raw);
-        read_buf.unmap();
-
-        RgbImage::from_raw(w, h, rgb).expect("rgb buf size")
+        let img = RgbImage::from_raw(w, h, rgb).expect("rgb buf size");
+        (img, depth_lin)
     }
+}
+
+fn build_verts(mesh: &Mesh) -> (Vec<Vertex>, Vec<u32>) {
+    let n_verts = mesh.vertices.len();
+    let has_color = mesh.vertex_colors.len() == n_verts;
+    let mut verts: Vec<Vertex> = Vec::with_capacity(n_verts);
+    for i in 0..n_verts {
+        let p = mesh.vertices[i];
+        let c = if has_color {
+            let c = mesh.vertex_colors[i];
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        } else {
+            [0.5, 0.5, 0.5]
+        };
+        verts.push(Vertex {
+            pos: [p.x, p.y, p.z],
+            color: c,
+        });
+    }
+    let mut indices: Vec<u32> = Vec::with_capacity(mesh.faces.len() * 3);
+    for f in &mesh.faces {
+        indices.extend_from_slice(f);
+    }
+    (verts, indices)
+}
+
+fn map_and_unpack_rgb(
+    device: &wgpu::Device,
+    buf: &wgpu::Buffer,
+    w: u32,
+    h: u32,
+    padded_row: u32,
+) -> Vec<u8> {
+    let slice = buf.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("buffer map");
+    rx.recv().expect("map channel").expect("map async result");
+    let raw = slice.get_mapped_range().expect("get_mapped_range");
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    for row in 0..h {
+        let row_start = (row as usize) * (padded_row as usize);
+        for col in 0..w {
+            let base = row_start + (col as usize) * 4;
+            rgb.push(raw[base]);
+            rgb.push(raw[base + 1]);
+            rgb.push(raw[base + 2]);
+        }
+    }
+    drop(raw);
+    buf.unmap();
+    rgb
+}
+
+fn map_and_unpack_f32(
+    device: &wgpu::Device,
+    buf: &wgpu::Buffer,
+    w: u32,
+    h: u32,
+    padded_row: u32,
+) -> Vec<f32> {
+    let slice = buf.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("buffer map");
+    rx.recv().expect("map channel").expect("map async result");
+    let raw = slice.get_mapped_range().expect("get_mapped_range");
+    let mut out = Vec::with_capacity((w * h) as usize);
+    for row in 0..h {
+        let row_start = (row as usize) * (padded_row as usize);
+        for col in 0..w {
+            let base = row_start + (col as usize) * 4;
+            let v = f32::from_le_bytes([raw[base], raw[base + 1], raw[base + 2], raw[base + 3]]);
+            out.push(v);
+        }
+    }
+    drop(raw);
+    buf.unmap();
+    out
 }
 
 /// Build the MVP matrix mapping world-space vertex positions to wgpu
@@ -394,6 +514,52 @@ fn build_mvp(camera: &Camera, img_size: UVec2) -> Mat4 {
 
     let view = Mat4::from(camera.world_to_local());
     proj * view
+}
+
+/// Map a linear-z buffer (`NaN` = no mesh) to a Turbo-colormapped image
+/// (near = blue, far = red). Foreground depth is normalized to its
+/// 5th/95th percentile so a single outlier vertex doesn't crush dynamic
+/// range; background pixels are black.
+pub fn depth_to_color(depth: &[f32], w: u32, h: u32) -> RgbImage {
+    let mut vals: Vec<f32> = depth.iter().copied().filter(|v| v.is_finite()).collect();
+    vals.sort_by(|a, b| a.partial_cmp(b).expect("finite-only sort"));
+    let (lo, hi) = if vals.is_empty() {
+        (0.0, 1.0)
+    } else {
+        let p_lo = vals[vals.len() * 5 / 100];
+        let p_hi = vals[(vals.len() * 95 / 100).min(vals.len() - 1)];
+        (p_lo, if p_hi > p_lo { p_hi } else { p_lo + 1e-6 })
+    };
+    let mut out = Vec::with_capacity((w * h * 3) as usize);
+    for v in depth {
+        if v.is_finite() {
+            let t = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+            out.extend_from_slice(&turbo(t));
+        } else {
+            out.extend_from_slice(&[0, 0, 0]);
+        }
+    }
+    RgbImage::from_raw(w, h, out).expect("color buf size")
+}
+
+/// Google Turbo colormap, degree-5 polynomial approximation
+/// (Mikhailov). `x` in `[0, 1]` → RGB, near=blue through green/yellow to
+/// far=red.
+fn turbo(x: f32) -> [u8; 3] {
+    let x = x.clamp(0.0, 1.0);
+    let (x2, x3, x4, x5) = (x * x, x * x * x, x * x * x * x, x * x * x * x * x);
+    let r = 0.13572138 + 4.61539260 * x - 42.66032258 * x2 + 132.13108234 * x3 - 152.94239396 * x4
+        + 59.28637943 * x5;
+    let g = 0.09140261 + 2.19418839 * x + 4.84296658 * x2 - 14.18503333 * x3
+        + 4.27729857 * x4
+        + 2.82956604 * x5;
+    let b = 0.10667330 + 12.64194608 * x - 60.58204836 * x2 + 110.36276771 * x3 - 89.90310912 * x4
+        + 27.34824973 * x5;
+    [
+        (r.clamp(0.0, 1.0) * 255.0).round() as u8,
+        (g.clamp(0.0, 1.0) * 255.0).round() as u8,
+        (b.clamp(0.0, 1.0) * 255.0).round() as u8,
+    ]
 }
 
 /// RGB PSNR between rendered and GT (both same dimensions). Returns

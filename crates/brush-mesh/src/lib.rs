@@ -10,6 +10,7 @@
 //! Reference: <https://github.com/autonomousvision/gaussian-opacity-fields>.
 
 pub mod delaunay;
+pub mod delaunay_par;
 pub mod extract;
 pub mod filter;
 pub mod marching_tet;

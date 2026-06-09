@@ -22,17 +22,17 @@
 //! Hilbert-step distance.
 
 use glam::DVec3;
-use hashbrown::{HashMap, HashSet};
+use rustc_hash::FxHashMap;
 
 /// Virtual point used to bound the triangulation. Real point ids are
 /// `0..n_points`; virtuals are `INF0 + k` for `k ∈ 0..4`.
-const INF0: u32 = u32::MAX - 3;
+pub(crate) const INF0: u32 = u32::MAX - 3;
 const INF1: u32 = u32::MAX - 2;
 const INF2: u32 = u32::MAX - 1;
 const INF3: u32 = u32::MAX;
 
 #[inline]
-fn is_virtual(v: u32) -> bool {
+pub(crate) fn is_virtual(v: u32) -> bool {
     v >= INF0
 }
 
@@ -49,6 +49,11 @@ struct Tet {
     /// The `alive` flag short-circuits walks that follow stale neighbour
     /// links during cavity carving.
     alive: bool,
+    /// Generation stamp for cavity-BFS membership: a tet is "in the
+    /// current cavity" iff `stamp == Triangulation::cavity_gen`. Replaces a
+    /// per-insertion hash set with an O(1) compare; stale stamps from
+    /// earlier insertions never collide since `cavity_gen` only increases.
+    stamp: u32,
 }
 
 impl Tet {
@@ -57,6 +62,7 @@ impl Tet {
             verts,
             neighbors: [u32::MAX; 4],
             alive: true,
+            stamp: 0,
         }
     }
 }
@@ -68,6 +74,9 @@ struct Triangulation {
     n_real: u32,
     tets: Vec<Tet>,
     free_tets: Vec<u32>,
+    /// Monotonic per-insertion counter; `collect_cavity` bumps it and
+    /// stamps cavity tets with the new value. See `Tet::stamp`.
+    cavity_gen: u32,
 }
 
 impl Triangulation {
@@ -81,6 +90,7 @@ impl Triangulation {
             n_real,
             tets: vec![bounding],
             free_tets: Vec::new(),
+            cavity_gen: 0,
         }
     }
 
@@ -121,7 +131,7 @@ impl Triangulation {
 /// Positive = `a` is above the plane of `b, c, d` when looking from outside.
 /// Zero ties are resolved by [`orient3d_sos`].
 #[inline]
-fn orient3d_filter(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
+pub(crate) fn orient3d_filter(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
     let ax = a.x - d.x;
     let ay = a.y - d.y;
     let az = a.z - d.z;
@@ -140,7 +150,7 @@ fn orient3d_filter(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
 ///
 /// Positive result → `p` is inside the sphere → the tet is NOT locally
 /// Delaunay and must be flipped.
-fn insphere_oriented(a: DVec3, b: DVec3, c: DVec3, d: DVec3, p: DVec3) -> f64 {
+pub(crate) fn insphere_oriented(a: DVec3, b: DVec3, c: DVec3, d: DVec3, p: DVec3) -> f64 {
     let ax = a.x - p.x;
     let ay = a.y - p.y;
     let az = a.z - p.z;
@@ -250,7 +260,7 @@ pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
         let p = tri.coord(pid);
         scr.clear();
         let start = walk_locate(&tri, p);
-        collect_cavity(&tri, start, p, &mut scr);
+        collect_cavity(&mut tri, start, p, &mut scr);
         fill_cavity(&mut tri, pid, &mut scr);
     }
 
@@ -280,7 +290,7 @@ pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
 /// there's no bucket-tied tie-breaking — within-bucket order was the
 /// hidden source of long `walk_locate` hops as N grew. The 3-axis Hilbert
 /// key fits in 63 bits.
-fn hilbert_order(points: &[glam::Vec3], min: DVec3, max: DVec3) -> Vec<u32> {
+pub(crate) fn hilbert_order(points: &[glam::Vec3], min: DVec3, max: DVec3) -> Vec<u32> {
     const RES: u32 = 1 << 21;
     let inv_size = (max - min).recip_or_zero();
     // Pre-compute keys; sort an indices vec by key. Avoids the
@@ -418,7 +428,7 @@ fn walk_locate(tri: &Triangulation, p: DVec3) -> u32 {
 /// same side of face `slot` as the original vertex `v[slot]` — i.e. inside
 /// the tet through that face. Used by `walk_locate`.
 #[inline]
-fn orient3d_subst(v: &[DVec3; 4], p: DVec3, slot: usize) -> f64 {
+pub(crate) fn orient3d_subst(v: &[DVec3; 4], p: DVec3, slot: usize) -> f64 {
     match slot {
         0 => orient3d_filter(p, v[1], v[2], v[3]),
         1 => orient3d_filter(v[0], p, v[2], v[3]),
@@ -493,13 +503,9 @@ struct Scratch {
     boundary: Vec<([u32; 4], usize, u32)>,
     /// BFS frontier in `collect_cavity`.
     stack: Vec<u32>,
-    /// "Already in current cavity" set. `hashbrown::HashSet<u32>`
-    /// beats `std::HashSet<u32>` materially on this access pattern
-    /// (insert + contains per neighbour walk).
-    in_cavity: HashSet<u32>,
     /// Face-key → (new tet index, local slot). Used by `fill_cavity`
     /// to stitch the side faces of new tets to each other.
-    face_owner: HashMap<[u32; 3], (u32, usize)>,
+    face_owner: FxHashMap<[u32; 3], (u32, usize)>,
 }
 
 impl Scratch {
@@ -507,32 +513,33 @@ impl Scratch {
         self.removed.clear();
         self.boundary.clear();
         self.stack.clear();
-        self.in_cavity.clear();
         self.face_owner.clear();
     }
 }
 
-fn collect_cavity(tri: &Triangulation, start: u32, p: DVec3, scr: &mut Scratch) {
+fn collect_cavity(tri: &mut Triangulation, start: u32, p: DVec3, scr: &mut Scratch) {
+    // New generation for this insertion; cavity membership = `stamp == cur_gen`.
+    tri.cavity_gen += 1;
+    let cur_gen = tri.cavity_gen;
     scr.stack.push(start);
-    scr.in_cavity.insert(start);
+    tri.tets[start as usize].stamp = cur_gen;
 
     while let Some(idx) = scr.stack.pop() {
-        let t = &tri.tets[idx as usize];
+        // Copy out the tet (Copy) so we can stamp neighbours without a
+        // borrow conflict against `tri.tets`.
+        let t = tri.tets[idx as usize];
         debug_assert!(t.alive);
         scr.removed.push(idx);
         for i in 0..4 {
             let nb = t.neighbors[i];
             if nb != u32::MAX {
-                // Single read of the neighbour tet — both `.alive` and
-                // `.verts` come from the same struct, so this saves a
-                // re-load when the alive branch is taken.
                 let nb_tet = &tri.tets[nb as usize];
                 if nb_tet.alive {
-                    if scr.in_cavity.contains(&nb) {
+                    if nb_tet.stamp == cur_gen {
                         continue;
                     }
                     if in_circumsphere(tri, nb_tet.verts, p) {
-                        scr.in_cavity.insert(nb);
+                        tri.tets[nb as usize].stamp = cur_gen;
                         scr.stack.push(nb);
                         continue;
                     }

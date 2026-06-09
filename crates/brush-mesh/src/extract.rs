@@ -166,7 +166,11 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     let pts_for_delaunay = pts.points.clone();
     let delaunay_handle = tokio::task::spawn_blocking(move || {
         let span = tracing::trace_span!("delaunay_3d").entered();
-        let tets = delaunay_3d(&pts_for_delaunay);
+        let tets = if std::env::var("BRUSH_DELAUNAY_PAR").is_ok() {
+            crate::delaunay_par::delaunay_3d_lockgrid(&pts_for_delaunay)
+        } else {
+            delaunay_3d(&pts_for_delaunay)
+        };
         drop(span);
         tets
     });
