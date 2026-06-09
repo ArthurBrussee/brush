@@ -51,10 +51,6 @@ pub struct Cli {
     #[arg(long, help_heading = "Mesh extraction", default_value = "mesh.ply")]
     pub out_mesh: std::path::PathBuf,
 
-    /// Near plane for frustum culling seed points.
-    #[arg(long, help_heading = "Mesh extraction", default_value = "0.02")]
-    pub mesh_near: f32,
-
     /// Far plane for frustum culling seed points.
     #[arg(long, help_heading = "Mesh extraction", default_value = "1e6")]
     pub mesh_far: f32,
@@ -72,13 +68,6 @@ pub struct Cli {
     /// into a speckled halo, so PSNR can be misleading.
     #[arg(long, help_heading = "Mesh extraction", default_value = "0.4")]
     pub iso_value: f32,
-
-    /// Skip writing the extracted mesh as PLY to disk. The mesh PLY for
-    /// a 10M-face garden is ~30 MB and even with buffering takes a few
-    /// seconds to flush; when iterating on the renderer / colour eval
-    /// we just want the eval-render PNGs, not the PLY.
-    #[arg(long, help_heading = "Mesh extraction")]
-    pub skip_mesh_write: bool,
 
     /// After extracting the mesh, render it at `--eval-views` camera
     /// viewpoints spread evenly across the capture and report mean PSNR

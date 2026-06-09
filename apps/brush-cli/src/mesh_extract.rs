@@ -241,7 +241,7 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
     // 3. Run the extraction.
     let cfg = ExtractConfig {
         tetra_points: TetraPointsConfig {
-            near: cli.mesh_near,
+            near: 0.2,
             far: cli.mesh_far,
             ..Default::default()
         },
@@ -254,14 +254,8 @@ pub async fn run(cli: &Cli) -> anyhow::Result<()> {
     let splats_for_eval = splats.clone();
     let mesh = extract_mesh(splats, &views, &cfg).await;
 
-    // 4. Optionally write the mesh PLY.
-    if cli.skip_mesh_write {
-        log::info!(
-            "Skipping mesh PLY write ({} verts, {} faces)",
-            mesh.vertices.len(),
-            mesh.faces.len()
-        );
-    } else {
+    // 4. Write the mesh PLY.
+    {
         let t_write = std::time::Instant::now();
         write_mesh(&mesh, &cli.out_mesh)?;
         log::info!(
