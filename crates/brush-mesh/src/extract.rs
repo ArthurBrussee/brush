@@ -6,7 +6,7 @@ use brush_cube::{MainBackendBase, calc_cube_count_1d};
 use brush_render::SplatOps;
 use brush_render::burn_glue::resolve_to_cube_float;
 use brush_render::camera::Camera;
-use brush_render::gaussian_splats::{RasterPass, SplatRenderMode, Splats};
+use brush_render::gaussian_splats::{RasterPass, RenderOptions, SplatRenderMode, Splats};
 use brush_render::kernels;
 use burn::backend::ops::{FloatTensorOps, TransactionOps, TransactionPrimitive};
 use burn::backend::tensor::FloatTensor;
@@ -438,10 +438,12 @@ async fn pre_render_views(
             transforms_p.clone(),
             sh_coeffs_p.clone(),
             raw_opacities_p.clone(),
-            render_mode,
-            Vec3::ZERO,
-            RasterPass::Forward,
-            false,
+            RenderOptions {
+                render_mode,
+                background: Vec3::ZERO,
+                pass: RasterPass::Forward,
+                geometry: false,
+            },
         )
         .await;
         cache.push(ViewRender {

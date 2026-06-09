@@ -7,7 +7,7 @@ use brush_render::burn_glue::{
 use brush_render::{
     SplatOps,
     camera::Camera,
-    gaussian_splats::{SplatRenderMode, Splats, fold_min_scale},
+    gaussian_splats::{RenderOptions, SplatRenderMode, Splats, fold_min_scale},
     sh::sh_coeffs_for_degree,
     shaders::helpers::ProjectUniforms,
 };
@@ -319,10 +319,12 @@ pub async fn render_splats_with_pass(
         transforms_inner.clone(),
         sh_inner.clone(),
         raw_opac_inner.clone(),
-        render_mode,
-        background,
-        pass,
-        geometry,
+        RenderOptions {
+            render_mode,
+            background,
+            pass,
+            geometry,
+        },
     )
     .await;
 

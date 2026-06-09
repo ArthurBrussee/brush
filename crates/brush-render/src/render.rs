@@ -3,7 +3,7 @@ use crate::{
     RenderAuxInner, SplatOps,
     camera::Camera,
     dim_check::DimCheck,
-    gaussian_splats::{RasterPass, SplatRenderMode},
+    gaussian_splats::{RenderOptions, SplatRenderMode},
     get_tile_offset::{CHECKS_PER_ITER, get_tile_offsets},
     kernels,
     render_aux::RenderOutput,
@@ -22,7 +22,7 @@ use burn::tensor::{DType, FloatDType, IntDType};
 use burn_cubecl::cubecl::CubeDim;
 use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
-use glam::{Vec3, uvec2};
+use glam::uvec2;
 use kernels::types::RasterizeUniformsLaunch;
 use std::f32::consts::PI;
 
@@ -42,11 +42,14 @@ impl SplatOps<Self> for MainBackendBase {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
-        render_mode: SplatRenderMode,
-        background: Vec3,
-        pass: RasterPass,
-        geometry: bool,
+        options: RenderOptions,
     ) -> RenderOutput<Self> {
+        let RenderOptions {
+            render_mode,
+            background,
+            pass,
+            geometry,
+        } = options;
         assert!(
             img_size[0] > 0 && img_size[1] > 0,
             "Can't render images with 0 size."

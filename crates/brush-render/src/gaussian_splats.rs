@@ -55,6 +55,62 @@ pub enum TextureMode {
     Float,
 }
 
+/// Bundled per-render options for [`crate::SplatOps::render`]. Start from a
+/// preset ([`Self::color`] / [`Self::float`] / [`Self::geometry`]) and tweak
+/// with the `with_*` builders.
+#[derive(Clone, Copy, Debug)]
+pub struct RenderOptions {
+    /// Mip vs default splat kernel (a property of the trained splats).
+    pub render_mode: SplatRenderMode,
+    /// Solid background colour composited behind the splats.
+    pub background: Vec3,
+    /// Forward-only (u8 inference) vs forward+backward (f32 training) vs the
+    /// test-only smooth-cutoff backward pass.
+    pub pass: RasterPass,
+    /// Also produce the PGSR geometry buffers (normal + plane distance);
+    /// only honoured on a backward (f32) pass.
+    pub geometry: bool,
+}
+
+impl RenderOptions {
+    /// u8 packed colour, forward-only (inference / viewer).
+    pub fn color() -> Self {
+        Self {
+            render_mode: SplatRenderMode::Default,
+            background: Vec3::ZERO,
+            pass: RasterPass::Forward,
+            geometry: false,
+        }
+    }
+    /// f32 colour with backward bookkeeping (training / eval).
+    pub fn float() -> Self {
+        Self {
+            pass: RasterPass::Backward,
+            ..Self::color()
+        }
+    }
+    /// f32 colour + PGSR geometry buffers (backward pass).
+    pub fn geometry() -> Self {
+        Self {
+            pass: RasterPass::Backward,
+            geometry: true,
+            ..Self::color()
+        }
+    }
+    pub fn with_background(mut self, background: Vec3) -> Self {
+        self.background = background;
+        self
+    }
+    pub fn with_render_mode(mut self, render_mode: SplatRenderMode) -> Self {
+        self.render_mode = render_mode;
+        self
+    }
+    pub fn with_pass(mut self, pass: RasterPass) -> Self {
+        self.pass = pass;
+        self
+    }
+}
+
 /// Gaussian splat parameters.
 ///
 /// `transforms` stores means(3) + rotations(4) + log scales(3) = 10 floats per splat
@@ -425,10 +481,12 @@ pub async fn render_splats(
         transforms_p,
         sh_coeffs_p,
         raw_opacities_p,
-        render_mode,
-        background,
-        pass,
-        geo,
+        RenderOptions {
+            render_mode,
+            background,
+            pass,
+            geometry: geo,
+        },
     )
     .await;
 

@@ -16,12 +16,8 @@ use burn_fusion::{
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use burn_wgpu::WgpuRuntime;
-use glam::Vec3;
 
-use crate::{
-    RenderAuxInner, SplatOps, camera::Camera, gaussian_splats::SplatRenderMode,
-    render_aux::RenderOutput, wgpu_kind,
-};
+use crate::{RenderAuxInner, SplatOps, camera::Camera, render_aux::RenderOutput, wgpu_kind};
 
 /// Inner Wgpu autodiff backend (same as `Autodiff<burn::backend::Wgpu>`).
 /// Used as the primitive backend for autodiff `Tensor<D>` operations.
@@ -309,10 +305,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
-        render_mode: SplatRenderMode,
-        background: Vec3,
-        pass: crate::gaussian_splats::RasterPass,
-        geometry: bool,
+        options: crate::gaussian_splats::RenderOptions,
     ) -> RenderOutput<Self> {
         let client = transforms.client.clone();
 
@@ -335,10 +328,7 @@ impl SplatOps<Self> for Fusion<MainBackendBase> {
             base_transforms,
             base_sh_coeffs,
             base_raw_opac,
-            render_mode,
-            background,
-            pass,
-            geometry,
+            options,
         )
         .await;
 
