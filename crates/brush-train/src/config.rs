@@ -121,8 +121,7 @@ pub struct TrainConfig {
     /// Master switch for the geometry losses: the iteration to turn them on at.
     /// Unset = geometry off (the weights above are ignored). Set it to enable
     /// flatten + depth-normal + depth-distortion + metric depth from that
-    /// iteration onward (they want a settled-enough reconstruction first; PGSR
-    /// uses ~7000). An individual loss can still be disabled with its weight = 0.
+    /// iteration onward.
     #[arg(long, help_heading = "Geometry options")]
     pub geo_from_iter: Option<u32>,
 
@@ -138,7 +137,7 @@ pub struct TrainConfig {
 
     /// Strength of random noise added to the background color each step.
     /// Noise is uniform in [-strength, +strength], clamped to [0, 1].
-    #[arg(long, help_heading = "Training options", default_value = "1.0")]
+    #[arg(long, help_heading = "Training options", default_value = "0.1")]
     pub background_noise_strength: f32,
 
     /// Number of LOD levels to generate after initial training (0 = disabled).
@@ -165,17 +164,6 @@ pub struct TrainConfig {
     /// camera-spacing estimate).
     #[arg(long, help_heading = "Training options")]
     pub random_init_scene_scale: Option<f32>,
-
-    /// Voxel size (metres) for `LiDAR`-init downsampling. `0` (default)
-    /// auto-derives it from the cloud extent (scene-relative density); a
-    /// positive value forces a fixed metric size.
-    #[arg(long, help_heading = "Init options", default_value = "0.0")]
-    pub lidar_voxel_size: f32,
-
-    /// Minimum `ARKit` confidence (0=low,1=med,2=high) for a `LiDAR` point to be
-    /// used at init.
-    #[arg(long, help_heading = "Init options", default_value = "2")]
-    pub lidar_min_confidence: u32,
 }
 
 impl Default for TrainConfig {
@@ -192,6 +180,9 @@ impl TrainConfig {
     /// Whether any active loss needs the PGSR geometry render pass (blended
     /// normal + plane distance). Enabled on demand so the geometry cost is
     /// only paid when something consumes it.
+    /// Config-level predicate: does this run use geometry losses *at all*? The
+    /// per-iteration decision (whether geometry runs on a given step) is gated
+    /// separately on `step >= geo_from_iter` in the trainer.
     pub fn needs_geometry(&self) -> bool {
         self.geo_from_iter.is_some()
             && (self.depth_normal_weight > 0.0

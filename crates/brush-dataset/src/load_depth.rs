@@ -57,10 +57,11 @@ impl LoadDepth {
         if bytes.len() < depth_end + n {
             return Err(bad("depth file: truncated payload"));
         }
-        let depth = bytes[16..depth_end]
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
-            .collect();
+        // Reinterpret the little-endian f32 payload in a single copy.
+        // `pod_collect_to_vec` tolerates the unaligned `&[u8]` (a plain
+        // `cast_slice` would need 4-byte alignment); native byte order is
+        // little-endian on all supported targets.
+        let depth = bytemuck::pod_collect_to_vec::<u8, f32>(&bytes[16..depth_end]);
         let conf = bytes[depth_end..depth_end + n].to_vec();
         Ok(DepthData {
             width,

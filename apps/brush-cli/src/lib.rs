@@ -66,12 +66,11 @@ pub struct Cli {
     #[arg(long, help_heading = "Mesh extraction")]
     pub splat_subsample: Option<u32>,
 
-    /// Iso-value for the level set. GOF default 0.5 — carves the surface
-    /// where transmittance has dropped to half, the principled "actual
-    /// material boundary" choice. Higher values (0.9+) fill more
-    /// background on diffuse-trained splats but fatten foreground
-    /// geometry into a speckled halo, so PSNR can be misleading.
-    #[arg(long, help_heading = "Mesh extraction", default_value = "0.5")]
+    /// Iso-value for the level set. Carves the surface where transmittance
+    /// has dropped to this fraction. Higher values (0.9+) fill more
+    /// background on diffuse-trained splats but fatten foreground geometry
+    /// into a speckled halo, so PSNR can be misleading.
+    #[arg(long, help_heading = "Mesh extraction", default_value = "0.4")]
     pub iso_value: f32,
 
     /// Skip writing the extracted mesh as PLY to disk. The mesh PLY for

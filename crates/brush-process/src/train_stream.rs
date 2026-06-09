@@ -106,8 +106,8 @@ pub(crate) async fn train_stream(
     {
         match brush_dataset::lidar_init::lidar_init_splats(
             dataset.train.views.as_slice(),
-            train_stream_config.train_config.lidar_voxel_size,
-            train_stream_config.train_config.lidar_min_confidence as u8,
+            0.0, // voxel size: 0 = auto-derive from cloud extent
+            2u8, // min ARKit confidence: high only
         )
         .await
         {
