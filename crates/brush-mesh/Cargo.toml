@@ -23,6 +23,7 @@ log.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt"] }
+meshopt = "0.6.2"
 
 [dev-dependencies]
 brush-cube = { path = "../brush-cube", features = [] }

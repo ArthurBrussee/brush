@@ -37,6 +37,14 @@ struct Args {
     /// (1.0 disables selection).
     #[arg(long, default_value = "0.4")]
     seed_alpha: f32,
+    /// Simplify to roughly this many faces before texturing (0 = off).
+    #[arg(long, default_value = "0")]
+    target_faces: u32,
+    /// Bake a UV-atlased color texture with this atlas side in texels
+    /// (0 = vertex colors only). With a texture, the mesh is also written
+    /// as OBJ+MTL+PNG next to the PLY.
+    #[arg(long, default_value = "0")]
+    texture_size: u32,
     #[arg(long, default_value = "1920")]
     resolution: u32,
 }
@@ -100,14 +108,80 @@ async fn main() -> anyhow::Result<()> {
         smooth_iters: args.smooth_iters,
         min_component_faces: args.min_component,
         seed_center_alpha: args.seed_alpha,
+        target_faces: args.target_faces,
+        texture_size: args.texture_size,
     };
-    let mesh = brush_mesh::extract_mesh(splats, &views, &cfg).await;
+    let out = brush_mesh::extract_mesh(splats, &views, &cfg).await;
 
     if let Some(parent) = args.out_mesh.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    brush_mesh::ply::write_ply_file(&mesh, &args.out_mesh)
+    brush_mesh::ply::write_ply_file(&out.mesh, &args.out_mesh)
         .with_context(|| format!("writing mesh {}", args.out_mesh.display()))?;
     log::info!("Wrote {}", args.out_mesh.display());
+    if let Some(tex) = &out.texture {
+        write_textured_obj(&out.mesh, tex, &args.out_mesh.with_extension(""))?;
+    }
+    Ok(())
+}
+
+/// Write `base.obj` + `base.mtl` + `base.png` with per-wedge UVs.
+fn write_textured_obj(
+    mesh: &brush_mesh::Mesh,
+    tex: &brush_mesh::texture::Texture,
+    base: &std::path::Path,
+) -> anyhow::Result<()> {
+    use std::io::Write;
+    let name = base
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "mesh".to_owned());
+
+    let png_path = base.with_extension("png");
+    image::RgbaImage::from_raw(tex.width, tex.height, tex.rgba.clone())
+        .context("atlas buffer size")?
+        .save(&png_path)?;
+
+    let mtl_path = base.with_extension("mtl");
+    std::fs::write(
+        &mtl_path,
+        format!(
+            "newmtl baked
+Kd 1 1 1
+map_Kd {name}.png
+"
+        ),
+    )?;
+
+    let obj_path = base.with_extension("obj");
+    let mut w = std::io::BufWriter::new(std::fs::File::create(&obj_path)?);
+    writeln!(
+        w,
+        "mtllib {name}.mtl
+usemtl baked"
+    )?;
+    for v in &mesh.vertices {
+        writeln!(w, "v {} {} {}", v.x, v.y, v.z)?;
+    }
+    // Per-vertex UVs (uvgen splits seam vertices), so vt aligns with v.
+    for uv in &tex.uvs {
+        // OBJ vt has a bottom-left origin; the atlas is top-left.
+        writeln!(w, "vt {} {}", uv[0], 1.0 - uv[1])?;
+    }
+    for f in &mesh.faces {
+        writeln!(
+            w,
+            "f {a}/{a} {b}/{b} {c}/{c}",
+            a = f[0] + 1,
+            b = f[1] + 1,
+            c = f[2] + 1
+        )?;
+    }
+    log::info!(
+        "Wrote textured OBJ to {} ({}x{} atlas)",
+        obj_path.display(),
+        tex.width,
+        tex.height
+    );
     Ok(())
 }

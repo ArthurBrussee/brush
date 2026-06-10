@@ -15,10 +15,12 @@ pub mod filter;
 pub mod marching_tet;
 pub mod ply;
 pub mod refine;
+pub mod simplify;
 pub mod smooth;
 pub mod tetra_points;
+pub mod texture;
 
-pub use extract::{ExtractConfig, extract_mesh};
+pub use extract::{ExtractConfig, ExtractOutput, extract_mesh};
 
 /// Triangle mesh produced by the extractor. Vertices are world-space.
 /// Per-vertex `colors` (u8 RGB) are the visibility-weighted blend of the

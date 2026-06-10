@@ -592,7 +592,7 @@ async fn export_mesh(
     anyhow::ensure!(!views.is_empty(), "mesh export needs at least one view");
     let mut cfg = brush_mesh::ExtractConfig::default();
     cfg.tetra_points.far = mesh_dist;
-    let mesh = brush_mesh::extract_mesh(splats, views, &cfg).await;
+    let mesh = brush_mesh::extract_mesh(splats, views, &cfg).await.mesh;
     let path = export_path.join(format!("mesh_{}.ply", pad_iter(iter, total_steps)));
     let write_path = path.clone();
     tokio::task::spawn_blocking(move || brush_mesh::ply::write_ply_file(&mesh, &write_path))

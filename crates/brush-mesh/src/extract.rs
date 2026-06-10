@@ -43,6 +43,13 @@ pub struct ExtractConfig {
     /// fewer verts at unchanged PSNR); 0.2 trades 0.2 dB for ~40% fewer
     /// verts. 1.0 disables.
     pub seed_center_alpha: f32,
+    /// Simplify the mesh to roughly this many faces (quadric collapse)
+    /// before any texturing: the geometry-rate dial. 0 disables.
+    pub target_faces: u32,
+    /// Bake a UV-atlased color texture with this atlas side length in
+    /// texels: decouples color resolution from vertex density. 0 keeps
+    /// vertex colors only.
+    pub texture_size: u32,
 }
 
 impl Default for ExtractConfig {
@@ -53,6 +60,8 @@ impl Default for ExtractConfig {
             smooth_iters: 0,
             min_component_faces: 100,
             seed_center_alpha: 0.4,
+            target_faces: 0,
+            texture_size: 0,
         }
     }
 }
@@ -60,7 +69,17 @@ impl Default for ExtractConfig {
 /// Extract a triangle mesh from `splats`. `views` carries the per-view
 /// `(camera, image_size)` pairs used for both frustum-culling the seed
 /// points and integrating the opacity along rays.
-pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &ExtractConfig) -> Mesh {
+/// Extraction output: the mesh plus the optional baked color atlas.
+pub struct ExtractOutput {
+    pub mesh: Mesh,
+    pub texture: Option<crate::texture::Texture>,
+}
+
+pub async fn extract_mesh(
+    splats: Splats,
+    views: &[(Camera, UVec2)],
+    cfg: &ExtractConfig,
+) -> ExtractOutput {
     // Bake the min_scale floor once so the seed sampler and integrate
     // kernels see the same effective splats as the renderer.
     let splats = splats.bake_min_scale();
@@ -184,7 +203,10 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     log::info!("Seed points (frustum-culled): {}", pts.points.len());
     if pts.points.len() < 4 {
         log::warn!("Too few seed points to triangulate; returning empty mesh");
-        return Mesh::default();
+        return ExtractOutput {
+            mesh: Mesh::default(),
+            texture: None,
+        };
     }
     phases.push(("select_and_build_seeds", phase_start.elapsed()));
     phase_start = std::time::Instant::now();
@@ -214,7 +236,10 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     );
     if mt.crossings.is_empty() {
         log::warn!("No iso-surface crossings; nothing to refine. Returning empty mesh.");
-        return Mesh::default();
+        return ExtractOutput {
+            mesh: Mesh::default(),
+            texture: None,
+        };
     }
 
     phases.push(("marching_tets", phase_start.elapsed()));
@@ -326,6 +351,89 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     );
 
     phases.push(("filter_and_crop", phase_start.elapsed()));
+    phase_start = std::time::Instant::now();
+
+    if cfg.target_faces > 0 {
+        let t_simp = std::time::Instant::now();
+        mesh = crate::simplify::simplify_mesh(&mesh, cfg.target_faces as usize);
+        log::info!("Simplify: {:.2}s", t_simp.elapsed().as_secs_f64());
+        phases.push(("simplify", phase_start.elapsed()));
+        phase_start = std::time::Instant::now();
+        // Re-evaluate vertex colors at the surviving vertex positions.
+        let colors = evaluate_colors(&splats, &mesh.vertices, &view_cache).await;
+        mesh.vertex_colors = colors
+            .iter()
+            .map(|c| {
+                [
+                    (c[0].clamp(0.0, 1.0) * 255.0) as u8,
+                    (c[1].clamp(0.0, 1.0) * 255.0) as u8,
+                    (c[2].clamp(0.0, 1.0) * 255.0) as u8,
+                ]
+            })
+            .collect();
+    }
+
+    // Color atlas bake: chart + pack UVs (uvgen splits seam vertices, so the
+    // mesh is re-indexed), then evaluate the visibility-weighted color at
+    // each texel's surface point, batched through the same integrate path
+    // the vertex colors use.
+    let texture = if cfg.texture_size > 0 && !mesh.faces.is_empty() {
+        let size = cfg.texture_size;
+        if let Some((atlased, uvs)) = crate::texture::atlas_mesh(&mesh, size) {
+            {
+                mesh = atlased;
+                log::info!(
+                    "Baking {size}x{size} atlas ({} faces, {} verts after seam splits)",
+                    mesh.faces.len(),
+                    mesh.vertices.len()
+                );
+                let mut rgba = vec![0u8; (size * size * 4) as usize];
+                let mut batch_pos: Vec<Vec3> = Vec::new();
+                let mut batch_idx: Vec<u32> = Vec::new();
+                let mut baked = 0usize;
+                const BAKE_BATCH: usize = 4_000_000;
+                for face in 0..mesh.faces.len() {
+                    crate::texture::rasterize_face_texels(
+                        &mesh,
+                        &uvs,
+                        size,
+                        face,
+                        &mut batch_pos,
+                        &mut batch_idx,
+                    );
+                    if batch_pos.len() >= BAKE_BATCH || face + 1 == mesh.faces.len() {
+                        let rgb = evaluate_colors(&splats, &batch_pos, &view_cache).await;
+                        for (&idx, c) in batch_idx.iter().zip(&rgb) {
+                            let o = (idx * 4) as usize;
+                            rgba[o] = (c[0].clamp(0.0, 1.0) * 255.0) as u8;
+                            rgba[o + 1] = (c[1].clamp(0.0, 1.0) * 255.0) as u8;
+                            rgba[o + 2] = (c[2].clamp(0.0, 1.0) * 255.0) as u8;
+                            rgba[o + 3] = 255;
+                        }
+                        baked += batch_pos.len();
+                        batch_pos.clear();
+                        batch_idx.clear();
+                        log::info!("baked {baked} texels");
+                    }
+                }
+                sync_client.sync().await.expect("sync");
+                crate::texture::dilate(&mut rgba, size, size, 2);
+                phases.push(("texture_bake", phase_start.elapsed()));
+                Some(crate::texture::Texture {
+                    width: size,
+                    height: size,
+                    rgba,
+                    uvs,
+                })
+            }
+        } else {
+            log::warn!("UV atlas generation failed; skipping texture");
+            None
+        }
+    } else {
+        None
+    };
+
     let total: std::time::Duration = phases.iter().map(|(_, d)| *d).sum();
     log::info!("=== EXTRACT PROFILE ===");
     for (name, d) in &phases {
@@ -338,7 +446,7 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     }
     log::info!("  {:>28}: {:>7.2}s", "TOTAL", total.as_secs_f64());
 
-    mesh
+    ExtractOutput { mesh, texture }
 }
 
 fn bbox(points: impl Iterator<Item = Vec3>) -> (Vec3, Vec3) {
