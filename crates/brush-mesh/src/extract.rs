@@ -39,9 +39,9 @@ pub struct ExtractConfig {
     /// Surface-importance seed selection (MILo-style): only Gaussians whose
     /// center alpha in the carve field is at most this spawn seed points.
     /// Free-floating fuzz has center alpha near 1 (every view sees through
-    /// it) and stops seeding geometry. 0.5 drops the most-transparent ~13%
-    /// of Gaussians and ~17% of mesh verts at unchanged PSNR; 0.2 trades
-    /// 0.2 dB for ~40% fewer verts. 1.0 disables.
+    /// it) and stops seeding geometry. Around 0.5 the cut is free (~17%
+    /// fewer verts at unchanged PSNR); 0.2 trades 0.2 dB for ~40% fewer
+    /// verts. 1.0 disables.
     pub seed_center_alpha: f32,
 }
 
@@ -52,7 +52,7 @@ impl Default for ExtractConfig {
             iso_value: 0.6,
             smooth_iters: 0,
             min_component_faces: 100,
-            seed_center_alpha: 0.5,
+            seed_center_alpha: 0.4,
         }
     }
 }

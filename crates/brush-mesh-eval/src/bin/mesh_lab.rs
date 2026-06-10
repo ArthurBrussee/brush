@@ -35,7 +35,7 @@ struct Args {
     far: f32,
     /// Seed only gaussians with carve-field center alpha at most this
     /// (1.0 disables selection).
-    #[arg(long, default_value = "0.5")]
+    #[arg(long, default_value = "0.4")]
     seed_alpha: f32,
     #[arg(long, default_value = "1920")]
     resolution: u32,
