@@ -35,12 +35,20 @@ pub const SIGMA_SCALE: f32 = 3.0;
 #[derive(Debug, Clone)]
 pub struct TetraPointsConfig {
     pub near: f32,
+    /// Far plane of the per-camera seed frustums: the meshed region is the
+    /// union of all camera frustums truncated at this distance (metres on
+    /// metric scenes). Keeps the mesh to the part of the scene the capture
+    /// actually orbits instead of every far-field splat.
     pub far: f32,
     /// Shrink each Gaussian's seed box to its actual support radius
     /// `sigma * sqrt(2 ln(255 * opacity))` (capped at 3 sigma) instead of a
     /// fixed 3 sigma; Gaussians below the 1/255 cutoff emit no seeds at all.
     /// Translucent splats stop seeding crossings in space they barely occupy.
     pub opacity_radius: bool,
+    /// Octahedron seeds (the 6 `+-r` axis points, on the support boundary)
+    /// instead of GOF's 8 box corners (at `sqrt(3) r`, off it): 22% fewer
+    /// seed points for PSNR-neutral quality.
+    pub octahedron: bool,
     /// Frustum margin as a fraction of the image size. GOF uses 0 (strict
     /// image bounds) for `get_frustum_mask`, which trims any seed point
     /// whose projection falls outside the rendered image. A small positive
@@ -55,9 +63,10 @@ impl Default for TetraPointsConfig {
             // Matches the integrate kernels' NEAR_PLANE: seed points the
             // integration can't see are pure Delaunay load.
             near: 0.2,
-            far: 1e6,
+            far: 4.0,
             frustum_margin: 0.0,
             opacity_radius: false,
+            octahedron: true,
         }
     }
 }
@@ -139,8 +148,17 @@ pub fn build_tetra_points(
                     scs.push(s_max);
                 }
             };
-            for c in &BOX_CORNERS {
-                push(mean + q * (Vec3::new(c[0], c[1], c[2]) * scale * r_sigma));
+            if cfg.octahedron {
+                for axis in 0..3 {
+                    let mut d = Vec3::ZERO;
+                    d[axis] = scale[axis] * r_sigma;
+                    push(mean + q * d);
+                    push(mean - q * d);
+                }
+            } else {
+                for c in &BOX_CORNERS {
+                    push(mean + q * (Vec3::new(c[0], c[1], c[2]) * scale * r_sigma));
+                }
             }
             push(mean);
             (pts, scs)

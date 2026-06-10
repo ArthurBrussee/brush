@@ -20,7 +20,7 @@ struct Args {
     ply: std::path::PathBuf,
     #[arg(long)]
     out_mesh: std::path::PathBuf,
-    #[arg(long, default_value = "0.7")]
+    #[arg(long, default_value = "0.6")]
     iso: f32,
     #[arg(long, default_value = "0")]
     smooth_iters: u32,
@@ -28,6 +28,11 @@ struct Args {
     min_component: usize,
     #[arg(long, default_value = "false")]
     opacity_radius: bool,
+    #[arg(long, default_value = "true")]
+    octa: bool,
+    /// Mesh region: union of camera frustums truncated at this distance.
+    #[arg(long, default_value = "4.0")]
+    far: f32,
     #[arg(long, default_value = "1920")]
     resolution: u32,
 }
@@ -81,6 +86,8 @@ async fn main() -> anyhow::Result<()> {
 
     let tetra_points = brush_mesh::tetra_points::TetraPointsConfig {
         opacity_radius: args.opacity_radius,
+        octahedron: args.octa,
+        far: args.far,
         ..Default::default()
     };
     let cfg = brush_mesh::ExtractConfig {

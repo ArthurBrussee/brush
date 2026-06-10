@@ -457,6 +457,7 @@ pub(crate) async fn train_stream(
                     &export_path,
                     iter,
                     training_steps,
+                    process_config.export_mesh_dist,
                 )
                 .await
                 .with_context(|| format!("Mesh export at iteration {iter} failed"));
@@ -561,6 +562,7 @@ pub(crate) async fn train_stream(
             &export_path,
             0,
             train_stream_config.train_config.total_iters(),
+            train_stream_config.process_config.export_mesh_dist,
         )
         .await
         .with_context(|| "Mesh export failed");
@@ -585,9 +587,11 @@ async fn export_mesh(
     export_path: &Path,
     iter: u32,
     total_steps: u32,
+    mesh_dist: f32,
 ) -> Result<(), anyhow::Error> {
     anyhow::ensure!(!views.is_empty(), "mesh export needs at least one view");
-    let cfg = brush_mesh::ExtractConfig::default();
+    let mut cfg = brush_mesh::ExtractConfig::default();
+    cfg.tetra_points.far = mesh_dist;
     let mesh = brush_mesh::extract_mesh(splats, views, &cfg).await;
     let path = export_path.join(format!("mesh_{}.ply", pad_iter(iter, total_steps)));
     let write_path = path.clone();

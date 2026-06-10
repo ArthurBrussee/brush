@@ -38,6 +38,10 @@ pub struct ProcessConfig {
         value_parser = clap::value_parser!(u32).range(1..)
     )]
     pub export_mesh_every: Option<u32>,
+    /// Mesh-export region: the union of all camera frustums truncated at
+    /// this distance (scene units; metres on metric scenes).
+    #[arg(long, help_heading = "Process options", default_value = "4.0")]
+    pub export_mesh_dist: f32,
     /// Location to put exported files. Supports {dataset} interpolation for the dataset
     /// folder name. Path is relative to the dataset's parent directory (or CWD if unavailable).
     /// Use "./{dataset}/" to export inside the dataset folder.
