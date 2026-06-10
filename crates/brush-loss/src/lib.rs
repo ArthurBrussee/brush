@@ -1072,6 +1072,17 @@ impl<B: Backend + LossOps<B>> Backward<B, 1> for ImageLossBackward {
 /// (RGB) to skip the alpha-match work entirely.
 ///
 /// `pred` must be on an autodiff-enabled Wgpu device.
+/// PSNR from a mean-squared-error scalar over images in `[0, 1]`. MSE is
+/// floored so identical images report 100 dB instead of infinity.
+pub fn psnr_from_mse(mse: Tensor<1>) -> Tensor<1> {
+    mse.clamp_min(1e-10).recip().log() * (10.0 / std::f32::consts::LN_10)
+}
+
+/// PSNR between two `[H, W, 3]` images in `[0, 1]`.
+pub fn psnr(a: Tensor<3>, b: Tensor<3>) -> Tensor<1> {
+    psnr_from_mse((a - b).powi_scalar(2).mean())
+}
+
 pub fn image_loss(pred: Tensor<3>, gt_packed: Tensor<2, Int>, cfg: ImageLossConfig) -> Tensor<3> {
     let pred_chw = pred.permute([2, 0, 1]);
     let pred_ad = unwrap_ad_wgpu_float(pred_chw);

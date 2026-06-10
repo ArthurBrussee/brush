@@ -5,6 +5,7 @@
 #![allow(clippy::missing_assert_message)]
 
 use brush_dataset::scene::SceneBatch;
+use brush_render::gaussian_splats::RenderOptions;
 use brush_render::{
     AlphaMode,
     bounding_box::BoundingBox,
@@ -171,7 +172,7 @@ async fn test_forward_rendering() {
         Pinhole,
     );
     let img_size = glam::uvec2(64, 64);
-    let result = render_splats(splats, &camera, img_size, Vec3::ZERO, 0.0, false).await;
+    let result = render_splats(splats, &camera, img_size, RenderOptions::float(), 0.0).await;
     assert!(result.num_visible > 0, "no splats rendered");
     let data = result
         .img
@@ -313,11 +314,14 @@ async fn train_with_geometry_losses() {
     let device =
         burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let batch = generate_test_batch((64, 64));
-    let mut config = TrainConfig::default();
-    config.flatten_weight = 0.1;
-    config.depth_normal_weight = 0.05;
-    config.geo_from_iter = Some(0); // exercise the geometry path immediately
-    assert!(config.needs_geometry());
+    let config = TrainConfig {
+        flatten_weight: 0.1,
+        depth_normal_weight: 0.05,
+        // Exercise the geometry path immediately.
+        geo_from_iter: Some(0),
+        ..Default::default()
+    };
+    assert!(config.needs_geometry(0));
 
     let mut splats = generate_test_splats(&device, 200);
     let mut trainer = SplatTrainer::new(
@@ -348,10 +352,12 @@ async fn train_with_distortion_loss() {
     let device =
         burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let batch = generate_test_batch((64, 64));
-    let mut config = TrainConfig::default();
-    config.distortion_weight = 0.1;
-    config.geo_from_iter = Some(0);
-    assert!(config.needs_geometry());
+    let config = TrainConfig {
+        distortion_weight: 0.1,
+        geo_from_iter: Some(0),
+        ..Default::default()
+    };
+    assert!(config.needs_geometry(0));
 
     let mut splats = generate_test_splats(&device, 200);
     let mut trainer = SplatTrainer::new(
@@ -388,10 +394,12 @@ async fn train_with_depth_loss() {
         conf: TensorData::new(vec![1.0f32; n], [16, 16, 1]),
     });
 
-    let mut config = TrainConfig::default();
-    config.depth_loss_weight = 0.5;
-    config.geo_from_iter = Some(0);
-    assert!(config.needs_geometry());
+    let config = TrainConfig {
+        depth_loss_weight: 0.5,
+        geo_from_iter: Some(0),
+        ..Default::default()
+    };
+    assert!(config.needs_geometry(0));
 
     let mut splats = generate_test_splats(&device, 200);
     let mut trainer = SplatTrainer::new(
@@ -493,7 +501,14 @@ async fn test_gradient_validation() {
     let img_size = glam::uvec2(64, 64);
 
     // Clone splats since render_splats takes ownership and we need splats for gradient validation
-    let result = render_splats(splats.clone(), &camera, img_size, Vec3::ZERO, 0.0, false).await;
+    let result = render_splats(
+        splats.clone(),
+        &camera,
+        img_size,
+        RenderOptions::float(),
+        0.0,
+    )
+    .await;
     splats.bwd_validate(result.img.mean()).await;
 }
 
@@ -503,7 +518,6 @@ async fn test_gradient_validation() {
 #[tokio::test(flavor = "multi_thread")]
 async fn stress_concurrent_train_and_view() {
     use brush_async::Actor;
-    use brush_render::TextureMode;
     use brush_render::gaussian_splats::render_splats as render_splats_fwd;
     use tokio::sync::watch;
 
@@ -552,16 +566,7 @@ async fn stress_concurrent_train_and_view() {
             );
             for _ in 0..viewer_iters_per_task {
                 let snap = rx.borrow_and_update().clone();
-                render_splats_fwd(
-                    snap,
-                    &camera,
-                    img_size,
-                    Vec3::ZERO,
-                    None,
-                    TextureMode::Float,
-                    false,
-                )
-                .await;
+                render_splats_fwd(snap, &camera, img_size, RenderOptions::float()).await;
             }
         });
         viewer_actors.push(actor);

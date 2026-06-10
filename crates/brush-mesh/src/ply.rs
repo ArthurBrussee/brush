@@ -9,9 +9,9 @@ use crate::Mesh;
 
 /// Read a binary little-endian PLY produced by [`write_ply`] back into a
 /// [`Mesh`]. Parses the `vertex { x y z [red green blue] }` +
-/// `face { list uchar uint vertex_indices }` schema this module writes;
-/// `vertex_scales` is left empty (not persisted by the writer). Faces with
-/// a vertex count other than 3 are truncated/zero-padded to a triangle.
+/// `face { list uchar uint vertex_indices }` schema this module writes.
+/// Faces with a vertex count other than 3 are truncated/zero-padded to a
+/// triangle.
 pub fn read_ply<R: BufRead>(reader: &mut R) -> std::io::Result<Mesh> {
     let mut n_verts = 0usize;
     let mut n_faces = 0usize;
@@ -43,11 +43,12 @@ pub fn read_ply<R: BufRead>(reader: &mut R) -> std::io::Result<Mesh> {
                 }
                 _ => in_vertex = false,
             },
-            Some("property") if in_vertex => {
+            Some("property")
+                if in_vertex
                 // property uchar red — colour block present.
-                if it.last() == Some("red") {
-                    has_colors = true;
-                }
+                && it.last() == Some("red") =>
+            {
+                has_colors = true;
             }
             _ => {}
         }
@@ -87,7 +88,6 @@ pub fn read_ply<R: BufRead>(reader: &mut R) -> std::io::Result<Mesh> {
 
     Ok(Mesh {
         vertices,
-        vertex_scales: Vec::new(),
         vertex_colors,
         faces,
     })
@@ -127,6 +127,21 @@ pub fn write_ply<W: Write>(out: &mut W, mesh: &Mesh) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Write `mesh` to `path` as a binary PLY, creating parent directories.
+/// Buffered: the writer emits ~4-byte writes per field, which without
+/// buffering hit the OS one by one (the bulk of mesh-write time on Windows).
+pub fn write_ply_file(mesh: &Mesh, path: &std::path::Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::File::create(path)?;
+    let mut buf = std::io::BufWriter::with_capacity(1 << 20, file);
+    write_ply(&mut buf, mesh)?;
+    Write::flush(&mut buf)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,7 +154,6 @@ mod tests {
                 glam::Vec3::new(1.0, 0.0, 0.0),
                 glam::Vec3::new(0.0, 1.0, 0.0),
             ],
-            vertex_scales: vec![1.0, 1.0, 1.0],
             vertex_colors: Vec::new(),
             faces: vec![[0, 1, 2]],
         };

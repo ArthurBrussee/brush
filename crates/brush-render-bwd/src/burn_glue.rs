@@ -226,42 +226,21 @@ pub fn lift_splats_to_autodiff(splats: Splats) -> Splats {
     }
 }
 
-/// Render splats on a differentiable device.
+/// Render splats on a differentiable device. `options.pass` must be a
+/// Backward variant (the smooth-cutoff one is test-only); `options.render_mode`
+/// is ignored — the mode is a property of the splats (`render_mip`).
 ///
 /// Panics if the device is not autodiff-enabled.
 pub async fn render_splats(
     splats: Splats,
     camera: &Camera,
     img_size: glam::UVec2,
-    background: Vec3,
+    options: brush_render::gaussian_splats::RenderOptions,
     screen_area_penalty: f32,
-    geo: bool,
 ) -> SplatOutputDiff {
-    render_splats_with_pass(
-        splats,
-        camera,
-        img_size,
-        background,
-        brush_render::gaussian_splats::RasterPass::Backward,
-        screen_area_penalty,
-        geo,
-    )
-    .await
-}
-
-/// Like [`render_splats`] but lets the caller pick the
-/// [`brush_render::gaussian_splats::RasterPass`] and whether to emit the
-/// PGSR geometry channels. Used by the finite-diff test suite to enable the
-/// C^1 smooth-cutoff surrogate; production code should use [`render_splats`].
-pub async fn render_splats_with_pass(
-    splats: Splats,
-    camera: &Camera,
-    img_size: glam::UVec2,
-    background: Vec3,
-    pass: brush_render::gaussian_splats::RasterPass,
-    screen_area_penalty: f32,
-    geometry: bool,
-) -> SplatOutputDiff {
+    let background = options.background;
+    let pass = options.pass;
+    let geometry = options.geometry;
     splats.clone().validate_values().await;
 
     let device = splats.device();
@@ -282,6 +261,12 @@ pub async fn render_splats_with_pass(
             f.clone(),
         ),
         None => (splats.transforms.val(), splats.raw_opacities.val()),
+    };
+    let transforms_val = if let Some(scale) = options.splat_scale {
+        let adjusted = transforms_val.clone().slice(s![.., 7..10]) + scale.ln();
+        transforms_val.slice_assign(s![.., 7..10], adjusted)
+    } else {
+        transforms_val
     };
 
     let transforms_ad = unwrap_ad_wgpu_float(transforms_val);
@@ -311,7 +296,7 @@ pub async fn render_splats_with_pass(
 
     assert!(
         pass.bwd_info(),
-        "render_splats_with_pass requires a Backward variant"
+        "render_splats requires a Backward pass variant"
     );
     let output = <MainBackend as SplatOps<MainBackend>>::render(
         camera,
@@ -324,6 +309,8 @@ pub async fn render_splats_with_pass(
             background,
             pass,
             geometry,
+            // Already folded into the transforms above.
+            splat_scale: None,
         },
     )
     .await;
@@ -359,14 +346,15 @@ pub async fn render_splats_with_pass(
         OpsKind::UnTracked(prep) => prep.finish(output.out_img),
     };
 
-    // `out_img` is `[H, W, 9]` when geometry is on: rgba then `Nx,Ny,Nz,D,ZZ`
-    // (ZZ = Sum(w*z^2), the second depth moment for the distortion loss).
-    // Slice both off the same tracked tensor so gradients merge on backward.
+    // `out_img` is `[H, W, GEO_CHANNELS]` when geometry is on: rgba then
+    // `Nx,Ny,Nz,D`, the normalized distortion, and its two backward-only
+    // mapped-depth moments. Slice both off the same tracked tensor so
+    // gradients merge on backward.
     let img_full: Tensor<3> = wrap_ad_wgpu_float(img_ad);
     let (img, geo) = if geometry {
         (
             img_full.clone().slice(s![.., .., 0..4]),
-            Some(img_full.slice(s![.., .., 4..9])),
+            Some(img_full.slice(s![.., .., 4..11])),
         )
     } else {
         (img_full, None)

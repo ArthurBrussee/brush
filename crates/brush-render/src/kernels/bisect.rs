@@ -1,6 +1,6 @@
 //! GPU-side state for the mesh-extraction binary search.
 //!
-//! Two small kernels that, together with [`integrate_alpha`], let the
+//! Two small kernels that, together with [`super::integrate`], let the
 //! whole bisection loop run on the GPU between an initial upload and a
 //! final readback — no per-step CPU↔GPU round-trips for midpoints,
 //! alphas, or bracket state.
@@ -9,7 +9,7 @@
 //! For each active crossing `i`, reads its original-crossing id
 //! `orig = active_in[i]`, looks up `left_pos[orig]` and `right_pos[orig]`,
 //! and writes the midpoint into `mid_pos[i]`. The midpoint tensor is
-//! then handed to [`integrate_alpha`] as its `points` input.
+//! then handed to the tiled integrate as its `points` input.
 //!
 //! ## [`bracket_update_kernel`]
 //! For each active crossing `i`:
@@ -84,7 +84,7 @@ pub fn bracket_update_kernel(
     let orig3 = (orig * 3u32) as usize;
     let i3 = (i * 3u32) as usize;
 
-    // Resolve alpha back from the running min. integrate_alpha only
+    // Resolve alpha back from the running min. The integrate kernel only
     // ever writes values in [0, 1] (the per-view α_int), so the +∞
     // we initialise with means "never visited by any view" — match
     // the CPU path and treat those as fully unoccluded (α = 1).

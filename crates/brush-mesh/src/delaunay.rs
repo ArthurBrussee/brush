@@ -1,122 +1,37 @@
-//! CPU 3D Delaunay triangulation via incremental Bowyer–Watson.
+//! Lock-grid parallel 3D Delaunay (Bowyer–Watson).
 //!
-//! Robust predicates: all `orient3d` / `insphere` tests run in `f64` with a
-//! cheap floating-point filter plus, on inconclusive results, a symbolic
-//! perturbation that breaks ties by lexicographic vertex id. The simulation
-//! of simplicity guarantees a unique triangulation for any input — including
-//! degenerate point sets (cospherical, coplanar) — at the cost of giving
-//! "wrong" answers on inputs that are exactly degenerate (but consistent
-//! with the perturbation). For GOF seed points we never see this in practice.
+//! Soundness: every per-tet field that can be touched by more than one thread
+//! is atomic (`verts`/`neighbors`/`alive`), so there are no torn reads and no
+//! `unsafe` — the only shared owner is `&Arena`, which is `Sync` because all
+//! its interior mutability goes through atomics. The lock grid provides
+//! *logical* exclusion (no two threads carve overlapping cavities at once),
+//! not memory safety.
 //!
-//! The triangulation is bootstrapped with a single very large bounding tet
-//! whose vertices are virtual points (index `INF_*`). The four virtual
-//! vertices are kept ordered (positive orient3d on the bounding tet) and
-//! `insphere` against a face containing a virtual vertex collapses to a
-//! 3-point `orient3d` test (the virtual is the "point at infinity"). Bowyer–
-//! Watson then refines the triangulation point-by-point; after all real
-//! points are inserted we strip any tet that still touches a virtual.
+//! Strategy: insert in Hilbert order so cavities stay tiny (the property that
+//! makes incremental Bowyer–Watson fast). Bootstrap a small seed triangulation
+//! serially, then insert in parallel levels at geometrically increasing
+//! density, each with a lock grid sized to the density the level ends at.
+//! Each insertion locks the 3×3×3 grid-cell block around its point; on a lock
+//! conflict or a cavity that escapes the locked region the point defers to a
+//! retry pass (the mesh is finer by then) and finally to a serial tail.
 //!
-//! Insertion order matters for performance (worst-case O(n²) for adversarial
-//! orders); we Hilbert-sort the points before insertion so the walk for
-//! `locate(point)` is bounded by the previous walk's length plus the
-//! Hilbert-step distance.
+//! Predicates (`orient3d`, `insphere`) run in f64. The triangulation is
+//! bootstrapped from a single very large bounding tet whose vertices are
+//! virtual points (index `INF0..`); tets still touching a virtual are
+//! stripped from the output.
 
 use glam::DVec3;
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Virtual point used to bound the triangulation. Real point ids are
-/// `0..n_points`; virtuals are `INF0 + k` for `k ∈ 0..4`.
-pub(crate) const INF0: u32 = u32::MAX - 3;
-const INF1: u32 = u32::MAX - 2;
-const INF2: u32 = u32::MAX - 1;
-const INF3: u32 = u32::MAX;
+/// `0..n_points`; virtuals are `INF0 + k` for `k in 0..4`.
+const INF0: u32 = u32::MAX - 3;
 
 #[inline]
-pub(crate) fn is_virtual(v: u32) -> bool {
+fn is_virtual(v: u32) -> bool {
     v >= INF0
-}
-
-/// A tetrahedron with four ordered vertex indices and four neighbour-tet
-/// indices, indexed such that `neighbors[i]` is the tet across the face
-/// *opposite* vertex `verts[i]`. `u32::MAX` means "no neighbour" (boundary,
-/// only possible during construction — never present in the final result
-/// because the bounding tet covers everything).
-#[derive(Copy, Clone, Debug)]
-struct Tet {
-    verts: [u32; 4],
-    neighbors: [u32; 4],
-    /// Removed tets get unlinked from the topology and added to a freelist.
-    /// The `alive` flag short-circuits walks that follow stale neighbour
-    /// links during cavity carving.
-    alive: bool,
-    /// Generation stamp for cavity-BFS membership: a tet is "in the
-    /// current cavity" iff `stamp == Triangulation::cavity_gen`. Replaces a
-    /// per-insertion hash set with an O(1) compare; stale stamps from
-    /// earlier insertions never collide since `cavity_gen` only increases.
-    stamp: u32,
-}
-
-impl Tet {
-    fn new(verts: [u32; 4]) -> Self {
-        Self {
-            verts,
-            neighbors: [u32::MAX; 4],
-            alive: true,
-            stamp: 0,
-        }
-    }
-}
-
-/// The triangulation, owning the tet list, the point coordinates (real +
-/// virtual), and a freelist of dead tet slots.
-struct Triangulation {
-    points: Vec<DVec3>, // [..n_real, INF0, INF1, INF2, INF3]
-    n_real: u32,
-    tets: Vec<Tet>,
-    free_tets: Vec<u32>,
-    /// Monotonic per-insertion counter; `collect_cavity` bumps it and
-    /// stamps cavity tets with the new value. See `Tet::stamp`.
-    cavity_gen: u32,
-}
-
-impl Triangulation {
-    fn new(points: Vec<DVec3>, virtuals: [DVec3; 4]) -> Self {
-        let n_real = points.len() as u32;
-        let mut all_points = points;
-        all_points.extend_from_slice(&virtuals);
-        let bounding = Tet::new([INF0, INF1, INF2, INF3]);
-        Self {
-            points: all_points,
-            n_real,
-            tets: vec![bounding],
-            free_tets: Vec::new(),
-            cavity_gen: 0,
-        }
-    }
-
-    fn coord(&self, v: u32) -> DVec3 {
-        if is_virtual(v) {
-            let k = (v - INF0) as usize;
-            self.points[self.n_real as usize + k]
-        } else {
-            self.points[v as usize]
-        }
-    }
-
-    fn alloc_tet(&mut self, t: Tet) -> u32 {
-        if let Some(i) = self.free_tets.pop() {
-            self.tets[i as usize] = t;
-            i
-        } else {
-            self.tets.push(t);
-            (self.tets.len() - 1) as u32
-        }
-    }
-
-    fn kill(&mut self, idx: u32) {
-        self.tets[idx as usize].alive = false;
-        self.free_tets.push(idx);
-    }
 }
 
 /// Robust orientation test for four points. Returns the sign of the
@@ -129,9 +44,8 @@ impl Triangulation {
 /// ```
 ///
 /// Positive = `a` is above the plane of `b, c, d` when looking from outside.
-/// Zero ties are resolved by [`orient3d_sos`].
 #[inline]
-pub(crate) fn orient3d_filter(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
+fn orient3d_filter(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
     let ax = a.x - d.x;
     let ay = a.y - d.y;
     let az = a.z - d.z;
@@ -150,7 +64,7 @@ pub(crate) fn orient3d_filter(a: DVec3, b: DVec3, c: DVec3, d: DVec3) -> f64 {
 ///
 /// Positive result → `p` is inside the sphere → the tet is NOT locally
 /// Delaunay and must be flipped.
-pub(crate) fn insphere_oriented(a: DVec3, b: DVec3, c: DVec3, d: DVec3, p: DVec3) -> f64 {
+fn insphere_oriented(a: DVec3, b: DVec3, c: DVec3, d: DVec3, p: DVec3) -> f64 {
     let ax = a.x - p.x;
     let ay = a.y - p.y;
     let az = a.z - p.z;
@@ -175,113 +89,18 @@ pub(crate) fn insphere_oriented(a: DVec3, b: DVec3, c: DVec3, d: DVec3, p: DVec3
     a2 * m03 - b2 * m02 + c2 * m01 - d2 * m00
 }
 
-/// `p` inside the open circumsphere of the tet? The "virtual" marker is
-/// purely structural — the four bounding-tet vertices live in `points`
-/// with real coordinates, so this is a plain `insphere` test. The bounding
-/// box is sized large enough (10× the data extent, see [`delaunay_3d`])
-/// that all real points land strictly inside it; the bounding vertices
-/// themselves never sit inside another tet's circumsphere.
-///
-/// All stored tets are positively oriented by construction — the bounding
-/// tet is built positive in `delaunay_3d`, and `fill_cavity` substitutes
-/// `pid` at a single vertex slot of an already-positive tet, which
-/// preserves orientation. We skip re-checking the orientation in release
-/// to halve the per-call math on the cavity-flood-fill hot path.
-fn in_circumsphere(tri: &Triangulation, verts: [u32; 4], p: DVec3) -> bool {
-    let a = tri.coord(verts[0]);
-    let b = tri.coord(verts[1]);
-    let c = tri.coord(verts[2]);
-    let d = tri.coord(verts[3]);
-    debug_assert!(
-        orient3d_filter(a, b, c, d) > 0.0,
-        "stored tets must be positively oriented",
-    );
-    insphere_oriented(a, b, c, d, p) < 0.0
-}
-
-/// Build a Delaunay 3D triangulation. Returns a list of tetrahedra
-/// `[v0, v1, v2, v3]` indexing into `points`.
-///
-/// Points are inserted in Hilbert-curve order — a known result of
-/// Amenta–Choi–Rote 2003: Bowyer–Watson with a Hilbert ordering is expected
-/// near-linear on "nice" inputs.
-pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
-    if points.len() < 4 {
-        return Vec::new();
+/// `orient3d` for the tet `v` with `p` substituted at position `slot`.
+/// For a positively oriented input tet, this is positive iff `p` is on the
+/// same side of face `slot` as the original vertex `v[slot]` — i.e. inside
+/// the tet through that face. Used by `walk_locate`.
+#[inline]
+fn orient3d_subst(v: &[DVec3; 4], p: DVec3, slot: usize) -> f64 {
+    match slot {
+        0 => orient3d_filter(p, v[1], v[2], v[3]),
+        1 => orient3d_filter(v[0], p, v[2], v[3]),
+        2 => orient3d_filter(v[0], v[1], p, v[3]),
+        _ => orient3d_filter(v[0], v[1], v[2], p),
     }
-
-    // Promote to f64 once. The downstream predicates *need* f64; doing the
-    // cast inside the hot loop would double the work.
-    let dpoints: Vec<DVec3> = points
-        .iter()
-        .map(|p| DVec3::new(p.x as f64, p.y as f64, p.z as f64))
-        .collect();
-
-    // Bounding tet — large enough to contain all real points by a safety
-    // factor of 10×. Vertices chosen so the tet has positive orient3d.
-    let mut min = dpoints[0];
-    let mut max = dpoints[0];
-    for p in &dpoints[1..] {
-        min = min.min(*p);
-        max = max.max(*p);
-    }
-    let center = (min + max) * 0.5;
-    let extent = (max - min).length().max(1.0);
-    let r = extent * 100.0;
-    // Regular tet inscribed in the bounding sphere, expanded so all points
-    // lie strictly inside.
-    let virtuals = [
-        center + DVec3::new(0.0, 0.0, r),
-        center + DVec3::new(r * 0.9428, 0.0, -r * 0.3333),
-        center + DVec3::new(-r * 0.4714, r * 0.8165, -r * 0.3333),
-        center + DVec3::new(-r * 0.4714, -r * 0.8165, -r * 0.3333),
-    ];
-    debug_assert!(
-        orient3d_filter(virtuals[0], virtuals[1], virtuals[2], virtuals[3]) > 0.0,
-        "bounding tet not positively oriented"
-    );
-
-    // Hilbert-sort the insertion order so consecutive insertions are
-    // spatially close — keeps `walk_locate`'s expected hop count bounded.
-    // Then *physically* reorder the points so the vertex indices stored
-    // in tets are themselves Hilbert-sorted. That way `walk_locate`
-    // reads from a spatially-coherent region of `tri.points` on each
-    // step, slashing L3 misses at the 6-9M-point scale where the points
-    // array (~160 MB) dwarfs cache. We map vertex ids back to caller-
-    // visible indices at output time via `order[..]`.
-    let order: Vec<u32> = hilbert_order(points, min, max);
-    let reordered: Vec<DVec3> = order.iter().map(|&i| dpoints[i as usize]).collect();
-    let mut tri = Triangulation::new(reordered, virtuals);
-
-    // One shared scratch reused across every insertion — see the
-    // `Scratch` docstring for why this matters.
-    let mut scr = Scratch::default();
-    for pid in 0..points.len() as u32 {
-        let p = tri.coord(pid);
-        scr.clear();
-        let start = walk_locate(&tri, p);
-        collect_cavity(&mut tri, start, p, &mut scr);
-        fill_cavity(&mut tri, pid, &mut scr);
-    }
-
-    // Extract real tets, remapping each Hilbert-indexed vertex back to
-    // the caller's original index space.
-    let mut out = Vec::with_capacity(tri.tets.len());
-    for t in &tri.tets {
-        if !t.alive {
-            continue;
-        }
-        if t.verts.iter().any(|&v| is_virtual(v)) {
-            continue;
-        }
-        out.push([
-            order[t.verts[0] as usize],
-            order[t.verts[1] as usize],
-            order[t.verts[2] as usize],
-            order[t.verts[3] as usize],
-        ]);
-    }
-    out
 }
 
 /// Compute a Hilbert-curve insertion order for `points`. We quantise each
@@ -290,13 +109,14 @@ pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
 /// there's no bucket-tied tie-breaking — within-bucket order was the
 /// hidden source of long `walk_locate` hops as N grew. The 3-axis Hilbert
 /// key fits in 63 bits.
-pub(crate) fn hilbert_order(points: &[glam::Vec3], min: DVec3, max: DVec3) -> Vec<u32> {
+fn hilbert_order(points: &[glam::Vec3], min: DVec3, max: DVec3) -> Vec<u32> {
+    use rayon::prelude::*;
     const RES: u32 = 1 << 21;
     let inv_size = (max - min).recip_or_zero();
     // Pre-compute keys; sort an indices vec by key. Avoids the
     // Vec<(u64,u32)> → Vec<u32> reshape after sort.
     let keys: Vec<u64> = points
-        .iter()
+        .par_iter()
         .map(|p| {
             let dp = DVec3::new(p.x as f64, p.y as f64, p.z as f64);
             let u = ((dp - min) * inv_size).clamp(DVec3::ZERO, DVec3::splat(1.0 - 1e-9));
@@ -307,7 +127,9 @@ pub(crate) fn hilbert_order(points: &[glam::Vec3], min: DVec3, max: DVec3) -> Ve
         })
         .collect();
     let mut order: Vec<u32> = (0..points.len() as u32).collect();
-    order.sort_unstable_by_key(|&i| keys[i as usize]);
+    // Tie-break equal keys by index so the order (and thus the
+    // triangulation walk behaviour) is deterministic across thread counts.
+    order.par_sort_unstable_by_key(|&i| (keys[i as usize], i));
     order
 }
 
@@ -378,259 +200,725 @@ fn hilbert3_key(x: u32, y: u32, z: u32, res: u32) -> u64 {
     key
 }
 
-/// Find any tet containing `p`. Walks neighbour links from the last
-/// live tet — for Hilbert-ordered inserts the previous tet is almost
-/// always a good starting point.
-fn walk_locate(tri: &Triangulation, p: DVec3) -> u32 {
-    // Start from the last live tet.
-    let mut current = (tri.tets.len() - 1) as u32;
-    while !tri.tets[current as usize].alive {
-        current -= 1;
-    }
+/// Atomic tetrahedron. `verts` is written once at creation and then only read,
+/// but lives in atomics anyway so a concurrent reader following a freshly
+/// linked neighbour never observes a torn value.
+struct Tet {
+    verts: [AtomicU32; 4],
+    neighbors: [AtomicU32; 4],
+    alive: AtomicBool,
+}
 
-    // Visibility walk: for each face i of the current (positively oriented)
-    // tet `[v0, v1, v2, v3]`, compute `orient3d` with `p` substituted at
-    // position `i`. If negative, `p` is on the outside of face `i`; step
-    // across to the neighbour. Bounded by tet count + slack.
-    let mut visited = 0u32;
+impl Tet {
+    fn dead() -> Self {
+        Self {
+            verts: [const { AtomicU32::new(0) }; 4],
+            neighbors: [const { AtomicU32::new(u32::MAX) }; 4],
+            alive: AtomicBool::new(false),
+        }
+    }
+    #[inline]
+    fn verts(&self) -> [u32; 4] {
+        [
+            self.verts[0].load(Ordering::Relaxed),
+            self.verts[1].load(Ordering::Relaxed),
+            self.verts[2].load(Ordering::Relaxed),
+            self.verts[3].load(Ordering::Relaxed),
+        ]
+    }
+    #[inline]
+    fn neighbor(&self, i: usize) -> u32 {
+        self.neighbors[i].load(Ordering::Relaxed)
+    }
+    #[inline]
+    fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::Relaxed)
+    }
+    fn set(&self, verts: [u32; 4], neighbors: [u32; 4]) {
+        for i in 0..4 {
+            self.verts[i].store(verts[i], Ordering::Relaxed);
+            self.neighbors[i].store(neighbors[i], Ordering::Relaxed);
+        }
+        self.alive.store(true, Ordering::Release);
+    }
+}
+
+/// Fixed-capacity tet arena with a bump allocator (no freelist — dead tets are
+/// compacted out at the end). `Sync` via all-atomic interior mutability.
+struct Arena {
+    points: Vec<DVec3>,
+    n_real: u32,
+    tets: Box<[Tet]>,
+    next: AtomicU32,
+}
+
+impl Arena {
+    fn new(points: Vec<DVec3>, n_real: u32, virtuals: [DVec3; 4], cap: usize) -> Self {
+        let mut all = points;
+        all.extend_from_slice(&virtuals);
+        // Parallel init: at 32 tets/point this is hundreds of MB of atomics,
+        // which a serial fill leaves memory-bandwidth-starved on one core.
+        let tets: Box<[Tet]> = (0..cap)
+            .into_par_iter()
+            .map(|_| Tet::dead())
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        Self {
+            points: all,
+            n_real,
+            tets,
+            next: AtomicU32::new(0),
+        }
+    }
+    #[inline]
+    fn coord(&self, v: u32) -> DVec3 {
+        if is_virtual(v) {
+            self.points[self.n_real as usize + (v - INF0) as usize]
+        } else {
+            self.points[v as usize]
+        }
+    }
+    #[inline]
+    fn tet(&self, i: u32) -> &Tet {
+        &self.tets[i as usize]
+    }
+    /// Bump-allocate a tet; returns its index.
+    fn alloc(&self, verts: [u32; 4], neighbors: [u32; 4]) -> u32 {
+        let i = self.next.fetch_add(1, Ordering::Relaxed);
+        self.tets[i as usize].set(verts, neighbors);
+        i
+    }
+    fn len(&self) -> u32 {
+        self.next.load(Ordering::Relaxed)
+    }
+}
+
+/// A grid of spin-locks over space. Locking a set of cells gives exclusive
+/// rights to mutate the tets owned by those cells (a tet is owned by the cell
+/// of its first real vertex).
+struct LockGrid {
+    locks: Box<[AtomicBool]>,
+    min: DVec3,
+    inv: DVec3,
+    gdim: u32,
+}
+
+impl LockGrid {
+    fn new(min: DVec3, max: DVec3, gdim: u32) -> Self {
+        let inv = {
+            let d = max - min;
+            DVec3::new(
+                if d.x.abs() > 1e-30 { 1.0 / d.x } else { 0.0 },
+                if d.y.abs() > 1e-30 { 1.0 / d.y } else { 0.0 },
+                if d.z.abs() > 1e-30 { 1.0 / d.z } else { 0.0 },
+            )
+        };
+        let n = (gdim as usize).pow(3);
+        Self {
+            locks: (0..n).map(|_| AtomicBool::new(false)).collect(),
+            min,
+            inv,
+            gdim,
+        }
+    }
+    #[inline]
+    fn cell_of(&self, q: DVec3) -> (u32, u32, u32) {
+        let u = ((q - self.min) * self.inv).clamp(DVec3::ZERO, DVec3::splat(1.0 - 1e-9));
+        (
+            (u.x * self.gdim as f64) as u32,
+            (u.y * self.gdim as f64) as u32,
+            (u.z * self.gdim as f64) as u32,
+        )
+    }
+    #[inline]
+    fn idx(&self, c: (u32, u32, u32)) -> usize {
+        ((c.0 * self.gdim + c.1) * self.gdim + c.2) as usize
+    }
+    #[inline]
+    fn try_lock(&self, cell: usize) -> bool {
+        self.locks[cell]
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+    }
+    #[inline]
+    fn unlock(&self, cell: usize) {
+        self.locks[cell].store(false, Ordering::Release);
+    }
+}
+
+#[inline]
+fn in_circumsphere(arena: &Arena, verts: [u32; 4], p: DVec3) -> bool {
+    let a = arena.coord(verts[0]);
+    let b = arena.coord(verts[1]);
+    let c = arena.coord(verts[2]);
+    let d = arena.coord(verts[3]);
+    insphere_oriented(a, b, c, d, p) < 0.0
+}
+
+/// Per-thread scratch reused across insertions.
+#[derive(Default)]
+struct Scratch {
+    visited: rustc_hash::FxHashSet<u32>,
+    stack: Vec<u32>,
+    removed: Vec<u32>,
+    boundary: Vec<([u32; 4], usize, u32)>,
+    new_tets: Vec<u32>,
+    face_owner: FxHashMap<[u32; 3], (u32, usize)>,
+}
+/// The set of grid cells a thread holds; used both to bound the cavity walk
+/// and to decide whether a tet may be touched.
+struct Locked<'a> {
+    grid: &'a LockGrid,
+    center: (u32, u32, u32),
+}
+impl Locked<'_> {
+    /// Is `cell` within the locked 3×3×3 block around `center`?
+    #[inline]
+    fn contains_cell(&self, c: (u32, u32, u32)) -> bool {
+        let d = |a: u32, b: u32| a.max(b) - a.min(b);
+        d(c.0, self.center.0) <= 1 && d(c.1, self.center.1) <= 1 && d(c.2, self.center.2) <= 1
+    }
+    /// Is this tet owned by a locked cell? Ownership = cell of the tet's
+    /// centroid (over real vertices). Centroid keeps a small cavity tet's owner
+    /// cell near the query point, so cavities rarely "escape" spuriously the way
+    /// a single-vertex rule does. Reads immutable `verts`, so always safe, and
+    /// it's a deterministic single cell per tet (keeps ownership exclusive).
+    #[inline]
+    fn owns(&self, arena: &Arena, verts: [u32; 4]) -> bool {
+        let mut sum = DVec3::ZERO;
+        let mut cnt = 0u32;
+        for &v in &verts {
+            if !is_virtual(v) {
+                sum += arena.coord(v);
+                cnt += 1;
+            }
+        }
+        if cnt == 0 {
+            return false; // all-virtual hull tet — never locked
+        }
+        self.contains_cell(self.grid.cell_of(sum / cnt as f64))
+    }
+}
+
+/// Visibility-walk point location from `start`. With `bound`, returns `None`
+/// if the walk needs to leave the locked region (defer). `visited` guards
+/// against cycles on a transiently-inconsistent read.
+fn walk_locate(
+    arena: &Arena,
+    start: u32,
+    p: DVec3,
+    bound: Option<&Locked>,
+    scratch_seen: &mut rustc_hash::FxHashSet<u32>,
+) -> Option<u32> {
+    scratch_seen.clear();
+    let mut current = start;
     loop {
-        let t = &tri.tets[current as usize];
-        debug_assert!(t.alive, "walk landed on a dead tet");
+        if !arena.tet(current).is_alive() || !scratch_seen.insert(current) {
+            return None;
+        }
+        let verts = arena.tet(current).verts();
         let v = [
-            tri.coord(t.verts[0]),
-            tri.coord(t.verts[1]),
-            tri.coord(t.verts[2]),
-            tri.coord(t.verts[3]),
+            arena.coord(verts[0]),
+            arena.coord(verts[1]),
+            arena.coord(verts[2]),
+            arena.coord(verts[3]),
         ];
-        let mut step_to = u32::MAX;
+        let mut step = None;
         for i in 0..4 {
             if orient3d_subst(&v, p, i) < 0.0 {
-                step_to = t.neighbors[i];
+                step = Some(arena.tet(current).neighbor(i));
                 break;
             }
         }
-        if step_to == u32::MAX {
-            return current;
-        }
-        if !tri.tets[step_to as usize].alive {
-            return linear_find(tri, p);
-        }
-        current = step_to;
-        visited += 1;
-        if visited > tri.tets.len() as u32 + 64 {
-            return linear_find(tri, p);
-        }
-    }
-}
-
-/// `orient3d` for the tet `v` with `p` substituted at position `slot`.
-/// For a positively oriented input tet, this is positive iff `p` is on the
-/// same side of face `slot` as the original vertex `v[slot]` — i.e. inside
-/// the tet through that face. Used by `walk_locate`.
-#[inline]
-pub(crate) fn orient3d_subst(v: &[DVec3; 4], p: DVec3, slot: usize) -> f64 {
-    match slot {
-        0 => orient3d_filter(p, v[1], v[2], v[3]),
-        1 => orient3d_filter(v[0], p, v[2], v[3]),
-        2 => orient3d_filter(v[0], v[1], p, v[3]),
-        _ => orient3d_filter(v[0], v[1], v[2], p),
-    }
-}
-
-/// Last-resort fallback for the locate walk: scan every live tet and pick
-/// the one with the largest minimum face-sign (= "most inside").
-///
-/// On near-degenerate inputs the per-face orient3d can come back as a
-/// tiny negative number even though `p` is geometrically inside the tet
-/// (fp error in subtracting nearly-equal coordinates). Returning the
-/// "best containment score" tet avoids panicking on such points and lets
-/// Bowyer–Watson carry on — the resulting cavity may be slightly off,
-/// but the surface-reconstruction downstream is far more tolerant of a
-/// small local glitch than of a hard crash.
-fn linear_find(tri: &Triangulation, p: DVec3) -> u32 {
-    let mut best_idx = u32::MAX;
-    let mut best_score = f64::NEG_INFINITY;
-    for (i, t) in tri.tets.iter().enumerate() {
-        if !t.alive {
-            continue;
-        }
-        let v = [
-            tri.coord(t.verts[0]),
-            tri.coord(t.verts[1]),
-            tri.coord(t.verts[2]),
-            tri.coord(t.verts[3]),
-        ];
-        let mut min_sign = f64::INFINITY;
-        for slot in 0..4 {
-            let s = orient3d_subst(&v, p, slot);
-            if s < min_sign {
-                min_sign = s;
+        let next = match step {
+            None => return Some(current),  // no face failed → p is inside `current`
+            Some(INF_NONE) => return None, // walked off the hull (shouldn't happen)
+            Some(nb) => nb,
+        };
+        // If stepping out of the locked region, defer.
+        if let Some(b) = bound {
+            let nv = arena.tet(next).verts();
+            if !b.owns(arena, nv) {
+                return None;
             }
         }
-        if min_sign >= 0.0 {
-            return i as u32;
-        }
-        if min_sign > best_score {
-            best_score = min_sign;
-            best_idx = i as u32;
-        }
-    }
-    assert!(best_idx != u32::MAX, "no live tets at all");
-    best_idx
-}
-
-/// Per-insertion scratch state. Allocated once at the top of
-/// [`delaunay_3d`] and reused across every Bowyer–Watson insertion via
-/// [`Scratch::clear`]. Hoisting these out of the inner loop was the
-/// single biggest win on the 2M-point profile: HashMap/HashSet/Vec
-/// allocs and frees were dominating `fill_cavity` and meaningfully
-/// hurting `collect_cavity`.
-#[derive(Default)]
-struct Scratch {
-    /// Indices of removed tets in the current cavity.
-    removed: Vec<u32>,
-    /// Boundary faces of the current cavity. Each entry:
-    /// `(verts, slot, opposite_tet)` where `verts` is the full 4-vertex
-    /// array of the cavity tet that owned this face, `slot` is which
-    /// local vertex of that tet is opposite the boundary face, and
-    /// `opposite_tet` is the live tet outside the cavity that shares
-    /// this face (or `u32::MAX`).
-    ///
-    /// Storing the full vertex array + slot — rather than just the
-    /// face triangle — lets `fill_cavity` build the new tet by
-    /// substituting `pid` at position `slot`, which guarantees the
-    /// result is positively oriented without parity bookkeeping.
-    boundary: Vec<([u32; 4], usize, u32)>,
-    /// BFS frontier in `collect_cavity`.
-    stack: Vec<u32>,
-    /// Face-key → (new tet index, local slot). Used by `fill_cavity`
-    /// to stitch the side faces of new tets to each other.
-    face_owner: FxHashMap<[u32; 3], (u32, usize)>,
-}
-
-impl Scratch {
-    fn clear(&mut self) {
-        self.removed.clear();
-        self.boundary.clear();
-        self.stack.clear();
-        self.face_owner.clear();
+        current = next;
     }
 }
 
-fn collect_cavity(tri: &mut Triangulation, start: u32, p: DVec3, scr: &mut Scratch) {
-    // New generation for this insertion; cavity membership = `stamp == cur_gen`.
-    tri.cavity_gen += 1;
-    let cur_gen = tri.cavity_gen;
-    scr.stack.push(start);
-    tri.tets[start as usize].stamp = cur_gen;
+const INF_NONE: u32 = u32::MAX;
 
-    while let Some(idx) = scr.stack.pop() {
-        // Copy out the tet (Copy) so we can stamp neighbours without a
-        // borrow conflict against `tri.tets`.
-        let t = tri.tets[idx as usize];
-        debug_assert!(t.alive);
-        scr.removed.push(idx);
+/// Collect the Bowyer–Watson cavity of `p` starting at the located tet `start`,
+/// recording removed tets and boundary faces in `scratch`. With `bound`, any
+/// cavity or boundary tet outside the locked region aborts to `None` (defer).
+fn collect_cavity(
+    arena: &Arena,
+    start: u32,
+    p: DVec3,
+    bound: Option<&Locked>,
+    scratch: &mut Scratch,
+) -> Option<()> {
+    scratch.visited.clear();
+    scratch.stack.clear();
+    scratch.removed.clear();
+    scratch.boundary.clear();
+    scratch.stack.push(start);
+    scratch.visited.insert(start);
+    while let Some(idx) = scratch.stack.pop() {
+        let tet = arena.tet(idx);
+        if !tet.is_alive() {
+            return None;
+        }
+        scratch.removed.push(idx);
+        let verts = tet.verts();
         for i in 0..4 {
-            let nb = t.neighbors[i];
-            if nb != u32::MAX {
-                let nb_tet = &tri.tets[nb as usize];
-                if nb_tet.alive {
-                    if nb_tet.stamp == cur_gen {
+            let nb = tet.neighbor(i);
+            if nb != INF_NONE {
+                let nb_tet = arena.tet(nb);
+                let nb_verts = nb_tet.verts();
+                // Any neighbour we might cross into or relink must be owned by
+                // the locked region; otherwise defer.
+                if let Some(b) = bound
+                    && !b.owns(arena, nb_verts)
+                {
+                    return None;
+                }
+                if nb_tet.is_alive() {
+                    if scratch.visited.contains(&nb) {
                         continue;
                     }
-                    if in_circumsphere(tri, nb_tet.verts, p) {
-                        tri.tets[nb as usize].stamp = cur_gen;
-                        scr.stack.push(nb);
+                    if in_circumsphere(arena, nb_verts, p) {
+                        scratch.visited.insert(nb);
+                        scratch.stack.push(nb);
                         continue;
                     }
                 }
             }
-            // Face opposite local vertex `i` is on the cavity boundary.
-            scr.boundary.push((t.verts, i, nb));
+            scratch.boundary.push((verts, i, nb));
         }
     }
+    Some(())
 }
 
-fn fill_cavity(tri: &mut Triangulation, pid: u32, scr: &mut Scratch) {
-    // Split-borrow disjoint scratch fields so we can iterate `boundary`
-    // while mutating `face_owner` inside the loop.
-    let Scratch {
-        removed,
-        boundary,
-        face_owner,
-        ..
-    } = scr;
-
-    // Kill removed tets first so the freelist can be reused for the new ones.
-    for &idx in &*removed {
-        tri.kill(idx);
+/// Retriangulate the collected cavity by connecting `pid` to every boundary
+/// face. Kills removed tets, allocates the new ones, stitches links. Returns a
+/// new tet incident to `pid`.
+fn fill_cavity(arena: &Arena, pid: u32, scratch: &mut Scratch) -> u32 {
+    for &idx in &scratch.removed {
+        arena.tet(idx).alive.store(false, Ordering::Relaxed);
     }
+    scratch.new_tets.clear();
+    scratch.face_owner.clear();
+    let mut last = INF_NONE;
+    for &(orig_verts, slot, outside_nb) in &scratch.boundary {
+        let mut nv = orig_verts;
+        nv[slot] = pid;
+        let new_idx = arena.alloc(nv, [INF_NONE; 4]);
+        last = new_idx;
+        scratch.new_tets.push(new_idx);
 
-    for &(orig_verts, slot, outside_nb) in &*boundary {
-        // Substitute pid for the removed vertex at `slot`. Because the
-        // original tet was positively oriented and we're swapping one
-        // coordinate (not a permutation), the new tet is also positively
-        // oriented when pid lies on the same side of the boundary face as
-        // the removed vertex did — which is exactly the condition for
-        // pid being inside the cavity.
-        let mut new_verts = orig_verts;
-        new_verts[slot] = pid;
-        let new_idx = tri.alloc_tet(Tet::new(new_verts));
-
-        // The boundary face in the new tet sits at the same local slot
-        // (`slot`) — the side opposite pid. Link it to the outside
-        // neighbour and mirror back on the outside tet.
-        tri.tets[new_idx as usize].neighbors[slot] = outside_nb;
-        if outside_nb != u32::MAX {
-            // The shared face is { orig_verts[j] : j != slot }. Find which
-            // local slot of `outside_nb` has the matching opposite vertex
-            // (= NOT one of those three) and link.
-            let face_set: [u32; 3] = [
+        arena.tet(new_idx).neighbors[slot].store(outside_nb, Ordering::Relaxed);
+        if outside_nb != INF_NONE {
+            let face = [
                 orig_verts[(slot + 1) % 4],
                 orig_verts[(slot + 2) % 4],
                 orig_verts[(slot + 3) % 4],
             ];
-            let nb_verts = tri.tets[outside_nb as usize].verts;
+            let ov = arena.tet(outside_nb).verts();
             for j in 0..4 {
-                if !face_set.contains(&nb_verts[j]) {
-                    tri.tets[outside_nb as usize].neighbors[j] = new_idx;
+                if !face.contains(&ov[j]) {
+                    arena.tet(outside_nb).neighbors[j].store(new_idx, Ordering::Relaxed);
                     break;
                 }
             }
         }
-
-        // The new tet has three "side faces", each shared with another new
-        // tet from the same cavity. A side face is opposite local slot k
-        // (k ≠ slot, since slot is where pid sits / boundary face lives).
-        // The face vertices are `new_verts` minus `new_verts[k]` = (pid,
-        // and the two boundary-face vertices that aren't `orig_verts[k]`).
         for k in 0..4 {
             if k == slot {
                 continue;
             }
-            // Side face triangle = { new_verts[j] : j != k }.
-            let key = canonical_tri([
-                new_verts[(k + 1) % 4],
-                new_verts[(k + 2) % 4],
-                new_verts[(k + 3) % 4],
-            ]);
-            match face_owner.remove(&key) {
-                Some((other_idx, other_slot)) => {
-                    tri.tets[new_idx as usize].neighbors[k] = other_idx;
-                    tri.tets[other_idx as usize].neighbors[other_slot] = new_idx;
+            let mut key = [nv[(k + 1) % 4], nv[(k + 2) % 4], nv[(k + 3) % 4]];
+            key.sort_unstable();
+            match scratch.face_owner.remove(&key) {
+                Some((other, other_slot)) => {
+                    arena.tet(new_idx).neighbors[k].store(other, Ordering::Relaxed);
+                    arena.tet(other).neighbors[other_slot].store(new_idx, Ordering::Relaxed);
                 }
                 None => {
-                    face_owner.insert(key, (new_idx, k));
+                    scratch.face_owner.insert(key, (new_idx, k));
                 }
             }
         }
     }
+    last
 }
 
-#[inline]
-fn canonical_tri(mut t: [u32; 3]) -> [u32; 3] {
-    t.sort_unstable();
-    t
+/// Last-resort point location: scan alive tets for the one containing `p`.
+/// Mirrors the serial `linear_find` fallback for near-degenerate inputs where
+/// the visibility walk oscillates.
+fn linear_locate(arena: &Arena, p: DVec3) -> u32 {
+    let mut best = 0u32;
+    let mut best_score = f64::NEG_INFINITY;
+    for i in 0..arena.len() {
+        let tet = arena.tet(i);
+        if !tet.is_alive() {
+            continue;
+        }
+        let verts = tet.verts();
+        let v = [
+            arena.coord(verts[0]),
+            arena.coord(verts[1]),
+            arena.coord(verts[2]),
+            arena.coord(verts[3]),
+        ];
+        let mut min_sign = f64::INFINITY;
+        for slot in 0..4 {
+            min_sign = min_sign.min(orient3d_subst(&v, p, slot));
+        }
+        if min_sign >= 0.0 {
+            return i;
+        }
+        if min_sign > best_score {
+            best_score = min_sign;
+            best = i;
+        }
+    }
+    best
+}
+
+/// Unlocked serial insertion (bootstrap + deferred cleanup). Walks from `hint`,
+/// falling back to a linear scan if the walk fails (degenerate seeds).
+fn serial_insert(arena: &Arena, pid: u32, hint: u32, scratch: &mut Scratch) -> u32 {
+    let p = arena.coord(pid);
+    let start = walk_locate(arena, hint, p, None, &mut scratch.visited)
+        .unwrap_or_else(|| linear_locate(arena, p));
+    if collect_cavity(arena, start, p, None, scratch).is_none() {
+        let start = linear_locate(arena, p);
+        collect_cavity(arena, start, p, None, scratch).expect("serial collect after relocate");
+    }
+    fill_cavity(arena, pid, scratch)
+}
+
+enum Ins {
+    Committed,
+    Deferred,
+}
+
+/// Attempt a locked parallel insertion of `pid`. Locks the 3×3×3 cell block
+/// around `pid`; on any lock conflict, walk escape, or cavity escape, releases
+/// and returns `Deferred` (handled later serially).
+fn try_insert_locked(
+    arena: &Arena,
+    grid: &LockGrid,
+    cell_seed: &[AtomicU32],
+    pid: u32,
+    scratch: &mut Scratch,
+) -> Ins {
+    let p = arena.coord(pid);
+    let c = grid.cell_of(p);
+    let g = grid.gdim;
+    let clamp = |x: i64| x.clamp(0, g as i64 - 1) as u32;
+    let mut cells: Vec<usize> = Vec::with_capacity(27);
+    for dx in -1..=1i64 {
+        for dy in -1..=1i64 {
+            for dz in -1..=1i64 {
+                let cc = (
+                    clamp(c.0 as i64 + dx),
+                    clamp(c.1 as i64 + dy),
+                    clamp(c.2 as i64 + dz),
+                );
+                cells.push(grid.idx(cc));
+            }
+        }
+    }
+    cells.sort_unstable();
+    cells.dedup();
+
+    // Try-lock all (sorted order); release everything on the first failure.
+    let mut held = 0usize;
+    let mut ok = true;
+    for (k, &cell) in cells.iter().enumerate() {
+        if grid.try_lock(cell) {
+            held = k + 1;
+        } else {
+            ok = false;
+            break;
+        }
+    }
+    let unlock_all = |held: usize| {
+        for &cell in &cells[..held] {
+            grid.unlock(cell);
+        }
+    };
+    if !ok {
+        unlock_all(held);
+        return Ins::Deferred;
+    }
+
+    let bound = Locked { grid, center: c };
+    let result = (|| {
+        // Walk start: the centre cell's seed, or (when that seed died
+        // without a replacement tet landing in the same cell) any alive
+        // seed from the locked block. Without the fallback such points
+        // defer on every pass and pile onto the serial tail.
+        let mut start = cell_seed[grid.idx(c)].load(Ordering::Relaxed);
+        if start == INF_NONE || !arena.tet(start).is_alive() {
+            start = INF_NONE;
+            for &cell in &cells {
+                let cand = cell_seed[cell].load(Ordering::Relaxed);
+                if cand != INF_NONE && arena.tet(cand).is_alive() {
+                    start = cand;
+                    break;
+                }
+            }
+        }
+        if start == INF_NONE {
+            return None;
+        }
+        let loc = walk_locate(arena, start, p, Some(&bound), &mut scratch.visited)?;
+        collect_cavity(arena, loc, p, Some(&bound), scratch)?;
+        fill_cavity(arena, pid, scratch);
+        // Refresh seeds for the locked cells touched by the new tets.
+        for i in 0..scratch.new_tets.len() {
+            let nt = scratch.new_tets[i];
+            let nv = arena.tet(nt).verts();
+            if let Some(v) = nv.iter().copied().find(|&v| !is_virtual(v)) {
+                let cc = grid.cell_of(arena.coord(v));
+                if bound.contains_cell(cc) {
+                    cell_seed[grid.idx(cc)].store(nt, Ordering::Relaxed);
+                }
+            }
+        }
+        Some(())
+    })();
+    unlock_all(held);
+    match result {
+        Some(()) => Ins::Committed,
+        None => Ins::Deferred,
+    }
+}
+
+/// Build a per-cell seed-tet table for `grid` by locating every cell centre
+/// in the current triangulation. Read-only on the arena (no insertion may run
+/// concurrently), so the x-slabs locate in parallel; within a slab the walk
+/// hint chains cell-to-cell so each locate is a short hop.
+fn seed_cells(
+    arena: &Arena,
+    grid: &LockGrid,
+    min: DVec3,
+    max: DVec3,
+    hint: u32,
+) -> Box<[AtomicU32]> {
+    let gdim = grid.gdim;
+    let cell_seed: Box<[AtomicU32]> = (0..(gdim as usize).pow(3))
+        .map(|_| AtomicU32::new(INF_NONE))
+        .collect();
+    (0..gdim).into_par_iter().for_each(|cx| {
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut h = hint;
+        for cy in 0..gdim {
+            for cz in 0..gdim {
+                let q = min
+                    + DVec3::new(
+                        (cx as f64 + 0.5) / gdim as f64,
+                        (cy as f64 + 0.5) / gdim as f64,
+                        (cz as f64 + 0.5) / gdim as f64,
+                    ) * (max - min);
+                let t = walk_locate(arena, h, q, None, &mut seen)
+                    .unwrap_or_else(|| linear_locate(arena, q));
+                h = t;
+                cell_seed[grid.idx((cx, cy, cz))].store(t, Ordering::Relaxed);
+            }
+        }
+    });
+    cell_seed
+}
+
+/// Newest alive tet: a good serial-walk hint after parallel work may have
+/// killed whatever hint we were holding.
+fn newest_alive(arena: &Arena) -> u32 {
+    let mut h = arena.len() - 1;
+    while !arena.tet(h).is_alive() {
+        h -= 1;
+    }
+    h
+}
+
+/// One parallel insertion level: multi-pass locked insertion of the
+/// Hilbert-ordered `remaining`, retrying deferrals into the ever-finer mesh,
+/// then a serial tail. Returns `(passes, serial_tail_len)` for logging.
+fn insert_level(
+    arena: &Arena,
+    grid: &LockGrid,
+    cell_seed: &[AtomicU32],
+    mut remaining: Vec<u32>,
+    scratch: &mut Scratch,
+) -> (u32, usize) {
+    let n_threads = rayon::current_num_threads().max(1);
+    // Parallel insertion in repeated passes. Each pass inserts the remaining
+    // points in contiguous Hilbert chunks (spatially separated threads → low
+    // contention); points whose cavity escaped the lock or lost a lock race
+    // are retried next pass into a now-finer mesh (smaller cavities). The
+    // residual shrinks geometrically; a small tail finishes serially.
+    let serial_tail = 4096usize;
+    let mut passes = 0u32;
+    while remaining.len() > serial_tail && passes < 12 {
+        let before = remaining.len();
+        let chunk = remaining.len().div_ceil(n_threads).max(1);
+        let mut next: Vec<u32> = remaining
+            .par_chunks(chunk)
+            .flat_map_iter(|pids| {
+                let mut scr = Scratch::default();
+                let mut deferred = Vec::new();
+                for &pid in pids {
+                    if matches!(
+                        try_insert_locked(arena, grid, cell_seed, pid, &mut scr),
+                        Ins::Deferred
+                    ) {
+                        deferred.push(pid);
+                    }
+                }
+                deferred
+            })
+            .collect();
+        next.sort_unstable(); // restore Hilbert order for next pass's chunks
+        remaining = next;
+        passes += 1;
+        // Keep retrying while passes still meaningfully shrink the residual:
+        // a parallel re-attempt is cheaper than a serial insert, so we only bail
+        // to the serial tail once a pass clears < 10% of what remained.
+        if remaining.len() * 10 > before * 9 {
+            break;
+        }
+    }
+
+    // Serial cleanup of the residual tail (Hilbert order, chained hint).
+    let n_deferred = remaining.len();
+    remaining.sort_unstable();
+    let mut h = newest_alive(arena);
+    for pid in remaining {
+        h = serial_insert(arena, pid, h, scratch);
+    }
+    (passes, n_deferred)
+}
+
+/// Lock-grid parallel 3D Delaunay. Returns tets as `[v0,v1,v2,v3]` indexing
+/// into `points` (caller order).
+pub fn delaunay_3d(points: &[glam::Vec3]) -> Vec<[u32; 4]> {
+    let n = points.len();
+    if n < 4 {
+        return Vec::new();
+    }
+    let dpoints: Vec<DVec3> = points
+        .iter()
+        .map(|p| DVec3::new(p.x as f64, p.y as f64, p.z as f64))
+        .collect();
+    let mut min = dpoints[0];
+    let mut max = dpoints[0];
+    for p in &dpoints[1..] {
+        min = min.min(*p);
+        max = max.max(*p);
+    }
+    let center = (min + max) * 0.5;
+    let r = (max - min).length().max(1.0) * 100.0;
+    let virtuals = [
+        center + DVec3::new(0.0, 0.0, r),
+        center + DVec3::new(r * 0.9428, 0.0, -r * 0.3333),
+        center + DVec3::new(-r * 0.4714, r * 0.8165, -r * 0.3333),
+        center + DVec3::new(-r * 0.4714, -r * 0.8165, -r * 0.3333),
+    ];
+
+    let order = hilbert_order(points, min, max);
+    let reordered: Vec<DVec3> = order.iter().map(|&i| dpoints[i as usize]).collect();
+
+    let t_arena = std::time::Instant::now();
+    let cap = n.saturating_mul(32) + 64;
+    let arena = Arena::new(reordered, n as u32, virtuals, cap);
+    let arena_secs = t_arena.elapsed().as_secs_f64();
+    // Bounding tet (index 0). Virtual vertices use the `INF0..` sentinels so
+    // `is_virtual` strips hull tets and `coord` maps them to the appended
+    // virtual points.
+    arena.alloc([INF0, INF0 + 1, INF0 + 2, INF0 + 3], [INF_NONE; 4]);
+
+    // Hierarchical insertion: a small serial bootstrap, then parallel levels
+    // at geometrically increasing density (every level multiplies the point
+    // count by 8). Each level uses *uniform* strided subsamples of the
+    // Hilbert order (a prefix would densify one region only) and a lock grid
+    // sized to the density the level ends at, so cavities span ≲ a cell and
+    // the 3×3×3 locked block contains them. This keeps the serial fraction
+    // at n/SERIAL_STRIDE instead of the n/8 a single-level bootstrap needs.
+    const SERIAL_STRIDE: usize = 512;
+    const LEVEL_STRIDES: [usize; 3] = [64, 8, 1];
+
+    let t_boot = std::time::Instant::now();
+    let mut scratch = Scratch::default();
+    let mut hint = 0u32;
+    let mut bootstrap = 0usize;
+    for pid in (0..n as u32).step_by(SERIAL_STRIDE) {
+        hint = serial_insert(&arena, pid, hint, &mut scratch);
+        bootstrap += 1;
+    }
+    let boot_secs = t_boot.elapsed().as_secs_f64();
+
+    let mut inserted = bootstrap;
+    let mut prev_stride = SERIAL_STRIDE;
+    let mut level_logs: Vec<String> = Vec::new();
+    for stride in LEVEL_STRIDES {
+        let pids: Vec<u32> = (0..n as u32)
+            .filter(|&p| {
+                (p as usize).is_multiple_of(stride) && !(p as usize).is_multiple_of(prev_stride)
+            })
+            .collect();
+        prev_stride = stride;
+        if pids.is_empty() {
+            continue;
+        }
+        let t_level = std::time::Instant::now();
+        let level_points = pids.len();
+        inserted += level_points;
+        // ~16 points/cell at the density this level ends at. Smaller cells
+        // spread the per-insertion 27-cell locks out so threads contend
+        // less; cavity escapes are mopped up by the multi-pass retry rather
+        // than by enlarging the locked block.
+        let gdim = (((inserted as f64) / 16.0).cbrt().ceil() as u32).max(1);
+        let grid = LockGrid::new(min, max, gdim);
+        let t_seed = std::time::Instant::now();
+        let cell_seed = seed_cells(&arena, &grid, min, max, newest_alive(&arena));
+        let seed_secs = t_seed.elapsed().as_secs_f64();
+        let (passes, n_deferred) = insert_level(&arena, &grid, &cell_seed, pids, &mut scratch);
+        level_logs.push(format!(
+            "1/{stride}: {level_points}pts gdim={gdim} seed={seed_secs:.2}s {passes}p tail={n_deferred} {:.2}s",
+            t_level.elapsed().as_secs_f64(),
+        ));
+    }
+
+    log::info!(
+        "lockgrid: threads={} arena={} | arena_init={arena_secs:.2}s boot={boot_secs:.2}s({bootstrap}) | {}",
+        rayon::current_num_threads(),
+        arena.len(),
+        level_logs.join(" | "),
+    );
+
+    // Compact: alive, all-real tets, remapped to caller indices.
+    let len = arena.len();
+    (0..len)
+        .into_par_iter()
+        .filter_map(|i| {
+            let tet = arena.tet(i);
+            if !tet.is_alive() {
+                return None;
+            }
+            let verts = tet.verts();
+            if verts.iter().any(|&v| is_virtual(v)) {
+                return None;
+            }
+            Some([
+                order[verts[0] as usize],
+                order[verts[1] as usize],
+                order[verts[2] as usize],
+                order[verts[3] as usize],
+            ])
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -639,39 +927,50 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::{RngExt, SeedableRng};
 
-    fn validate_empty_circumsphere(points: &[glam::Vec3], tets: &[[u32; 4]]) {
+    /// Self-consistency: every non-vertex point must lie outside each tet's
+    /// circumsphere (the defining Delaunay property). `queries` limits the
+    /// number of points checked against all tets (None = all points).
+    fn validate(points: &[glam::Vec3], tets: &[[u32; 4]], queries: Option<usize>) {
         let dp: Vec<DVec3> = points
             .iter()
             .map(|p| DVec3::new(p.x as f64, p.y as f64, p.z as f64))
             .collect();
+        let stride = queries.map_or(1, |q| (points.len() / q).max(1));
         for &t in tets {
-            let a = dp[t[0] as usize];
-            let b = dp[t[1] as usize];
-            let c = dp[t[2] as usize];
-            let d = dp[t[3] as usize];
-            // Orient positively for the insphere convention.
+            let (a, b, c, d) = (
+                dp[t[0] as usize],
+                dp[t[1] as usize],
+                dp[t[2] as usize],
+                dp[t[3] as usize],
+            );
             let (a, b) = if orient3d_filter(a, b, c, d) > 0.0 {
                 (a, b)
             } else {
                 (b, a)
             };
-            for (i, &q) in dp.iter().enumerate() {
-                if i == t[0] as usize
-                    || i == t[1] as usize
-                    || i == t[2] as usize
-                    || i == t[3] as usize
-                {
+            for (i, &q) in dp.iter().enumerate().step_by(stride) {
+                if t.contains(&(i as u32)) {
                     continue;
                 }
-                let det = insphere_oriented(a, b, c, d, q);
-                // det < 0 means inside the sphere — Delaunay says this
-                // must not happen for any non-vertex.
                 assert!(
-                    det >= -1e-6,
-                    "Delaunay property violated: vertex {i} inside circumsphere of tet {t:?}"
+                    insphere_oriented(a, b, c, d, q) >= -1e-6,
+                    "Delaunay property violated: point {i} inside tet {t:?}"
                 );
             }
         }
+    }
+
+    fn random_points(n: usize, seed: u64) -> Vec<glam::Vec3> {
+        let mut rng = StdRng::seed_from_u64(seed);
+        (0..n)
+            .map(|_| {
+                glam::Vec3::new(
+                    rng.random_range(-1.0..1.0),
+                    rng.random_range(-1.0..1.0),
+                    rng.random_range(-1.0..1.0),
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -684,38 +983,30 @@ mod tests {
         ];
         let tets = delaunay_3d(&pts);
         assert_eq!(tets.len(), 1);
-        validate_empty_circumsphere(&pts, &tets);
+        validate(&pts, &tets, None);
     }
 
     #[test]
     fn random_points_satisfy_empty_circumsphere() {
-        let mut rng = StdRng::seed_from_u64(42);
-        let pts: Vec<glam::Vec3> = (0..30)
-            .map(|_| {
-                glam::Vec3::new(
-                    rng.random_range(-1.0..1.0),
-                    rng.random_range(-1.0..1.0),
-                    rng.random_range(-1.0..1.0),
-                )
-            })
-            .collect();
+        let pts = random_points(300, 123);
         let tets = delaunay_3d(&pts);
         assert!(!tets.is_empty());
-        validate_empty_circumsphere(&pts, &tets);
+        validate(&pts, &tets, None);
+        let mut seen = vec![false; pts.len()];
+        for t in &tets {
+            for &v in t {
+                seen[v as usize] = true;
+            }
+        }
+        assert!(seen.iter().all(|&s| s), "every input point is referenced");
     }
 
+    /// At 20k points the hierarchical path engages its parallel levels (the
+    /// final level is above the serial-tail threshold). Validates coverage
+    /// plus the empty-circumsphere property on a sample of query points.
     #[test]
-    fn covers_all_points() {
-        let mut rng = StdRng::seed_from_u64(7);
-        let pts: Vec<glam::Vec3> = (0..50)
-            .map(|_| {
-                glam::Vec3::new(
-                    rng.random_range(-1.0..1.0),
-                    rng.random_range(-1.0..1.0),
-                    rng.random_range(-1.0..1.0),
-                )
-            })
-            .collect();
+    fn parallel_levels_satisfy_empty_circumsphere() {
+        let pts = random_points(20_000, 7);
         let tets = delaunay_3d(&pts);
         let mut seen = vec![false; pts.len()];
         for t in &tets {
@@ -723,8 +1014,48 @@ mod tests {
                 seen[v as usize] = true;
             }
         }
-        for (i, s) in seen.iter().enumerate() {
-            assert!(*s, "vertex {i} not referenced by any tet");
+        assert!(seen.iter().all(|&s| s), "every input point is referenced");
+        validate(&pts, &tets, Some(32));
+    }
+
+    /// Manual perf check: `cargo test -p brush-mesh --release -- --ignored
+    /// --nocapture bench_lockgrid`.
+    #[test]
+    #[ignore = "manual perf benchmark"]
+    fn bench_lockgrid_2m() {
+        let pts = random_points(2_000_000, 99);
+        let t = std::time::Instant::now();
+        let tets = delaunay_3d(&pts);
+        println!(
+            "lockgrid 2M: {:.2}s ({} tets)",
+            t.elapsed().as_secs_f64(),
+            tets.len()
+        );
+    }
+
+    /// Lockgrid with a stdout logger so the per-phase breakdown prints.
+    #[test]
+    #[ignore = "manual perf benchmark"]
+    fn bench_lockgrid_phases_2m() {
+        struct StdoutLog;
+        impl log::Log for StdoutLog {
+            fn enabled(&self, _: &log::Metadata) -> bool {
+                true
+            }
+            fn log(&self, record: &log::Record) {
+                println!("{}", record.args());
+            }
+            fn flush(&self) {}
         }
+        let _ = log::set_logger(Box::leak(Box::new(StdoutLog)));
+        log::set_max_level(log::LevelFilter::Info);
+        let pts = random_points(2_000_000, 99);
+        let t = std::time::Instant::now();
+        let tets = delaunay_3d(&pts);
+        println!(
+            "lockgrid total {:.2}s ({} tets)",
+            t.elapsed().as_secs_f64(),
+            tets.len()
+        );
     }
 }

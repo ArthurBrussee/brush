@@ -14,7 +14,11 @@ reprojection: R_w2c = R_c2wᵀ, no axis flip, gives ~5px median error). So
 R_w2c = R_c2wᵀ, t_w2c = -R_w2c·t. World units are millimetres (AprilTag frame);
 we divide translations by 1000 so the scene is metric metres, matching the
 LiDAR depth.
+
+
+RF: I Thiiiiink this is unused now?
 """
+
 import math
 import os
 import subprocess
@@ -25,20 +29,34 @@ MECH = "/Users/arthurbrussee/Code/mech"
 
 def decode(pb_path):
     out = subprocess.run(
-        ["protoc", "--proto_path=proto",
-         "--decode=terraform.mapper.MapperInput",
-         "proto/terraform/mapper/pipeline.proto"],
-        cwd=MECH, stdin=open(pb_path, "rb"), capture_output=True, check=True)
+        [
+            "protoc",
+            "--proto_path=proto",
+            "--decode=terraform.mapper.MapperInput",
+            "proto/terraform/mapper/pipeline.proto",
+        ],
+        cwd=MECH,
+        stdin=open(pb_path, "rb"),
+        capture_output=True,
+        check=True,
+    )
     return out.stdout.decode()
 
 
 def decode_itm(pb_path):
     """Decode a refined IterativeTagMap (bench_e2e --dump-poses output)."""
     out = subprocess.run(
-        ["protoc", "--proto_path=proto",
-         "--decode=terraform.reconstruction.IterativeTagMap",
-         "proto/terraform/reconstruction/online.proto"],
-        cwd=MECH, stdin=open(pb_path, "rb"), capture_output=True, check=True)
+        [
+            "protoc",
+            "--proto_path=proto",
+            "--decode=terraform.reconstruction.IterativeTagMap",
+            "proto/terraform/reconstruction/online.proto",
+        ],
+        cwd=MECH,
+        stdin=open(pb_path, "rb"),
+        capture_output=True,
+        check=True,
+    )
     return out.stdout.decode()
 
 
@@ -50,17 +68,20 @@ def parse(text):
         if c.isspace():
             i += 1
         elif c in "{}:":
-            toks.append(c); i += 1
+            toks.append(c)
+            i += 1
         elif c == '"':
             j = i + 1
             while j < n and text[j] != '"':
-                j += 2 if text[j] == '\\' else 1
-            toks.append(text[i:j + 1]); i = j + 1
+                j += 2 if text[j] == "\\" else 1
+            toks.append(text[i : j + 1])
+            i = j + 1
         else:
             j = i
             while j < n and not text[j].isspace() and text[j] not in "{}:":
                 j += 1
-            toks.append(text[i:j]); i = j
+            toks.append(text[i:j])
+            i = j
 
     pos = 0
 
@@ -68,14 +89,16 @@ def parse(text):
         nonlocal pos
         d = {}
         while pos < len(toks) and toks[pos] != "}":
-            key = toks[pos]; pos += 1
+            key = toks[pos]
+            pos += 1
             if toks[pos] == ":":
                 pos += 1
-                val = toks[pos]; pos += 1
+                val = toks[pos]
+                pos += 1
                 if val.startswith('"'):
                     val = val[1:-1]
                 elif val in ("true", "false"):
-                    val = (val == "true")
+                    val = val == "true"
                 else:
                     try:
                         val = float(val)
@@ -85,7 +108,8 @@ def parse(text):
             else:  # '{'
                 pos += 1
                 val = block()
-                assert toks[pos] == "}"; pos += 1
+                assert toks[pos] == "}"
+                pos += 1
             d.setdefault(key, [])
             d[key].append(val)
         return d
@@ -117,7 +141,9 @@ def matT(m):
 
 
 def matmul(a, b):
-    return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+    return [
+        [sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)
+    ]
 
 
 def matvec(m, v):
@@ -215,11 +241,17 @@ def main(pb_path, raw_dir, out_dir):
 
         rot = kf["world_from_kf_prior"][0]["rotation"][0]
         tr = kf["world_from_kf_prior"][0]["translation"][0]
-        r_c2w = quat_to_mat(get(rot, "x", default=0.0), get(rot, "y", default=0.0),
-                            get(rot, "z", default=0.0), get(rot, "w", default=0.0))
-        t_c2w = [get(tr, "x", default=0.0) / 1000.0,
-                 get(tr, "y", default=0.0) / 1000.0,
-                 get(tr, "z", default=0.0) / 1000.0]
+        r_c2w = quat_to_mat(
+            get(rot, "x", default=0.0),
+            get(rot, "y", default=0.0),
+            get(rot, "z", default=0.0),
+            get(rot, "w", default=0.0),
+        )
+        t_c2w = [
+            get(tr, "x", default=0.0) / 1000.0,
+            get(tr, "y", default=0.0) / 1000.0,
+            get(tr, "z", default=0.0) / 1000.0,
+        ]
         r_w2c = matT(r_c2w)
         t_w2c = matvec(r_w2c, t_c2w)
         t_w2c = [-t_w2c[0], -t_w2c[1], -t_w2c[2]]
@@ -227,7 +259,8 @@ def main(pb_path, raw_dir, out_dir):
 
         cam_lines.append(f"{cid} PINHOLE {w} {h} {fx} {fy} {cx} {cy}")
         img_lines.append(
-            f"{cid} {qw} {qx} {qy} {qz} {t_w2c[0]} {t_w2c[1]} {t_w2c[2]} {cid} {name}")
+            f"{cid} {qw} {qx} {qy} {qz} {t_w2c[0]} {t_w2c[1]} {t_w2c[2]} {cid} {name}"
+        )
         img_lines.append("")
 
         # Symlink the image; pack the LiDAR depth + confidence into one file.
@@ -317,7 +350,11 @@ def main_refined(itm_path, raw_dir, out_dir):
         cid += 1
 
         mat = val["pose"][0]["mat"]  # 16 row-major, world_from_cam
-        r_c2w = [[mat[0], mat[1], mat[2]], [mat[4], mat[5], mat[6]], [mat[8], mat[9], mat[10]]]
+        r_c2w = [
+            [mat[0], mat[1], mat[2]],
+            [mat[4], mat[5], mat[6]],
+            [mat[8], mat[9], mat[10]],
+        ]
         c = [mat[3] / 1000.0, mat[7] / 1000.0, mat[11] / 1000.0]
         r_w2c = matT(r_c2w)
         t = matvec(r_w2c, c)
@@ -325,8 +362,12 @@ def main_refined(itm_path, raw_dir, out_dir):
         qw, qx, qy, qz = mat_to_quat(r_w2c)
 
         cam_lines.append(
-            f"{cid} FULL_OPENCV {w} {h} {fx} {fy} {cx} {cy} " + " ".join(str(d) for d in dist))
-        img_lines.append(f"{cid} {qw} {qx} {qy} {qz} {t[0]} {t[1]} {t[2]} {cid} {stem}.jpg")
+            f"{cid} FULL_OPENCV {w} {h} {fx} {fy} {cx} {cy} "
+            + " ".join(str(d) for d in dist)
+        )
+        img_lines.append(
+            f"{cid} {qw} {qx} {qy} {qz} {t[0]} {t[1]} {t[2]} {cid} {stem}.jpg"
+        )
         img_lines.append("")
 
         jpg_dst = os.path.join(out_dir, "images", f"{stem}.jpg")
@@ -352,7 +393,9 @@ def main_refined(itm_path, raw_dir, out_dir):
 
 
 if __name__ == "__main__":
-    base = os.path.expanduser(sys.argv[1] if len(sys.argv) > 1 else "~/data/rollable-board-ios")
+    base = os.path.expanduser(
+        sys.argv[1] if len(sys.argv) > 1 else "~/data/rollable-board-ios"
+    )
     raw = os.path.join(base, "raw")
     default_out = (base[:-4] if base.endswith("-ios") else base) + "-colmap"
     out = os.path.expanduser(sys.argv[2]) if len(sys.argv) > 2 else default_out

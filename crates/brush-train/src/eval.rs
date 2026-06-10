@@ -5,10 +5,10 @@ use anyhow::Result;
 use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
 use brush_loss::{ImageLossConfig, image_loss_eval};
 use brush_render::camera::Camera;
+use brush_render::gaussian_splats::RenderOptions;
 use brush_render::gaussian_splats::Splats;
-use brush_render::{AlphaMode, RenderAux, TextureMode, render_splats};
+use brush_render::{AlphaMode, RenderAux, render_splats};
 use burn::tensor::{Device, Int, Tensor, s};
-use glam::Vec3;
 use image::DynamicImage;
 
 pub struct EvalSample {
@@ -33,16 +33,7 @@ pub async fn eval_stats(
     let gt_packed: Tensor<2, Int> = Tensor::from_data(gt_packed_data, device);
 
     // Render on reference black background.
-    let (img, render_aux) = render_splats(
-        splats,
-        gt_cam,
-        res,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-        false,
-    )
-    .await;
+    let (img, render_aux) = render_splats(splats, gt_cam, res, RenderOptions::float()).await;
     let render_rgb = img.slice(s![.., .., 0..3]);
 
     // Simulate an 8-bit roundtrip for fair comparison.
@@ -58,7 +49,7 @@ pub async fn eval_stats(
     let mse = image_loss_eval(render_rgb.clone(), gt_packed.clone(), cfg(1.0, 0.0))
         .powi_scalar(2)
         .mean();
-    let psnr = mse.recip().log() * 10.0 / std::f32::consts::LN_10;
+    let psnr = brush_loss::psnr_from_mse(mse);
     let ssim = image_loss_eval(render_rgb.clone(), gt_packed, cfg(0.0, 1.0)).mean();
 
     Ok(EvalSample {

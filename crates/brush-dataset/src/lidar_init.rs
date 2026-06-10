@@ -7,26 +7,23 @@
 //! the heavy cross-view overlap into one representative point per cell, giving
 //! even coverage at a controllable density.
 
-use std::collections::HashMap;
-
 use brush_render::sh::rgb_to_sh;
 use brush_serde::SplatData;
 use glam::{UVec2, Vec3};
+use hashbrown::HashMap;
 
 use crate::scene::SceneView;
 
-/// Auto voxel size = cloud extent / this many cells along the longest axis,
-/// when `voxel_size <= 0`. Keeps init density scene-scale invariant.
-const AUTO_GRID: f32 = 128.0;
-
 /// Build init `SplatData` from the views' `LiDAR` depth. `voxel_size` is in
-/// metres; `<= 0` auto-derives it from the cloud extent (scene-relative).
-/// `min_conf` is the `ARKit` confidence floor (0/1/2). Returns `None` when no
-/// view has usable depth.
+/// metres; `<= 0` auto-derives it as `extent / auto_grid` (cells along the
+/// longest axis, scene-relative; higher = finer/denser). `min_conf` is the
+/// `ARKit` confidence floor (0/1/2). Returns `None` when no view has usable
+/// depth.
 pub async fn lidar_init_splats(
     views: &[SceneView],
     voxel_size: f32,
     min_conf: u8,
+    auto_grid: f32,
 ) -> anyhow::Result<Option<SplatData>> {
     // Pass 1: back-project every confident depth pixel into a world point +
     // sampled color, tracking the cloud extent for auto voxel sizing. Runs on a
@@ -52,6 +49,7 @@ pub async fn lidar_init_splats(
 
             let img = view.image.load().await?.to_rgb8();
             let (iw, ih) = (img.width() as f32, img.height() as f32);
+            let img_raw = img.as_raw();
 
             // Intrinsics at the depth map's native resolution (LiDAR is aligned
             // to the RGB camera's fov). Pinhole back-projection ignores lens
@@ -81,10 +79,14 @@ pub async fn lidar_init_splats(
 
                     // Color from the matching image pixel (depth and RGB share
                     // the camera fov, different resolutions).
-                    let ix = (((u as f32 + 0.5) / w as f32) * iw).clamp(0.0, iw - 1.0) as u32;
-                    let iy = (((v as f32 + 0.5) / h as f32) * ih).clamp(0.0, ih - 1.0) as u32;
-                    let px = img.get_pixel(ix, iy);
-                    let col = Vec3::new(px[0] as f32, px[1] as f32, px[2] as f32) / 255.0;
+                    let ix = (((u as f32 + 0.5) / w as f32) * iw).clamp(0.0, iw - 1.0) as usize;
+                    let iy = (((v as f32 + 0.5) / h as f32) * ih).clamp(0.0, ih - 1.0) as usize;
+                    let pb = (iy * iw as usize + ix) * 3;
+                    let col = Vec3::new(
+                        img_raw[pb] as f32,
+                        img_raw[pb + 1] as f32,
+                        img_raw[pb + 2] as f32,
+                    ) / 255.0;
 
                     lo = lo.min(p);
                     hi = hi.max(p);
@@ -96,8 +98,7 @@ pub async fn lidar_init_splats(
     }
 
     let workers = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
+        .map_or(4, |n| n.get())
         .min(views.len().max(1));
     let chunk_size = views.len().div_ceil(workers).max(1);
     // Keep the actors alive until their handles resolve (dropping an actor
@@ -130,31 +131,28 @@ pub async fn lidar_init_splats(
     let voxel = if voxel_size > 0.0 {
         voxel_size
     } else {
-        ((hi - lo).max_element() / AUTO_GRID).max(1e-4)
+        ((hi - lo).max_element() / auto_grid.max(1.0)).max(1e-4)
     };
     let inv = 1.0 / voxel;
 
-    // Pass 2: voxel-downsample (collapses cross-view overlap).
-    // Per voxel: (sum position, sum color, count).
-    let mut acc: HashMap<(i64, i64, i64), (Vec3, Vec3, u32)> = HashMap::new();
+    // Pass 2: voxel de-dup. The grid is purely about collapsing the heavy
+    // cross-view overlap, so the first sample in a cell wins outright;
+    // averaging would invent new (blurred) data and costs a read-modify-write
+    // per point.
+    let mut acc: HashMap<(i64, i64, i64), (Vec3, Vec3)> = HashMap::new();
     for (p, col) in pts {
         let key = (
             (p.x * inv).floor() as i64,
             (p.y * inv).floor() as i64,
             (p.z * inv).floor() as i64,
         );
-        let e = acc.entry(key).or_insert((Vec3::ZERO, Vec3::ZERO, 0));
-        e.0 += p;
-        e.1 += col;
-        e.2 += 1;
+        acc.entry(key).or_insert((p, col));
     }
 
     let mut means = Vec::with_capacity(acc.len() * 3);
     let mut sh = Vec::with_capacity(acc.len() * 3);
-    for (psum, csum, cnt) in acc.into_values() {
-        let inv_n = 1.0 / cnt as f32;
-        let p = psum * inv_n;
-        let dc = rgb_to_sh(csum * inv_n);
+    for (p, col) in acc.into_values() {
+        let dc = rgb_to_sh(col);
         means.extend_from_slice(&[p.x, p.y, p.z]);
         sh.extend_from_slice(&[dc.x, dc.y, dc.z]);
     }

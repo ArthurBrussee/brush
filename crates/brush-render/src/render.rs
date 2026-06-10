@@ -44,11 +44,14 @@ impl SplatOps<Self> for MainBackendBase {
         raw_opacities: FloatTensor<Self>,
         options: RenderOptions,
     ) -> RenderOutput<Self> {
+        // `splat_scale` is consumed by the `Splats`-level wrappers (it adjusts
+        // the log scales before the tensors reach this raw-tensor op).
         let RenderOptions {
             render_mode,
             background,
             pass,
             geometry,
+            splat_scale: _,
         } = options;
         assert!(
             img_size[0] > 0 && img_size[1] > 0,

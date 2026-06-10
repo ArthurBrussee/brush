@@ -968,28 +968,17 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "brush-async",
- "brush-dataset",
- "brush-mesh",
  "brush-process",
- "brush-render",
- "brush-serde",
- "brush-vfs",
- "burn",
- "bytemuck",
  "clap",
  "env_logger",
  "getrandom 0.4.2",
- "glam",
  "humantime",
- "image",
  "indicatif",
  "indicatif-log-bridge",
  "log",
- "pollster",
  "tokio",
  "tokio-stream",
  "tracing",
- "wgpu",
 ]
 
 [[package]]
@@ -1020,6 +1009,7 @@ dependencies = [
  "colmap-reader",
  "getrandom 0.4.2",
  "glam",
+ "hashbrown 0.16.1",
  "image",
  "itertools 0.14.0",
  "jpeg-decoder",
@@ -1096,6 +1086,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "brush-mesh-eval"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "brush-dataset",
+ "brush-loss",
+ "brush-mesh",
+ "brush-process",
+ "brush-render",
+ "brush-serde",
+ "brush-vfs",
+ "burn",
+ "bytemuck",
+ "clap",
+ "env_logger",
+ "glam",
+ "image",
+ "log",
+ "pollster",
+ "tokio",
+ "tokio-stream",
+ "wgpu",
+]
+
+[[package]]
 name = "brush-prefix-sum"
 version = "0.3.0"
 dependencies = [
@@ -1118,6 +1133,7 @@ dependencies = [
  "async-fn-stream",
  "brush-async",
  "brush-dataset",
+ "brush-mesh",
  "brush-render",
  "brush-render-bwd",
  "brush-rerun",

@@ -47,7 +47,9 @@ pub struct TetraPointsConfig {
 impl Default for TetraPointsConfig {
     fn default() -> Self {
         Self {
-            near: 0.02,
+            // Matches the integrate kernels' NEAR_PLANE: seed points the
+            // integration can't see are pure Delaunay load.
+            near: 0.2,
             far: 1e6,
             frustum_margin: 0.0,
         }
@@ -76,10 +78,14 @@ pub fn build_tetra_points(
     image_sizes: &[glam::UVec2],
     cfg: &TetraPointsConfig,
 ) -> TetraPoints {
-    assert_eq!(cameras.len(), image_sizes.len());
+    assert_eq!(
+        cameras.len(),
+        image_sizes.len(),
+        "one image size per camera"
+    );
     let n = means.len() / 3;
-    assert_eq!(quats_wxyz.len(), n * 4);
-    assert_eq!(log_scales.len(), n * 3);
+    assert_eq!(quats_wxyz.len(), n * 4, "flat [N*4] wxyz quats");
+    assert_eq!(log_scales.len(), n * 3, "flat [N*3] log scales");
 
     // 9 points per Gaussian, parallel over Gaussians. The frustum cull is
     // folded in so we don't materialise a 9× temporary.

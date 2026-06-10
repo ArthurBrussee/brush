@@ -20,11 +20,22 @@ use brush_render::{
         radial_tangential_8::RadialTangential8Params, thin_prism_fisheye::ThinPrismFisheyeParams,
     },
 };
-use brush_render_bwd::render_splats_with_pass;
+use brush_render_bwd::render_splats;
 
 /// Finite-diff tests need the C^1 cutoff so analytical and numerical
 /// agree at typical eps; production paths use the hard step.
 const PASS: RasterPass = RasterPass::BackwardSmoothCutoff;
+
+/// Smooth-cutoff backward options for the finite-diff checks.
+fn opts_for(background: Vec3) -> brush_render::gaussian_splats::RenderOptions {
+    brush_render::gaussian_splats::RenderOptions::float()
+        .with_background(background)
+        .with_pass(PASS)
+}
+
+fn geo_opts() -> brush_render::gaussian_splats::RenderOptions {
+    brush_render::gaussian_splats::RenderOptions::geometry().with_pass(PASS)
+}
 use burn::tensor::{Gradients, Tensor, s};
 use glam::Vec3;
 
@@ -105,7 +116,7 @@ async fn render_value(
         let splats = splats;
         let cam: &Camera = cam;
         let background = Vec3::ZERO;
-        async move { render_splats_with_pass(splats, cam, img_size, background, PASS, 0.0, false).await }
+        async move { render_splats(splats, cam, img_size, opts_for(background), 0.0).await }
     }
     .await;
     diff.img
@@ -126,7 +137,7 @@ async fn analytical_grads(
         let splats = splats.clone();
         let cam: &Camera = cam;
         let background = Vec3::ZERO;
-        async move { render_splats_with_pass(splats, cam, img_size, background, PASS, 0.0, false).await }
+        async move { render_splats(splats, cam, img_size, opts_for(background), 0.0).await }
     }
     .await;
     let grads = diff.img.mean().backward();
@@ -282,9 +293,7 @@ async fn render_value_geo(
     device: &burn::tensor::Device,
 ) -> f32 {
     let splats = build_splats(scene, device);
-    let diff =
-        brush_render_bwd::render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS, 0.0, true)
-            .await;
+    let diff = brush_render_bwd::render_splats(splats, cam, img_size, geo_opts(), 0.0).await;
     diff.geo
         .expect("geo channels")
         .mean()
@@ -300,16 +309,8 @@ async fn analytical_grads_geo(
     device: &burn::tensor::Device,
 ) -> (Splats, Gradients) {
     let splats = build_splats(scene, device);
-    let diff = brush_render_bwd::render_splats_with_pass(
-        splats.clone(),
-        cam,
-        img_size,
-        Vec3::ZERO,
-        PASS,
-        0.0,
-        true,
-    )
-    .await;
+    let diff =
+        brush_render_bwd::render_splats(splats.clone(), cam, img_size, geo_opts(), 0.0).await;
     let grads = diff.geo.expect("geo channels").mean().backward();
     (splats, grads)
 }
@@ -381,19 +382,18 @@ async fn finite_diff_geo_rayplane() {
     );
 }
 
-/// Loss over just the `zz = Sum(w*z^2)` channel, isolating the depth-distortion
-/// moment's backward (the value route's 2z chain factor + the z^2 alpha
-/// coupling) from the normal/depth channels.
-async fn render_value_zz(
+/// Loss over just the distortion channel (GOF: normalized squared pairwise
+/// error over NDC-mapped depths), isolating its backward (depth route through
+/// the mapping + the weight and normalizer alpha couplings) from the
+/// normal/depth channels.
+async fn render_value_dist(
     scene: &Scene,
     cam: &Camera,
     img_size: glam::UVec2,
     device: &burn::tensor::Device,
 ) -> f32 {
     let splats = build_splats(scene, device);
-    let diff =
-        brush_render_bwd::render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS, 0.0, true)
-            .await;
+    let diff = brush_render_bwd::render_splats(splats, cam, img_size, geo_opts(), 0.0).await;
     diff.geo
         .expect("geo channels")
         .slice(s![.., .., 4..5])
@@ -403,23 +403,15 @@ async fn render_value_zz(
         .expect("loss readback")
 }
 
-async fn analytical_grads_zz(
+async fn analytical_grads_dist(
     scene: &Scene,
     cam: &Camera,
     img_size: glam::UVec2,
     device: &burn::tensor::Device,
 ) -> (Splats, Gradients) {
     let splats = build_splats(scene, device);
-    let diff = brush_render_bwd::render_splats_with_pass(
-        splats.clone(),
-        cam,
-        img_size,
-        Vec3::ZERO,
-        PASS,
-        0.0,
-        true,
-    )
-    .await;
+    let diff =
+        brush_render_bwd::render_splats(splats.clone(), cam, img_size, geo_opts(), 0.0).await;
     let grads = diff
         .geo
         .expect("geo channels")
@@ -429,12 +421,13 @@ async fn analytical_grads_zz(
     (splats, grads)
 }
 
-/// Depth-distortion moment backward: the `zz` channel depends on each splat's
-/// weight (opacity/scale/position via alpha) and on z^2 (position), so perturb
-/// mean / scale / opacity / rotation and confirm the analytical grad matches
-/// central differences.
+/// Depth-distortion backward: the channel depends on each splat's weight
+/// (opacity/scale/position via alpha), its mapped depth (position/rotation via
+/// the ray-plane), and the (1-T)^2 normalizer, so perturb mean / scale /
+/// opacity / rotation and confirm the analytical grad matches central
+/// differences.
 #[tokio::test]
-async fn finite_diff_distortion_zz() {
+async fn finite_diff_distortion() {
     let device =
         burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let cam = std_cam();
@@ -445,7 +438,7 @@ async fn finite_diff_distortion_zz() {
     let rel_tol = 0.03_f32;
     let abs_tol = 3e-4_f32;
 
-    let (splats, grads) = analytical_grads_zz(&scene, &cam, img_size, &device).await;
+    let (splats, grads) = analytical_grads_dist(&scene, &cam, img_size, &device).await;
 
     let cases: &[(Lane, usize, usize)] = &[
         (Lane::Mean, 0, 0),
@@ -464,11 +457,11 @@ async fn finite_diff_distortion_zz() {
     for (lane, splat, comp) in cases {
         let mut s_plus = scene.clone();
         perturb(&mut s_plus, *lane, *splat, *comp, eps);
-        let l_plus = render_value_zz(&s_plus, &cam, img_size, &device).await;
+        let l_plus = render_value_dist(&s_plus, &cam, img_size, &device).await;
 
         let mut s_minus = scene.clone();
         perturb(&mut s_minus, *lane, *splat, *comp, -eps);
-        let l_minus = render_value_zz(&s_minus, &cam, img_size, &device).await;
+        let l_minus = render_value_dist(&s_minus, &cam, img_size, &device).await;
 
         let numerical = (l_plus - l_minus) / (2.0 * eps);
         let an = analytical_at(&splats, &grads, *lane, *splat, *comp).await;
@@ -489,7 +482,7 @@ async fn finite_diff_distortion_zz() {
 
     assert!(
         failed.is_empty(),
-        "distortion zz finite-diff vs analytical mismatch:\n  {}",
+        "distortion finite-diff vs analytical mismatch:\n  {}",
         failed.join("\n  "),
     );
 }
@@ -497,7 +490,7 @@ async fn finite_diff_distortion_zz() {
 /// Over-flattened splats (a flatten-loss-collapsed scale axis) must not blow up
 /// the geometry render: the near-singular covariance can drive the ray-plane
 /// depth gradient huge-but-finite, so it's rejected to a flat fallback. Without
-/// that, the depth/zz channels explode (~1e6+). Here every splat is collapsed on
+/// that, the depth/distortion channels explode (~1e6+). Here every splat is collapsed on
 /// one axis; the geo channels must stay finite and bounded.
 #[tokio::test]
 async fn flat_splat_geo_stays_bounded() {
@@ -508,7 +501,7 @@ async fn flat_splat_geo_stays_bounded() {
     // Sweep flatness for both an edge-on (thin world-y, plane through the view
     // dir) and a face-on (thin world-z) splat. The geo render must stay finite
     // and bounded at every flatness, the near-singular covariance must not leak
-    // NaN/Inf into the depth/normal/zz channels.
+    // NaN/Inf into the depth/normal/distortion channels.
     for ls in [-1.0f32, -8.0, -15.0, -20.0] {
         for log_scales in [vec![0.5, ls, 0.5], vec![0.5, 0.5, ls]] {
             let scene = Scene {
@@ -519,16 +512,8 @@ async fn flat_splat_geo_stays_bounded() {
                 raw_opac: vec![4.0],
             };
             let splats = build_splats(&scene, &device);
-            let diff = brush_render_bwd::render_splats_with_pass(
-                splats,
-                &cam,
-                img_size,
-                Vec3::ZERO,
-                PASS,
-                0.0,
-                true,
-            )
-            .await;
+            let diff =
+                brush_render_bwd::render_splats(splats, &cam, img_size, geo_opts(), 0.0).await;
             let geo: Vec<f32> = diff
                 .geo
                 .unwrap()
@@ -651,7 +636,7 @@ async fn finite_diff_broad_mip_mode() {
             SplatRenderMode::Mip,
             device,
         );
-        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS, 0.0, false).await;
+        let diff = render_splats(splats, cam, img_size, opts_for(Vec3::ZERO), 0.0).await;
         diff.img
             .mean()
             .into_scalar_async::<f32>()
@@ -674,8 +659,7 @@ async fn finite_diff_broad_mip_mode() {
             SplatRenderMode::Mip,
             device,
         );
-        let diff =
-            render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, PASS, 0.0, false).await;
+        let diff = render_splats(splats.clone(), cam, img_size, opts_for(Vec3::ZERO), 0.0).await;
         let g = diff.img.mean().backward();
         (splats, g)
     }
@@ -757,7 +741,7 @@ async fn finite_diff_weighted_loss() {
         device: &burn::tensor::Device,
     ) -> f32 {
         let splats = build_splats(scene, device);
-        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS, 0.0, false).await;
+        let diff = render_splats(splats, cam, img_size, opts_for(Vec3::ZERO), 0.0).await;
         (diff.img * weights)
             .sum()
             .into_scalar_async::<f32>()
@@ -773,8 +757,7 @@ async fn finite_diff_weighted_loss() {
         device: &burn::tensor::Device,
     ) -> (Splats, Gradients) {
         let splats = build_splats(scene, device);
-        let diff =
-            render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, PASS, 0.0, false).await;
+        let diff = render_splats(splats.clone(), cam, img_size, opts_for(Vec3::ZERO), 0.0).await;
         let loss = (diff.img * weights).sum();
         (splats, loss.backward())
     }

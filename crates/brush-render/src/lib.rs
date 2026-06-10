@@ -5,7 +5,7 @@ use burn::backend::tensor::FloatTensor;
 use camera::Camera;
 use clap::ValueEnum;
 
-pub use crate::gaussian_splats::{Splats, TextureMode, render_splats};
+pub use crate::gaussian_splats::{Splats, render_splats};
 pub use crate::render_aux::{RenderAux, RenderAuxInner, RenderOutput};
 
 pub mod burn_glue;

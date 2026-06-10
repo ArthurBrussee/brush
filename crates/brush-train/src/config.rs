@@ -106,24 +106,31 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Geometry options", default_value = "0.05")]
     pub depth_normal_weight: f32,
 
-    /// Weight of the metric depth supervision loss: L1 between the RaDe-GS
-    /// rendered depth and the per-view `LiDAR` depth (when the dataset provides
-    /// it), per-pixel weighted by `ARKit` confidence. No-op without depth data.
+    /// Weight of the metric depth supervision loss: L1 between the rendered
+    /// depth and the per-view `LiDAR` depth (when the dataset provides it),
+    /// confidence-weighted and sparse (at the `LiDAR` grid). Ground-truth
+    /// supervision, so it runs from iteration 0 (not gated by
+    /// `--geo-from-iter`). No-op without depth data.
     #[arg(long, help_heading = "Geometry options", default_value = "0.2")]
     pub depth_loss_weight: f32,
 
-    /// Weight of the depth-distortion loss (2DGS `L_d`, squared form): penalizes
-    /// each ray's weighted depth variance, concentrating its weight onto a single
-    /// depth so the surface stops being a fuzzy shell. Scene-scale dependent.
-    #[arg(long, help_heading = "Geometry options", default_value = "0.1")]
+    /// Weight of the depth-distortion loss (GOF `L_d`: squared pairwise error
+    /// over NDC-mapped depths, normalized per pixel): pulls each ray's splats
+    /// onto a single depth so the surface stops being a fuzzy shell.
+    #[arg(long, help_heading = "Geometry options", default_value = "100.0")]
     pub distortion_weight: f32,
 
-    /// Master switch for the geometry losses: the iteration to turn them on at.
-    /// Unset = geometry off (the weights above are ignored). Set it to enable
-    /// flatten + depth-normal + depth-distortion + metric depth from that
-    /// iteration onward.
+    /// Master switch for the self-consistency geometry regularizers: the
+    /// iteration to turn them on at. Unset = off (their weights above are
+    /// ignored). Set it to enable flatten + depth-normal + depth-distortion
+    /// from that iteration onward.
     #[arg(long, help_heading = "Geometry options")]
     pub geo_from_iter: Option<u32>,
+
+    /// `LiDAR` init voxel grid: cells along the cloud's longest axis. Higher =
+    /// finer/denser init. Density is scene-scale invariant (metric voxel).
+    #[arg(long, help_heading = "Geometry options", default_value = "256")]
+    pub lidar_grid: f32,
 
     /// Base background color (R,G,B) used during training.
     #[arg(
@@ -177,16 +184,19 @@ impl TrainConfig {
         self.total_train_iters + self.lod_levels * self.lod_refine_steps
     }
 
-    /// Whether any active loss needs the PGSR geometry render pass (blended
-    /// normal + plane distance). Enabled on demand so the geometry cost is
-    /// only paid when something consumes it.
-    /// Config-level predicate: does this run use geometry losses *at all*? The
-    /// per-iteration decision (whether geometry runs on a given step) is gated
-    /// separately on `step >= geo_from_iter` in the trainer.
-    pub fn needs_geometry(&self) -> bool {
-        self.geo_from_iter.is_some()
-            && (self.depth_normal_weight > 0.0
-                || self.depth_loss_weight > 0.0
-                || self.distortion_weight > 0.0)
+    /// Whether the self-consistency geometry regularizers (depth-normal,
+    /// distortion, flatten) are active at `iter` (gated by `geo_from_iter`).
+    pub fn geo_regs_on(&self, iter: u32) -> bool {
+        self.geo_from_iter.is_some_and(|from| iter >= from)
+    }
+
+    /// Whether any active loss needs the geometry render pass at `iter`:
+    /// the metric depth loss runs from iteration 0, the regularizers from
+    /// `geo_from_iter`. The depth loss additionally needs per-batch depth,
+    /// which the trainer checks per step.
+    pub fn needs_geometry(&self, iter: u32) -> bool {
+        self.depth_loss_weight > 0.0
+            || (self.geo_regs_on(iter)
+                && (self.depth_normal_weight > 0.0 || self.distortion_weight > 0.0))
     }
 }

@@ -209,15 +209,15 @@ pub fn resolve_to_cube_float<const D: usize>(tensor: Tensor<D>) -> CubeTensor<Wg
 /// Colormap the PGSR depth / normal maps into a packed RGBA8 `[H, W, 1]`
 /// image for the viewer. The output dtype is `u32` (packed) but it is
 /// wrapped as a float `Tensor` so the display path can read its buffer
-/// directly, matching the packed-rgb render path. `normal_mode` selects the
-/// normal hemisphere map; otherwise depth is jet-colored over `[dmin, dmax]`.
+/// directly, matching the packed-rgb render path. `mode`: 0 = depth jet over
+/// `[dmin, dmax]`, 1 = normal hemisphere, 2 = alpha grayscale.
 pub fn geo_colormap_pack(
     depth: Tensor<3>,
     normal: Tensor<3>,
     alpha: Tensor<3>,
     dmin: f32,
     dmax: f32,
-    normal_mode: bool,
+    mode: u32,
 ) -> Tensor<3> {
     let [h, w, _] = depth.dims();
     let dinv_range = if dmax > dmin {
@@ -237,7 +237,7 @@ pub fn geo_colormap_pack(
         dinv_range: f32,
         h: usize,
         w: usize,
-        normal_mode: bool,
+        mode: u32,
     }
 
     impl Operation<FusionCubeRuntime<WgpuRuntime>> for Op {
@@ -266,7 +266,7 @@ pub fn geo_colormap_pack(
                 self.dmin,
                 self.dinv_range,
                 num_pixels,
-                self.normal_mode,
+                self.mode,
             );
 
             h.register_float_tensor::<MainBackendBase>(&out.id, out_t);
@@ -290,7 +290,7 @@ pub fn geo_colormap_pack(
         dinv_range,
         h,
         w,
-        normal_mode,
+        mode,
     };
     let [out] = client
         .register(stream, OperationIr::Custom(desc), op)

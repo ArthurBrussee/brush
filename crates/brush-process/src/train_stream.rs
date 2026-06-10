@@ -106,8 +106,9 @@ pub(crate) async fn train_stream(
     {
         match brush_dataset::lidar_init::lidar_init_splats(
             dataset.train.views.as_slice(),
-            0.0, // voxel size: 0 = auto-derive from cloud extent
+            0.0, // voxel size: 0 = auto-derive from cloud extent via lidar_grid
             2u8, // min ARKit confidence: high only
+            train_stream_config.train_config.lidar_grid,
         )
         .await
         {
@@ -125,7 +126,7 @@ pub(crate) async fn train_stream(
         None
     };
 
-    // Convert SplatData to Splats using KNN initialization
+    // Convert SplatData to Splats using KNN initialization.
     let (up_axis, init_splats) = if let Some(msg) = load_result.init_splat {
         // Use loaded splats with KNN init
         let render_mode = train_stream_config
@@ -216,10 +217,25 @@ pub(crate) async fn train_stream(
     // Per-train-view (world center, focal-px at native res) for the
     // Mip-Splatting 3D filter (always on).
     let mut view_cams: Vec<(glam::Vec3, f32)> = Vec::with_capacity(dataset.train.views.len());
+    // Pinhole (camera, image size) pairs for mesh export, if enabled.
+    #[cfg(not(target_family = "wasm"))]
+    let mut mesh_views: Vec<(brush_render::camera::Camera, glam::UVec2)> = Vec::new();
     for view in dataset.train.views.iter() {
         let (w, h) = view.image.dimensions().await.unwrap_or((1, 1));
         let focal = view.camera.focal(glam::uvec2(w, h)).x;
         view_cams.push((view.camera.position, focal));
+        #[cfg(not(target_family = "wasm"))]
+        if train_stream_config
+            .process_config
+            .export_mesh_every
+            .is_some()
+        {
+            // The mesh pipeline (alpha integration + eval rasterizer) is
+            // pinhole-only; drop any distortion model but keep the fov.
+            let mut cam = view.camera;
+            cam.camera_model = brush_render::kernels::camera_model::CameraModel::Pinhole;
+            mesh_views.push((cam, glam::uvec2(w, h)));
+        }
     }
 
     let mut trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
@@ -266,14 +282,13 @@ pub(crate) async fn train_stream(
         if target_lod > current_lod {
             #[cfg(not(target_family = "wasm"))]
             {
-                let (name, exp_iter, exp_total) = if current_lod == 0 {
-                    (process_config.export_name.clone(), iter, training_steps)
-                } else {
-                    let lod_name = process_config
-                        .export_name
-                        .replace(".ply", &format!("_lod{current_lod}.ply"));
-                    (lod_name, lod_refine_steps, lod_refine_steps)
-                };
+                let (name, exp_iter, exp_total) = export_target(
+                    process_config,
+                    current_lod,
+                    iter,
+                    training_steps,
+                    lod_refine_steps,
+                );
                 let res =
                     export_checkpoint(splats.clone(), &export_path, &name, exp_iter, exp_total)
                         .await
@@ -414,19 +429,37 @@ pub(crate) async fn train_stream(
                 is_last_step
             };
             if should_export {
-                let (name, exp_iter, exp_total) = if current_lod == 0 {
-                    (process_config.export_name.clone(), iter, training_steps)
-                } else {
-                    let lod_name = process_config
-                        .export_name
-                        .replace(".ply", &format!("_lod{current_lod}.ply"));
-                    (lod_name, lod_refine_steps, lod_refine_steps)
-                };
+                let (name, exp_iter, exp_total) = export_target(
+                    process_config,
+                    current_lod,
+                    iter,
+                    training_steps,
+                    lod_refine_steps,
+                );
                 let res =
                     export_checkpoint(splats.clone(), &export_path, &name, exp_iter, exp_total)
                         .await
                         .with_context(|| format!("Export at iteration {iter} failed"));
 
+                if let Err(error) = res {
+                    emitter.emit(ProcessMessage::Warning { error }).await;
+                }
+            }
+
+            let mesh_now = train_stream_config
+                .process_config
+                .export_mesh_every
+                .is_some_and(|every| iter % every == 0 || is_last_step);
+            if mesh_now {
+                let res = export_mesh(
+                    splats.clone(),
+                    &mesh_views,
+                    &export_path,
+                    iter,
+                    training_steps,
+                )
+                .await
+                .with_context(|| format!("Mesh export at iteration {iter} failed"));
                 if let Err(error) = res {
                     emitter.emit(ProcessMessage::Warning { error }).await;
                 }
@@ -512,10 +545,57 @@ pub(crate) async fn train_stream(
         brush_async::yield_now().await;
     }
 
+    // With zero training steps the loop never runs, so the "always export a
+    // mesh on the last step" promise is kept here: mesh-only extraction from
+    // the initial splats.
+    #[cfg(not(target_family = "wasm"))]
+    if train_stream_config
+        .process_config
+        .export_mesh_every
+        .is_some()
+        && process_config.start_iter >= train_stream_config.train_config.total_iters()
+    {
+        let res = export_mesh(
+            splats.clone(),
+            &mesh_views,
+            &export_path,
+            0,
+            train_stream_config.train_config.total_iters(),
+        )
+        .await
+        .with_context(|| "Mesh export failed");
+        if let Err(error) = res {
+            emitter.emit(ProcessMessage::Warning { error }).await;
+        }
+    }
+
     emitter
         .emit(ProcessMessage::TrainMessage(TrainMessage::DoneTraining))
         .await;
 
+    Ok(())
+}
+
+/// Run GOF-style mesh extraction on the current splats and write
+/// `mesh_{iter}.ply` next to the splat exports.
+#[cfg(not(target_family = "wasm"))]
+async fn export_mesh(
+    splats: Splats,
+    views: &[(brush_render::camera::Camera, glam::UVec2)],
+    export_path: &Path,
+    iter: u32,
+    total_steps: u32,
+) -> Result<(), anyhow::Error> {
+    anyhow::ensure!(!views.is_empty(), "mesh export needs at least one view");
+    let cfg = brush_mesh::ExtractConfig::default();
+    let mesh = brush_mesh::extract_mesh(splats, views, &cfg).await;
+    let path = export_path.join(format!("mesh_{}.ply", pad_iter(iter, total_steps)));
+    let write_path = path.clone();
+    tokio::task::spawn_blocking(move || brush_mesh::ply::write_ply_file(&mesh, &write_path))
+        .await
+        .context("mesh write task panicked")?
+        .with_context(|| format!("writing mesh {}", path.display()))?;
+    log::info!("Exported mesh to {}", path.display());
     Ok(())
 }
 
@@ -586,6 +666,33 @@ async fn run_eval(
     Ok(())
 }
 
+/// Export filename + per-phase `(iter, total)` for progress interpolation;
+/// LOD exports get a `_lodN` suffix and per-phase counts.
+#[cfg(not(target_family = "wasm"))]
+fn export_target(
+    process_config: &crate::config::ProcessConfig,
+    current_lod: u32,
+    iter: u32,
+    training_steps: u32,
+    lod_refine_steps: u32,
+) -> (String, u32, u32) {
+    if current_lod == 0 {
+        (process_config.export_name.clone(), iter, training_steps)
+    } else {
+        let lod_name = process_config
+            .export_name
+            .replace(".ply", &format!("_lod{current_lod}.ply"));
+        (lod_name, lod_refine_steps, lod_refine_steps)
+    }
+}
+
+/// Zero-pad `iter` to the digit count of `total` so exports sort by name.
+#[cfg(not(target_family = "wasm"))]
+fn pad_iter(iter: u32, total: u32) -> String {
+    let digits = ((total.max(1) as f64).log10().floor() as usize) + 1;
+    format!("{iter:0digits$}")
+}
+
 // TODO: Want to support this on WASM somehow. Maybe have user pick a file once,
 // and write to it repeatedly?
 #[cfg(not(target_family = "wasm"))]
@@ -599,8 +706,7 @@ async fn export_checkpoint(
     tokio::fs::create_dir_all(&export_path)
         .await
         .with_context(|| format!("Creating export directory {}", export_path.display()))?;
-    let digits = ((total_steps as f64).log10().floor() as usize) + 1;
-    let export_name = export_name.replace("{iter}", &format!("{iter:0digits$}"));
+    let export_name = export_name.replace("{iter}", &pad_iter(iter, total_steps));
     let splat_data = brush_serde::splat_to_ply(splats)
         .await
         .context("Serializing splat data")?;

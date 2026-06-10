@@ -153,10 +153,11 @@ pub enum ViewChannel {
     Depth { max_meters: f32 },
     /// Rendered view-space normal, hemisphere-mapped to RGB.
     Normal,
+    /// Coverage alpha as grayscale.
+    Alpha,
 }
 
 impl ViewChannel {
-    /// Default far end of the depth colormap ramp.
     pub const DEFAULT_DEPTH_METERS: f32 = 5.0;
 }
 

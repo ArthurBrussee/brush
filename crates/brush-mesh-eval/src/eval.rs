@@ -1,6 +1,6 @@
 //! Mesh evaluation: render the extracted mesh at training-camera
 //! viewpoints with an in-process wgpu renderer
-//! ([`crate::mesh_render::MeshRenderer`]) and report PSNR vs the
+//! ([`crate::render::MeshRenderer`]) and report PSNR vs the
 //! re-rendered splat appearance at each view, plus a labeled grid with
 //! one row per view and columns `GT | splat | mesh | depth`.
 //!
@@ -16,26 +16,26 @@
 //! than any external shading model. The depth panel is per-view-z-
 //! normalised grayscale.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context;
 use brush_dataset::scene::SceneView;
 use brush_render::camera::Camera;
+use brush_render::gaussian_splats::RenderOptions;
 use brush_render::gaussian_splats::Splats;
-use brush_render::kernels::camera_model::CameraModel;
-use brush_render::{TextureMode, render_splats};
+use brush_render::render_splats;
 use burn::tensor::s;
 use glam::{UVec2, Vec3};
 use image::{ImageBuffer, Rgb, RgbImage};
 
 pub struct ViewEval {
-    pub view_idx: usize,
     /// PSNR of mesh-render vs the splat render (at a pinhole camera).
     pub psnr: f64,
     /// PSNR of mesh-render vs the GT image (at a pinhole camera).
     pub psnr_vs_gt: f64,
+    /// PSNR of the splat render vs the GT image (splat appearance fidelity).
+    pub psnr_splat_vs_gt: f64,
     pub coverage: f64,
-    pub rendered_path: PathBuf,
 }
 
 pub async fn eval_psnr(
@@ -43,19 +43,17 @@ pub async fn eval_psnr(
     train_views: &[SceneView],
     splats: &Splats,
     n: usize,
-    zoomed_out: bool,
     out_dir: &Path,
 ) -> anyhow::Result<Vec<ViewEval>> {
     std::fs::create_dir_all(out_dir).with_context(|| format!("mkdir {}", out_dir.display()))?;
     let n = n.min(train_views.len());
-    let renderer =
-        crate::mesh_render::MeshRenderer::new().context("initializing wgpu mesh renderer")?;
+    let renderer = crate::render::MeshRenderer::new().context("initializing wgpu mesh renderer")?;
     let mut results = Vec::with_capacity(n);
     // One row per view: GT | splat | mesh | depth, assembled into a
     // single labeled grid after the loop.
     let mut rows: Vec<[RgbImage; 4]> = Vec::with_capacity(n);
 
-    let selection = select_views(mesh, train_views, n, zoomed_out);
+    let selection = select_views(mesh, train_views, n);
     for &i in &selection {
         let view = &train_views[i];
         let (w, h) = view
@@ -65,7 +63,7 @@ pub async fn eval_psnr(
             .context("read view dims")?;
         let img_size = UVec2::new(w, h);
 
-        let pin_cam = with_pinhole(&view.camera);
+        let pin_cam = view.camera.with_pinhole();
 
         // GT: load the dataset image, RGB at native resolution.
         let gt_img = load_gt_rgb(view).await?;
@@ -84,7 +82,7 @@ pub async fn eval_psnr(
             image::imageops::FilterType::Triangle,
         );
         let (_, depth_raw) = renderer.render_with_depth(mesh, &pin_cam, img_size);
-        let depth_img = crate::mesh_render::depth_to_color(&depth_raw, img_size.x, img_size.y);
+        let depth_img = crate::render::depth_to_color(&depth_raw, img_size.x, img_size.y);
 
         let rendered_path = out_dir.join(format!("view_{i:04}.png"));
         rendered
@@ -97,23 +95,24 @@ pub async fn eval_psnr(
             .save(&splat_path)
             .with_context(|| format!("saving splat render to {}", splat_path.display()))?;
 
-        let psnr_vs_splat = crate::mesh_render::psnr(&rendered, &splat_img);
-        let psnr_vs_gt = crate::mesh_render::psnr(&rendered, &gt_img);
+        let device = splats.device();
+        let psnr_vs_splat = psnr(&rendered, &splat_img, &device).await;
+        let psnr_vs_gt = psnr(&rendered, &gt_img, &device).await;
+        let psnr_splat_vs_gt = psnr(&splat_img, &gt_img, &device).await;
         let coverage = compute_coverage(&rendered);
 
         log::info!(
             "view[{i:04}]: PSNR(mesh vs splat)={psnr_vs_splat:.2} PSNR(mesh vs GT)={psnr_vs_gt:.2} \
-             coverage={:.1}%",
+             PSNR(splat vs GT)={psnr_splat_vs_gt:.2} coverage={:.1}%",
             coverage * 100.0
         );
 
         rows.push([gt_img, splat_img, rendered, depth_img]);
         results.push(ViewEval {
-            view_idx: i,
             psnr: psnr_vs_splat,
             psnr_vs_gt,
+            psnr_splat_vs_gt,
             coverage,
-            rendered_path,
         });
     }
 
@@ -128,10 +127,12 @@ pub async fn eval_psnr(
     if !results.is_empty() {
         let mean_psnr = results.iter().map(|r| r.psnr).sum::<f64>() / results.len() as f64;
         let mean_gt = results.iter().map(|r| r.psnr_vs_gt).sum::<f64>() / results.len() as f64;
+        let mean_splat_gt =
+            results.iter().map(|r| r.psnr_splat_vs_gt).sum::<f64>() / results.len() as f64;
         let mean_cov = results.iter().map(|r| r.coverage).sum::<f64>() / results.len() as f64;
         log::info!(
             "PSNR over {} views: mean_vs_splat={mean_psnr:.3} mean_vs_GT={mean_gt:.3} \
-             coverage={:.1}%",
+             mean_splat_vs_GT={mean_splat_gt:.3} coverage={:.1}%",
             results.len(),
             mean_cov * 100.0
         );
@@ -140,34 +141,14 @@ pub async fn eval_psnr(
     Ok(results)
 }
 
-/// Build a copy of `cam` with the camera model swapped to `Pinhole`.
-/// For pinhole-source cameras this is a no-op; for distorted cameras it
-/// removes the distortion so the splat-render and our wgpu mesh-render
-/// share the same projection.
-fn with_pinhole(cam: &Camera) -> Camera {
-    Camera {
-        camera_model: CameraModel::Pinhole,
-        ..*cam
-    }
-}
-
-/// Choose `n` view indices for the eval grid. Default: even spread across
-/// the capture. `zoomed_out`: rank cameras by distance to the mesh
-/// centroid, keep the farthest half, then spread those by frame order so
-/// the picks are both pulled-back and varied.
-fn select_views(
-    mesh: &brush_mesh::Mesh,
-    views: &[SceneView],
-    n: usize,
-    zoomed_out: bool,
-) -> Vec<usize> {
+/// Choose `n` view indices for the eval grid: rank cameras by distance to
+/// the mesh centroid, keep the farthest half, then spread those by frame
+/// order so the picks are both pulled-back and varied.
+fn select_views(mesh: &brush_mesh::Mesh, views: &[SceneView], n: usize) -> Vec<usize> {
     let len = views.len();
     let n = n.min(len);
     if n == 0 {
         return Vec::new();
-    }
-    if !zoomed_out {
-        return (0..n).map(|k| k * len / n).collect();
     }
     let centroid = mesh.vertices.iter().fold(Vec3::ZERO, |acc, &v| acc + v)
         / mesh.vertices.len().max(1) as f32;
@@ -187,22 +168,35 @@ async fn load_gt_rgb(view: &SceneView) -> anyhow::Result<RgbImage> {
     Ok(dyn_img.into_rgb8())
 }
 
+fn img_tensor(img: &RgbImage, device: &burn::tensor::Device) -> burn::tensor::Tensor<3> {
+    let data: Vec<f32> = img.as_raw().iter().map(|&v| v as f32 / 255.0).collect();
+    burn::tensor::Tensor::from_data(
+        burn::tensor::TensorData::new(data, [img.height() as usize, img.width() as usize, 3]),
+        device,
+    )
+}
+
+/// RGB PSNR between two equal-size images, computed on the GPU via
+/// [`brush_loss::psnr`].
+async fn psnr(a: &RgbImage, b: &RgbImage, device: &burn::tensor::Device) -> f64 {
+    debug_assert_eq!(
+        a.dimensions(),
+        b.dimensions(),
+        "PSNR needs equal-size images"
+    );
+    brush_loss::psnr(img_tensor(a, device), img_tensor(b, device))
+        .into_scalar_async::<f32>()
+        .await
+        .map_or(f64::NAN, f64::from)
+}
+
 /// Render the splats at `camera` to an 8-bit RGB image.
 async fn render_splats_to_rgb(
     splats: &Splats,
     camera: &Camera,
     img_size: UVec2,
 ) -> anyhow::Result<ImageBuffer<Rgb<u8>, Vec<u8>>> {
-    let (img, _aux) = render_splats(
-        splats.clone(),
-        camera,
-        img_size,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-        false,
-    )
-    .await;
+    let (img, _aux) = render_splats(splats.clone(), camera, img_size, RenderOptions::float()).await;
     let rgb = img.slice(s![.., .., 0..3]);
     let [h, w, _] = [rgb.dims()[0], rgb.dims()[1], rgb.dims()[2]];
     let data = rgb

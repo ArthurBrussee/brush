@@ -1,7 +1,9 @@
 use brush_async::{Actor, AsyncMap};
 use brush_process::slot::Slot;
 use brush_render::{
-    TextureMode, burn_glue::resolve_to_cube_float, camera::Camera, gaussian_splats::Splats,
+    burn_glue::resolve_to_cube_float,
+    camera::Camera,
+    gaussian_splats::{RenderOptions, Splats},
     render_splats,
 };
 use burn::tensor::Tensor;
@@ -56,15 +58,16 @@ impl SplatBackbuffer {
                             splats,
                             &req.state.camera,
                             req.state.img_size,
-                            req.state.background,
-                            req.state.splat_scale,
-                            TextureMode::Packed,
-                            false,
+                            RenderOptions::color()
+                                .with_background(req.state.background)
+                                .with_splat_scale(req.state.splat_scale),
                         )
                         .await;
                         image
                     }
-                    channel @ (ViewChannel::Depth { .. } | ViewChannel::Normal) => {
+                    channel @ (ViewChannel::Depth { .. }
+                    | ViewChannel::Normal
+                    | ViewChannel::Alpha) => {
                         render_geo_channel(
                             splats,
                             &req.state.camera,

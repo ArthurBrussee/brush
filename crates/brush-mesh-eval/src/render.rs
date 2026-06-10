@@ -144,13 +144,6 @@ impl MeshRenderer {
         })
     }
 
-    pub fn render(&self, mesh: &Mesh, camera: &Camera, img_size: UVec2) -> RgbImage {
-        let (color, _) = self.render_inner(mesh, camera, img_size, false);
-        color
-    }
-
-    /// Render color plus mesh depth (linear view-z). Background depth
-    /// pixels are filled with `f32::NAN`.
     pub fn render_with_depth(
         &self,
         mesh: &Mesh,
@@ -548,36 +541,16 @@ pub fn depth_to_color(depth: &[f32], w: u32, h: u32) -> RgbImage {
 fn turbo(x: f32) -> [u8; 3] {
     let x = x.clamp(0.0, 1.0);
     let (x2, x3, x4, x5) = (x * x, x * x * x, x * x * x * x, x * x * x * x * x);
-    let r = 0.13572138 + 4.61539260 * x - 42.66032258 * x2 + 132.13108234 * x3 - 152.94239396 * x4
-        + 59.28637943 * x5;
-    let g = 0.09140261 + 2.19418839 * x + 4.84296658 * x2 - 14.18503333 * x3
-        + 4.27729857 * x4
-        + 2.82956604 * x5;
-    let b = 0.10667330 + 12.64194608 * x - 60.58204836 * x2 + 110.36276771 * x3 - 89.90310912 * x4
-        + 27.34824973 * x5;
+    let r = 0.13572138 + 4.615_392_7 * x - 42.660_324 * x2 + 132.131_09 * x3 - 152.942_4 * x4
+        + 59.286_38 * x5;
+    let g = 0.09140261 + 2.194_188_4 * x + 4.842_966_6 * x2 - 14.185_034 * x3
+        + 4.277_298_5 * x4
+        + 2.829_566 * x5;
+    let b = 0.106_673_3 + 12.641_946 * x - 60.582_047 * x2 + 110.362_77 * x3 - 89.903_11 * x4
+        + 27.348_25 * x5;
     [
         (r.clamp(0.0, 1.0) * 255.0).round() as u8,
         (g.clamp(0.0, 1.0) * 255.0).round() as u8,
         (b.clamp(0.0, 1.0) * 255.0).round() as u8,
     ]
-}
-
-/// RGB PSNR between rendered and GT (both same dimensions). Returns
-/// `99.0` for an exact match.
-pub fn psnr(a: &RgbImage, b: &image::ImageBuffer<image::Rgb<u8>, Vec<u8>>) -> f64 {
-    debug_assert_eq!(a.dimensions(), b.dimensions());
-    let mut sse: u64 = 0;
-    let total = a.width() as u64 * a.height() as u64 * 3;
-    for (pa, pb) in a.pixels().zip(b.pixels()) {
-        for c in 0..3 {
-            let d = pa[c] as i32 - pb[c] as i32;
-            sse += (d * d) as u64;
-        }
-    }
-    let mse = sse as f64 / total as f64;
-    if mse <= f64::EPSILON {
-        99.0
-    } else {
-        10.0 * (255.0_f64 * 255.0 / mse).log10()
-    }
 }

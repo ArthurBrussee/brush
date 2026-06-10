@@ -1,6 +1,6 @@
 use brush_dataset::scene::SceneBatch;
 use brush_render::{
-    AlphaMode, TextureMode,
+    AlphaMode,
     bounding_box::BoundingBox,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats},
@@ -166,10 +166,7 @@ pub async fn run_forward_render(
             splats.clone(),
             &camera,
             glam::uvec2(resolution.0, resolution.1),
-            Vec3::ZERO,
-            None,
-            TextureMode::Float,
-            false,
+            brush_render::gaussian_splats::RenderOptions::float(),
         )
         .await;
     }
@@ -189,9 +186,8 @@ pub async fn run_backward_render(
             splats.clone(),
             &camera,
             glam::uvec2(resolution.0, resolution.1),
-            Vec3::ZERO,
+            brush_render::gaussian_splats::RenderOptions::float(),
             0.0,
-            false,
         )
         .await;
         let _ = diff_out.img.mean().backward();

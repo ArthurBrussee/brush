@@ -4,13 +4,11 @@ use crate::kernels::camera_model::kannala_brandt_4::KannalaBrandt4Params;
 use crate::kernels::camera_model::radial_tangential_8::RadialTangential8Params;
 use crate::kernels::camera_model::thin_prism_fisheye::ThinPrismFisheyeParams;
 use crate::{
-    TextureMode,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats, render_splats},
 };
 use assert_approx_eq::assert_approx_eq;
 use burn::tensor::{Distribution, Tensor};
-use glam::Vec3;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[cfg(target_family = "wasm")]
@@ -51,10 +49,7 @@ async fn renders_at_all() {
         splats,
         &cam,
         img_size,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-        false,
+        crate::gaussian_splats::RenderOptions::float(),
     )
     .await;
 
@@ -119,10 +114,7 @@ async fn renders_many_splats() {
         splats,
         &cam,
         img_size,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-        false,
+        crate::gaussian_splats::RenderOptions::float(),
     )
     .await;
 
@@ -298,10 +290,7 @@ async fn render_scene(
         splats,
         cam,
         img_size,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-        false,
+        crate::gaussian_splats::RenderOptions::float(),
     )
     .await;
     read_finite(output).await
@@ -510,10 +499,7 @@ async fn renders_large_rotated_splats() {
         splats,
         &cam,
         img_size,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-        false,
+        crate::gaussian_splats::RenderOptions::float(),
     )
     .await;
 
@@ -581,10 +567,7 @@ async fn renders_many_large_splats_stress() {
         splats,
         &cam,
         img_size,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-        false,
+        crate::gaussian_splats::RenderOptions::float(),
     )
     .await;
 
@@ -659,10 +642,7 @@ async fn render_panics_loudly_on_nan_positions() {
         splats,
         &cam,
         img_size,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-        false,
+        crate::gaussian_splats::RenderOptions::float(),
     )
     .await;
 }
@@ -695,8 +675,13 @@ async fn zero_splats_renders_background() {
     assert_eq!(splats.num_splats(), 0);
 
     let bg = glam::vec3(0.7, 0.3, 0.1);
-    let (output, _aux) =
-        render_splats(splats, &cam, img_size, bg, None, TextureMode::Float, false).await;
+    let (output, _aux) = render_splats(
+        splats,
+        &cam,
+        img_size,
+        crate::gaussian_splats::RenderOptions::float().with_background(bg),
+    )
+    .await;
     let pixels = output
         .to_data_async()
         .await
@@ -875,10 +860,7 @@ async fn render_smoke_with_model(model: CameraModel) {
         splats,
         &cam,
         img_size,
-        Vec3::ZERO,
-        None,
-        TextureMode::Float,
-        false,
+        crate::gaussian_splats::RenderOptions::float(),
     )
     .await;
     read_finite(output).await;

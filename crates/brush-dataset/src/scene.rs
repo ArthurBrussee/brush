@@ -160,7 +160,6 @@ pub struct SceneBatch {
     pub has_alpha: bool,
     pub alpha_mode: AlphaMode,
     pub camera: Camera,
-    /// Metric `LiDAR` depth for this view, when the dataset provides it.
     pub depth: Option<DepthSample>,
 }
 

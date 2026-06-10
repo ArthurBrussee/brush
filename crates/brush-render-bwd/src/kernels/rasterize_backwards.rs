@@ -26,7 +26,7 @@ use burn_cubecl::cubecl::prelude::*;
 
 use brush_render::kernels::helpers::{
     ALPHA_CUTOFF_MID, TILE_SIZE, TILE_WIDTH, alpha_cutoff_weight, alpha_cutoff_weight_deriv,
-    read_projected_geo, read_projected_splat,
+    dist_ndc, dist_ndc_deriv, read_projected_geo, read_projected_splat,
 };
 use brush_render::kernels::types::{RasterizeUniforms, Splat, Sym2, Vec3A};
 
@@ -135,9 +135,10 @@ pub fn rasterize_backwards_kernel<A: AtomicAddF32>(
 ) {
     let (tile_id, tile_origin_x, tile_origin_y) = tile_origin(u.tile_bw);
     // `pix_state` holds the per-pixel running color (and, when geo, normal
-    // + depth) remainder plus transmittance. 4 floats for rgb+T, 8 when
-    // geo adds the (Nx,Ny,Nz,depth) remainder.
-    let ps = comptime![if geo { 9u32 } else { 4u32 }];
+    // + depth + distortion-moment) remainders plus transmittance. 4 floats
+    // for rgb+T; geo adds (Nx,Ny,Nz,depth) and the mapped-depth moments
+    // (S1, S2) the distortion weight-gradient replay walks back.
+    let ps = comptime![if geo { 10u32 } else { 4u32 }];
     let mut pix_state = Shared::new_slice((TILE_SIZE * ps) as usize);
     load_pixel_state(output, u, tile_origin_x, tile_origin_y, &mut pix_state, geo);
     let (range_lo, range_hi) = load_range(tile_offsets, tile_id);
@@ -240,8 +241,8 @@ fn load_pixel_state(
     pix_state: &mut Shared<[f32]>,
     #[comptime] geo: bool,
 ) {
-    let ps = comptime![if geo { 9u32 } else { 4u32 }];
-    let nchan = comptime![if geo { 9u32 } else { 4u32 }];
+    let ps = comptime![if geo { 10u32 } else { 4u32 }];
+    let nchan = comptime![if geo { 11u32 } else { 4u32 }];
     let pixels_per_load = (TILE_SIZE + SPLAT_BATCH - 1u32) / SPLAT_BATCH;
     let mut p = 0u32;
     while p < pixels_per_load {
@@ -264,11 +265,16 @@ fn load_pixel_state(
                 pix_state[s + 2] = final_b - t_final * u.bg_b;
                 pix_state[s + 3] = 1.0f32;
                 if comptime![geo] {
+                    // Alpha-blended remainders (normal + depth) plus the
+                    // distortion's mapped-depth moment remainders (S1, S2;
+                    // channels 9/10). The normalized distortion itself
+                    // (chan 8) is recomputed from these, not replayed.
                     pix_state[s + 4] = output[base + 4];
                     pix_state[s + 5] = output[base + 5];
                     pix_state[s + 6] = output[base + 6];
                     pix_state[s + 7] = output[base + 7];
-                    pix_state[s + 8] = output[base + 8];
+                    pix_state[s + 8] = output[base + 9];
+                    pix_state[s + 9] = output[base + 10];
                 }
             } else {
                 pix_state[s] = 0.0f32;
@@ -281,6 +287,7 @@ fn load_pixel_state(
                     pix_state[s + 6] = 0.0f32;
                     pix_state[s + 7] = 0.0f32;
                     pix_state[s + 8] = 0.0f32;
+                    pix_state[s + 9] = 0.0f32;
                 }
             }
         }
@@ -326,8 +333,8 @@ fn accumulate_grads_for_batch(
     #[comptime] smooth_cutoff: bool,
     #[comptime] geo: bool,
 ) -> SplatGrad {
-    let ps = comptime![if geo { 9u32 } else { 4u32 }];
-    let nchan = comptime![if geo { 9u32 } else { 4u32 }];
+    let ps = comptime![if geo { 10u32 } else { 4u32 }];
+    let nchan = comptime![if geo { 11u32 } else { 4u32 }];
     let conic = Sym2 {
         c00: splat.conic_x,
         c01: splat.conic_y,
@@ -411,54 +418,90 @@ fn accumulate_grads_for_batch(
                         let new_remain_y = state_y - vis * clamped_g;
                         let new_remain_z = state_z - vis * clamped_b;
 
-                        // Geometry: blends with the same weights as rgb, no
-                        // bg and no clamp. The normal is constant per splat;
-                        // the depth varies per pixel as `t = grad·d + depth_c`
-                        // (`d = (dx, dy)` already computed above). Value grads
-                        // scatter unconditionally; `dot_geo` couples into the
-                        // shared v_alpha below.
+                        // Geometry: the blended normal + expected depth blend with
+                        // the same weights as rgb, so their value grads scatter and
+                        // `dot_geo` couples into v_alpha. The distortion (chan 8,
+                        // GOF: raw/(D0^2+eps) with raw = Sum_{i>j} w_i w_j
+                        // (m_i-m_j)^2 over NDC-mapped depths) contributes through
+                        // three routes: its depth dependence (m_k), its weight
+                        // dependence (w_k, via the same remainder pattern as the
+                        // blended channels), and the (1-T)^2 normalizer.
                         let mut dot_geo = 0.0f32;
                         if comptime![geo] {
                             let v_n_x = v_output[pix_base + 4];
                             let v_n_y = v_output[pix_base + 5];
                             let v_n_z = v_output[pix_base + 6];
                             let v_d = v_output[pix_base + 7];
-                            // zz = Sum(w*z^2): same weight as depth, but the value
-                            // z^2 itself depends on the plane params, so its value
-                            // grads carry an extra 2z chain factor.
-                            let v_zz = v_output[pix_base + 8];
+                            let v_dist = v_output[pix_base + 8];
                             let t_pix = grad_depth.x() * dx + grad_depth.y() * dy + grad_depth.z();
-                            let two_z = 2.0f32 * t_pix;
-                            // Depth-plane value grads: t is linear in the plane
-                            // params, so ∂t/∂grad_x = dx, ∂t/∂grad_y = dy, ∂t/∂depth_c = 1.
-                            // The zz channel adds ∂z²/∂param = 2z·∂z/∂param.
-                            grad.gx += vis * (v_d + v_zz * two_z) * dx;
-                            grad.gy += vis * (v_d + v_zz * two_z) * dy;
-                            grad.dc += vis * (v_d + v_zz * two_z);
+
+                            // Distortion pieces. D0 = Sum(w) = final_a, D1/D2 =
+                            // mapped-depth moments (channels 9/10), all full-pixel
+                            // sums; `vn` folds the detachedly-applied normalizer
+                            // into the upstream grad.
+                            let d0 = final_a;
+                            let d1 = output[pix_base + 9];
+                            let d2 = output[pix_base + 10];
+                            let norm = 1.0f32 / (d0 * d0 + 1e-7f32);
+                            let vn = v_dist * norm;
+                            let m = dist_ndc(t_pix);
+                            let dm_dt = dist_ndc_deriv(t_pix);
+
+                            // dL/dt = expected-depth value grad `vis*v_d` + the
+                            // distortion depth route `draw/dm_k = 2 w_k (m_k D0 -
+                            // D1)` + the moment channels' own value grads
+                            // (S1/S2 blend m and m^2), all chained through the
+                            // NDC mapping. t is linear in the plane params
+                            // (∂t/∂grad_x = dx, ∂t/∂grad_y = dy, ∂t/∂depth_c = 1).
+                            let v_s1 = v_output[pix_base + 9];
+                            let v_s2 = v_output[pix_base + 10];
+                            let v_m = 2.0f32 * vis * (m * d0 - d1) * vn
+                                + vis * (v_s1 + 2.0f32 * m * v_s2);
+                            let g_t = vis * v_d + v_m * dm_dt;
+                            grad.gx += g_t * dx;
+                            grad.gy += g_t * dy;
+                            grad.dc += g_t;
                             // `t` also depends on the splat's 2D position via
                             // `d = mean2d - pixel` (∂t/∂mean2d = (grad_x, grad_y)).
-                            grad.xy_x += vis * (v_d + v_zz * two_z) * grad_depth.x();
-                            grad.xy_y += vis * (v_d + v_zz * two_z) * grad_depth.y();
+                            grad.xy_x += g_t * grad_depth.x();
+                            grad.xy_y += g_t * grad_depth.y();
                             grad.n_x += vis * v_n_x;
                             grad.n_y += vis * v_n_y;
                             grad.n_z += vis * v_n_z;
 
+                            // v_alpha couplings, all in the shared remainder
+                            // pattern `(state_w*c_k - S_>=k) * ra`: the blended
+                            // channels (normal, depth), the distortion's weight
+                            // route with c_k = G_k = draw/dw_k = m^2 D0 + D2 -
+                            // 2 m D1 (whose remainder Sum_{i>=k} w_i G_i expands
+                            // over the moment remainders), and the normalizer
+                            // route with c_k = 1 and dL/dD0 = -2 D0 out norm.
                             let state_nx = pix_state[s + 4];
                             let state_ny = pix_state[s + 5];
                             let state_nz = pix_state[s + 6];
                             let state_d = pix_state[s + 7];
-                            let state_zz = pix_state[s + 8];
+                            let state_s1 = pix_state[s + 8];
+                            let state_s2 = pix_state[s + 9];
+                            let w_geq = state_w - (1.0f32 - final_a);
+                            let g_k = m * m * d0 + d2 - 2.0f32 * m * d1;
+                            let r_geq = d0 * state_s2 + d2 * w_geq - 2.0f32 * d1 * state_s1;
+                            let out_dist = output[pix_base + 8];
+                            let v_d0 = -2.0f32 * d0 * out_dist * vn;
                             dot_geo = ((state_w * normal.x() - state_nx) * v_n_x
                                 + (state_w * normal.y() - state_ny) * v_n_y
                                 + (state_w * normal.z() - state_nz) * v_n_z
                                 + (state_w * t_pix - state_d) * v_d
-                                + (state_w * t_pix * t_pix - state_zz) * v_zz)
+                                + (state_w * m - state_s1) * v_s1
+                                + (state_w * m * m - state_s2) * v_s2
+                                + (state_w * g_k - r_geq) * vn
+                                + (state_w - w_geq) * v_d0)
                                 * ra;
                             pix_state[s + 4] = state_nx - vis * normal.x();
                             pix_state[s + 5] = state_ny - vis * normal.y();
                             pix_state[s + 6] = state_nz - vis * normal.z();
                             pix_state[s + 7] = state_d - vis * t_pix;
-                            pix_state[s + 8] = state_zz - vis * t_pix * t_pix;
+                            pix_state[s + 8] = state_s1 - vis * m;
+                            pix_state[s + 9] = state_s2 - vis * m * m;
                         }
 
                         // Chain through the cutoff. Hard step (production):

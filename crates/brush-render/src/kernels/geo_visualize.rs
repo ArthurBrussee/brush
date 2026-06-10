@@ -17,6 +17,8 @@ fn jet(t: f32) -> (f32, f32, f32) {
     (r, g, b)
 }
 
+/// `mode`: 0 = depth (jet over `[dmin, dmax]`), 1 = normal hemisphere,
+/// 2 = alpha grayscale.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 pub fn colormap_pack_kernel(
@@ -27,7 +29,7 @@ pub fn colormap_pack_kernel(
     dmin: f32,
     dinv_range: f32,
     num_pixels: u32,
-    #[comptime] normal_mode: bool,
+    #[comptime] mode: u32,
 ) {
     let idx = ABSOLUTE_POS as u32;
     if idx >= num_pixels {
@@ -38,9 +40,14 @@ pub fn colormap_pack_kernel(
     let mut g = 0.0f32;
     let mut b = 0.0f32;
 
-    // Empty pixels (no surface) stay black.
-    if alpha[idx as usize] > 0.5f32 {
-        if comptime![normal_mode] {
+    if comptime![mode == 2] {
+        let a = clamp(alpha[idx as usize], 0.0f32, 1.0f32);
+        r = a;
+        g = a;
+        b = a;
+    } else if alpha[idx as usize] > 0.5f32 {
+        // Empty pixels (no surface) stay black.
+        if comptime![mode == 1] {
             let nb = (idx * 3u32) as usize;
             r = clamp(normal[nb] * 0.5f32 + 0.5f32, 0.0f32, 1.0f32);
             g = clamp(normal[nb + 1] * 0.5f32 + 0.5f32, 0.0f32, 1.0f32);

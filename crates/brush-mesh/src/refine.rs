@@ -8,7 +8,7 @@
 //! 1. [`bisect::compute_midpoints_kernel`] — gathers active left/right
 //!    endpoints and writes midpoints into a contiguous `[n_active, 3]`
 //!    tensor.
-//! 2. The 292 [`integrate_alpha_kernel`] launches (one per view) fold
+//! 2. The per-view tiled integrate launches fold
 //!    into a `min_alpha` running aggregator over the midpoint tensor.
 //! 3. [`bisect::bracket_update_kernel`] reads the aggregator back,
 //!    decides convergence per crossing, updates left/right in place,
@@ -112,12 +112,8 @@ impl RefineState {
         self.n_active
     }
 
-    pub fn n_crossings(&self) -> usize {
-        self.n_crossings
-    }
-
     /// Launches the gather-and-average kernel. Returns a tensor handle
-    /// suitable as the `points` input to `integrate_alpha`. Only the
+    /// suitable as the `points` input to the tiled integrate. Only the
     /// first `n_active` rows are meaningful.
     pub fn compute_midpoints_t(&self) -> FloatTensor<B> {
         if self.n_active == 0 {
@@ -208,7 +204,8 @@ impl RefineState {
     }
 }
 
-async fn read_back_f32(t: FloatTensor<B>) -> Vec<f32> {
+/// Drain a `f32` tensor from the GPU into host memory.
+pub(crate) async fn read_back_f32(t: FloatTensor<B>) -> Vec<f32> {
     use burn::backend::ops::{TransactionOps, TransactionPrimitive};
     let tp = TransactionPrimitive::<B>::new(vec![t], vec![], vec![], vec![]);
     let data = <B as TransactionOps<B>>::tr_execute(tp)

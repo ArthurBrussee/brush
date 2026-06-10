@@ -48,28 +48,26 @@ impl RasterPass {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum TextureMode {
-    Packed,
-    #[default]
-    Float,
-}
-
 /// Bundled per-render options for [`crate::SplatOps::render`]. Start from a
 /// preset ([`Self::color`] / [`Self::float`] / [`Self::geometry`]) and tweak
 /// with the `with_*` builders.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderOptions {
-    /// Mip vs default splat kernel (a property of the trained splats).
+    /// Mip vs default splat kernel. The `Splats`-taking render wrappers
+    /// derive this from the splats themselves (`render_mip`) and ignore it.
     pub render_mode: SplatRenderMode,
     /// Solid background colour composited behind the splats.
     pub background: Vec3,
-    /// Forward-only (u8 inference) vs forward+backward (f32 training) vs the
-    /// test-only smooth-cutoff backward pass.
+    /// Forward-only (packed u8 image) vs forward+backward (f32 image,
+    /// training/eval) vs the test-only smooth-cutoff backward pass.
     pub pass: RasterPass,
     /// Also produce the PGSR geometry buffers (normal + plane distance);
-    /// only honoured on a backward (f32) pass.
+    /// forces the f32 path.
     pub geometry: bool,
+    /// Uniform multiplier on every splat's scale (the viewer's splat-size
+    /// slider). Applied as a tensor op on the log scales, so it stays
+    /// differentiable on backward passes.
+    pub splat_scale: Option<f32>,
 }
 
 impl RenderOptions {
@@ -80,6 +78,7 @@ impl RenderOptions {
             background: Vec3::ZERO,
             pass: RasterPass::Forward,
             geometry: false,
+            splat_scale: None,
         }
     }
     /// f32 colour with backward bookkeeping (training / eval).
@@ -107,6 +106,10 @@ impl RenderOptions {
     }
     pub fn with_pass(mut self, pass: RasterPass) -> Self {
         self.pass = pass;
+        self
+    }
+    pub fn with_splat_scale(mut self, splat_scale: Option<f32>) -> Self {
+        self.splat_scale = splat_scale;
         self
     }
 }
@@ -418,21 +421,17 @@ impl Splats {
     }
 }
 
-/// Render splats on a non-differentiable device.
-///
-/// When `geo` is set the renderer also emits the PGSR geometry channels, so
-/// `out_img` is `[H, W, 8]` (`rgba` then view-space blended `Nx,Ny,Nz,D`)
-/// instead of `[H, W, 4]`. Geometry needs the f32/backward path, so it
-/// forces `TextureMode::Float` semantics regardless of `texture_mode`.
+/// Render splats on a non-differentiable device. `options.pass` picks the
+/// image format (`Forward` = packed u8, `Backward` = f32); geometry implies
+/// f32. `options.render_mode` is ignored (derived from the splats).
 pub async fn render_splats(
     splats: Splats,
     camera: &Camera,
     img_size: glam::UVec2,
-    background: Vec3,
-    splat_scale: Option<f32>,
-    texture_mode: TextureMode,
-    geo: bool,
+    options: RenderOptions,
 ) -> (Tensor<3>, RenderAux) {
+    let splat_scale = options.splat_scale;
+    let geo = options.geometry;
     splats.clone().validate_values().await;
 
     let sh_coeffs = splats.sh_coeffs.into_value();
@@ -461,7 +460,11 @@ pub async fn render_splats(
         SplatRenderMode::Default
     };
 
-    let use_float = geo || matches!(texture_mode, TextureMode::Float);
+    // Geometry implies the f32 image: the geo channels only exist on the
+    // Backward path, whose remainder-walk backward needs unquantized rgba in
+    // the same buffer. A packed-u8 rgba + separate f32 geo image would need a
+    // second output tensor and kernel variant for a viewer-only path.
+    let use_float = geo || options.pass.bwd_info();
 
     let transforms_p = unwrap_wgpu_float(transforms);
     let sh_coeffs_p = unwrap_wgpu_float(sh_coeffs);
@@ -483,9 +486,8 @@ pub async fn render_splats(
         raw_opacities_p,
         RenderOptions {
             render_mode,
-            background,
             pass,
-            geometry: geo,
+            ..options
         },
     )
     .await;

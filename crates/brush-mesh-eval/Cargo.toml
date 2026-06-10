@@ -1,0 +1,40 @@
+[package]
+name = "brush-mesh-eval"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+
+# Standalone mesh-eval tool: renders an extracted mesh at dataset viewpoints
+# and reports PSNR vs the splat render and the GT images. Kept out of the
+# normal CLI; mesh extraction itself lives in the trainer
+# (--export-mesh-every).
+[[bin]]
+name = "brush-mesh-eval"
+path = "src/main.rs"
+
+[dependencies]
+brush-dataset.path = "../brush-dataset"
+brush-loss.path = "../brush-loss"
+brush-mesh.path = "../brush-mesh"
+brush-process.path = "../brush-process"
+brush-render.path = "../brush-render"
+brush-serde.path = "../brush-serde"
+brush-vfs.path = "../brush-vfs"
+
+burn.workspace = true
+glam.workspace = true
+image.workspace = true
+wgpu.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
+pollster = "0.4"
+
+anyhow.workspace = true
+clap.workspace = true
+log.workspace = true
+env_logger.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+tokio-stream.workspace = true
+
+[lints]
+workspace = true

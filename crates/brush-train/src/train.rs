@@ -10,8 +10,8 @@ use crate::{
     stats::RefineRecord,
 };
 use brush_dataset::scene::SceneBatch;
-use brush_loss::{ImageLossConfig, image_loss, unpack_gt_rgb};
-use brush_render::gaussian_splats::Splats;
+use brush_loss::{ImageLossConfig, image_loss};
+use brush_render::gaussian_splats::{RenderOptions, Splats};
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
 use burn::{
@@ -188,25 +188,26 @@ impl SplatTrainer {
             // The splats already carry their 3D-filter floor (set at refine);
             // the render path folds it in. Optimizer/refine work on raw params.
             let render_input = splats.clone();
-            // `geo_from_iter` is the master switch for all geometry losses
-            // (None = off). The geometry render pass is needed by depth-normal,
-            // depth-distortion and the metric depth loss (the latter only when
-            // the view has LiDAR).
-            let geo_on = self
-                .config
-                .geo_from_iter
-                .is_some_and(|it| self.step_count >= it);
+            // Metric depth is ground-truth supervision: on from iteration 0
+            // when the batch carries LiDAR; the self-consistency regularizers
+            // are gated by `geo_from_iter`.
+            let geo_on = self.config.geo_regs_on(self.step_count);
             let want_single = geo_on && self.config.depth_normal_weight > 0.0;
-            let want_depth = geo_on && self.config.depth_loss_weight > 0.0 && batch.depth.is_some();
+            let want_depth = self.config.depth_loss_weight > 0.0 && batch.depth.is_some();
             let want_distort = geo_on && self.config.distortion_weight > 0.0;
             let want_geo = want_single || want_depth || want_distort;
+            let render_opts = if want_geo {
+                RenderOptions::geometry()
+            } else {
+                RenderOptions::float()
+            }
+            .with_background(background);
             let diff_out = render_splats(
                 render_input,
                 &camera,
                 img_size,
-                background,
+                render_opts,
                 self.config.screen_area_penalty,
-                want_geo,
             )
             .instrument(trace_span!("Forward"))
             .await;
@@ -288,25 +289,21 @@ impl SplatTrainer {
             // Coverage alpha shared by the geometry losses below.
             let geo_alpha = pred_image.clone().slice(s![.., .., 3..4]);
 
-            // Single-view depth-normal consistency on the RaDe-GS geometry.
+            // Single-view depth-normal consistency (GOF cosine) on the RaDe-GS geometry.
             if let Some(geo) = diff_out.geo.clone().filter(|_| want_single) {
-                // Edge-aware weight from the (constant) GT image, à la PGSR.
-                let gt_rgb: Tensor<3> =
-                    Tensor::from_inner(unpack_gt_rgb(gt_packed.clone(), composite_bg));
                 let dn = brush_render::geo::depth_normal_consistency(
                     geo,
                     geo_alpha.clone(),
-                    gt_rgb,
                     &camera,
                     img_size,
                 );
                 loss = loss + dn.mean() * self.config.depth_normal_weight;
             }
 
-            // Depth-distortion (2DGS L_d, squared form): concentrate each ray's
-            // weight onto a single depth via the rendered depth moments.
+            // Depth-distortion (Mip-NeRF360 / 2DGS L1 form): concentrate each ray's
+            // weight onto a single depth (accumulated in the rasterizer).
             if let Some(geo) = diff_out.geo.clone().filter(|_| want_distort) {
-                let dist = brush_render::geo::depth_distortion(geo, geo_alpha.clone());
+                let dist = brush_render::geo::depth_distortion(geo);
                 loss = loss + dist.mean() * self.config.distortion_weight;
             }
 

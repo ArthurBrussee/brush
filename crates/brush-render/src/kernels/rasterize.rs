@@ -17,7 +17,7 @@ use burn_cubecl::cubecl::prelude::*;
 
 use super::helpers::{
     ALPHA_CUTOFF_MID, PROJECTED_GEO_LANES, PROJECTED_LANES, PROJECTED_LANES_USIZE, TILE_SIZE,
-    TILE_WIDTH, alpha_cutoff_weight, calc_sigma, map_1d_to_2d,
+    TILE_WIDTH, alpha_cutoff_weight, calc_sigma, dist_ndc, map_1d_to_2d,
 };
 use super::types::{RasterizeUniforms, Sym2};
 
@@ -83,8 +83,16 @@ pub fn rasterize_kernel(
     let mut pix_ny = 0.0f32;
     let mut pix_nz = 0.0f32;
     let mut pix_depth = 0.0f32;
-    // Second depth moment Sum(w*z^2), for the depth-distortion (variance) loss.
-    let mut pix_zz = 0.0f32;
+    // Depth-distortion (GOF): squared pairwise error `Sum_{i>j} w_i w_j
+    // (m_i - m_j)^2` over NDC-mapped depths `m = far(t-near)/((far-near)t)`,
+    // accumulated front-to-back via the prefix moments `S1 = Sum(w*m)`,
+    // `S2 = Sum(w*m^2)` (error_i = m_i^2*A_<i + S2_<i - 2*m_i*S1_<i), and
+    // normalized by the final accumulated alpha squared at write-out.
+    // Matches GOF's renderCUDA; the squared form is sign-correct regardless
+    // of how per-pixel ray-plane depths order against the blend order.
+    let mut pix_dist = 0.0f32;
+    let mut pix_dist_s1 = 0.0f32;
+    let mut pix_dist_s2 = 0.0f32;
     let mut done = !inside;
     let mut last_useful_isect = range_lo;
 
@@ -166,8 +174,14 @@ pub fn rasterize_kernel(
                         let t_pix = projected_geo[geo_base] * off_x
                             + projected_geo[geo_base + 1] * off_y
                             + projected_geo[geo_base + 2];
+                        // Distortion increment: prefix weight `1 - t_acc` and
+                        // prefix moments, all *before* this splat updates them.
+                        let m = dist_ndc(t_pix);
+                        let w_prev = 1.0f32 - t_acc;
+                        pix_dist += vis * (m * m * w_prev + pix_dist_s2 - 2.0f32 * m * pix_dist_s1);
+                        pix_dist_s1 += m * vis;
+                        pix_dist_s2 += m * m * vis;
                         pix_depth += t_pix * vis;
-                        pix_zz += t_pix * t_pix * vis;
                         pix_nx += projected_geo[geo_base + 3] * vis;
                         pix_ny += projected_geo[geo_base + 4] * vis;
                         pix_nz += projected_geo[geo_base + 5] * vis;
@@ -190,7 +204,7 @@ pub fn rasterize_kernel(
         let final_b = pix_b + t_acc * u.bg_b;
         let final_a = 1.0f32 - t_acc;
         if comptime![bwd_info] {
-            let nchan = comptime![if geo { 9u32 } else { 4u32 }];
+            let nchan = comptime![if geo { 11u32 } else { 4u32 }];
             let base = (pix_id * nchan) as usize;
             out_img_f32[base] = final_r;
             out_img_f32[base + 1] = final_g;
@@ -202,7 +216,12 @@ pub fn rasterize_kernel(
                 out_img_f32[base + 5] = pix_ny;
                 out_img_f32[base + 6] = pix_nz;
                 out_img_f32[base + 7] = pix_depth;
-                out_img_f32[base + 8] = pix_zz;
+                // Normalized distortion (GOF: raw / (1-T)^2), then the raw
+                // mapped-depth moments S1/S2 the backward needs to
+                // reconstruct per-splat pairwise sums.
+                out_img_f32[base + 8] = pix_dist / (final_a * final_a + 1e-7f32);
+                out_img_f32[base + 9] = pix_dist_s1;
+                out_img_f32[base + 10] = pix_dist_s2;
             }
         } else {
             let r = clamp(final_r * 255.0f32, 0.0f32, 255.0f32) as u32;

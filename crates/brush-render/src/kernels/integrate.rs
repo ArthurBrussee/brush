@@ -1,40 +1,16 @@
-//! Tile-cooperative variant of [`integrate_alpha`], modeled on
-//! [`rasterize`].
+//! Tile-cooperative opacity-along-ray integrator (the GOF "integrate" pass
+//! for mesh extraction): given world-space query points and a view's
+//! tile-sorted gaussian list from the forward render, evaluates
+//! `alpha(p) = 1 - prod_g (1 - alpha_g(p))` with each gaussian evaluated at
+//! `t = min(t*, t_point)` along the ray (`t*` = its peak depth, from the
+//! view2gaussian formulation).
 //!
-//! Replaces the "one thread per vertex, each independently walks its
-//! tile's gaussian list" pattern with the rasterize-style:
-//!
-//! - **One workgroup per tile** (dispatch grid = `tile_bw × tile_bh`).
-//! - Workgroup threads correspond to the vertices that project into
-//!   that tile. The vertex set is computed per view by
-//!   [`project_vertices_kernel`] + a radix sort by `tile_id`, with
-//!   `vertex_tile_offsets` giving the slice of `sorted_indices` that
-//!   belongs to each tile.
-//! - Threads cooperatively load gaussian batches into a shared-memory
-//!   `local_batch`. All threads in the workgroup then iterate the batch
-//!   in lockstep, evaluating the 3D ray-gaussian integrate at their own
-//!   vertex's `(ray_dir, depth)`.
-//! - Each thread accumulates its own `t_acc`. Workgroup completion
-//!   tracks via a shared atomic `num_done` counter — once every thread
-//!   has either run out of contributing gaussians or hit the early-out
-//!   cutoff, the whole workgroup exits the batch loop.
-//!
-//! This is the same pattern GOF's `IntegrateGaussianAlphaToPoints` uses
-//! in CUDA, and the same one brush's existing renderer uses.
-//!
-//! ## Per-view setup
-//!
-//! Before launching this kernel, the host must:
-//! 1. Run [`project_vertices_kernel`] to fill `tile_ids`, `depths`,
-//!    `ray_dirs`, `pix_xy` from the input `points`.
-//! 2. Run a histogram + prefix sum on `tile_ids` → `vertex_tile_offsets`.
-//! 3. Run `radix_argsort(tile_ids, identity_indices)` → `sorted_indices`.
-//!
-//! ## Vertex sentinel
-//!
-//! Off-screen / behind-near-plane vertices get `tile_ids[i] = u.tile_bw *
-//! u.tile_bh` — outside the valid range — so they sort to the end and
-//! land in a phantom tile that the dispatch grid doesn't cover.
+//! Structure mirrors `rasterize`: one workgroup per tile, gaussians staged
+//! through shared memory, every thread integrating its own vertex. Per view
+//! the host first projects vertices to tiles ([`project_vertices_kernel`]),
+//! histograms + prefix-sums tile ids, and scatters vertex ids into
+//! per-tile slices. Off-screen / behind-near-plane vertices get the
+//! sentinel tile `tile_bw * tile_bh`, which the dispatch never covers.
 
 use super::helpers::{TILE_WIDTH, sigmoid, world_to_cam};
 use super::types::{ProjectUniforms, Quat, Vec3A};
@@ -59,21 +35,10 @@ const ALPHA_CLAMP: f32 = 0.999;
 const T_EARLY_OUT: f32 = 1.0e-4;
 const COLOR_BLEND_POWER: f32 = 8.0;
 
-/// Per-view projection of vertex query points.
-///
-/// For each input vertex:
-/// - `tile_id` = the tile (in `[0, tile_bw*tile_bh)`) the vertex
-///   projects into, or `tile_bw * tile_bh` (sentinel = "off-screen /
-///   behind near plane") otherwise.
-/// - `depth` = the camera-space Z of the vertex.
-/// - `ray_dir_xy[2*i + 0/1]` = the GOF-convention ray direction
-///   `(p_cam.xy / p_cam.z)` (the `z` component is implicitly 1).
-/// - `pix_x`, `pix_y` = the projected pixel coordinates (for RGB
-///   sampling at colour-eval time).
-///
-/// Off-screen vertices' non-tile_id outputs are left at whatever
-/// garbage was in the buffer — the tiled integrate kernel never reads
-/// them because the sort drops them past the last real tile.
+/// Per-view vertex projection: writes each vertex's tile id (or the
+/// off-screen sentinel), camera-space depth, GOF-convention ray dir
+/// (`p_cam.xy / p_cam.z`), and projected pixel coords. Sentinel vertices'
+/// other outputs stay garbage; the integrate kernel never reads them.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 pub fn project_vertices_kernel(
@@ -195,7 +160,7 @@ pub fn scatter_vertices_kernel(
 /// integrate against their own vertex.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-pub fn integrate_alpha_tiled_kernel(
+pub fn integrate_kernel(
     // Splat data
     transforms: &Tensor<f32>,
     raw_opacities: &Tensor<f32>,
@@ -277,7 +242,7 @@ pub fn integrate_alpha_tiled_kernel(
             let global_gid = global_from_compact_gid[compact_gid as usize];
             let src_base = (global_gid * 10u32) as usize;
             let dst_base = (local_idx * LOCAL_BATCH_LANES) as usize;
-            // Unrolled to keep the 10-float copy out of a loop body the
+            // Unrolled to keep the 11-lane copy out of a loop body the
             // cube macro would have to specialise.
             local_batch[dst_base] = transforms[src_base];
             local_batch[dst_base + 1] = transforms[src_base + 1];

@@ -17,10 +17,6 @@ use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::trace_span;
 
-pub mod mesh_eval;
-pub mod mesh_extract;
-pub mod mesh_render;
-
 #[derive(Parser, Clone)]
 #[command(
     author,
@@ -41,79 +37,12 @@ pub struct Cli {
     )]
     pub with_viewer: bool,
 
-    /// Extract a triangle mesh from a trained splat (GOF-style mesh
-    /// extraction). Loads the dataset's cameras and the splat PLY, then
-    /// writes the mesh to `--out-mesh`.
-    #[arg(long, help_heading = "Mesh extraction", conflicts_with = "with_viewer")]
-    pub extract_mesh: bool,
-
-    /// Output path for the extracted mesh (binary PLY).
-    #[arg(long, help_heading = "Mesh extraction", default_value = "mesh.ply")]
-    pub out_mesh: std::path::PathBuf,
-
-    /// Far plane for frustum culling seed points.
-    #[arg(long, help_heading = "Mesh extraction", default_value = "1e6")]
-    pub mesh_far: f32,
-
-    /// Subsample the input splat PLY by this stride before extracting.
-    /// Each Gaussian produces 9 seed points; with ~1M splats and stride 1
-    /// the CPU Delaunay handles 9M points, which is workable but slow —
-    /// use a higher stride for fast iteration.
-    #[arg(long, help_heading = "Mesh extraction")]
-    pub splat_subsample: Option<u32>,
-
-    /// Iso-value for the level set. Carves the surface where transmittance
-    /// has dropped to this fraction. Higher values (0.9+) fill more
-    /// background on diffuse-trained splats but fatten foreground geometry
-    /// into a speckled halo, so PSNR can be misleading.
-    #[arg(long, help_heading = "Mesh extraction", default_value = "0.4")]
-    pub iso_value: f32,
-
-    /// After extracting the mesh, render it at `--eval-views` camera
-    /// viewpoints spread evenly across the capture and report mean PSNR
-    /// vs the ground-truth images. Renders land in `{out-mesh dir}/
-    /// eval_renders/` as a labeled `GT | splat | mesh | depth` grid
-    /// (default 0 = skip eval).
-    #[arg(long, help_heading = "Mesh extraction", default_value = "0")]
-    pub eval_views: usize,
-
-    /// Skip extraction and load the mesh from `--out-mesh` instead, then
-    /// only run the eval render. Lets you re-render the eval grid (more
-    /// views, higher res) without paying for the Delaunay again.
-    #[arg(long, help_heading = "Mesh extraction")]
-    pub reuse_mesh: bool,
-
-    /// Max image resolution for the eval render panels (GT + splat +
-    /// mesh + depth). Higher = sharper, larger grid. Default 1920.
-    #[arg(long, help_heading = "Mesh extraction", default_value = "1920")]
-    pub eval_resolution: u32,
-
-    /// Pick the most pulled-back eval views (cameras farthest from the
-    /// mesh centroid), spread across the capture, instead of an even
-    /// spread over all frames. Favors wide context shots over close-ups.
-    #[arg(long, help_heading = "Mesh extraction")]
-    pub eval_zoomed_out: bool,
-
-    /// Target fraction of the scene's all-views directional coverage
-    /// to fill before stopping view subsetting, in `[0, 1]`. Default
-    /// `0.8` — heavily-redundant captures drop most views, near-
-    /// optimal ones drop only a few. See `brush_mesh::view_select`.
-    /// Set to `1.0` to disable subsetting entirely.
-    #[arg(long, help_heading = "Mesh extraction", default_value = "0.8")]
-    pub view_coverage: f32,
-
     #[clap(flatten)]
     pub train_stream: TrainStreamConfig,
 }
 
 impl Cli {
     pub fn validate(self) -> Result<Self, Error> {
-        if (self.extract_mesh || self.reuse_mesh) && self.source.is_none() {
-            return Err(Error::raw(
-                ErrorKind::MissingRequiredArgument,
-                "--extract-mesh/--reuse-mesh require a --source pointing at a dataset directory containing a PLY",
-            ));
-        }
         if !self.with_viewer && self.source.is_none() {
             return Err(Error::raw(
                 ErrorKind::MissingRequiredArgument,

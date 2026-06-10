@@ -14,6 +14,30 @@ pub use brush_cube::{Sym3, calc_sigma, is_finite_f32, sigmoid};
 pub const TILE_WIDTH: u32 = 16;
 pub const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
 
+/// NDC depth-mapping planes for the distortion loss, `m = far(t - near) /
+/// ((far - near) t)`. Matches GOF's `NEAR_PLANE` / `FAR_PLANE` so the mapped
+/// depth lands in `[0, 1]` and the distortion weight transfers across scenes.
+pub const DIST_NEAR: f32 = 0.2;
+pub const DIST_FAR: f32 = 100.0;
+
+/// NDC-map a depth for the distortion loss (clamped to `t >= DIST_NEAR`).
+#[cube]
+pub fn dist_ndc(t: f32) -> f32 {
+    let t_m = max(t, DIST_NEAR);
+    (DIST_FAR * t_m - DIST_FAR * DIST_NEAR) / ((DIST_FAR - DIST_NEAR) * t_m)
+}
+
+/// `d(dist_ndc)/dt`; zero in the clamped region.
+#[cube]
+pub fn dist_ndc_deriv(t: f32) -> f32 {
+    let t_m = max(t, DIST_NEAR);
+    select(
+        t > DIST_NEAR,
+        DIST_FAR * DIST_NEAR / ((DIST_FAR - DIST_NEAR) * t_m * t_m),
+        0.0f32,
+    )
+}
+
 /// Smoothstep ramp centered at 1/255: zero below `MID - BAND/2`, one
 /// above `MID + BAND/2`. C^1 in alpha. Selected at kernel-compile-time
 /// via `RasterPass::BackwardSmoothCutoff` — the rasterizer's

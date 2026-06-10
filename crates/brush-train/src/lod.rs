@@ -6,7 +6,6 @@ use burn::{
     prelude::Module,
     tensor::{Device, Int, Tensor, TensorData, s},
 };
-use glam::Vec3;
 
 /// Decimate splats to `target_count` using pre-computed per-Gaussian scores.
 /// Higher scores are considered more important and kept.
@@ -99,14 +98,13 @@ pub async fn compute_pup_scores(
         splats.transforms = splats.transforms.map(|t: Tensor<2>| t.require_grad());
 
         // No screen-area penalty for LOD sensitivity scoring — keep the
-        // gradient on pure image loss. No geometry render needed here either.
+        // gradient on pure image loss.
         let diff_out = render_splats(
             splats.clone(),
             &view.camera,
             img_size,
-            Vec3::ZERO,
+            brush_render::gaussian_splats::RenderOptions::float(),
             0.0,
-            false,
         )
         .await;
         let pred_rgb = diff_out.img.slice(s![.., .., 0..3]);

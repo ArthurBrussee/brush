@@ -560,6 +560,12 @@ impl ScenePanel {
             {
                 channel = ViewChannel::Normal;
             }
+            if ui
+                .selectable_label(matches!(channel, ViewChannel::Alpha), "Alpha")
+                .clicked()
+            {
+                channel = ViewChannel::Alpha;
+            }
         });
 
         // Absolute depth colormap range, carried in the Depth variant.
