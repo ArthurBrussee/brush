@@ -32,12 +32,17 @@ pub fn compute_midpoints_kernel(
 }
 
 /// Folds the per-step integrate result back into the bracket state:
-/// shrinks the endpoint whose sdf sign matches the midpoint's.
+/// shrinks the endpoint whose sdf sign matches the midpoint's. Both
+/// endpoint sdfs are tracked so the finish can place each crossing by a
+/// regula-falsi lerp (visibly recovers small cracks where plain midpoints
+/// land inconsistently on edges sharing endpoints).
 #[cube(launch)]
+#[allow(clippy::too_many_arguments)]
 pub fn bracket_update_kernel(
     left_pos: &mut Tensor<f32>,
     right_pos: &mut Tensor<f32>,
     left_sdf: &mut Tensor<f32>,
+    right_sdf: &mut Tensor<f32>,
     mid_pos: &Tensor<f32>,
     min_alpha: &Tensor<f32>,
     n: u32,
@@ -71,5 +76,6 @@ pub fn bracket_update_kernel(
         right_pos[i3] = mid_pos[i3];
         right_pos[i3 + 1] = mid_pos[i3 + 1];
         right_pos[i3 + 2] = mid_pos[i3 + 2];
+        right_sdf[iu] = sdf;
     }
 }
