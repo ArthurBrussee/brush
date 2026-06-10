@@ -36,6 +36,11 @@ pub const SIGMA_SCALE: f32 = 3.0;
 pub struct TetraPointsConfig {
     pub near: f32,
     pub far: f32,
+    /// Shrink each Gaussian's seed box to its actual support radius
+    /// `sigma * sqrt(2 ln(255 * opacity))` (capped at 3 sigma) instead of a
+    /// fixed 3 sigma; Gaussians below the 1/255 cutoff emit no seeds at all.
+    /// Translucent splats stop seeding crossings in space they barely occupy.
+    pub opacity_radius: bool,
     /// Frustum margin as a fraction of the image size. GOF uses 0 (strict
     /// image bounds) for `get_frustum_mask`, which trims any seed point
     /// whose projection falls outside the rendered image. A small positive
@@ -52,6 +57,7 @@ impl Default for TetraPointsConfig {
             near: 0.2,
             far: 1e6,
             frustum_margin: 0.0,
+            opacity_radius: true,
         }
     }
 }
@@ -74,6 +80,7 @@ pub fn build_tetra_points(
     means: &[f32],
     quats_wxyz: &[f32],
     log_scales: &[f32],
+    opacities: &[f32],
     cameras: &[Camera],
     image_sizes: &[glam::UVec2],
     cfg: &TetraPointsConfig,
@@ -86,6 +93,7 @@ pub fn build_tetra_points(
     let n = means.len() / 3;
     assert_eq!(quats_wxyz.len(), n * 4, "flat [N*4] wxyz quats");
     assert_eq!(log_scales.len(), n * 3, "flat [N*3] log scales");
+    assert_eq!(opacities.len(), n, "one opacity per gaussian");
 
     // 9 points per Gaussian, parallel over Gaussians. The frustum cull is
     // folded in so we don't materialise a 9× temporary.
@@ -105,27 +113,36 @@ pub fn build_tetra_points(
                 log_scales[3 * i + 1].exp(),
                 log_scales[3 * i + 2].exp(),
             );
-            // Stored per-point scale: `3 · max_axis_effective`. This is
-            // the 3σ half-extent of the Gaussian along its widest axis,
-            // and matches GOF's `vertices_scale` storage so the filter
-            // rule `edge_len > scale_a + scale_b` (≈6σ across two
-            // Gaussians) lines up.
-            let s_max = scale.max_element() * SIGMA_SCALE;
+            // Seed radius in sigmas: GOF's fixed 3, or the opacity-aware
+            // support radius where contribution drops below the 1/255
+            // render cutoff.
+            let r_sigma = if cfg.opacity_radius {
+                let o = opacities[i].max(0.0);
+                if o * 255.0 <= 1.0 {
+                    // Never contributes above the cutoff: no seeds.
+                    return (Vec::new(), Vec::new());
+                }
+                (2.0 * (o * 255.0).ln()).sqrt().min(SIGMA_SCALE)
+            } else {
+                SIGMA_SCALE
+            };
+            // Stored per-point scale: `r · max_axis_effective`, the half-
+            // extent along the widest axis; matches GOF's `vertices_scale`
+            // so the filter rule `edge_len > scale_a + scale_b` lines up.
+            let s_max = scale.max_element() * r_sigma;
 
-            let mut pts: Vec<Vec3> = Vec::with_capacity(9);
-            let mut scs: Vec<f32> = Vec::with_capacity(9);
-            for c in &BOX_CORNERS {
-                let local = Vec3::new(c[0], c[1], c[2]) * scale * SIGMA_SCALE;
-                let world = mean + q * local;
+            let mut pts: Vec<Vec3> = Vec::with_capacity(15);
+            let mut scs: Vec<f32> = Vec::with_capacity(15);
+            let mut push = |world: Vec3| {
                 if point_in_any_frustum(world, cameras, image_sizes, cfg) {
                     pts.push(world);
                     scs.push(s_max);
                 }
+            };
+            for c in &BOX_CORNERS {
+                push(mean + q * (Vec3::new(c[0], c[1], c[2]) * scale * r_sigma));
             }
-            if point_in_any_frustum(mean, cameras, image_sizes, cfg) {
-                pts.push(mean);
-                scs.push(s_max);
-            }
+            push(mean);
             (pts, scs)
         })
         .collect();
@@ -192,6 +209,7 @@ mod tests {
             &means,
             &quats,
             &log_scales,
+            &[0.9],
             &[cam],
             &[sz],
             &TetraPointsConfig::default(),
@@ -214,7 +232,7 @@ mod tests {
             far: 100.0,
             ..Default::default()
         };
-        let out = build_tetra_points(&means, &quats, &log_scales, &[cam], &[sz], &cfg);
+        let out = build_tetra_points(&means, &quats, &log_scales, &[0.9], &[cam], &[sz], &cfg);
         assert!(out.points.is_empty());
     }
 }

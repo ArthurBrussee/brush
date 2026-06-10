@@ -29,7 +29,8 @@ pub struct ExtractConfig {
     /// brush-trained splats).
     pub iso_value: f32,
     /// Taubin smoothing iterations (λ|μ pairs) applied to the final mesh.
-    /// Non-shrinking low-pass on the marching-tets noise; 0 disables.
+    /// Trades measured fidelity for visual smoothness (every iteration costs
+    /// PSNR), so it defaults off; 0 disables.
     pub smooth_iters: u32,
     /// Drop connected components with fewer faces than this (speckle blobs
     /// from isolated iso-crossings). 0/1 disables.
@@ -41,7 +42,7 @@ impl Default for ExtractConfig {
         Self {
             tetra_points: TetraPointsConfig::default(),
             iso_value: 0.4,
-            smooth_iters: 10,
+            smooth_iters: 0,
             min_component_faces: 100,
         }
     }
@@ -91,6 +92,15 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         .expect("read scales")
         .into_vec::<f32>()
         .expect("scales f32");
+    let opacities: Vec<f32> = splats
+        .raw_opacities
+        .val()
+        .into_data_async()
+        .await
+        .expect("read opacities")
+        .into_vec::<f32>()
+        .map(|v: Vec<f32>| v.iter().map(|&r| 1.0 / (1.0 + (-r).exp())).collect())
+        .expect("opacities f32");
 
     sync_client.sync().await.expect("sync");
     phases.push(("load_tensors", phase_start.elapsed()));
@@ -104,6 +114,7 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         &means,
         &quats,
         &log_scales,
+        &opacities,
         &cams,
         &img_sizes,
         &cfg.tetra_points,
@@ -161,26 +172,17 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
     phases.push(("marching_tets", phase_start.elapsed()));
     phase_start = std::time::Instant::now();
 
-    // Binary-search refinement with GPU-resident bracket state; the only
-    // per-step CPU traffic is a 4-byte readback of the active count.
+    // Binary-search refinement with GPU-resident bracket state: N_STEPS
+    // fixed steps over all crossings, no CPU traffic until the readback.
     let device = resolve_to_cube_float(splats.transforms.val()).device;
-    let mut state = RefineState::new(&mt.crossings, &pts.points, &sdf, device);
-    for step in 0..N_STEPS {
-        if state.n_active() == 0 {
-            break;
-        }
+    let mut state = RefineState::new(&mt.crossings, &pts.points, &sdf, &device);
+    for _ in 0..N_STEPS {
         let mid_pos_t = state.compute_midpoints_t();
         let (min_alpha_t, _, _) =
-            integrate_alpha(&splats, &mid_pos_t, state.n_active(), &view_cache, false);
-        state.update_bracket_t(min_alpha_t, cfg.iso_value).await;
-        sync_client.sync().await.expect("sync");
-        log::info!(
-            "Binary search step {}/{} done ({} crossings still active)",
-            step + 1,
-            N_STEPS,
-            state.n_active(),
-        );
+            integrate_alpha(&splats, &mid_pos_t, state.n_crossings(), &view_cache, false);
+        state.update_bracket_t(min_alpha_t, cfg.iso_value);
     }
+    sync_client.sync().await.expect("sync");
     phases.push(("binary_search", phase_start.elapsed()));
     phase_start = std::time::Instant::now();
     let refined = state.finish().await;
