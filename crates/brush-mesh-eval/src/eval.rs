@@ -53,7 +53,7 @@ pub async fn eval_psnr(
     // single labeled grid after the loop.
     let mut rows: Vec<[RgbImage; 4]> = Vec::with_capacity(n);
 
-    let selection = select_views(mesh, train_views, n);
+    let selection = select_views(train_views, n);
     for &i in &selection {
         let view = &train_views[i];
         let (w, h) = view
@@ -142,16 +142,20 @@ pub async fn eval_psnr(
 }
 
 /// Choose `n` view indices for the eval grid: rank cameras by distance to
-/// the mesh centroid, keep the farthest half, then spread those by frame
-/// order so the picks are both pulled-back and varied.
-fn select_views(mesh: &brush_mesh::Mesh, views: &[SceneView], n: usize) -> Vec<usize> {
+/// the camera-cloud centroid (approximates the scene center for inward
+/// captures), keep the farthest half, then spread those by frame order so
+/// the picks are both pulled-back and varied. Deterministic in the cameras
+/// only, so scores stay comparable across different meshes of one scene.
+fn select_views(views: &[SceneView], n: usize) -> Vec<usize> {
     let len = views.len();
     let n = n.min(len);
     if n == 0 {
         return Vec::new();
     }
-    let centroid = mesh.vertices.iter().fold(Vec3::ZERO, |acc, &v| acc + v)
-        / mesh.vertices.len().max(1) as f32;
+    let centroid = views
+        .iter()
+        .fold(Vec3::ZERO, |acc, v| acc + v.camera.position)
+        / views.len().max(1) as f32;
     let mut by_dist: Vec<usize> = (0..len).collect();
     by_dist.sort_by(|&a, &b| {
         let da = (views[a].camera.position - centroid).length();

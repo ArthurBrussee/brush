@@ -20,9 +20,9 @@ struct Args {
     ply: std::path::PathBuf,
     #[arg(long)]
     out_mesh: std::path::PathBuf,
-    #[arg(long, default_value = "0.4")]
+    #[arg(long, default_value = "0.5")]
     iso: f32,
-    #[arg(long, default_value = "10")]
+    #[arg(long, default_value = "0")]
     smooth_iters: u32,
     #[arg(long, default_value = "100")]
     min_component: usize,

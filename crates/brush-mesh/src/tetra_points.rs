@@ -57,7 +57,7 @@ impl Default for TetraPointsConfig {
             near: 0.2,
             far: 1e6,
             frustum_margin: 0.0,
-            opacity_radius: true,
+            opacity_radius: false,
         }
     }
 }

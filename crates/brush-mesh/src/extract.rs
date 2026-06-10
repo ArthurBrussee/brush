@@ -25,8 +25,8 @@ use crate::tetra_points::{TetraPointsConfig, build_tetra_points};
 pub struct ExtractConfig {
     pub tetra_points: TetraPointsConfig,
     /// Iso-value for the level set. Carves the surface where transmittance
-    /// has dropped to this fraction (GOF uses 0.5; 0.4 works better on
-    /// brush-trained splats).
+    /// has dropped to this fraction (GOF's 0.5; measured best on brush
+    /// splats too once evals used a fixed view set).
     pub iso_value: f32,
     /// Taubin smoothing iterations (λ|μ pairs) applied to the final mesh.
     /// Trades measured fidelity for visual smoothness (every iteration costs
@@ -41,7 +41,7 @@ impl Default for ExtractConfig {
     fn default() -> Self {
         Self {
             tetra_points: TetraPointsConfig::default(),
-            iso_value: 0.4,
+            iso_value: 0.5,
             smooth_iters: 0,
             min_component_faces: 100,
         }
