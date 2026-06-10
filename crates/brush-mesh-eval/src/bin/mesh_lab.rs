@@ -134,8 +134,7 @@ fn write_textured_obj(
     use std::io::Write;
     let name = base
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "mesh".to_owned());
+        .map_or_else(|| "mesh".to_owned(), |n| n.to_string_lossy().into_owned());
 
     let png_path = base.with_extension("png");
     image::RgbaImage::from_raw(tex.width, tex.height, tex.rgba.clone())
