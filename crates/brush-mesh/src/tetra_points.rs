@@ -218,11 +218,13 @@ mod tests {
     }
 
     #[test]
-    fn emits_nine_points_per_gaussian_when_visible() {
-        let (cam, sz) = fake_cam(Vec3::new(0.0, 0.0, -5.0));
+    fn emits_expected_seeds_per_gaussian_when_visible() {
+        // Within the default 4 m frustum truncation.
+        let (cam, sz) = fake_cam(Vec3::new(0.0, 0.0, -3.0));
         let means = vec![0.0, 0.0, 0.0];
         let quats = vec![1.0, 0.0, 0.0, 0.0];
         let log_scales = vec![-2.0; 3];
+        // Octahedron default: 6 axis points + center.
         let out = build_tetra_points(
             &means,
             &quats,
@@ -232,12 +234,18 @@ mod tests {
             &[sz],
             &TetraPointsConfig::default(),
         );
-        assert_eq!(out.points.len(), 9);
-        assert_eq!(out.scales.len(), 9);
+        assert_eq!(out.points.len(), 7, "octahedron: 6 axis points + center");
         let s = (-2.0f32).exp() * SIGMA_SCALE;
         for sc in &out.scales {
-            assert!((sc - s).abs() < 1e-6);
+            assert!((sc - s).abs() < 1e-6, "stored scale is 3 sigma max axis");
         }
+        // Box corners: 8 + center.
+        let cfg = TetraPointsConfig {
+            octahedron: false,
+            ..Default::default()
+        };
+        let out = build_tetra_points(&means, &quats, &log_scales, &[0.9], &[cam], &[sz], &cfg);
+        assert_eq!(out.points.len(), 9, "box: 8 corners + center");
     }
 
     #[test]
