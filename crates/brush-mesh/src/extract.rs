@@ -36,6 +36,13 @@ pub struct ExtractConfig {
     /// Drop connected components with fewer faces than this (speckle blobs
     /// from isolated iso-crossings). 0/1 disables.
     pub min_component_faces: usize,
+    /// Surface-importance seed selection (MILo-style): only Gaussians whose
+    /// center alpha in the carve field is at most this spawn seed points.
+    /// Free-floating fuzz has center alpha near 1 (every view sees through
+    /// it) and stops seeding geometry. 0.5 drops the most-transparent ~13%
+    /// of Gaussians and ~17% of mesh verts at unchanged PSNR; 0.2 trades
+    /// 0.2 dB for ~40% fewer verts. 1.0 disables.
+    pub seed_center_alpha: f32,
 }
 
 impl Default for ExtractConfig {
@@ -45,6 +52,7 @@ impl Default for ExtractConfig {
             iso_value: 0.6,
             smooth_iters: 0,
             min_component_faces: 100,
+            seed_center_alpha: 0.5,
         }
     }
 }
@@ -109,13 +117,66 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
 
     let cams: Vec<Camera> = views.iter().map(|(c, _)| *c).collect();
     let img_sizes: Vec<UVec2> = views.iter().map(|(_, s)| *s).collect();
-
     let splat_bbox = bbox(means.chunks_exact(3).map(|c| Vec3::new(c[0], c[1], c[2])));
+
+    // The render cache feeds seed selection, the initial alpha eval, every
+    // binary-search iter, and the colour eval.
+    let render_mode = if splats.render_mip {
+        SplatRenderMode::Mip
+    } else {
+        SplatRenderMode::Default
+    };
+    let view_cache = pre_render_views(&splats, views, render_mode).await;
+    sync_client.sync().await.expect("sync");
+    phases.push(("pre_render", phase_start.elapsed()));
+    phase_start = std::time::Instant::now();
+
+    // Surface-importance selection (MILo lesson): only Gaussians whose
+    // center isn't carved away spawn seeds.
+    let n_gaussians = means.len() / 3;
+    let keep: Option<Vec<bool>> = if cfg.seed_center_alpha < 1.0 {
+        let centers: Vec<Vec3> = means
+            .chunks_exact(3)
+            .map(|c| Vec3::new(c[0], c[1], c[2]))
+            .collect();
+        let center_alpha = evaluate_alpha(&splats, &centers, &view_cache).await;
+        let keep: Vec<bool> = center_alpha
+            .iter()
+            .map(|&a| a <= cfg.seed_center_alpha)
+            .collect();
+        let kept = keep.iter().filter(|&&k| k).count();
+        log::info!(
+            "Seed selection: {kept}/{n_gaussians} gaussians with center alpha <= {}",
+            cfg.seed_center_alpha
+        );
+        Some(keep)
+    } else {
+        None
+    };
+    let (means_s, quats_s, log_scales_s, opacities_s) = match &keep {
+        Some(keep) => {
+            let sel = |src: &[f32], w: usize| -> Vec<f32> {
+                src.chunks_exact(w)
+                    .zip(keep)
+                    .filter(|&(_, &k)| k)
+                    .flat_map(|(c, _)| c.iter().copied())
+                    .collect()
+            };
+            (
+                sel(&means, 3),
+                sel(&quats, 4),
+                sel(&log_scales, 3),
+                sel(&opacities, 1),
+            )
+        }
+        None => (means, quats, log_scales, opacities),
+    };
+
     let pts = build_tetra_points(
-        &means,
-        &quats,
-        &log_scales,
-        &opacities,
+        &means_s,
+        &quats_s,
+        &log_scales_s,
+        &opacities_s,
         &cams,
         &img_sizes,
         &cfg.tetra_points,
@@ -125,18 +186,10 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         log::warn!("Too few seed points to triangulate; returning empty mesh");
         return Mesh::default();
     }
-
-    phases.push(("build_seeds", phase_start.elapsed()));
+    phases.push(("select_and_build_seeds", phase_start.elapsed()));
     phase_start = std::time::Instant::now();
 
-    // CPU Delaunay and the per-view pre-render are independent and both
-    // expensive; run them concurrently. The render cache then feeds the
-    // initial alpha eval, every binary-search iter, and the colour eval.
-    let render_mode = if splats.render_mip {
-        SplatRenderMode::Mip
-    } else {
-        SplatRenderMode::Default
-    };
+    // CPU Delaunay overlaps the GPU initial alpha eval over the seeds.
     let pts_for_delaunay = pts.points.clone();
     let delaunay_handle = tokio::task::spawn_blocking(move || {
         let span = tracing::trace_span!("delaunay_3d").entered();
@@ -144,14 +197,8 @@ pub async fn extract_mesh(splats: Splats, views: &[(Camera, UVec2)], cfg: &Extra
         drop(span);
         tets
     });
-    let splats_ref = &splats;
-    let pts_ref = &pts.points;
-    let gpu_block = async move {
-        let cache = pre_render_views(splats_ref, views, render_mode).await;
-        let alpha = evaluate_alpha(splats_ref, pts_ref, &cache).await;
-        (cache, alpha)
-    };
-    let ((view_cache, alpha), tets_result) = tokio::join!(gpu_block, delaunay_handle);
+    let alpha_fut = evaluate_alpha(&splats, &pts.points, &view_cache);
+    let (alpha, tets_result) = tokio::join!(alpha_fut, delaunay_handle);
     let tets = tets_result.expect("delaunay task panicked");
     log::info!("Delaunay tets: {}", tets.len());
     sync_client.sync().await.expect("sync");

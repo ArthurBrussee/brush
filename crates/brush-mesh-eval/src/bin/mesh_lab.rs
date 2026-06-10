@@ -33,6 +33,10 @@ struct Args {
     /// Mesh region: union of camera frustums truncated at this distance.
     #[arg(long, default_value = "4.0")]
     far: f32,
+    /// Seed only gaussians with carve-field center alpha at most this
+    /// (1.0 disables selection).
+    #[arg(long, default_value = "0.5")]
+    seed_alpha: f32,
     #[arg(long, default_value = "1920")]
     resolution: u32,
 }
@@ -95,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
         iso_value: args.iso,
         smooth_iters: args.smooth_iters,
         min_component_faces: args.min_component,
+        seed_center_alpha: args.seed_alpha,
     };
     let mesh = brush_mesh::extract_mesh(splats, &views, &cfg).await;
 
