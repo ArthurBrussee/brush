@@ -152,7 +152,8 @@ async fn read_dataset_inner(
         views.push(SceneView { camera, image });
     }
 
-    let (train_views, eval_views) = split_eval_every(views, load_args.eval_split_every);
+    let (train_views, eval_views) =
+        split_eval_every(views, load_args.eval_split_every, load_args.train_on_eval);
 
     Ok(DatasetLoadResult {
         init_splat: None,

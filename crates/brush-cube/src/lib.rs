@@ -562,6 +562,61 @@ pub struct PixelRect {
     pub max_y: f32,
 }
 
+/// f32-atomic-add abstraction: a single kernel covers both the native
+/// `Atomic<f32>::fetch_add` path and the `Atomic<u32>` CAS-over-bit-pattern
+/// fallback. Hosts pick the impl from [`supports_float_atomics`]. Shared by
+/// the rasterizer backward and the appearance-grid backward.
+#[cube]
+pub trait AtomicAddF32: Send + Sync + 'static {
+    type Storage: Numeric;
+    fn add(target: &Atomic<Self::Storage>, val: f32);
+}
+
+#[derive(CubeType)]
+pub struct HfAtomicAdd;
+
+#[derive(CubeType)]
+pub struct CasAtomicAdd;
+
+#[cube]
+impl AtomicAddF32 for HfAtomicAdd {
+    type Storage = f32;
+    fn add(target: &Atomic<f32>, val: f32) {
+        Atomic::fetch_add(target, val);
+    }
+}
+
+#[cube]
+impl AtomicAddF32 for CasAtomicAdd {
+    type Storage = u32;
+    fn add(target: &Atomic<u32>, val: f32) {
+        let mut old_value = Atomic::load(target);
+        let mut done = false;
+        while !done {
+            let new_bits = u32::reinterpret(f32::reinterpret(old_value) + val);
+            let actual = Atomic::compare_exchange_weak(target, old_value, new_bits);
+            if actual == old_value {
+                done = true;
+            } else {
+                old_value = actual;
+            }
+        }
+    }
+}
+
+/// Whether the device supports native f32 atomic add (`HfAtomicAdd`) or
+/// needs the CAS fallback (`CasAtomicAdd`).
+pub fn supports_float_atomics<R: burn_cubecl::CubeRuntime>(
+    client: &burn_cubecl::cubecl::client::ComputeClient<R>,
+) -> bool {
+    use burn_cubecl::cubecl::features::AtomicUsage;
+    use burn_cubecl::cubecl::ir::{ElemType, FloatKind, Type};
+    client
+        .properties()
+        .atomic_type_usage(Type::atomic(Type::scalar(ElemType::Float(FloatKind::F32))))
+        .contains(AtomicUsage::Add)
+}
+
 #[cube]
 pub fn sigmoid(x: f32) -> f32 {
     1.0f32 / (1.0f32 + f32::exp(-x))

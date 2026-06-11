@@ -9,6 +9,7 @@ use crate::{
     splat_init::bounds_from_pos,
     stats::RefineRecord,
 };
+use brush_appearance::{AppearanceConfig, AppearanceTrainState};
 use brush_dataset::scene::SceneBatch;
 use brush_loss::{ImageLossConfig, image_loss};
 use brush_render::gaussian_splats::Splats;
@@ -41,13 +42,6 @@ const MIN_OPACITY: f32 = 1.0 / 255.0;
 /// against a fixed target instead of chasing a moving floor.
 const MIN_SCALE_FREEZE_FRAC: f32 = 0.9;
 
-/// Mip-Splatting 3D-filter strength (the paper's `s`): each splat gets a frozen
-/// per-splat world-space scale floor `f = sqrt(MIN_SCALE_FACTOR) · pixel size at
-/// the nearest observing camera`, i.e. a ~0.32px std-dev floor. Folded into
-/// scales/opacity at render (and baked at export), never optimized. Fundamental
-/// to well-behaved splats, so not a tunable.
-const MIN_SCALE_FACTOR: f32 = 0.1;
-
 type OptimizerType = OptimizerAdaptor<AdamScaled, Splats>;
 
 pub struct SplatTrainer {
@@ -55,6 +49,9 @@ pub struct SplatTrainer {
     sched_mean: ExponentialLrScheduler,
     refine_record: Option<RefineRecord>,
     optim: Option<OptimizerType>,
+    /// Optional per-view appearance compensation (bilateral grid / PPISP).
+    /// Lives on the inner backend between steps, like the splats.
+    appearance: Option<AppearanceTrainState>,
     ssim_enabled: bool,
     bounds: BoundingBox,
     step_count: u32,
@@ -137,6 +134,7 @@ impl SplatTrainer {
             config,
             sched_mean: lr_mean.init().expect("Mean lr schedule must be valid."),
             optim: None,
+            appearance: None,
             refine_record: None,
             ssim_enabled,
             bounds,
@@ -152,6 +150,67 @@ impl SplatTrainer {
     /// the Mip-Splatting 3D filter (gated on `config.min_scale_factor > 0`).
     pub fn set_view_cams(&mut self, view_cams: Vec<(glam::Vec3, f32)>) {
         self.view_cams = view_cams;
+    }
+
+    /// Set up per-view appearance compensation (bilateral grid and/or PPISP,
+    /// gated on the train config). `camera_indices` maps each training view
+    /// to a physical-camera group for PPISP's per-camera params; same length
+    /// and order as the scene's view list.
+    pub fn init_appearance(&mut self, camera_indices: Vec<u32>, device: &Device) {
+        let dims = &self.config.bilagrid_dims;
+        assert_eq!(dims.len(), 3, "bilagrid-dims must be `x,y,guidance`");
+        assert!(
+            dims.iter().all(|d| *d >= 2),
+            "bilagrid-dims must each be >= 2"
+        );
+        let betas = &self.config.bilagrid_betas;
+        assert_eq!(betas.len(), 2, "bilagrid-betas must be `b1,b2`");
+        let config = AppearanceConfig {
+            ppisp_grid: self.config.ppisp_grid,
+            grid_color: !self.config.ppisp_grid_expose_only,
+            grid_crf: self.config.ppisp_grid_crf,
+            crf_per_camera: self.config.ppisp_crf_per_camera,
+            bilagrid: self.config.bilateral_grid,
+            bilagrid_dims: (dims[0] as usize, dims[1] as usize, dims[2] as usize),
+            bilagrid_tv_weight: self.config.bilagrid_tv_weight,
+            bilagrid_mean_reg: self.config.bilagrid_mean_reg,
+            bilagrid_lr: self.config.bilagrid_lr,
+            bilagrid_betas: (betas[0], betas[1]),
+            grad_subsample: self.config.bilagrid_grad_subsample,
+            ppisp: self.config.ppisp,
+            ppisp_lr: self.config.ppisp_lr,
+            ppisp_reg_scale: self.config.ppisp_reg_scale,
+        };
+        self.appearance = AppearanceTrainState::new(
+            config,
+            camera_indices,
+            self.config.total_train_iters,
+            device,
+        );
+    }
+
+    /// Whether appearance compensation is active.
+    pub fn has_appearance(&self) -> bool {
+        self.appearance.is_some()
+    }
+
+    /// Magnitude summary of the learned appearance parameters (`None` when
+    /// appearance compensation is disabled).
+    pub async fn appearance_stats(&self) -> Option<String> {
+        match &self.appearance {
+            Some(state) => state.stats().await,
+            None => None,
+        }
+    }
+
+    /// Forward-only appearance correction for an eval render of *training*
+    /// view `view_idx` (`--train-on-eval`). `img` is `[H, W, 3|4]` on the
+    /// inner backend; returns it unchanged when appearance is disabled.
+    pub fn appearance_eval_correction(&self, img: Tensor<3>, view_idx: usize) -> Tensor<3> {
+        match &self.appearance {
+            Some(state) => state.apply_eval(img, view_idx),
+            None => img,
+        }
     }
 
     pub async fn step(&mut self, batch: SceneBatch, splats: Splats) -> (Splats, TrainStepStats) {
@@ -184,6 +243,13 @@ impl SplatTrainer {
 
         let median_scale = self.bounds.median_size();
 
+        // Lift the active view's appearance params onto the autodiff graph
+        // for this step.
+        let active_appearance = self
+            .appearance
+            .as_ref()
+            .map(|s| s.begin_step(batch.view_index, self.step_count.saturating_sub(1)));
+
         let (mut grads, visible, num_visible, loss_inner) = {
             // The splats already carry their 3D-filter floor (set at refine);
             // the render path folds it in. Optimizer/refine work on raw params.
@@ -198,7 +264,14 @@ impl SplatTrainer {
             .instrument(trace_span!("Forward"))
             .await;
 
-            let pred_image = diff_out.img;
+            // Per-view appearance compensation (PPISP then bilateral grid)
+            // happens on the rendered image, before any loss term sees it —
+            // the splats themselves learn appearance-free colors. Alpha
+            // passes through untouched.
+            let pred_image = match &active_appearance {
+                Some(active) => active.apply(diff_out.img),
+                None => diff_out.img,
+            };
             let refine_weight_holder = diff_out.refine_weight_holder;
             let visible = diff_out.visible;
             let max_radius = diff_out.max_radius;
@@ -257,6 +330,13 @@ impl SplatTrainer {
                         pred_image.clone().slice(s![.., .., 0..3]).unsqueeze_dim(0),
                         gt_rgb_diff.unsqueeze_dim(0),
                     ) * self.config.lpips_loss_weight;
+            }
+
+            // Appearance regularisers (bilagrid TV, PPISP param priors).
+            if let Some(active) = &active_appearance
+                && let Some(reg) = active.reg_loss()
+            {
+                loss = loss + reg;
             }
 
             // Strip the autodiff graph off the loss so consumers can read the
@@ -369,6 +449,15 @@ impl SplatTrainer {
             splats
         });
 
+        // Appearance optimizer step: the active view's bilateral grid gets a
+        // sparse Adam update and the PPISP params a dense one, each on its
+        // own warmup + exp-decay LR schedule.
+        if let (Some(state), Some(active)) = (self.appearance.as_mut(), active_appearance) {
+            trace_span!("Appearance step").in_scope(|| {
+                state.end_step(active, &mut grads, self.step_count.saturating_sub(1));
+            });
+        }
+
         // Add random noise. Only do this in the growth phase, otherwise
         // let the splats settle in without noise, not much point in exploring regions anymore.
         // The noise gate is non-differentiable bookkeeping. Read opacity from
@@ -469,6 +558,13 @@ impl SplatTrainer {
                 n_area_gt_005 as f64 / n_total,
                 n_area_gt_010 as f64 / n_total,
             );
+        }
+
+        // Surface the learned appearance magnitudes with the same cadence:
+        // runs without an eval split (e.g. GUI) otherwise never see whether
+        // the grids are training.
+        if let Some(stats) = self.appearance_stats().await {
+            log::info!("appearance iter={iter}: {stats}");
         }
 
         let max_allowed_bounds = self.bounds.extent.max_element() * 100.0;
@@ -619,7 +715,9 @@ impl SplatTrainer {
             // `splats` is already on the inner backend here, so `means()` is too.
             // No-op when there are no view cameras (e.g. unit tests).
             let means = splats.means();
-            if let Some(f) = compute_min_scale(&means, &self.view_cams, MIN_SCALE_FACTOR) {
+            if let Some(f) =
+                compute_min_scale(&means, &self.view_cams, self.config.min_scale_factor)
+            {
                 splats = splats.with_min_scale(f);
             }
         }

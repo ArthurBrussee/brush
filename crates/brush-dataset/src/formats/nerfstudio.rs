@@ -347,6 +347,9 @@ async fn read_dataset_inner(
         if let Some(eval_period) = load_args.eval_split_every {
             // Include extra eval images only when the dataset doesn't have them.
             if i % eval_period == 0 && val_views.is_none() {
+                if load_args.train_on_eval {
+                    train_views.push(view.clone());
+                }
                 eval_views.push(view);
             } else {
                 train_views.push(view);

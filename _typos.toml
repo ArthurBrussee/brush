@@ -2,3 +2,7 @@
 lod = "lod"
 Lod = "Lod"
 ba = "ba"
+# LichtFeld Studio (reference implementation for the bilateral grid kernels).
+Feld = "Feld"
+# Short for "n delta" in the appearance kernels/tests.
+nd = "nd"

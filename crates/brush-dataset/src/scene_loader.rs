@@ -145,6 +145,7 @@ async fn run_loader(
             has_alpha,
             alpha_mode: view.image.alpha_mode(),
             camera: view.camera,
+            view_index: index,
         };
 
         if tx.send(batch).await.is_err() {

@@ -57,45 +57,9 @@ fn zero_grad() -> SplatGrad {
     }
 }
 
-/// f32-atomic-add abstraction so a single kernel covers both the native
-/// `Atomic<f32>::fetch_add` path and the `Atomic<u32>` CAS fallback.
-#[cube]
-pub trait AtomicAddF32: Send + Sync + 'static {
-    type Storage: Numeric;
-    fn add(target: &Atomic<Self::Storage>, val: f32);
-}
-
-#[derive(CubeType)]
-pub struct HfAtomicAdd;
-
-#[derive(CubeType)]
-pub struct CasAtomicAdd;
-
-#[cube]
-impl AtomicAddF32 for HfAtomicAdd {
-    type Storage = f32;
-    fn add(target: &Atomic<f32>, val: f32) {
-        Atomic::fetch_add(target, val);
-    }
-}
-
-#[cube]
-impl AtomicAddF32 for CasAtomicAdd {
-    type Storage = u32;
-    fn add(target: &Atomic<u32>, val: f32) {
-        let mut old_value = Atomic::load(target);
-        let mut done = false;
-        while !done {
-            let new_bits = u32::reinterpret(f32::reinterpret(old_value) + val);
-            let actual = Atomic::compare_exchange_weak(target, old_value, new_bits);
-            if actual == old_value {
-                done = true;
-            } else {
-                old_value = actual;
-            }
-        }
-    }
-}
+// f32-atomic-add abstraction lives in `brush-cube` (shared with the
+// appearance-grid backward); re-exported here for the host launch code.
+pub use brush_cube::{AtomicAddF32, CasAtomicAdd, HfAtomicAdd};
 
 #[cube(launch)]
 pub fn rasterize_backwards_kernel<A: AtomicAddF32>(

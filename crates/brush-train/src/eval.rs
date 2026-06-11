@@ -25,6 +25,7 @@ pub async fn eval_stats(
     gt_img: DynamicImage,
     alpha_mode: AlphaMode,
     device: &Device,
+    correction: Option<&(dyn Fn(Tensor<3>) -> Tensor<3> + Sync)>,
 ) -> Result<EvalSample> {
     let res = glam::uvec2(gt_img.width(), gt_img.height());
 
@@ -36,6 +37,15 @@ pub async fn eval_stats(
     let (img, render_aux) =
         render_splats(splats, gt_cam, res, Vec3::ZERO, None, TextureMode::Float).await;
     let render_rgb = img.slice(s![.., .., 0..3]);
+
+    // Apply the learned per-view appearance correction when scoring a
+    // training view (`--train-on-eval`): without it, scores on
+    // appearance-varying datasets mostly measure the splat <-> average
+    // appearance offset rather than reconstruction quality.
+    let render_rgb = match correction {
+        Some(f) => f(render_rgb),
+        None => render_rgb,
+    };
 
     // Simulate an 8-bit roundtrip for fair comparison.
     let render_rgb = (render_rgb * 255.0).round() / 255.0;
