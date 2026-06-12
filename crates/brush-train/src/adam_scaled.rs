@@ -206,8 +206,21 @@ impl AdaptiveMomentum {
             .moment_2
             .clone()
             .div_scalar(1f32 - self.beta_2.powi(time));
-        // moment_2_corrected broadcasts when it has reduced trailing dims
-        let grad = moment_1_corrected.div(moment_2_corrected.sqrt().add_scalar(self.epsilon));
+        // moment_2_corrected broadcasts when it has reduced trailing dims.
+        //
+        // The clamp guards the sqrt: a second moment is non-negative by
+        // construction, but a tiny negative residue can sneak in GPU-side
+        // (refine's old scatter-add moment reset did exactly that, see
+        // `scatter_zeroing_is_exact`), and sqrt(-ε) is NaN — which the
+        // reduced-moment broadcast then smears across the whole row. A
+        // negative state self-heals within a few steps via the
+        // (1-β₂)·mean(g²) term, so clamping only at the read is enough.
+        let grad = moment_1_corrected.div(
+            moment_2_corrected
+                .clamp_min(0.0)
+                .sqrt()
+                .add_scalar(self.epsilon),
+        );
         (grad, state)
     }
 }

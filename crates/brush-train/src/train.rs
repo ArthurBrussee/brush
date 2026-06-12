@@ -649,10 +649,9 @@ impl SplatTrainer {
         let refine_count = split_inds.len();
 
         if refine_count > 0 {
-            let refine_inds = Tensor::from_data(
-                TensorData::new(split_inds.into_iter().collect::<Vec<_>>(), [refine_count]),
-                device,
-            );
+            let split_inds: Vec<i32> = split_inds.into_iter().collect();
+            let refine_inds =
+                Tensor::from_data(TensorData::new(split_inds.clone(), [refine_count]), device);
 
             let cur_transforms = splats.transforms.val().select(0, refine_inds.clone());
             let cur_means = cur_transforms.clone().slice(s![.., 0..3]);
@@ -719,13 +718,30 @@ impl SplatTrainer {
 
             // Optimizer state lives on the inner (non-autodiff) device.
             let opt_device = device.clone().inner();
-            let refine_inds_opt = refine_inds.to_device(&opt_device);
 
-            // Both halves of a split start with zero Adam moments.
+            // Both halves of a split start with zero Adam moments: multiply
+            // the parent rows by a 0/1 mask built on the CPU (the indices are
+            // already host-side).
             //
-            // Burn's scatter bridge
-            // only implements Add, so we add the negated parent value to zero
-            // it out instead of using Assign.
+            // This deliberately avoids `scatter(Add)` of the negated parent
+            // value: under load, burn's scatter can drop or misroute single
+            // row updates (see `scatter_zeroing_is_exact`), which left
+            // moment_2 slightly NEGATIVE — and `sqrt(-ε)` is NaN, which the
+            // reduced-moment broadcast then smeared over a whole SH row. A
+            // mask multiply is elementwise (fusable) and exact.
+            let mut keep = vec![1.0f32; splats.num_splats() as usize];
+            for i in &split_inds {
+                keep[*i as usize] = 0.0;
+            }
+            let keep_mask = Tensor::<1>::from_data(
+                TensorData::new(keep, [splats.num_splats() as usize]),
+                &opt_device,
+            );
+
+            let mask1 = keep_mask.clone();
+            let mask2 = keep_mask.clone().unsqueeze_dim::<2>(1);
+            let mask3 = keep_mask.unsqueeze_dim::<2>(1).unsqueeze_dim::<3>(2);
+
             splats = map_splats_and_opt(
                 splats,
                 &mut record,
@@ -734,32 +750,19 @@ impl SplatTrainer {
                 |x| Tensor::cat(vec![x, new_raw_opac], 0),
                 |x: Tensor<2>| {
                     let d1 = x.dims()[1];
-                    let neg_parent = -x.clone().select(0, refine_inds_opt.clone());
-                    let inds: Tensor<2, Int> =
-                        refine_inds_opt.clone().unsqueeze_dim(1).repeat_dim(1, d1);
-                    let x = x.scatter(0, inds, neg_parent, IndexingUpdateOp::Add);
+                    let x = x * mask2.clone();
                     Tensor::cat(vec![x, Tensor::zeros([refine_count, d1], &opt_device)], 0)
                 },
                 |x: Tensor<3>| {
                     let [_, d1, d2] = x.dims();
-                    let neg_parent = -x.clone().select(0, refine_inds_opt.clone());
-                    let inds_2: Tensor<2, Int> =
-                        refine_inds_opt.clone().unsqueeze_dim(1).repeat_dim(1, d1);
-                    let inds: Tensor<3, Int> = inds_2.unsqueeze_dim(2).repeat_dim(2, d2);
-                    let x = x.scatter(0, inds, neg_parent, IndexingUpdateOp::Add);
+                    let x = x * mask3.clone();
                     Tensor::cat(
                         vec![x, Tensor::zeros([refine_count, d1, d2], &opt_device)],
                         0,
                     )
                 },
                 |x: Tensor<1>| {
-                    let neg_parent = -x.clone().select(0, refine_inds_opt.clone());
-                    let x = x.scatter(
-                        0,
-                        refine_inds_opt.clone(),
-                        neg_parent,
-                        IndexingUpdateOp::Add,
-                    );
+                    let x = x * mask1.clone();
                     Tensor::cat(vec![x, Tensor::zeros([refine_count], &opt_device)], 0)
                 },
             );
