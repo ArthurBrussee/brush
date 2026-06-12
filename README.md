@@ -28,6 +28,17 @@ It also supports masking images:
 - Images with transparency. This will force the final splat to match the transparency of the input.
 - A folder of images called 'masks'. This ignores parts of the image that are masked out.
 
+### Appearance compensation
+
+For captures with varying exposure, white balance, or lens vignetting between images, Brush can learn per-view photometric corrections during training so the variation isn't baked into the splats. The corrections only apply while training — exported splats keep canonical colors and render unmodified.
+
+- `--ppisp-grid` (recommended) learns per-camera lens vignetting ([PPISP](https://research.nvidia.com/labs/sil/projects/ppisp/)-style, shared across views with matching intrinsics) plus a per-view bilateral grid of PPISP exposure + color parameters (as in [spirulae-splat](https://github.com/harry7557558/spirulae-splat)'s hybrid). Variants: `--ppisp-grid-expose-only`, `--ppisp-grid-crf`, `--ppisp-crf-per-camera`.
+- `--bilateral-grid` ([BilaRF](https://bilarfpro.github.io/)-style affine grids) and `--ppisp` (the full per-frame PPISP model) are kept as comparison modes.
+
+Tunables: `--bilagrid-dims x,y,guidance`, `--bilagrid-tv-weight`, `--bilagrid-mean-reg`, `--bilagrid-lr`, `--bilagrid-grad-subsample`, `--ppisp-lr`, `--ppisp-reg-scale`.
+
+By default evaluation compares the raw, uncorrected render against ground truth — on appearance-varying captures that mostly measures the offset between the splats and the average appearance. Pass `--train-on-eval` to keep eval views in the training set; eval then applies each view's learned correction, which is the more meaningful comparison for these models.
+
 ## Viewer
 Brush also works well as a splat viewer, including on the web. It can load .ply & .compressed.ply files. You can stream in data from a URL (for a web app, simply append `?url=`).
 

@@ -220,7 +220,8 @@ async fn load_dataset_inner(
             views.push(SceneView { camera, image });
         }
 
-        let (train_views, eval_views) = split_eval_every(views, load_args.eval_split_every);
+        let (train_views, eval_views) =
+            split_eval_every(views, load_args.eval_split_every, load_args.train_on_eval);
 
         Result::<_, FormatError>::Ok((Dataset::from_views(train_views, eval_views), warnings))
     });

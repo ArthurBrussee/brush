@@ -911,6 +911,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "brush-appearance"
+version = "0.3.0"
+dependencies = [
+ "brush-cube",
+ "brush-render",
+ "burn",
+ "burn-cubecl",
+ "burn-fusion",
+ "burn-ir",
+ "getrandom 0.4.2",
+ "tokio",
+ "wasm-bindgen-test",
+]
+
+[[package]]
 name = "brush-async"
 version = "0.3.0"
 dependencies = [
@@ -1218,6 +1233,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "ball-tree",
+ "brush-appearance",
  "brush-cube",
  "brush-dataset",
  "brush-loss",

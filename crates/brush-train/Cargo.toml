@@ -10,6 +10,7 @@ debug-validation = ["brush-render-bwd/debug-validation"]
 
 [dependencies]
 brush-render.path = "../brush-render"
+brush-appearance.path = "../brush-appearance"
 brush-dataset.path = "../brush-dataset"
 brush-render-bwd.path = "../brush-render-bwd"
 brush-loss.path = "../brush-loss"

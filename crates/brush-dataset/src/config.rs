@@ -27,6 +27,13 @@ pub struct LoadDataseConfig {
     /// Create an eval dataset by selecting every nth image
     #[arg(long, help_heading = "Dataset Options")]
     pub eval_split_every: Option<usize>,
+    /// Keep the eval views in the training set instead of holding them out.
+    /// Useful with appearance compensation, where held-out views have no
+    /// learned per-view corrections and eval scores mostly measure the
+    /// splat <-> average-appearance drift.
+    #[arg(long, help_heading = "Dataset Options")]
+    #[serde(default)]
+    pub train_on_eval: bool,
     /// Load only every nth frame
     #[arg(long, help_heading = "Dataset Options")]
     pub subsample_frames: Option<u32>,

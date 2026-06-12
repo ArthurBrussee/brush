@@ -131,11 +131,23 @@ fn opengl_c2w_to_pose(mut c2w: glam::Mat4) -> (glam::Vec3, glam::Quat) {
 }
 
 /// Split views into (train, eval) by selecting every `eval_split_every`-th view
-/// for eval. With `None`, every view is a train view.
+/// for eval. With `None`, every view is a train view. With `train_on_eval`,
+/// eval views are additionally kept in the training set (so per-view
+/// appearance corrections exist for them).
 fn split_eval_every(
     views: Vec<SceneView>,
     eval_split_every: Option<usize>,
+    train_on_eval: bool,
 ) -> (Vec<SceneView>, Vec<SceneView>) {
+    if train_on_eval {
+        let eval = views
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| eval_split_every.is_some_and(|split| i % split == 0))
+            .map(|(_, v)| v.clone())
+            .collect();
+        return (views, eval);
+    }
     views.into_iter().enumerate().partition_map(|(i, v)| {
         if let Some(split) = eval_split_every
             && i % split == 0

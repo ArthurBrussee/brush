@@ -12,6 +12,10 @@ Most of the loss and backward path was rewritten over the cycle. SSIM moved to a
 
 The growth path got a real overhaul: longer-edge split, "uni" noise, and a fix for far-away splats being deleted too early ([#265](https://github.com/ArthurBrussee/brush/pull/265)). Force-split kicks in for splats that grow too big, then later gated by `growth_stop_iter` to avoid pathological end-of-training behaviour ([#390](https://github.com/ArthurBrussee/brush/pull/390), [#398](https://github.com/ArthurBrussee/brush/pull/398)). Random frustum init helps when there are no good initial points ([#372](https://github.com/ArthurBrussee/brush/pull/372)). NaN handling was tightened up with a new fuzz suite ([#389](https://github.com/ArthurBrussee/brush/pull/389)).
 
+#### Appearance compensation (PPISP grid hybrid, bilateral grid & PPISP)
+
+Training can now learn per-view photometric corrections so exposure / white-balance / vignetting variation between input images isn't baked into the splats. The recommended `--ppisp-grid` mode learns per-camera PPISP vignetting plus per-view bilateral grids of PPISP exposure + color parameters (spirulae-splat's hybrid); `--bilateral-grid` (BilaRF affine grids) and `--ppisp` (full per-frame PPISP) are available as comparison modes. All are fused CubeCL kernels with custom autodiff in the new `brush-appearance` crate; corrections apply to the rendered image before the loss and only exist at training time — exported splats keep canonical colors. The grids use a sparse per-view optimizer (per-step cost independent of dataset size) with optional gradient subsampling, and `--train-on-eval` lets evaluation apply the learned per-view corrections.
+
 #### Mip-Splatting
 
 The 2D mip filter from Mip-Splatting is now implemented, with a `render_mode` flag and a UI toggle. Contributed by @fhahlbohm ([#337](https://github.com/ArthurBrussee/brush/pull/337)).

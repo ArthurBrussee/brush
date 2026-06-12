@@ -148,6 +148,9 @@ pub struct SceneBatch {
     pub has_alpha: bool,
     pub alpha_mode: AlphaMode,
     pub camera: Camera,
+    /// Index of this view in the training scene's view list. Used by
+    /// per-view appearance models (bilateral grid / PPISP).
+    pub view_index: usize,
 }
 
 impl SceneBatch {
