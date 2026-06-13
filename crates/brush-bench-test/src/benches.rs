@@ -188,7 +188,6 @@ pub async fn run_backward_render(
             &camera,
             glam::uvec2(resolution.0, resolution.1),
             Vec3::ZERO,
-            0.0,
         )
         .await;
         let _ = diff_out.img.mean().backward();

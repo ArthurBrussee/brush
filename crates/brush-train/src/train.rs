@@ -188,15 +188,9 @@ impl SplatTrainer {
             // The splats already carry their 3D-filter floor (set at refine);
             // the render path folds it in. Optimizer/refine work on raw params.
             let render_input = splats.clone();
-            let diff_out = render_splats(
-                render_input,
-                &camera,
-                img_size,
-                background,
-                self.config.screen_area_penalty,
-            )
-            .instrument(trace_span!("Forward"))
-            .await;
+            let diff_out = render_splats(render_input, &camera, img_size, background)
+                .instrument(trace_span!("Forward"))
+                .await;
 
             let pred_image = diff_out.img;
             let refine_weight_holder = diff_out.refine_weight_holder;
@@ -519,30 +513,10 @@ impl SplatTrainer {
             .await
             .expect("Failed to count non-finite splats") as u32;
 
-        // "Poisoned" big-screen prune: kill splats whose max 2D screen extent
-        // exceeds the threshold (every refine, including post-growth). The
-        // freed budget is re-sampled below. This handles the hard outliers
-        // that the smooth split + area regulariser don't reach on their own.
-        let big_screen_mask = if self.config.kill_at_screen_size > 0.0 {
-            Some(
-                refiner
-                    .max_screen_size
-                    .clone()
-                    .greater_elem(self.config.kill_at_screen_size),
-            )
-        } else {
-            None
-        };
-
         let prune_mask = alpha_mask
             .bool_or(scale_big)
             .bool_or(bound_mask)
             .bool_or(non_finite_mask);
-        let prune_mask = if let Some(bsm) = big_screen_mask {
-            prune_mask.bool_or(bsm)
-        } else {
-            prune_mask
-        };
 
         let (mut splats, refiner, pruned_count) =
             prune_points(splats, &mut record, refiner, prune_mask).await;
@@ -564,6 +538,38 @@ impl SplatTrainer {
             let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
             split_inds.extend(resampled_inds);
         }
+
+        // Force-split splats that are too big on screen (every refine). Rather
+        // than killing them (the old `kill_at_screen_size`), we split them and
+        // shrink the children down to `split_at_screen_size` on screen — see
+        // `refine_splats`. Capped by the remaining `max_splats` budget.
+        let pre_oversized = split_inds.len();
+        if self.config.split_at_screen_size > 0.0 {
+            let oversized = refiner.above_screen_size(self.config.split_at_screen_size);
+            let oversized_inds = oversized.argwhere_async().await;
+            if oversized_inds.dims()[0] > 0 {
+                let oversized_inds = oversized_inds
+                    .squeeze_dim::<1>(1)
+                    .into_data_async()
+                    .await
+                    .expect("Failed to get oversized indices")
+                    .into_vec::<i32>()
+                    .expect("Failed to read oversized indices");
+                let mut budget = self
+                    .config
+                    .max_splats
+                    .saturating_sub(splats.num_splats() + split_inds.len() as u32);
+                for ind in oversized_inds {
+                    if budget == 0 {
+                        break;
+                    }
+                    if split_inds.insert(ind) {
+                        budget -= 1;
+                    }
+                }
+            }
+        }
+        let num_split_oversized = (split_inds.len() - pre_oversized) as u32;
 
         let pre_high_grad = split_inds.len();
         if iter < self.config.growth_stop_iter {
@@ -605,7 +611,10 @@ impl SplatTrainer {
 
         let num_split_high_grad = (split_inds.len() - pre_high_grad) as u32;
         let refine_count = split_inds.len();
-        splats = self.refine_splats(&device, record, splats, split_inds, iter);
+        // Per-splat max on-screen extent, used by `refine_splats` to cap the
+        // split shrink so oversized splats' children land at `split_at_screen_size`.
+        let screen_sizes = refiner.max_screen_size.clone();
+        splats = self.refine_splats(&device, record, splats, split_inds, screen_sizes, iter);
 
         // Update current bounds based on the splats.
         self.bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
@@ -630,6 +639,7 @@ impl SplatTrainer {
             splats,
             RefineStats {
                 num_added: refine_count as u32,
+                num_split_oversized,
                 num_split_high_grad,
                 num_pruned: pruned_count,
                 num_pruned_non_finite,
@@ -644,6 +654,7 @@ impl SplatTrainer {
         mut record: HashMap<ParamId, AdaptorRecord<AdamScaled>>,
         mut splats: Splats,
         split_inds: HashSet<i32>,
+        screen_sizes: Tensor<1>,
         iter: u32,
     ) -> Splats {
         let refine_count = split_inds.len();
@@ -683,7 +694,23 @@ impl SplatTrainer {
             let cur_scales_sq = cur_scales.clone().powi_scalar(2);
             let max_scale_sq = cur_scales_sq.clone().max_dim(1).clamp_min(1e-30);
             let ratio = cur_scales_sq / max_scale_sq;
-            let k_per_axis: Tensor<2> = -(ratio * (1.0_f32 - FRAC_1_SQRT_2)) + 1.0;
+            // Max-axis shrink factor `k` (per splat). The standard split uses
+            // 1/√2 (mass-conserving). When `split_at_screen_size` is set, splats
+            // that are too big on screen shrink harder so their children land at
+            // (at most) the cap: `k = min(1/√2, split_at_screen_size / screen)`.
+            // Splats already within √2× of the cap are unaffected (min → 1/√2).
+            let k_per_axis: Tensor<2> = if self.config.split_at_screen_size > 0.0 {
+                let k_max = screen_sizes
+                    .select(0, refine_inds.clone())
+                    .unsqueeze_dim(1)
+                    .clamp_min(1e-6)
+                    .recip()
+                    .mul_scalar(self.config.split_at_screen_size)
+                    .clamp_max(FRAC_1_SQRT_2);
+                -(ratio * (-k_max + 1.0)) + 1.0
+            } else {
+                -(ratio * (1.0_f32 - FRAC_1_SQRT_2)) + 1.0
+            };
             let offset_factor = (-k_per_axis.clone().powi_scalar(2) + 1.0)
                 .clamp_min(0.0)
                 .sqrt();

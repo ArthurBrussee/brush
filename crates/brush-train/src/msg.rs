@@ -3,6 +3,8 @@ use burn::tensor::Tensor;
 #[derive(Clone)]
 pub struct RefineStats {
     pub num_added: u32,
+    /// Subset of `num_added` from force-splitting oversized (on-screen) splats.
+    pub num_split_oversized: u32,
     /// Subset of `num_added` that came from gradient-driven sampling.
     pub num_split_high_grad: u32,
     pub num_pruned: u32,

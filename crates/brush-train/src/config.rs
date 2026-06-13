@@ -71,15 +71,11 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "15000")]
     pub growth_stop_iter: u32,
 
-    /// Prune-and-resample any splat whose max screen-space extent exceeds this
-    /// fraction of the image dimension.
+    /// Split any splat whose max screen-space extent exceeds this fraction of
+    /// the image dimension, shrinking the children so they land at (at most)
+    /// this size on screen. 0 disables.
     #[arg(long, help_heading = "Refine options", default_value = "0.5")]
-    pub kill_at_screen_size: f32,
-
-    /// Weight of the per-splat screen-area loss. Works as a nudge toward small on-screen
-    /// footprints.
-    #[arg(long, help_heading = "Training options", default_value = "0.05")]
-    pub screen_area_penalty: f32,
+    pub split_at_screen_size: f32,
 
     /// Weight of SSIM loss (compared to l1 loss)
     #[clap(long, help_heading = "Training options", default_value = "0.2")]

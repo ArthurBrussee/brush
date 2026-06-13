@@ -156,9 +156,9 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
         );
         slider(
             ui,
-            &mut tc.kill_at_screen_size,
+            &mut tc.split_at_screen_size,
             0.0..=1.0,
-            "Kill at screen size (0 disables)",
+            "Split at screen size (0 disables)",
             false,
             enabled,
         );

@@ -28,6 +28,15 @@ impl RefineRecord {
             .bool_and(self.vis_mask())
     }
 
+    /// Visible splats whose max 2D screen-space extent (as a fraction of the
+    /// image dim) exceeds `threshold` — i.e. the "too big on screen" outliers.
+    pub(crate) fn above_screen_size(&self, threshold: f32) -> Tensor<1, Bool> {
+        self.max_screen_size
+            .clone()
+            .greater_elem(threshold)
+            .bool_and(self.vis_mask())
+    }
+
     pub(crate) fn gather_stats(
         &mut self,
         refine_weight: Tensor<1>,

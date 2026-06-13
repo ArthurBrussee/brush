@@ -322,6 +322,7 @@ pub(crate) async fn train_stream(
         } else {
             RefineStats {
                 num_added: 0,
+                num_split_oversized: 0,
                 num_split_high_grad: 0,
                 num_pruned: 0,
                 num_pruned_non_finite: 0,
