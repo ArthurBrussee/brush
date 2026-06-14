@@ -81,8 +81,6 @@ impl SplatOps<Self> for MainBackendBase {
             sh_degree,
             total_splats,
             num_visible: 0, // num_visible — not yet known.
-            // Backward-only; the forward leaves it 0 and `project_bwd` sets it.
-            screen_area_penalty: 0.0,
             jacobian_clamp_limits: calculate_jacobian_clamp_limits(
                 img_size,
                 pinhole_params,
