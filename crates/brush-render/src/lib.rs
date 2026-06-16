@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 
+use brush_cube::MainBackend as Wgpu;
 use burn::backend::Backend;
 use burn::backend::tensor::FloatTensor;
 use camera::Camera;
@@ -50,7 +51,15 @@ macro_rules! __wgpu_kind {
 /// Trait for the gaussian splatting rendering pipeline.
 ///
 /// A single call performs: cull → readback → rasterize.
-pub trait SplatOps<B: Backend> {
+///
+/// `#[backend_extension(Wgpu)]` generates `impl SplatOps for Dispatch`, which
+/// unwraps the type-erased `Tensor<D>` dispatch primitives to the concrete
+/// Wgpu backend, calls the hand-written `impl SplatOps for Wgpu`, and re-wraps
+/// the `RenderOutput` via its `ExtensionType` derive. Only the non-autodiff
+/// arm is generated: the differentiable path is a hand-rolled `Backward` in
+/// `brush-render-bwd` and never dispatches `render` through `Autodiff`.
+#[burn::backend::backend_extension(Wgpu)]
+pub trait SplatOps: Backend {
     /// Render gaussian splats to an image.
     ///
     /// Full forward pipeline: cull, depth sort, readback, project, rasterize.
@@ -60,13 +69,13 @@ pub trait SplatOps<B: Backend> {
     fn render(
         camera: &Camera,
         img_size: glam::UVec2,
-        transforms: FloatTensor<B>,
-        sh_coeffs: FloatTensor<B>,
-        raw_opacities: FloatTensor<B>,
+        transforms: FloatTensor<Self>,
+        sh_coeffs: FloatTensor<Self>,
+        raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: gaussian_splats::RasterPass,
-    ) -> impl Future<Output = RenderOutput<B>>;
+    ) -> impl Future<Output = RenderOutput<Self>>;
 }
 
 #[derive(

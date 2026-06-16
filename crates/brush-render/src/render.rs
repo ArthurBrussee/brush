@@ -34,7 +34,7 @@ pub fn calc_tile_bounds(img_size: glam::UVec2) -> glam::UVec2 {
     )
 }
 
-impl SplatOps<Self> for MainBackendBase {
+impl SplatOps for MainBackendBase {
     #[allow(clippy::too_many_arguments)]
     async fn render(
         camera: &Camera,

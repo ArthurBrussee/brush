@@ -53,20 +53,20 @@ pub struct SplatGrads<B: Backend> {
 }
 
 /// Backward pass trait mirroring [`SplatOps`].
-pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
+pub trait SplatBwdOps: SplatOps {
     /// Backward pass for rasterization.
     /// Returns sparse `v_combined` [`num_visible`, 10] indexed by `compact_gid`.
     #[allow(clippy::too_many_arguments)]
     fn rasterize_bwd(
-        out_img: FloatTensor<B>,
-        projected_splats: FloatTensor<B>,
-        compact_gid_from_isect: IntTensor<B>,
-        tile_offsets: IntTensor<B>,
+        out_img: FloatTensor<Self>,
+        projected_splats: FloatTensor<Self>,
+        compact_gid_from_isect: IntTensor<Self>,
+        tile_offsets: IntTensor<Self>,
         background: Vec3,
         img_size: glam::UVec2,
-        v_output: FloatTensor<B>,
+        v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
-    ) -> RasterizeGrads<B>;
+    ) -> RasterizeGrads<Self>;
 
     /// Backward pass for projection.
     /// Reads sparse `v_combined` [`num_visible`, 9], writes dense outputs (scatter in kernel).
@@ -75,14 +75,14 @@ pub trait SplatBwdOps<B: Backend>: SplatOps<B> {
     /// view direction and then to the mean.
     #[allow(clippy::too_many_arguments)]
     fn project_bwd(
-        transforms: FloatTensor<B>,
-        sh_coeffs: FloatTensor<B>,
-        raw_opac: FloatTensor<B>,
-        global_from_compact_gid: IntTensor<B>,
+        transforms: FloatTensor<Self>,
+        sh_coeffs: FloatTensor<Self>,
+        raw_opac: FloatTensor<Self>,
+        global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         render_mode: SplatRenderMode,
-        v_combined: FloatTensor<B>,
-    ) -> SplatGrads<B>;
+        v_combined: FloatTensor<Self>,
+    ) -> SplatGrads<Self>;
 }
 
 /// State saved during forward pass for backward computation.
@@ -112,7 +112,7 @@ struct RenderBackwards;
 const NUM_BWD_ARGS: usize = 4;
 
 // Implement gradient registration when rendering backwards.
-impl<B: Backend + SplatBwdOps<B>> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
+impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
     type State = GaussianBackwardState<B>;
 
     fn backward(
@@ -292,7 +292,7 @@ pub async fn render_splats_with_pass(
         pass.bwd_info(),
         "render_splats_with_pass requires a Backward variant"
     );
-    let output = <MainBackend as SplatOps<MainBackend>>::render(
+    let output = <MainBackend as SplatOps>::render(
         camera,
         img_size,
         transforms_inner.clone(),
@@ -344,7 +344,7 @@ pub async fn render_splats_with_pass(
     }
 }
 
-impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
+impl SplatBwdOps for Fusion<MainBackendBase> {
     #[allow(clippy::too_many_arguments)]
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
@@ -381,7 +381,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
 
                 let [v_combined] = outputs;
 
-                let grads = <MainBackendBase as SplatBwdOps<MainBackendBase>>::rasterize_bwd(
+                let grads = <MainBackendBase as SplatBwdOps>::rasterize_bwd(
                     h.get_float_tensor::<MainBackendBase>(out_img),
                     h.get_float_tensor::<MainBackendBase>(projected_splats),
                     h.get_int_tensor::<MainBackendBase>(compact_gid_from_isect),
@@ -474,7 +474,7 @@ impl SplatBwdOps<Self> for Fusion<MainBackendBase> {
 
                 let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
 
-                let grads = <MainBackendBase as SplatBwdOps<MainBackendBase>>::project_bwd(
+                let grads = <MainBackendBase as SplatBwdOps>::project_bwd(
                     h.get_float_tensor::<MainBackendBase>(transforms),
                     h.get_float_tensor::<MainBackendBase>(sh_coeffs),
                     h.get_float_tensor::<MainBackendBase>(raw_opac),

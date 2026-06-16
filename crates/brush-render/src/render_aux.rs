@@ -1,7 +1,7 @@
 use burn::{
     Tensor,
     backend::{
-        Backend,
+        Backend, ExtensionType,
         tensor::{FloatTensor, IntTensor},
     },
     tensor::Int,
@@ -10,9 +10,13 @@ use burn::{
 use crate::shaders::helpers::ProjectUniforms;
 
 /// Internal render output used by kernel impls. Holds backend primitives.
-#[derive(Debug, Clone)]
+///
+/// `ExtensionType` lets the `#[backend_extension]`-generated `Dispatch` impl
+/// re-wrap these primitives across the backend boundary automatically.
+#[derive(Debug, Clone, ExtensionType)]
 pub struct RenderOutput<B: Backend> {
     pub out_img: FloatTensor<B>,
+    #[extension_type]
     pub aux: RenderAuxInner<B>,
     // State needed by the backward pass; non-diff callers can ignore these.
     pub projected_splats: FloatTensor<B>,
@@ -51,7 +55,7 @@ impl<B: Backend> RenderOutput<B> {
 
 /// Internal aux struct holding backend primitives. Used by the kernel
 /// pipeline and the backward registration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ExtensionType)]
 pub struct RenderAuxInner<B: Backend> {
     pub num_visible: u32,
     pub num_intersections: u32,
