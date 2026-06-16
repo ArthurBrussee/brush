@@ -210,7 +210,7 @@ impl AppPane for StatsPanel {
 
             let device = process.burn_device();
             let client = WgpuRuntime::<AutoCompiler>::client(&device);
-            let memory = client.memory_usage_total();
+            let memory = client.memory_usage();
 
             ui.add_space(10.0);
             ui.heading("GPU");

@@ -82,7 +82,6 @@ skip = [
     { name = "console" },
     { name = "jni-sys" },
     { name = "wasm-streams" },
-    { name = "ndarray" },
 ]
 
 [licenses]

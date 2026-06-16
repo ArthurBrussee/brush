@@ -423,9 +423,10 @@ pub(crate) async fn train_stream(
             {
                 visualize.log_memory(
                     iter,
-                    &WgpuRuntime::<AutoCompiler>::client(wgpu_device).memory_usage_total()?,
+                    &WgpuRuntime::<AutoCompiler>::client(wgpu_device).memory_usage()?,
                 )?;
             }
+
             if refine.num_added > 0 {
                 visualize
                     .log_refine_stats(iter, &refine, refine_dur)

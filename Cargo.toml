@@ -93,7 +93,13 @@ wgpu = { version = "29", default-features = false, features = ["naga-ir"] }
 
 serde-ply = "0.2.1"
 
-burn = { git = "https://github.com/tracel-ai/burn", branch = "main", features = [
+# `default-features = false` re-lists burn's default set minus `rl`: burn-rl
+# enables `burn-core/dataset`, which pulls gix-tempfile -> signal-hook-registry
+# -> errno, none of which compile for wasm32. Brush has its own dataset stack
+# and no RL, so dropping `rl` keeps the wasm build green.
+burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-features = false, features = [
+    'std',
+    'optim',
     'extension',
 ] }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn", branch = "main" }
@@ -118,7 +124,7 @@ eframe = { version = "0.34.3", default-features = false, features = [
 
 egui_tiles = { version = "0.15", features = ["serde"] }
 
-rerun = { version = "0.32", default-features = false, features = [
+rerun = { version = "0.33", default-features = false, features = [
     'sdk',
     'glam',
 ] }

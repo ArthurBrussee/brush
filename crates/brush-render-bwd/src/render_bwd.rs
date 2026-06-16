@@ -18,7 +18,7 @@ use crate::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};
 use crate::kernels;
 use brush_render::shaders::helpers::ProjectUniforms;
 
-impl SplatBwdOps<Self> for MainBackendBase {
+impl SplatBwdOps for MainBackendBase {
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
         projected_splats: FloatTensor<Self>,

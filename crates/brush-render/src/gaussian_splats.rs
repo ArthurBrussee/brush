@@ -1,6 +1,6 @@
-use brush_cube::MainBackend;
 use burn::{
     Tensor,
+    backend::Dispatch,
     module::{Module, Param, ParamId},
     tensor::{Device, Gradients, TensorData, activation::sigmoid, s},
 };
@@ -10,7 +10,6 @@ use tracing::trace_span;
 
 use crate::{
     RenderAux, SplatOps,
-    burn_glue::{unwrap_wgpu_float, wrap_wgpu_float, wrap_wgpu_int},
     camera::Camera,
     sh::{sh_coeffs_for_degree, sh_degree_from_coeffs},
 };
@@ -401,10 +400,6 @@ pub async fn render_splats(
 
     let use_float = matches!(texture_mode, TextureMode::Float);
 
-    let transforms_p = unwrap_wgpu_float(transforms);
-    let sh_coeffs_p = unwrap_wgpu_float(sh_coeffs);
-    let raw_opacities_p = unwrap_wgpu_float(raw_opacities);
-
     // Float mode needs `Backward` (f32 image + per-splat bookkeeping); Packed
     // mode goes through the packed u8 path. Neither inference path uses the
     // smooth cutoff — that's reserved for the gradient-check tests.
@@ -413,12 +408,15 @@ pub async fn render_splats(
     } else {
         RasterPass::Forward
     };
-    let output = <MainBackend as SplatOps<MainBackend>>::render(
+    // Route through the `#[backend_extension]`-generated `Dispatch` impl: it
+    // unwraps these dispatch primitives to the Wgpu backend, runs the render,
+    // and re-wraps the `RenderOutput` via its `ExtensionType` derive.
+    let output = <Dispatch as SplatOps>::render(
         camera,
         img_size,
-        transforms_p,
-        sh_coeffs_p,
-        raw_opacities_p,
+        transforms.into_dispatch(),
+        sh_coeffs.into_dispatch(),
+        raw_opacities.into_dispatch(),
         render_mode,
         background,
         pass,
@@ -434,11 +432,11 @@ pub async fn render_splats(
     let aux = RenderAux {
         num_visible,
         num_intersections,
-        visible: wrap_wgpu_float(output.aux.visible),
-        max_radius: wrap_wgpu_float(output.aux.max_radius),
-        tile_offsets: wrap_wgpu_int(output.aux.tile_offsets),
+        visible: Tensor::from_dispatch(output.aux.visible),
+        max_radius: Tensor::from_dispatch(output.aux.max_radius),
+        tile_offsets: Tensor::from_dispatch(output.aux.tile_offsets),
         img_size,
     };
 
-    (wrap_wgpu_float(output.out_img), aux)
+    (Tensor::from_dispatch(output.out_img), aux)
 }

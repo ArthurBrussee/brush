@@ -20,7 +20,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.93.0
+          toolchain: 1.95.0
           components: rustfmt, clippy
 
       - name: Install packages (Linux)
@@ -68,7 +68,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.93.0
+          toolchain: 1.95.0
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
@@ -103,7 +103,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          rust-version: "1.92.0"
+          rust-version: "1.95.0"
           log-level: error
           command: check
           arguments: --target  ${{ matrix.target }}
@@ -121,7 +121,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.93.0
+          toolchain: 1.95.0
 
       - uses: Swatinem/rust-cache@v2
         with:
