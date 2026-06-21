@@ -4,14 +4,10 @@ use brush_async::Actor;
 use rand::{SeedableRng, seq::SliceRandom};
 use tokio::sync::{Mutex, mpsc};
 
-use crate::scene::{Scene, SceneBatch, sample_to_packed_data, view_to_sample_image};
-
-/// Cache budget for packed scene batches. 6 GB on native; less on
-/// wasm since the whole heap is bounded by browser limits.
-#[cfg(not(target_family = "wasm"))]
-const CACHE_BUDGET_BYTES: usize = 6 * 1024 * 1024 * 1024;
-#[cfg(target_family = "wasm")]
-const CACHE_BUDGET_BYTES: usize = 2 * 1024 * 1024 * 1024;
+use crate::{
+    config::LoadDatasetConfig,
+    scene::{Scene, SceneBatch, sample_to_packed_data, view_to_sample_image},
+};
 
 /// Shared cache of GPU-ready scene batches. Each slot holds at most one
 /// batch; once the running total passes `budget_bytes`, new batches bypass
@@ -22,16 +18,16 @@ const CACHE_BUDGET_BYTES: usize = 2 * 1024 * 1024 * 1024;
 /// single copy of the already-packed `[H, W]` u32 buffer.
 struct BatchCache {
     slots: Vec<Option<Arc<SceneBatch>>>,
-    used_bytes: usize,
-    budget_bytes: usize,
+    used_bytes: u64,
+    budget_bytes: u64,
 }
 
 impl BatchCache {
-    fn new(n_views: usize) -> Self {
+    fn new(n_views: usize, budget_bytes: u64) -> Self {
         Self {
             slots: vec![None; n_views],
             used_bytes: 0,
-            budget_bytes: CACHE_BUDGET_BYTES,
+            budget_bytes,
         }
     }
 
@@ -45,7 +41,12 @@ impl BatchCache {
         }
         // Track exact bytes: rounding to whole MB let sub-MB images slip in
         // for free and bypass the budget entirely.
-        let size_bytes = batch.img_packed.as_bytes().len();
+        let size_bytes: u64 = batch
+            .img_packed
+            .as_bytes()
+            .len()
+            .try_into()
+            .expect("shouldn't exceed ~18 Exabytes...");
         if self.used_bytes + size_bytes < self.budget_bytes {
             self.slots[index] = Some(batch);
             self.used_bytes += size_bytes;
@@ -61,7 +62,7 @@ pub struct SceneLoader {
 }
 
 impl SceneLoader {
-    pub fn new(scene: &Scene, seed: u64) -> Self {
+    pub fn new(scene: &Scene, seed: u64, config: &LoadDatasetConfig) -> Self {
         // Prefetch buffer: at most 4 batches ahead of the trainer.
         // Two tasks per actor share this buffer so one task's I/O can
         // overlap with the other's decode + GPU upload.
@@ -78,7 +79,10 @@ impl SceneLoader {
         const TASKS_PER_ACTOR: usize = 2;
 
         let views = scene.views.clone();
-        let cache = Arc::new(Mutex::new(BatchCache::new(views.len())));
+        let cache = Arc::new(Mutex::new(BatchCache::new(
+            views.len(),
+            config.max_scene_batch_cache_size,
+        )));
 
         let mut task_idx: u64 = 0;
         let actors: Vec<Actor> = (0..n_actors)
