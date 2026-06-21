@@ -17,7 +17,7 @@ pub struct ModelConfig {
 
 #[derive(Clone, Debug, Args, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub struct LoadDataseConfig {
+pub struct LoadDatasetConfig {
     /// Max nr. of frames of dataset to load
     #[arg(long, help_heading = "Dataset Options")]
     pub max_frames: Option<usize>,

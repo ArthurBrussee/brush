@@ -7,7 +7,7 @@ use std::{
 use super::{DatasetLoadResult, FormatError};
 use crate::{
     Dataset,
-    config::LoadDataseConfig,
+    config::LoadDatasetConfig,
     formats::{find_image_by_name, find_mask_path, split_eval_every},
     scene::{LoadImage, SceneView},
 };
@@ -101,7 +101,7 @@ async fn count_registered_images(
 
 pub(crate) async fn load_dataset(
     vfs: Arc<BrushVfs>,
-    load_args: &LoadDataseConfig,
+    load_args: &LoadDatasetConfig,
 ) -> Option<Result<DatasetLoadResult, FormatError>> {
     log::info!("Loading colmap dataset");
 
@@ -121,7 +121,7 @@ pub(crate) async fn load_dataset(
 
 async fn load_dataset_inner(
     vfs: Arc<BrushVfs>,
-    load_args: &LoadDataseConfig,
+    load_args: &LoadDatasetConfig,
     cam_path: PathBuf,
     img_path: PathBuf,
 ) -> Result<DatasetLoadResult, FormatError> {

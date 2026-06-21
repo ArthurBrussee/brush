@@ -1,4 +1,4 @@
-use crate::{Dataset, config::LoadDataseConfig, scene::SceneView};
+use crate::{Dataset, config::LoadDatasetConfig, scene::SceneView};
 use brush_serde::{DeserializeError, SplatMessage, load_splat_from_ply};
 
 use brush_vfs::BrushVfs;
@@ -55,7 +55,7 @@ pub enum DatasetError {
 
 pub async fn load_dataset(
     vfs: Arc<BrushVfs>,
-    load_args: &LoadDataseConfig,
+    load_args: &LoadDatasetConfig,
 ) -> Result<DatasetLoadResult, DatasetError> {
     let mut dataset = colmap::load_dataset(vfs.clone(), load_args).await;
 
