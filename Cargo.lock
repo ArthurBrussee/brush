@@ -922,7 +922,7 @@ dependencies = [
  "log",
  "rand 0.10.1",
  "rerun",
- "safetensors 0.7.0",
+ "safetensors 0.8.0",
  "tokio",
  "wasm-bindgen-test",
  "wasm-logger",
@@ -8359,6 +8359,19 @@ dependencies = [
  "hashbrown 0.16.1",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "safetensors"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79b079b829cb27a1c3c374341345ed2e8b2c0c839034522cee576c140bd7f846"
+dependencies = [
+ "hashbrown 0.16.1",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
