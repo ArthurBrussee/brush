@@ -28,6 +28,7 @@ impl SplatBwdOps for MainBackendBase {
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
+        render_depth: bool,
     ) -> RasterizeGrads<Self> {
         let _span = tracing::trace_span!("rasterize_bwd").entered();
 
@@ -36,8 +37,9 @@ impl SplatBwdOps for MainBackendBase {
         let num_visible = projected_splats.shape()[0].max(1);
         let client = projected_splats.client.clone();
 
-        // Sparse [num_visible, 10] indexed by compact_gid.
-        let v_combined = Self::float_zeros([num_visible, 10].into(), &device, FloatDType::F32);
+        // Sparse [num_visible, 11] indexed by compact_gid. Lane 10 is the
+        // expected-depth gradient (zero in colour-only modes).
+        let v_combined = Self::float_zeros([num_visible, 11].into(), &device, FloatDType::F32);
 
         let tile_bounds = uvec2(
             img_size
@@ -81,6 +83,7 @@ impl SplatBwdOps for MainBackendBase {
                     v_combined.clone().into_tensor_arg(),
                     uniforms,
                     smooth_cutoff,
+                    render_depth,
                 );
             } else {
                 rasterize_backwards_kernel::launch::<CasAtomicAdd, WgpuRuntime>(
@@ -95,6 +98,7 @@ impl SplatBwdOps for MainBackendBase {
                     v_combined.clone().into_tensor_arg(),
                     uniforms,
                     smooth_cutoff,
+                    render_depth,
                 );
             }
         });

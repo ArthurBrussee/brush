@@ -17,6 +17,7 @@ bytemuck.workspace = true
 thiserror = { workspace = true }
 image.workspace = true
 jpeg-decoder.workspace = true
+tiff = "0.11"
 serde.workspace = true
 serde_json.workspace = true
 glam.workspace = true

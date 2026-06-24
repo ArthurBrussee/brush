@@ -1118,6 +1118,21 @@ pub fn image_loss_eval(
     wrap_wgpu_float::<3>(map).permute([1, 2, 0])
 }
 
+/// L1 depth loss in disparity (inverse-depth) space
+pub fn depth_loss(pred_depth: Tensor<2>, gt_depth: Tensor<2>) -> Tensor<1> {
+    let pred_invalid = pred_depth.clone().lower_equal_elem(0.0);
+    let disp_pred = pred_depth.recip().mask_fill(pred_invalid, 0.0);
+
+    let gt_valid = gt_depth.clone().greater_elem(0.0);
+    let gt_invalid = gt_depth.clone().lower_equal_elem(0.0);
+    let disp_gt = gt_depth.recip().mask_fill(gt_invalid, 0.0);
+
+    let valid = gt_valid.float();
+    let abs_err = (disp_pred - disp_gt).abs() * valid.clone();
+
+    abs_err.sum() / valid.sum().clamp_min(1.0)
+}
+
 /// Decode `gt_packed` back to a `[H, W, 3]` f32 RGB tensor. `composite_bg =
 /// Some(bg)` folds in `gt + (1 - gt.a) * bg`; `None` skips that math.
 /// Materialising f32 GT defeats the whole point of the packed format, so

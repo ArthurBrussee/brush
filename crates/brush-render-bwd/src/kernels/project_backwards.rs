@@ -124,7 +124,7 @@ pub fn project_backwards_kernel(
     // splats that contributed to a pixel; non-contributing splats leave
     // v_rasterize_grads at zero and (since the dense outputs are zero-
     // init) we can return without writing anything at all.
-    let rg_base = (compact_gid * 10u32) as usize;
+    let rg_base = (compact_gid * 11u32) as usize;
     let v_mean2d_x = v_rasterize_grads[rg_base];
     let v_mean2d_y = v_rasterize_grads[rg_base + 1];
     let v_conics_x = v_rasterize_grads[rg_base + 2];
@@ -135,6 +135,7 @@ pub fn project_backwards_kernel(
     let v_color_b = v_rasterize_grads[rg_base + 7];
     let v_alpha_in = v_rasterize_grads[rg_base + 8];
     let v_refine_in = v_rasterize_grads[rg_base + 9];
+    let v_depth_in = v_rasterize_grads[rg_base + 10];
 
     let any_grad = v_mean2d_x != 0.0f32
         || v_mean2d_y != 0.0f32
@@ -145,7 +146,8 @@ pub fn project_backwards_kernel(
         || v_color_g != 0.0f32
         || v_color_b != 0.0f32
         || v_alpha_in != 0.0f32
-        || v_refine_in != 0.0f32;
+        || v_refine_in != 0.0f32
+        || v_depth_in != 0.0f32;
     if !any_grad {
         terminate!();
     }
@@ -217,6 +219,8 @@ pub fn project_backwards_kernel(
         Vec2::new(v_mean2d_x, v_mean2d_y),
         camera_model,
     );
+
+    let v_mean_c = Vec3A::new(v_mean_c.x(), v_mean_c.y(), v_mean_c.z() + v_depth_in);
 
     // v_covar_c = J^T * v_cov2d * J (2x2 sym → 3x3 sym).
     let vcc = cam_jac.transpose_congruence_sym2(v_cov2d);

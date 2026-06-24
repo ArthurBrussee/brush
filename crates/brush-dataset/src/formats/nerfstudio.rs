@@ -260,7 +260,11 @@ async fn read_transforms_file(
             continue;
         }
 
-        let view = SceneView { image, camera };
+        let view = SceneView {
+            image,
+            camera,
+            depth: None,
+        };
         results.push(view);
     }
     Ok(results)

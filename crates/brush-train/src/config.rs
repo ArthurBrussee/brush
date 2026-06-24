@@ -92,6 +92,10 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "0.0")]
     pub lpips_loss_weight: f32,
 
+    /// Weight of l1 loss on depth (disparity-space)
+    #[arg(long, help_heading = "Training options", default_value = "0.0")]
+    pub depth_loss_weight: f32,
+
     /// Base background color (R,G,B) used during training.
     #[arg(
         long,

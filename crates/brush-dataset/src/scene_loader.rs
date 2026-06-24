@@ -139,10 +139,24 @@ async fn run_loader(
                 .expect("Scene loader failed to load an image");
             let sample = view_to_sample_image(raw, view.image.alpha_mode());
             let (img_packed, has_alpha) = sample_to_packed_data(sample);
+
+            let depth = if let Some(load_depth) = &view.depth {
+                let [h, w] = [img_packed.shape[0], img_packed.shape[1]];
+                Some(
+                    load_depth
+                        .load(h, w)
+                        .await
+                        .expect("Scene loader failed to load an image"),
+                )
+            } else {
+                None
+            };
+
             let batch = Arc::new(SceneBatch {
                 img_packed,
                 has_alpha,
                 alpha_mode: view.image.alpha_mode(),
+                depth,
                 camera: view.camera,
             });
             cache.lock().await.insert(index, batch.clone());

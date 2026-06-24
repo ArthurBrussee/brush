@@ -10,10 +10,10 @@ use crate::{
     stats::RefineRecord,
 };
 use brush_dataset::scene::SceneBatch;
-use brush_loss::{ImageLossConfig, image_loss};
-use brush_render::gaussian_splats::Splats;
+use brush_loss::{ImageLossConfig, depth_loss, image_loss};
+use brush_render::gaussian_splats::{RasterPass, RasterizationMode, Splats};
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
-use brush_render_bwd::render_splats;
+use brush_render_bwd::render_splats_with_pass;
 use burn::{
     backend::wgpu::{AutoCompiler, WgpuDevice, WgpuRuntime},
     lr_scheduler::{
@@ -188,9 +188,22 @@ impl SplatTrainer {
             // The splats already carry their 3D-filter floor (set at refine);
             // the render path folds it in. Optimizer/refine work on raw params.
             let render_input = splats.clone();
-            let diff_out = render_splats(render_input, &camera, img_size, background)
-                .instrument(trace_span!("Forward"))
-                .await;
+            let use_depth = batch.depth.is_some() && self.config.depth_loss_weight > 0.0;
+            let raster_mode = if use_depth {
+                RasterizationMode::RgbaAndDepth
+            } else {
+                RasterizationMode::Rgba
+            };
+            let diff_out = render_splats_with_pass(
+                render_input,
+                &camera,
+                img_size,
+                background,
+                RasterPass::Backward,
+                raster_mode,
+            )
+            .instrument(trace_span!("Forward"))
+            .await;
 
             let pred_image = diff_out.img;
             let refine_weight_holder = diff_out.refine_weight_holder;
@@ -223,7 +236,7 @@ impl SplatTrainer {
                 mask: masked_alpha,
             };
             let pred_for_loss = if do_alpha_match {
-                pred_image.clone()
+                pred_image.clone().slice(s![.., .., 0..4])
             } else {
                 pred_image.clone().slice(s![.., .., 0..3])
             };
@@ -251,6 +264,16 @@ impl SplatTrainer {
                         pred_image.clone().slice(s![.., .., 0..3]).unsqueeze_dim(0),
                         gt_rgb_diff.unsqueeze_dim(0),
                     ) * self.config.lpips_loss_weight;
+            }
+
+            // Depth Disparity L1 loss on rendered expected depth
+            if use_depth && let Some(depth_data) = &batch.depth {
+                let gt_depth: Tensor<2> = Tensor::from_data(depth_data.clone(), &device);
+                let accumulated_depth = pred_image.clone().slice(s![.., .., 4..5]);
+                let alpha = pred_image.clone().slice(s![.., .., 3..4]);
+                let expected_depth =
+                    (accumulated_depth / alpha.clamp_min(1e-10)).reshape([img_h, img_w]);
+                loss = loss + depth_loss(expected_depth, gt_depth) * self.config.depth_loss_weight;
             }
 
             // Strip the autodiff graph off the loss so consumers can read the

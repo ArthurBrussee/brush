@@ -66,6 +66,7 @@ pub trait SplatBwdOps: SplatOps {
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
+        render_depth: bool,
     ) -> RasterizeGrads<Self>;
 
     /// Backward pass for projection.
@@ -102,6 +103,7 @@ struct GaussianBackwardState<B: Backend> {
 
     render_mode: SplatRenderMode,
     pass: brush_render::gaussian_splats::RasterPass,
+    rasterization_mode: brush_render::gaussian_splats::RasterizationMode,
     background: Vec3,
     img_size: glam::UVec2,
 }
@@ -144,6 +146,7 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
             state.img_size,
             v_output,
             state.pass.smooth_cutoff(),
+            state.rasterization_mode.render_depth(),
         );
 
         let splat_grads = B::project_bwd(
@@ -226,6 +229,7 @@ pub async fn render_splats(
         img_size,
         background,
         brush_render::gaussian_splats::RasterPass::Backward,
+        brush_render::gaussian_splats::RasterizationMode::Rgba,
     )
     .await
 }
@@ -240,6 +244,7 @@ pub async fn render_splats_with_pass(
     img_size: glam::UVec2,
     background: Vec3,
     pass: brush_render::gaussian_splats::RasterPass,
+    rasterization_mode: brush_render::gaussian_splats::RasterizationMode,
 ) -> SplatOutputDiff {
     splats.clone().validate_values().await;
 
@@ -299,6 +304,7 @@ pub async fn render_splats_with_pass(
         sh_inner.clone(),
         raw_opac_inner.clone(),
         render_mode,
+        rasterization_mode,
         background,
         pass,
     )
@@ -323,6 +329,7 @@ pub async fn render_splats_with_pass(
                 compact_gid_from_isect: output.compact_gid_from_isect,
                 render_mode,
                 pass,
+                rasterization_mode,
                 global_from_compact_gid: output.global_from_compact_gid,
                 background,
                 img_size,
@@ -355,6 +362,7 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
+        render_depth: bool,
     ) -> RasterizeGrads<Self> {
         #[derive(Debug)]
         struct CustomOp {
@@ -362,6 +370,7 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
             background: Vec3,
             img_size: glam::UVec2,
             smooth_cutoff: bool,
+            render_depth: bool,
         }
 
         impl Operation<FusionCubeRuntime<WgpuRuntime>> for CustomOp {
@@ -390,6 +399,7 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
                     self.img_size,
                     h.get_float_tensor::<MainBackendBase>(v_output),
                     self.smooth_cutoff,
+                    self.render_depth,
                 );
 
                 h.register_float_tensor::<MainBackendBase>(&v_combined.id, grads.v_combined);
@@ -413,7 +423,7 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
         let outputs = {
             let v_combined_out = TensorIr::uninit(
                 client.create_empty_handle(),
-                Shape::new([num_visible, 10]),
+                Shape::new([num_visible, 11]),
                 DType::F32,
             );
             let stream = StreamId::current();
@@ -427,6 +437,7 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
                 background,
                 img_size,
                 smooth_cutoff,
+                render_depth,
             };
             client
                 .register(stream, OperationIr::Custom(desc), op)

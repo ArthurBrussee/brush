@@ -21,6 +21,24 @@ pub enum SplatRenderMode {
     Mip,
 }
 
+/// Output channels the rasterizer produces.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+pub enum RasterizationMode {
+    #[default]
+    Rgba,
+    RgbaAndDepth,
+}
+
+impl RasterizationMode {
+    pub const fn render_depth(self) -> bool {
+        matches!(self, Self::RgbaAndDepth)
+    }
+
+    pub const fn bwd_out_channels(self) -> usize {
+        if self.render_depth() { 5 } else { 4 }
+    }
+}
+
 /// Forward/backward rasterizer mode. Replaces the old `bwd_info: bool` so the
 /// test-only smooth-cutoff variant rides along on the same enum that already
 /// switches in/out the backward bookkeeping.
@@ -418,6 +436,7 @@ pub async fn render_splats(
         sh_coeffs.into_dispatch(),
         raw_opacities.into_dispatch(),
         render_mode,
+        RasterizationMode::Rgba,
         background,
         pass,
     )
