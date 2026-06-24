@@ -45,6 +45,11 @@ fn main() -> Result<(), anyhow::Error> {
         .build()
         .expect("Failed to initialize tokio runtime")
         .block_on(async move {
+            // Headless animation render path (no viewer).
+            if args.animation.render_anim.is_some() {
+                return brush_cli::run_render_animation(&args).await;
+            }
+
             let init_process = brush_cli::build_process(&args);
 
             if args.with_viewer {

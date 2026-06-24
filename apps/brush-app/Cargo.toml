@@ -26,6 +26,7 @@ brush-process.path = "../../crates/brush-process"
 brush-dataset.path = "../../crates/brush-dataset"
 brush-render.path = "../../crates/brush-render"
 brush-serde.path = "../../crates/brush-serde"
+brush-anim.path = "../../crates/brush-anim"
 
 rrfd.path = "../../crates/rrfd"
 
@@ -68,14 +69,14 @@ brush-cli.path = "../brush-cli"
 winit = { version = "0.30", features = ["default"] }
 clap.workspace = true
 env_logger.workspace = true
-tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread", "sync"] }
 
 [target.'cfg(target_family = "windows")'.dependencies]
 winapi.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { version = "0.30", features = ["android-game-activity"] }
-tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread", "sync"] }
 android_logger = "0.15.0"
 jni = "0.22"
 
