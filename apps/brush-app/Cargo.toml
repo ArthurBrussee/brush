@@ -26,6 +26,7 @@ brush-process.path = "../../crates/brush-process"
 brush-dataset.path = "../../crates/brush-dataset"
 brush-render.path = "../../crates/brush-render"
 brush-serde.path = "../../crates/brush-serde"
+brush-anim.path = "../../crates/brush-anim"
 
 rrfd.path = "../../crates/rrfd"
 

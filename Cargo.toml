@@ -5,6 +5,7 @@ members = [
     "apps/brush-c",
     "apps/brush-cli",
     "apps/brush-js",
+    "crates/brush-anim",
     "crates/brush-async",
     "crates/brush-bench-test",
     "crates/brush-cube",
