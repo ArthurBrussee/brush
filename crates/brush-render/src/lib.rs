@@ -8,7 +8,7 @@ use clap::ValueEnum;
 use glam::Vec3;
 
 use crate::gaussian_splats::{RasterPass, RasterizationMode, SplatRenderMode};
-pub use crate::gaussian_splats::{Splats, TextureMode, render_splats};
+pub use crate::gaussian_splats::{Splats, TextureMode, render_splats, render_splats_depth};
 pub use crate::render_aux::{RenderAux, RenderAuxInner, RenderOutput};
 
 pub mod burn_glue;

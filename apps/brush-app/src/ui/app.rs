@@ -149,6 +149,7 @@ pub struct CameraSettings {
     pub splat_scale: Option<f32>,
     pub background: Option<Vec3>,
     pub grid_enabled: Option<bool>,
+    pub depth_view: bool,
     pub clamping: CameraClamping,
 }
 

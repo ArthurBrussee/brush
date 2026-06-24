@@ -261,7 +261,7 @@ async fn load_dataset_inner(
         let (points_path, is_binary) = find_points3d_path(&vfs_init, &points_dir)?;
         // At this point the VFS has said this file exists so just unwrap.
         let mut points_file = vfs_init
-            .reader_at_path(&points_path)
+            .reader_at_path(points_path)
             .await
             .expect("unreachable");
 
@@ -429,7 +429,7 @@ async fn estimate_metric_scale(
     }
 
     let (points_path, is_binary) = find_points3d_path(vfs, points_dir)?;
-    let mut points_file = vfs.reader_at_path(&points_path).await.ok()?;
+    let mut points_file = vfs.reader_at_path(points_path).await.ok()?;
     let points = colmap_reader::read_points3d(&mut points_file, is_binary, false)
         .await
         .ok()?;

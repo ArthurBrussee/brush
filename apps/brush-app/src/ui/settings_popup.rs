@@ -193,7 +193,7 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
         slider(
             ui,
             &mut tc.depth_loss_weight,
-            0.0..=10.0,
+            0.0..=1.0,
             "Depth loss weight (0 disables)",
             false,
             enabled,

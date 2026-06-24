@@ -388,6 +388,46 @@ pub async fn render_splats(
     splat_scale: Option<f32>,
     texture_mode: TextureMode,
 ) -> (Tensor<3>, RenderAux) {
+    render_splats_inner(
+        splats,
+        camera,
+        img_size,
+        background,
+        splat_scale,
+        texture_mode,
+        RasterizationMode::Rgba,
+    )
+    .await
+}
+
+pub async fn render_splats_depth(
+    splats: Splats,
+    camera: &Camera,
+    img_size: glam::UVec2,
+    background: Vec3,
+    splat_scale: Option<f32>,
+) -> (Tensor<3>, RenderAux) {
+    render_splats_inner(
+        splats,
+        camera,
+        img_size,
+        background,
+        splat_scale,
+        TextureMode::Float,
+        RasterizationMode::RgbaAndDepth,
+    )
+    .await
+}
+
+async fn render_splats_inner(
+    splats: Splats,
+    camera: &Camera,
+    img_size: glam::UVec2,
+    background: Vec3,
+    splat_scale: Option<f32>,
+    texture_mode: TextureMode,
+    raster_mode: RasterizationMode,
+) -> (Tensor<3>, RenderAux) {
     splats.clone().validate_values().await;
 
     let sh_coeffs = splats.sh_coeffs.into_value();
@@ -436,7 +476,7 @@ pub async fn render_splats(
         sh_coeffs.into_dispatch(),
         raw_opacities.into_dispatch(),
         render_mode,
-        RasterizationMode::Rgba,
+        raster_mode,
         background,
         pass,
     )
