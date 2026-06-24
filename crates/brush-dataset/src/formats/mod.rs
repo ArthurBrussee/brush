@@ -188,6 +188,40 @@ fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
     })
 }
 
+/// Locate the `points3d.{txt,bin}` belonging to the chosen reconstruction.
+fn find_points3d_path<'a>(vfs: &'a BrushVfs, points_dir: &'a Path) -> Option<(&'a Path, bool)> {
+    let path = vfs
+        .files_ending_in("points3d.txt")
+        .chain(vfs.files_ending_in("points3d.bin"))
+        .find(|p| p.parent() == Some(points_dir))?;
+    let is_binary = matches!(path.extension().and_then(|e| e.to_str()), Some("bin"));
+    Some((path, is_binary))
+}
+
+/// Locate a per-image depth map.
+fn find_depth_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
+    let search_name = path.file_name().expect("File must have a name");
+    let search_stem = path.file_stem().expect("File must have a name");
+
+    vfs.iter_files().find(|candidate| {
+        let Some(stem) = candidate.file_stem() else {
+            return false;
+        };
+        if !(stem.eq_ignore_ascii_case(search_name) || stem.eq_ignore_ascii_case(search_stem)) {
+            return false;
+        }
+        let depth_idx = candidate
+            .components()
+            .position(|c| c.as_os_str().eq_ignore_ascii_case("depth"));
+        depth_idx.is_some_and(|idx| {
+            let candidate_components: Vec<_> = candidate.components().collect();
+            let path_dir_components: Vec<_> = path.parent().unwrap().components().collect();
+            let depth_dir_subpath = &candidate_components[idx + 1..candidate_components.len() - 1];
+            path_dir_components.ends_with(depth_dir_subpath)
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

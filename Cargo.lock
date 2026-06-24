@@ -992,6 +992,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tiff",
  "tokio",
  "tracing",
  "wasm-bindgen-test",

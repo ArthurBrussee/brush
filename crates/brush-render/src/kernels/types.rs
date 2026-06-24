@@ -11,9 +11,9 @@ use crate::kernels::camera_model::pinhole::PinholeParams;
 pub use brush_cube::{Mat2x3, Mat3, PixelRect, Quat, Sym2, TileBbox, Vec3A};
 
 /// One projected splat as the kernel sees it. The on-device storage is
-/// a flat `Tensor<f32>` of `9 * num_visible` lanes (see
+/// a flat `Tensor<f32>` of `PROJECTED_LANES * num_visible` lanes (see
 /// `helpers::PROJECTED_LANES`); the load helper packages the lanes into
-/// this struct so consumers don't carry nine independent locals.
+/// this struct so consumers don't carry ten independent locals.
 #[derive(CubeType, CubeTypeMut, Copy, Clone)]
 #[expand(derive(Clone, Copy))]
 pub struct Splat {
@@ -26,6 +26,7 @@ pub struct Splat {
     pub color_r: f32,
     pub color_g: f32,
     pub color_b: f32,
+    pub depth: f32,
 }
 
 #[cube]
@@ -41,6 +42,7 @@ impl Splat {
             color_r: 0.0f32,
             color_g: 0.0f32,
             color_b: 0.0f32,
+            depth: 0.0f32,
         }
     }
 }

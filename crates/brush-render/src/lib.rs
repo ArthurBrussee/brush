@@ -7,8 +7,8 @@ use camera::Camera;
 use clap::ValueEnum;
 use glam::Vec3;
 
-use crate::gaussian_splats::SplatRenderMode;
-pub use crate::gaussian_splats::{Splats, TextureMode, render_splats};
+use crate::gaussian_splats::{RasterPass, RasterizationMode, SplatRenderMode};
+pub use crate::gaussian_splats::{Splats, TextureMode, render_splats, render_splats_depth};
 pub use crate::render_aux::{RenderAux, RenderAuxInner, RenderOutput};
 
 pub mod burn_glue;
@@ -73,8 +73,9 @@ pub trait SplatOps: Backend {
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
+        rasterization_mode: RasterizationMode,
         background: Vec3,
-        pass: gaussian_splats::RasterPass,
+        pass: RasterPass,
     ) -> impl Future<Output = RenderOutput<Self>>;
 }
 

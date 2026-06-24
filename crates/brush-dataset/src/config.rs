@@ -36,4 +36,7 @@ pub struct LoadDataseConfig {
     /// Whether to interpret an alpha channel (or masks) as transparency or masking.
     #[arg(long, help_heading = "Dataset Options")]
     pub alpha_mode: Option<AlphaMode>,
+    /// Whether to rescale the dataset to suite the depth map scale
+    #[arg(long, help_heading = "Dataset Options", default_value = "false")]
+    pub estimate_metric_scale: bool,
 }

@@ -451,6 +451,83 @@ impl ScenePanel {
         }
     }
 
+    /// Google's "Turbo" colormap, matching the polynomial in the backbuffer shader.
+    fn turbo_color(t: f32) -> Color32 {
+        let x = t.clamp(0.0, 1.0);
+        let c0 = [0.114_089_01, 0.062_883_41, 0.224_833_72];
+        let c1 = [6.716_419_5, 3.182_286_8, 7.571_581_6];
+        let c2 = [-66.094_02, -4.927_983, -10.094_394];
+        let c3 = [228.766_08, 25.049_868, -91.541_05];
+        let c4 = [-334.835_15, -69.317_5, 288.585_88];
+        let c5 = [218.763_72, 67.521_51, -305.204_6];
+        let c6 = [-52.889_034, -21.545_273, 110.517_46];
+        let mut rgb = [0.0f32; 3];
+        for i in 0..3 {
+            let v = c0[i]
+                + x * (c1[i] + x * (c2[i] + x * (c3[i] + x * (c4[i] + x * (c5[i] + x * c6[i])))));
+            rgb[i] = v.clamp(0.0, 1.0);
+        }
+        Color32::from_rgb(
+            (rgb[0] * 255.0) as u8,
+            (rgb[1] * 255.0) as u8,
+            (rgb[2] * 255.0) as u8,
+        )
+    }
+
+    /// Draw a vertical depth colorbar in the top-right of `rect` with min/max labels.
+    fn draw_depth_colorbar(ui: &egui::Ui, rect: Rect, depth_min: f32, depth_max: f32) {
+        let painter = ui.painter_at(rect);
+
+        let bar_w = 16.0;
+        let bar_h = (rect.height() * 0.4).clamp(80.0, 240.0);
+        let bar_rect = Rect::from_min_size(
+            egui::pos2(rect.max.x - 24.0 - bar_w, rect.min.y + 36.0),
+            egui::vec2(bar_w, bar_h),
+        );
+
+        let bg_rect = Rect::from_min_max(
+            egui::pos2(bar_rect.min.x - 40.0, bar_rect.min.y - 12.0),
+            egui::pos2(bar_rect.max.x + 12.0, bar_rect.max.y + 12.0),
+        );
+        painter.rect_filled(
+            bg_rect,
+            6.0,
+            Color32::from_rgba_unmultiplied(20, 20, 25, 180),
+        );
+
+        let steps = 64;
+        for i in 0..steps {
+            let f = i as f32 / (steps - 1) as f32;
+            let seg_top = bar_rect.max.y - (i as f32 + 1.0) / steps as f32 * bar_h;
+            let color = Self::turbo_color(f);
+            painter.rect_filled(
+                Rect::from_min_size(
+                    egui::pos2(bar_rect.min.x, seg_top),
+                    egui::vec2(bar_w, bar_h / steps as f32 + 1.0),
+                ),
+                0.0,
+                color,
+            );
+        }
+
+        let text_color = Color32::WHITE;
+        let font = egui::FontId::new(11.0, egui::FontFamily::Proportional);
+        painter.text(
+            egui::pos2(bar_rect.min.x - 6.0, bar_rect.min.y),
+            Align2::RIGHT_CENTER,
+            format!("{depth_max:.2}"),
+            font.clone(),
+            text_color,
+        );
+        painter.text(
+            egui::pos2(bar_rect.min.x - 6.0, bar_rect.max.y),
+            Align2::RIGHT_CENTER,
+            format!("{depth_min:.2}"),
+            font,
+            text_color,
+        );
+    }
+
     fn draw_controls_help(ui: &mut egui::Ui, min_width: Option<f32>) {
         let key_color = Color32::from_rgb(140, 180, 220);
         let action_color = Color32::from_rgb(140, 140, 140);
@@ -557,6 +634,16 @@ impl ScenePanel {
         let mut enabled = settings.grid_enabled.unwrap_or(false);
         if ui.checkbox(&mut enabled, "Show Grid").changed() {
             settings.grid_enabled = Some(enabled);
+            process.set_cam_settings(&settings);
+        }
+
+        // Depth map view toggle
+        let mut settings = process.get_cam_settings();
+        if ui
+            .checkbox(&mut settings.depth_view, "Depth map view")
+            .on_hover_text("Render the depth instead of color")
+            .changed()
+        {
             process.set_cam_settings(&settings);
         }
 
@@ -1039,6 +1126,9 @@ impl AppPane for ScenePanel {
                 camera.fov_y = focal_to_fov(focal_x, size.y, &camera.camera_model);
             }
 
+            // Depth range of the last rendered depth map, for the colorbar.
+            let mut depth_range = None;
+
             // Render the splats and grid
             ui.scope(|ui| {
                 // if training views have alpha, show a background checker. Masked images
@@ -1059,7 +1149,7 @@ impl AppPane for ScenePanel {
                 }
 
                 if let Some(backbuffer) = &mut self.backbuffer {
-                    backbuffer.paint(
+                    depth_range = backbuffer.paint(
                         rect,
                         ui,
                         &process.current_splats(),
@@ -1067,6 +1157,7 @@ impl AppPane for ScenePanel {
                         self.frame as usize,
                         settings.background.unwrap_or(Vec3::ZERO),
                         settings.splat_scale,
+                        settings.depth_view,
                         self.splats_dirty,
                     );
                     self.splats_dirty = false;
@@ -1080,6 +1171,10 @@ impl AppPane for ScenePanel {
             });
 
             self.update_and_draw_reference_pose_bars(ui, rect, &camera, delta_time);
+
+            if let Some((depth_min, depth_max)) = depth_range {
+                Self::draw_depth_colorbar(ui, rect, depth_min, depth_max);
+            }
 
             if interactive {
                 self.draw_play_pause(ui, rect);

@@ -190,6 +190,14 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             false,
             enabled,
         );
+        slider(
+            ui,
+            &mut tc.depth_loss_weight,
+            0.0..=1.0,
+            "Depth loss weight (0 disables)",
+            false,
+            enabled,
+        );
     });
 
     ui.collapsing("Background", |ui| {
@@ -387,6 +395,14 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             args.load_config.alpha_mode = Some(alpha_mode);
         }
     }
+
+    ui.add_enabled(
+        enabled,
+        egui::Checkbox::new(
+            &mut args.load_config.estimate_metric_scale,
+            "Estimate metric scale",
+        ),
+    );
 
     ui.add_space(16.0);
 

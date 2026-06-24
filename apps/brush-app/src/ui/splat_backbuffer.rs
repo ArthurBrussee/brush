@@ -2,9 +2,9 @@ use brush_async::{Actor, AsyncMap};
 use brush_process::slot::Slot;
 use brush_render::{
     TextureMode, burn_glue::resolve_to_cube_float, camera::Camera, gaussian_splats::Splats,
-    render_splats,
+    render_splats, render_splats_depth,
 };
-use burn::tensor::Tensor;
+use burn::tensor::{Tensor, s};
 use egui::Rect;
 use glam::{UVec2, Vec3};
 
@@ -23,11 +23,20 @@ struct LastRenderState {
     camera: Camera,
     background: Vec3,
     splat_scale: Option<f32>,
+    depth_view: bool,
     img_size: UVec2,
 }
 
+#[derive(Clone)]
+struct RenderResult {
+    /// In RGBA mode, a `[H, W, 1]` tensor holding packed RGBA8 values.
+    /// In depth mode, a `[H, W, 1]` tensor of depths.
+    image: Tensor<3>,
+    depth_range: Option<(f32, f32)>,
+}
+
 pub struct SplatBackbuffer {
-    pipe: AsyncMap<RenderRequest, Tensor<3>>,
+    pipe: AsyncMap<RenderRequest, RenderResult>,
 }
 
 impl SplatBackbuffer {
@@ -45,16 +54,12 @@ impl SplatBackbuffer {
         let pipe = AsyncMap::new(
             actor,
             async move |req: &RenderRequest| {
-                let (image, _) = render_splats(
-                    req.splats.get(req.state.frame).unwrap(),
-                    &req.state.camera,
-                    req.state.img_size,
-                    req.state.background,
-                    req.state.splat_scale,
-                    TextureMode::Packed,
-                )
-                .await;
-                image
+                let splats = req.splats.get(req.state.frame).unwrap();
+                if req.state.depth_view {
+                    render_depth(splats, req).await
+                } else {
+                    render_rgba(splats, req).await
+                }
             },
             |req: &RenderRequest| req.ctx.request_repaint(),
         );
@@ -71,8 +76,9 @@ impl SplatBackbuffer {
         frame: usize,
         background: Vec3,
         splat_scale: Option<f32>,
+        depth_view: bool,
         splats_dirty: bool,
-    ) {
+    ) -> Option<(f32, f32)> {
         // Calculate pixel size for rendering
         let ppp = ui.ctx().pixels_per_point();
         let img_size = UVec2::new(
@@ -86,6 +92,7 @@ impl SplatBackbuffer {
             camera: *camera,
             background,
             splat_scale,
+            depth_view,
             img_size,
         };
 
@@ -100,7 +107,8 @@ impl SplatBackbuffer {
             });
         }
 
-        if let Some(image) = self.pipe.latest() {
+        if let Some(result) = self.pipe.latest() {
+            let image = result.image;
             let shape = image.shape();
             let img_height = shape[0] as u32;
             let img_width = shape[1] as u32;
@@ -112,8 +120,13 @@ impl SplatBackbuffer {
                         last_img: image,
                         img_width,
                         img_height,
+                        depth_range: result.depth_range,
                     },
                 ));
+
+            result.depth_range
+        } else {
+            None
         }
     }
 }
@@ -123,6 +136,12 @@ impl SplatBackbuffer {
 struct Uniforms {
     img_width: u32,
     img_height: u32,
+    /// 0 = packed RGBA image, 1 = float32 depth map.
+    mode: u32,
+    _pad: u32,
+    depth_min: f32,
+    depth_max: f32,
+    _pad2: [f32; 2],
 }
 
 pub struct SplatBackbufferResources {
@@ -220,10 +239,71 @@ impl SplatBackbufferResources {
     }
 }
 
+async fn render_rgba(splats: Splats, req: &RenderRequest) -> RenderResult {
+    let (image, _) = render_splats(
+        splats,
+        &req.state.camera,
+        req.state.img_size,
+        req.state.background,
+        req.state.splat_scale,
+        TextureMode::Packed,
+    )
+    .await;
+    RenderResult {
+        image,
+        depth_range: None,
+    }
+}
+
+async fn render_depth(splats: Splats, req: &RenderRequest) -> RenderResult {
+    let max_depth = 100.0;
+
+    let (image, _) = render_splats_depth(
+        splats,
+        &req.state.camera,
+        req.state.img_size,
+        req.state.background,
+        req.state.splat_scale,
+    )
+    .await;
+
+    let accumulated_depth = image.clone().slice(s![.., .., 4..5]);
+    let alpha = image.clone().slice(s![.., .., 3..4]);
+    let depth = accumulated_depth / alpha.clamp_min(1e-10);
+
+    let invalid = depth.clone().lower_equal_elem(0.0) | depth.clone().greater_elem(max_depth);
+    let depth_min = depth
+        .clone()
+        .mask_fill(invalid.clone(), f32::INFINITY)
+        .min()
+        .into_scalar_async::<f32>()
+        .await
+        .expect("Failed to read depth min");
+    let depth_max = depth
+        .clone()
+        .mask_fill(invalid, f32::NEG_INFINITY)
+        .max()
+        .into_scalar_async::<f32>()
+        .await
+        .expect("Failed to read depth max");
+
+    let depth_range = if depth_min.is_finite() && depth_max.is_finite() && depth_max > depth_min {
+        (depth_min, depth_max)
+    } else {
+        (0.0, max_depth)
+    };
+
+    RenderResult {
+        image: depth,
+        depth_range: Some(depth_range),
+    }
+}
+
 struct SplatBackbufferPainter {
     last_img: Tensor<3>,
     img_width: u32,
     img_height: u32,
+    depth_range: Option<(f32, f32)>,
 }
 
 impl CallbackTrait for SplatBackbufferPainter {
@@ -240,12 +320,21 @@ impl CallbackTrait for SplatBackbufferPainter {
         };
 
         // Update uniform buffer with image dimensions
+        let (mode, depth_min, depth_max) = match self.depth_range {
+            Some((min, max)) => (1, min, max),
+            None => (0, 0.0, 1.0),
+        };
         queue.write_buffer(
             &res.uniform_buffer,
             0,
             bytemuck::cast_slice(&[Uniforms {
                 img_width: self.img_width,
                 img_height: self.img_height,
+                mode,
+                _pad: 0,
+                depth_min,
+                depth_max,
+                _pad2: [0.0; 2],
             }]),
         );
 

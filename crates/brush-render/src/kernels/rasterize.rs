@@ -34,6 +34,7 @@ pub fn rasterize_kernel(
     u: RasterizeUniforms,
     #[comptime] bwd_info: bool,
     #[comptime] smooth_cutoff: bool,
+    #[comptime] render_depth: bool,
 ) {
     let global_id = ABSOLUTE_POS as u32;
     let (pix_x, pix_y) = map_1d_to_2d(global_id, u.tile_bw);
@@ -75,6 +76,7 @@ pub fn rasterize_kernel(
     let mut pix_r = 0.0f32;
     let mut pix_g = 0.0f32;
     let mut pix_b = 0.0f32;
+    let mut pix_d = 0.0f32;
     let mut done = !inside;
     let mut last_useful_isect = range_lo;
 
@@ -145,6 +147,9 @@ pub fn rasterize_kernel(
                     pix_r += max(local_batch[dst_base + 6], 0.0f32) * vis;
                     pix_g += max(local_batch[dst_base + 7], 0.0f32) * vis;
                     pix_b += max(local_batch[dst_base + 8], 0.0f32) * vis;
+                    if comptime![render_depth] {
+                        pix_d += local_batch[dst_base + 9] * vis;
+                    }
                     t_acc = next_t;
                     last_useful_isect = batch_start + t + 1u32;
                 }
@@ -163,11 +168,15 @@ pub fn rasterize_kernel(
         let final_b = pix_b + t_acc * u.bg_b;
         let final_a = 1.0f32 - t_acc;
         if comptime![bwd_info] {
-            let base = (pix_id * 4u32) as usize;
+            let out_chans = comptime![if render_depth { 5u32 } else { 4u32 }];
+            let base = (pix_id * out_chans) as usize;
             out_img_f32[base] = final_r;
             out_img_f32[base + 1] = final_g;
             out_img_f32[base + 2] = final_b;
             out_img_f32[base + 3] = final_a;
+            if comptime![render_depth] {
+                out_img_f32[base + 4] = pix_d;
+            }
         } else {
             let r = clamp(final_r * 255.0f32, 0.0f32, 255.0f32) as u32;
             let g = clamp(final_g * 255.0f32, 0.0f32, 255.0f32) as u32;

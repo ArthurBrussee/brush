@@ -43,6 +43,7 @@ impl SplatOps for MainBackendBase {
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         render_mode: SplatRenderMode,
+        raster_mode: crate::gaussian_splats::RasterizationMode,
         background: Vec3,
         pass: RasterPass,
     ) -> RenderOutput<Self> {
@@ -52,6 +53,7 @@ impl SplatOps for MainBackendBase {
         );
         let bwd_info = pass.bwd_info();
         let smooth_cutoff = pass.smooth_cutoff();
+        let render_depth = raster_mode.render_depth() && bwd_info;
 
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
@@ -244,7 +246,11 @@ impl SplatOps for MainBackendBase {
                 tile_offsets.clone().into_tensor_arg(),
             );
         });
-        let out_dim = if bwd_info { 4 } else { 1 };
+        let out_dim = if bwd_info {
+            if render_depth { 5 } else { 4 }
+        } else {
+            1
+        };
         let out_img = create_tensor(
             [img_size.y as usize, img_size.x as usize, out_dim],
             &device,
@@ -290,6 +296,7 @@ impl SplatOps for MainBackendBase {
                 uniforms,
                 bwd_info,
                 smooth_cutoff,
+                render_depth,
             );
         });
         RenderOutput {

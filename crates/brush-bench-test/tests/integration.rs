@@ -126,6 +126,7 @@ fn generate_test_batch(resolution: (u32, u32)) -> SceneBatch {
         img_packed,
         has_alpha: false,
         alpha_mode: AlphaMode::Transparent,
+        depth: None,
         camera,
     }
 }
@@ -252,6 +253,7 @@ async fn train_with_zero_visible_does_not_crash() {
         img_packed: TensorData::new(vec![pixel; 64 * 64], [64usize, 64]),
         has_alpha: false,
         alpha_mode: AlphaMode::Transparent,
+        depth: None,
         camera,
     };
 

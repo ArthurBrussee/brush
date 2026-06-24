@@ -83,6 +83,7 @@ pub fn project_visible_kernel(
             color_r: cr_c,
             color_g: cg_c,
             color_b: cb_c,
+            depth: mean_c.z(),
         },
     );
 }

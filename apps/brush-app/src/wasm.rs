@@ -60,6 +60,7 @@ impl CameraSettings {
             },
             background: background.map(|v| v.to_glam()),
             grid_enabled,
+            depth_view: false,
         })
     }
 }
