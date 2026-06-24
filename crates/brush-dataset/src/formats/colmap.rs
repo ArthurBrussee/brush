@@ -216,8 +216,13 @@ async fn load_dataset_inner(
                 load_args.max_resolution,
                 load_args.alpha_mode,
             );
+            let image_size = glam::uvec2(colmap_camera.width as u32, colmap_camera.height as u32);
 
-            views.push(SceneView { camera, image });
+            views.push(SceneView {
+                camera,
+                image,
+                image_size,
+            });
         }
 
         let (train_views, eval_views) = split_eval_every(views, load_args.eval_split_every);
