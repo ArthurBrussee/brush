@@ -51,3 +51,7 @@ local.properties
 
 # Local test datasets (downloaded slices, e.g. from HuggingFace). Not vendored.
 /datasets/
+
+# Assembled brush-cli distribution bundle (compiled binary + docs). Regenerable
+# via scripts/build-cli-output.sh — build artifact, not committed.
+/output/

@@ -1,98 +1,149 @@
-# Brush
+# Brush — SeedeXR optimized fork
 
-<video src=https://github.com/user-attachments/assets/5756967a-846c-44cf-bde9-3ca4c86f1a4d>A video showing various Brush features and scenes</video>
+> A resource-aware fork of [**Brush**](https://github.com/ArthurBrussee/brush) (Arthur Brussee),
+> maintained by **Seede XR Group Limited / Seede XR Studios**, focused on training 3D Gaussian
+> Splats efficiently on commodity hardware — especially **16 GiB Apple-Silicon** machines.
+> Fork home: **https://github.com/SeedeXR/brush** · upstream credit below.
 
-<p align="center">
-  <i>
-    Massive thanks to <a href="https://www.youtube.com/@gradeeterna">@GradeEterna</a> for the beautiful scenes
-  </i>
-</p>
+Brush is a 3D reconstruction engine using [Gaussian splatting](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/).
+It runs on a wide range of systems: **macOS/Windows/Linux**, **AMD/Nvidia/Intel** cards,
+**Android**, and in a **browser**, via WebGPU-compatible tech and the
+[Burn](https://github.com/tracel-ai/burn) machine-learning framework — producing simple,
+dependency-free binaries that run nearly anywhere without setup.
 
-Brush is a 3D reconstruction engine using [Gaussian splatting](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/). It works on a wide range of systems: **macOS/windows/linux**, **AMD/Nvidia/Intel** cards, **Android**, and in a **browser**. To achieve this, it uses WebGPU compatible tech and the [Burn](https://github.com/tracel-ai/burn) machine learning framework.
+---
 
-Machine learning for real time rendering has tons of potential, but most ML tools don't work well with it: Rendering requires realtime interactivity, usually involve dynamic shapes & computations, don't run on most platforms, and it can be cumbersome to ship apps with large CUDA deps. Brush on the other hand produces simple dependency free binaries, runs on nearly all devices, without any setup.
+## ✨ What this fork adds (resource & efficiency work)
 
-[**Try the web demo** <img src="https://cdn-icons-png.flaticon.com/256/888/888846.png" alt="chrome logo" width="24"/>
-](https://arthurbrussee.github.io/brush-demo)
-_NOTE: Only works on Chrome and Edge. Firefox and Safari are hopefully supported soon)_
+Measured on a 10-core, 16 GiB Apple-Silicon machine (release builds, seed-fixed; "noise band"
+= PSNR ±0.08, SSIM ±0.002, peak RSS ±30 MB). Full study and data below.
 
-[![](https://dcbadge.limes.pink/api/server/https://discord.gg/TbxJST2BbC)](https://discord.gg/TbxJST2BbC)
+| Improvement | Result |
+|---|---|
+| **Adaptive host-cache budget** | hardcoded 6 GiB → **min(6 GiB, ¼ of system RAM)** (auto **4 GiB** on 16 GiB), with `--max-cache-bytes` override |
+| **Peak training memory** (`--sh-degree 1`, diffuse scenes) | **−30–40 %** at quality within the noise band |
+| **Exported `.ply` model size** (`--sh-degree 1`) | **−60 %** |
+| **LRU cache eviction** | hot views stay resident under a smaller budget (was refuse-on-full) |
+| **Decode-concurrency cap** | bounds peak image-decode memory; throughput-neutral |
+| **Observability** | `--log-resources N` (GPU mem + splat count) and a richer end-of-run summary |
+
+Recommended memory-saving defaults: **`--sh-degree 2`** is quality-neutral even on specular scenes
+at ~−20 % memory; **`--sh-degree 1`** is best for diffuse scenes or tight memory budgets. See
+[`docs/optimization-results.md`](docs/optimization-results.md) for the before/after evidence and
+the diffuse-vs-specular caveat.
+
+The per-step rasterization kernels were found to be **already well-optimized** upstream; the one
+remaining speed lever (importance-based primitive reduction) is documented as future work in
+[`docs/speed-and-algorithms.md`](docs/speed-and-algorithms.md).
+
+---
+
+## 🚀 Quickstart (CLI)
+
+```bash
+# Build the headless trainer (always use --release for real runs)
+cargo build --release -p brush-cli
+
+# Train a COLMAP/Nerfstudio dataset and export a .ply
+./target/release/brush-cli /path/to/dataset
+
+# Low-memory profile (quality-neutral, ~-20% RAM)
+./target/release/brush-cli /path/to/dataset --sh-degree 2
+
+# Constrained machine: cap host cache + watch resources
+./target/release/brush-cli /path/to/dataset --max-cache-bytes 2147483648 --log-resources-every 500
+```
+
+- **Full flag reference:** [`docs/cli-reference.md`](docs/cli-reference.md) · or the man page:
+  `man ./docs/man/brush-cli.1`
+- **`brush-cli --help`** is the authoritative, version-exact option list.
+
+---
+
+## 📚 Documentation
+
+| Doc | What |
+|---|---|
+| [docs/README.md](docs/README.md) | Documentation index |
+| [docs/cli-reference.md](docs/cli-reference.md) | Complete CLI manual (every flag, examples) |
+| [docs/man/brush-cli.1](docs/man/brush-cli.1) | Installable roff man page (auto-generated from clap) |
+| [docs/cli-internals.md](docs/cli-internals.md) | Binary internals (functions/helpers, control flow) |
+| [docs/architecture.md](docs/architecture.md) | Engine architecture & training pipeline |
+| [docs/data-flow.md](docs/data-flow.md) | Dataset → loader → train → export data flow |
+| [docs/performance.md](docs/performance.md) | Memory/resource model + tuning knobs |
+| [docs/speed-and-algorithms.md](docs/speed-and-algorithms.md) | Where training time goes; algorithmic levers |
+| [docs/optimization-results.md](docs/optimization-results.md) | **Before/after results** of this fork's work |
+| [docs/profiling.md](docs/profiling.md) | How to benchmark and profile |
+| [research/](research/) | Research paper (`.md` + `.pdf`) on this study |
+| [llms.txt](llms.txt) | LLM-friendly project overview |
+
+---
 
 # Features
 
 ## Training
-
-Brush takes in COLMAP data or datasets in the Nerfstudio format. Training is fully supported natively, on mobile, and in a browser. While training you can interact with the scene and see the training dynamics live, and compare the current rendering to input views as the training progresses.
-
-It also supports masking images:
-- Images with transparency. This will force the final splat to match the transparency of the input.
-- A folder of images called 'masks'. This ignores parts of the image that are masked out.
+Brush takes in COLMAP data or datasets in the Nerfstudio format. Training is fully supported
+natively, on mobile, and in a browser. While training you can interact with the scene and see the
+training dynamics live, and compare the current rendering to input views as the training
+progresses. It also supports masking images:
+- Images with transparency — forces the final splat to match the input transparency.
+- A folder of images called `masks` — ignores masked-out parts of the image.
 
 ## Viewer
-Brush also works well as a splat viewer, including on the web. It can load .ply & .compressed.ply files. You can stream in data from a URL (for a web app, simply append `?url=`).
-
-Brush also can load .zip of splat files to display them as an animation, or a special ply that includes delta frames (see [cat-4D](https://cat-4d.github.io/) and [Cap4D](https://felixtaubner.github.io/cap4d/)!).
+Brush also works well as a splat viewer, including on the web. It can load `.ply` &
+`.compressed.ply` files, and stream from a URL (append `?url=`). It can load a `.zip` of splat
+files to display as an animation, or a special ply with delta frames (see
+[cat-4D](https://cat-4d.github.io/) and [Cap4D](https://felixtaubner.github.io/cap4d/)).
 
 ## CLI
-Brush can be used as a CLI. Run `brush --help` to get an overview. Every CLI command can work with `--with-viewer` which also opens the UI, for easy debugging.
+The headless trainer is `brush-cli` (this fork's optimization focus). The GUI app (`brush`,
+brush-app) additionally offers a viewer. See the [CLI reference](docs/cli-reference.md).
 
 ## Rerun
-
-https://github.com/user-attachments/assets/f679fec0-935d-4dd2-87e1-c301db9cdc2c
-
-While training, additional data can be visualized with the excellent [rerun](https://rerun.io/). To install rerun on your machine, please follow their [instructions](https://rerun.io/docs/getting-started/installing-viewer). Open the ./brush_blueprint.rbl in the viewer for best results.
+While training, additional data can be visualized with [rerun](https://rerun.io/) (`--rerun-enabled`).
+Install with `cargo install rerun-cli`; open `./brush_blueprint.rbl` in the viewer for best results.
 
 ## Building Brush
-First install rust 1.88+. You can run tests with `cargo test --all`. Brush uses the wonderful [rerun](https://rerun.io/) for additional visualizations while training, run `cargo install rerun-cli` if you want to use it.
+First install Rust (this fork's pinned dependency graph currently needs **1.96+**; upstream lists
+1.88+). Run tests with `cargo test --all`.
 
 ### Windows/macOS/Linux
-Use `cargo run --release` from the workspace root to make an optimized build. Use `cargo run` to run a debug build. 
+`cargo run --release` from the workspace root for an optimized build of the app, or
+`cargo build --release -p brush-cli` for just the headless trainer.
 
 ### Web
-Brush can be compiled to WASM. Run `npm run dev` to start the demo website using Next.js, see the web directory in app/brush-app/web.
-
-Brush uses [`wasm-pack`](https://drager.github.io/wasm-pack/) to build the WASM bundle. You can also use it without a bundler, see [wasm-pack's documentation](https://drager.github.io/wasm-pack/book/).
-
-WebGPU is still an upcoming standard, and as such, only Chrome 134+ on Windows and macOS is currently supported.
+Brush compiles to WASM. See `apps/brush-app/web`; Brush uses
+[`wasm-pack`](https://drager.github.io/wasm-pack/). WebGPU support: Chrome 134+ on Windows/macOS.
 
 ### Android
-
-As a one time setup, make sure you have the Android SDK & NDK installed.
-- Check if ANDROID_NDK_HOME and ANDROID_HOME are set
-- Add the Android target to rust `rustup target add aarch64-linux-android`
-- Install cargo-ndk to manage building a lib `cargo install cargo-ndk`
-
-Each time you change the rust code, run
-- `cargo ndk -t arm64-v8a -o crates/brush-app/app/src/main/jniLibs/ build`
-- Nb:  Nb, for best performance, build in release mode. This is separate
-  from the Android Studio app build configuration.
-- `cargo ndk -t arm64-v8a -o crates/brush-app/app/src/main/jniLibs/  build --release`
-
-You can now either run the project from Android Studio (Android Studio does NOT build the rust code), or run it from the command line:
+One-time: install the Android SDK & NDK, set `ANDROID_NDK_HOME`/`ANDROID_HOME`,
+`rustup target add aarch64-linux-android`, `cargo install cargo-ndk`. Then:
 ```
-./gradlew build
-./gradlew installDebug
-adb shell am start -n com.splats.app/.MainActivity
+cargo ndk -t arm64-v8a -o crates/brush-app/app/src/main/jniLibs/ build --release
+./gradlew installDebug && adb shell am start -n com.splats.app/.MainActivity
 ```
-
-You can also open this folder as a project in Android Studio and run things from there. Nb: Running in Android Studio does _not_ rebuild the rust code automatically.
 
 ## Benchmarks
-
-Rendering and training are generally faster than gsplat. You can run benchmarks of some of the kernels using `cargo bench`.
+Rendering and training are generally faster than gsplat. Run kernel benchmarks with `cargo bench`.
+(Note: the `brush-sort` bench currently fails to compile against the pinned Burn `main` due to a
+feature-unification issue — tracked; production code is unaffected.)
 
 # Acknowledgements
 
-[**gSplat**](https://github.com/nerfstudio-project/gsplat), for their reference version of the kernels
+This fork builds directly on **[Brush](https://github.com/ArthurBrussee/brush) by Arthur Brussee** —
+all credit for the engine is theirs. Additional thanks (from upstream):
 
-**Peter Hedman, George Kopanas & Bernhard Kerbl**, for the many discussions & pointers.
+[**gSplat**](https://github.com/nerfstudio-project/gsplat), for their reference kernels ·
+**Peter Hedman, George Kopanas & Bernhard Kerbl**, for discussions & pointers ·
+**The Burn team**, for help & improvements ·
+**Raph Levien**, for the [original GPU radix sort](https://github.com/googlefonts/compute-shader-101/pull/31) ·
+**GradeEterna**, for feedback and scenes.
 
-**The Burn team**, for help & improvements to Burn along the way
-
-**Raph Levien**, for the [original version](https://github.com/googlefonts/compute-shader-101/pull/31) of the GPU radix sort.
-
-**GradeEterna**, for feedback and their scenes.
+The optimization study in this fork was **AI-assisted research conducted with Claude (Anthropic)**;
+see [`research/`](research/).
 
 # Disclaimer
 
-This is *not* an official Google product. This repository is a forked public version of [the google-research repository](https://github.com/google-research/google-research/tree/master/brush_splat)
+This is *not* an official Google product. Upstream Brush is a forked public version of
+[the google-research repository](https://github.com/google-research/google-research/tree/master/brush_splat).
+Apache-2.0 licensed (see `LICENSE`).

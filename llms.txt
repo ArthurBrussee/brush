@@ -1,0 +1,55 @@
+# Brush — SeedeXR optimized fork
+
+> A cross-platform 3D Gaussian Splatting (3DGS) reconstruction engine in Rust (Burn ML framework
+> + WebGPU/wgpu), forked from ArthurBrussee/brush and optimized by Seede XR Group Limited for
+> resource-aware training on commodity hardware, especially 16 GiB Apple-Silicon machines.
+> Fork: https://github.com/SeedeXR/brush — Upstream: https://github.com/ArthurBrussee/brush
+
+Brush trains and renders 3D Gaussian Splats from COLMAP or Nerfstudio datasets and runs on
+macOS/Windows/Linux, AMD/Nvidia/Intel GPUs, Android, and the browser. The headless trainer is
+`brush-cli`; the GUI app (with viewer) is `brush` (brush-app). Compute runs as WebGPU compute
+shaders via CubeCL/Burn (Metal on Apple Silicon). This fork adds an adaptive host-cache budget
+(¼ of system RAM), LRU cache eviction, decode-concurrency capping, resource logging, and
+memory-saving SH-degree guidance — delivering ~30–40% lower peak training memory and ~60% smaller
+exported models at quality within the measurement noise band on diffuse scenes.
+
+Key facts for working with this repo:
+- Build the trainer: `cargo build --release -p brush-cli` (always use `--release`).
+- Run: `./target/release/brush-cli <dataset_path_or_url> [flags]`.
+- Memory-saving: `--sh-degree 2` (quality-neutral, ~-20% RAM) or `--sh-degree 1` (diffuse scenes);
+  `--max-cache-bytes <bytes>` overrides the auto ¼-RAM cache; `--log-resources-every N` logs usage.
+- Authoritative flag list: `brush-cli --help`. Tests: `cargo test --all`.
+- Discipline: every optimization is measured against a noise band (PSNR ±0.08, SSIM ±0.002,
+  RSS ±30 MB); changes ship only with a logged before/after and no quality/resource regression.
+
+## Documentation
+- [Documentation index](docs/README.md): map of all docs.
+- [CLI reference](docs/cli-reference.md): complete `brush-cli` manual — every flag, defaults, examples.
+- [CLI man page](docs/man/brush-cli.1): roff man page, auto-generated from clap (`man ./docs/man/brush-cli.1`).
+- [CLI internals](docs/cli-internals.md): the binary's functions/helpers and control flow.
+- [Architecture](docs/architecture.md): workspace layout, crates, training pipeline, concurrency.
+- [Data flow](docs/data-flow.md): dataset → VFS → loader → train loop → export.
+- [Performance & resource model](docs/performance.md): the unified-memory model and tuning knobs.
+- [Speed & algorithms](docs/speed-and-algorithms.md): where training time goes; algorithmic levers.
+- [Optimization results](docs/optimization-results.md): measured before/after of this fork's work.
+- [Profiling](docs/profiling.md): how to benchmark and profile (divan, rerun, /usr/bin/time, Tracy).
+
+## Research
+- [Research paper (Markdown)](research/brush-optimization-paper.md): empirical optimization study.
+- [Research paper (PDF)](research/brush-optimization-paper.pdf): typeset version with figures.
+- [Research README](research/README.md): authorship and PDF rebuild steps.
+
+## Source layout
+- [Workspace manifest](Cargo.toml): 4 apps + 19 crates.
+- [brush-cli binary](apps/brush-cli/src/main.rs): headless trainer entry point.
+- [brush-cli library](apps/brush-cli/src/lib.rs): `Cli` args, `run_headless`, `run_cli_ui`.
+- [brush-process](crates/brush-process/src/lib.rs): orchestration (datasource → train → export).
+- [brush-dataset scene loader](crates/brush-dataset/src/scene_loader.rs): parallel loader, adaptive LRU batch cache.
+- [brush-train](crates/brush-train/src/train.rs): training step, optimizer, densification.
+- [brush-render](crates/brush-render/src/gaussian_splats.rs): splat representation and forward kernels.
+
+## Optional
+- [Upstream Brush](https://github.com/ArthurBrussee/brush): original engine and credit.
+- [Burn framework](https://github.com/tracel-ai/burn): the ML/compute backend.
+- [Changelog](CHANGELOG.md): upstream release notes (kernel optimization history).
+- [License](LICENSE): Apache-2.0.
