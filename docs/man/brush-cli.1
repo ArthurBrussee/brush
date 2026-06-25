@@ -1,0 +1,210 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH brush-cli 1  "brush-cli 0.3.0" 
+.SH NAME
+brush\-cli \- Brush \- universal splats
+.SH SYNOPSIS
+\fBbrush\-cli\fR [\fB\-\-with\-viewer\fR] [\fB\-\-total\-train\-iters\fR] [\fB\-\-render\-mode\fR] [\fB\-\-lr\-mean\fR] [\fB\-\-lr\-mean\-end\fR] [\fB\-\-mean\-noise\-weight\fR] [\fB\-\-lr\-coeffs\-dc\fR] [\fB\-\-lr\-coeffs\-sh\-scale\fR] [\fB\-\-lr\-opac\fR] [\fB\-\-lr\-scale\fR] [\fB\-\-lr\-rotation\fR] [\fB\-\-max\-splats\fR] [\fB\-\-refine\-every\fR] [\fB\-\-growth\-grad\-threshold\fR] [\fB\-\-growth\-select\-fraction\fR] [\fB\-\-growth\-stop\-iter\fR] [\fB\-\-split\-at\-screen\-size\fR] [\fB\-\-ssim\-weight\fR] [\fB\-\-opac\-decay\fR] [\fB\-\-match\-alpha\-weight\fR] [\fB\-\-lpips\-loss\-weight\fR] [\fB\-\-background\-color\fR] [\fB\-\-background\-noise\-strength\fR] [\fB\-\-lod\-levels\fR] [\fB\-\-lod\-refine\-steps\fR] [\fB\-\-lod\-decimation\-keep\fR] [\fB\-\-lod\-image\-scale\fR] [\fB\-\-random\-init\-scene\-scale\fR] [\fB\-\-sh\-degree\fR] [\fB\-\-max\-frames\fR] [\fB\-\-max\-resolution\fR] [\fB\-\-eval\-split\-every\fR] [\fB\-\-subsample\-frames\fR] [\fB\-\-subsample\-points\fR] [\fB\-\-alpha\-mode\fR] [\fB\-\-max\-cache\-bytes\fR] [\fB\-\-seed\fR] [\fB\-\-start\-iter\fR] [\fB\-\-eval\-every\fR] [\fB\-\-eval\-save\-to\-disk\fR] [\fB\-\-export\-every\fR] [\fB\-\-export\-path\fR] [\fB\-\-export\-name\fR] [\fB\-\-log\-resources\-every\fR] [\fB\-\-rerun\-enabled\fR] [\fB\-\-rerun\-log\-train\-stats\-every\fR] [\fB\-\-rerun\-log\-splats\-every\fR] [\fB\-\-rerun\-log\-distribution\-every\fR] [\fB\-\-rerun\-max\-img\-size\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIPATH_OR_URL\fR] 
+.SH DESCRIPTION
+Brush \- universal splats
+.SH OPTIONS
+.TP
+\fB\-\-with\-viewer\fR
+Spawn a viewer to visualize the training
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+[\fIPATH_OR_URL\fR]
+Source to load from (path or URL)
+.SH "TRAINING OPTIONS"
+.TP
+\fB\-\-total\-train\-iters\fR \fI<TOTAL_TRAIN_ITERS>\fR [default: 30000]
+Total number of steps to train for
+.TP
+\fB\-\-render\-mode\fR \fI<RENDER_MODE>\fR
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+default
+.IP \(bu 2
+mip
+.RE
+.TP
+\fB\-\-lr\-mean\fR \fI<LR_MEAN>\fR [default: 2e\-5]
+Start learning rate for the mean parameters
+.TP
+\fB\-\-lr\-mean\-end\fR \fI<LR_MEAN_END>\fR [default: 2e\-7]
+Start learning rate for the mean parameters
+.TP
+\fB\-\-mean\-noise\-weight\fR \fI<MEAN_NOISE_WEIGHT>\fR [default: 50.0]
+How much noise to add to the mean parameters of low opacity gaussians
+.TP
+\fB\-\-lr\-coeffs\-dc\fR \fI<LR_COEFFS_DC>\fR [default: 2e\-3]
+Learning rate for the base SH (RGB) coefficients
+.TP
+\fB\-\-lr\-coeffs\-sh\-scale\fR \fI<LR_COEFFS_SH_SCALE>\fR [default: 10.0]
+How much to divide the learning rate by for higher SH orders
+.TP
+\fB\-\-lr\-opac\fR \fI<LR_OPAC>\fR [default: 0.012]
+Learning rate for the opacity parameter
+.TP
+\fB\-\-lr\-scale\fR \fI<LR_SCALE>\fR [default: 5e\-3]
+Learning rate for the scale parameters
+.TP
+\fB\-\-lr\-rotation\fR \fI<LR_ROTATION>\fR [default: 2e\-3]
+Learning rate for the rotation parameters
+.TP
+\fB\-\-ssim\-weight\fR \fI<SSIM_WEIGHT>\fR [default: 0.2]
+Weight of SSIM loss (compared to l1 loss)
+.TP
+\fB\-\-opac\-decay\fR \fI<OPAC_DECAY>\fR [default: 0.004]
+Factor of the opacity decay
+.TP
+\fB\-\-background\-color\fR \fI<BACKGROUND_COLOR>...\fR [default: 0,0,0]
+Base background color (R,G,B) used during training
+.TP
+\fB\-\-background\-noise\-strength\fR \fI<BACKGROUND_NOISE_STRENGTH>\fR [default: 0.1]
+Strength of random noise added to the background color each step. Noise is uniform in [\-strength, +strength], clamped to [0, 1]
+.TP
+\fB\-\-random\-init\-scene\-scale\fR \fI<RANDOM_INIT_SCENE_SCALE>\fR
+Scene scale used for random splat initialization. When no init is provided, splats are randomly placed inside camera frustums up to this depth. By default this is estimated from the camera spacing (with a 1m minimum)
+.SH "REFINE OPTIONS"
+.TP
+\fB\-\-max\-splats\fR \fI<MAX_SPLATS>\fR [default: 10000000]
+Max nr. of splats. This is only an upper bound, the actual final number of splats is NOT determined by this
+.TP
+\fB\-\-refine\-every\fR \fI<REFINE_EVERY>\fR [default: 200]
+Frequency of \*(Aqrefinement\*(Aq where gaussians are replaced and densified. This should roughly be the number of images it takes to properly "cover" your scene
+.TP
+\fB\-\-growth\-grad\-threshold\fR \fI<GROWTH_GRAD_THRESHOLD>\fR [default: 0.0025]
+Threshold to control splat growth. Lower means faster growth
+.TP
+\fB\-\-growth\-select\-fraction\fR \fI<GROWTH_SELECT_FRACTION>\fR [default: 0.25]
+What fraction of splats that are deemed as needing to grow do actually grow. Increase this to make splats grow more aggressively
+.TP
+\fB\-\-growth\-stop\-iter\fR \fI<GROWTH_STOP_ITER>\fR [default: 15000]
+Period after which splat growth stops
+.TP
+\fB\-\-split\-at\-screen\-size\fR \fI<SPLIT_AT_SCREEN_SIZE>\fR [default: 0.5]
+Split any splat whose max screen\-space extent exceeds this fraction of the image dimension, shrinking the children so they land at (at most) this size on screen. 0 disables
+.TP
+\fB\-\-match\-alpha\-weight\fR \fI<MATCH_ALPHA_WEIGHT>\fR [default: 0.1]
+Weight of l1 loss on alpha if input view has transparency
+.TP
+\fB\-\-lpips\-loss\-weight\fR \fI<LPIPS_LOSS_WEIGHT>\fR [default: 0.0]
+
+.SH "LOD OPTIONS"
+.TP
+\fB\-\-lod\-levels\fR \fI<LOD_LEVELS>\fR [default: 0]
+Number of LOD levels to generate after initial training (0 = disabled)
+.TP
+\fB\-\-lod\-refine\-steps\fR \fI<LOD_REFINE_STEPS>\fR [default: 5000]
+Number of refinement training steps per LOD level
+.TP
+\fB\-\-lod\-decimation\-keep\fR \fI<LOD_DECIMATION_KEEP>\fR [default: 50]
+Percentage of gaussians to keep at each LOD level (1\-100)
+.TP
+\fB\-\-lod\-image\-scale\fR \fI<LOD_IMAGE_SCALE>\fR [default: 50]
+Percentage to scale source images at each LOD level (1\-100)
+.SH "MODEL OPTIONS"
+.TP
+\fB\-\-sh\-degree\fR \fI<SH_DEGREE>\fR [default: 3]
+SH degree of splats
+.SH "DATASET OPTIONS"
+.TP
+\fB\-\-max\-frames\fR \fI<MAX_FRAMES>\fR
+Max nr. of frames of dataset to load
+.TP
+\fB\-\-max\-resolution\fR \fI<MAX_RESOLUTION>\fR [default: 1920]
+Max resolution of images to load
+.TP
+\fB\-\-eval\-split\-every\fR \fI<EVAL_SPLIT_EVERY>\fR
+Create an eval dataset by selecting every nth image
+.TP
+\fB\-\-subsample\-frames\fR \fI<SUBSAMPLE_FRAMES>\fR
+Load only every nth frame
+.TP
+\fB\-\-subsample\-points\fR \fI<SUBSAMPLE_POINTS>\fR
+Load only every nth point from the initial sfm data
+.TP
+\fB\-\-alpha\-mode\fR \fI<ALPHA_MODE>\fR
+Whether to interpret an alpha channel (or masks) as transparency or masking
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+masked
+.IP \(bu 2
+transparent
+.RE
+.TP
+\fB\-\-max\-cache\-bytes\fR \fI<MAX_CACHE_BYTES>\fR
+Max bytes for the host\-side packed\-batch cache. Defaults to min(6 GiB, 1/4 of system RAM) on native — lower it on memory\-constrained machines (e.g. `\-\-max\-cache\-bytes 2147483648` for ~2 GiB)
+.SH "PROCESS OPTIONS"
+.TP
+\fB\-\-seed\fR \fI<SEED>\fR [default: 42]
+Random seed
+.TP
+\fB\-\-start\-iter\fR \fI<START_ITER>\fR [default: 0]
+Iteration to resume from
+.TP
+\fB\-\-eval\-every\fR \fI<EVAL_EVERY>\fR [default: 1000]
+Eval every this many steps
+.TP
+\fB\-\-eval\-save\-to\-disk\fR
+Save the rendered eval images to disk. Uses export\-path for the file location
+.TP
+\fB\-\-export\-every\fR \fI<EXPORT_EVERY>\fR [default: 5000]
+Export every this many steps
+.TP
+\fB\-\-export\-path\fR \fI<EXPORT_PATH>\fR [default: ./{dataset}_exports/]
+Location to put exported files. Supports {dataset} interpolation for the dataset folder name. Path is relative to the dataset\*(Aqs parent directory (or CWD if unavailable). Use "./{dataset}/" to export inside the dataset folder
+.TP
+\fB\-\-export\-name\fR \fI<EXPORT_NAME>\fR [default: export_{iter}.ply]
+Filename of exported ply file
+.TP
+\fB\-\-log\-resources\-every\fR \fI<LOG_RESOURCES_EVERY>\fR
+Log resource usage (GPU memory in use + splat count) every N steps. Off by default — the GPU memory query stalls behind queued work, so it\*(Aqs only run when explicitly requested
+.SH "RERUN OPTIONS"
+.TP
+\fB\-\-rerun\-enabled\fR
+Whether to enable rerun.io logging for this run
+.TP
+\fB\-\-rerun\-log\-train\-stats\-every\fR \fI<RERUN_LOG_TRAIN_STATS_EVERY>\fR [default: 50]
+How often to log basic training statistics
+.TP
+\fB\-\-rerun\-log\-splats\-every\fR \fI<RERUN_LOG_SPLATS_EVERY>\fR
+How often to log out the full splat point cloud to rerun (warning: heavy)
+.TP
+\fB\-\-rerun\-log\-distribution\-every\fR \fI<RERUN_LOG_DISTRIBUTION_EVERY>\fR [default: 1000]
+How often to log the splat scale/opacity/anisotropy distribution stats
+.TP
+\fB\-\-rerun\-max\-img\-size\fR \fI<RERUN_MAX_IMG_SIZE>\fR [default: 512]
+The maximum size of images from the dataset logged to rerun
+.SH VERSION
+v0.3.0
+.SH EXAMPLES
+.TP
+Train and export with defaults:
+.B brush\-cli ./datasets/tandt/truck
+.TP
+Low\-memory profile (quality\-neutral, ~\-20% RAM):
+.B brush\-cli ./datasets/tandt/truck \-\-sh\-degree 2
+.TP
+Constrained machine \(em cap host cache and log resources:
+.B brush\-cli ./big \-\-max\-cache\-bytes 2147483648 \-\-log\-resources\-every 500
+.TP
+Resume from a checkpoint:
+.B brush\-cli ./scene \-\-start\-iter 5000 \-\-total\-train\-iters 30000
+.SH NOTES
+Always build with \-\-release for performance\-sensitive runs. Run \fBbrush\-cli \-\-help\fR for the authoritative, version\-exact option list. See the Brush docs under docs/ for memory/perf guidance.
+.SH SEE ALSO
+brush(1) (the brush\-app GUI).

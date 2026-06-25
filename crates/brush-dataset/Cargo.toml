@@ -34,6 +34,8 @@ tokio = { workspace = true, features = ["io-util"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["io-util", "fs", "macros"] }
+# Total-RAM query for the adaptive packed-batch cache budget (native only).
+sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

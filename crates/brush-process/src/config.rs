@@ -45,6 +45,15 @@ pub struct ProcessConfig {
         default_value = "export_{iter}.ply"
     )]
     pub export_name: String,
+    /// Log resource usage (GPU memory in use + splat count) every N steps.
+    /// Off by default — the GPU memory query stalls behind queued work, so it's
+    /// only run when explicitly requested.
+    #[arg(
+        long,
+        help_heading = "Process options",
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    pub log_resources_every: Option<u32>,
 }
 
 #[derive(Parser, Clone, Serialize, Deserialize)]

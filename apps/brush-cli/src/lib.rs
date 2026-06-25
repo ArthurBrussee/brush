@@ -185,6 +185,13 @@ pub async fn run_cli_ui(
     #[allow(unused_mut)]
     let mut duration = Duration::from_secs(0);
 
+    // End-of-run summary tracking (Phase 5 observability): pulled from the
+    // message stream, so no extra GPU queries or deps. Reported once at exit.
+    let mut last_iter: u32 = 0;
+    let mut peak_splats: u32 = 0;
+    let mut last_psnr: Option<f32> = None;
+    let mut last_ssim: Option<f32> = None;
+
     while let Some(msg) = messages.recv().await {
         let _span = trace_span!("CLI UI").entered();
 
@@ -243,12 +250,14 @@ pub async fn run_cli_ui(
                     }
                     train_progress.set_position(iter as u64);
                     duration = total_elapsed;
+                    last_iter = iter;
                 }
                 TrainMessage::RefineStep {
                     cur_splat_count,
                     iter,
                     ..
                 } => {
+                    peak_splats = peak_splats.max(cur_splat_count);
                     stats_spinner.set_message(format!("Current splat count {cur_splat_count}"));
                     log::info!("Refine iter {iter}, {cur_splat_count} splats.");
                 }
@@ -257,6 +266,8 @@ pub async fn run_cli_ui(
                     avg_psnr,
                     avg_ssim,
                 } => {
+                    last_psnr = Some(avg_psnr);
+                    last_ssim = Some(avg_ssim);
                     log::info!("Eval iter {iter}: PSNR {avg_psnr}, ssim {avg_ssim}");
 
                     eval_spinner.set_message(format!(
@@ -280,13 +291,26 @@ pub async fn run_cli_ui(
     }
 
     let duration_secs = Duration::from_secs(duration.as_secs());
+    // Steps executed *this run*: training runs `start_iter..total_iters`, so on a
+    // resume the step count and rate must be measured from start_iter, not 0.
+    let steps_run = last_iter.saturating_sub(train_stream_config.process_config.start_iter);
+    let secs = duration.as_secs_f64();
+    let steps_per_sec = if secs > 0.0 {
+        f64::from(steps_run) / secs
+    } else {
+        0.0
+    };
+    let quality = match (last_psnr, last_ssim) {
+        (Some(p), Some(s)) => format!(", final eval PSNR {p:.2} / SSIM {s:.4}"),
+        _ => String::new(),
+    };
     let _ = sp.println(format!(
-        "Training took {}",
+        "Training took {} — {steps_run} steps ({steps_per_sec:.1}/s), peak {peak_splats} splats{quality}",
         humantime::format_duration(duration_secs)
     ));
 
     log::info!(
-        "Done training! Took {:?}.",
+        "Done training! Took {}. {steps_run} steps ({steps_per_sec:.1}/s), peak {peak_splats} splats{quality}",
         humantime::format_duration(duration_secs)
     );
 

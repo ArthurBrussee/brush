@@ -45,3 +45,9 @@ brush-app/captures
 local.properties
 *.so
 .claude/settings.local.json
+
+# Agent working memory (local only — planning/profiling/process logs).
+/memory/
+
+# Local test datasets (downloaded slices, e.g. from HuggingFace). Not vendored.
+/datasets/

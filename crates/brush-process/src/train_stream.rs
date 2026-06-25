@@ -171,7 +171,11 @@ pub(crate) async fn train_stream(
     let mut eval_scene = dataset.eval;
 
     let mut train_duration = Duration::from_secs(0);
-    let mut dataloader = SceneLoader::new(&dataset.train, 42);
+    let mut dataloader = SceneLoader::new(
+        &dataset.train,
+        42,
+        train_stream_config.load_config.max_cache_bytes,
+    );
     let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
 
     // Per-train-view (world center, focal-px at native res) for the
@@ -204,7 +208,13 @@ pub(crate) async fn train_stream(
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let export_path = base_path.join(&export_path_str);
+    // An absolute --export-path is honored verbatim; a relative one stays
+    // anchored to the dataset's parent dir (so it travels with the dataset).
+    let export_path = if Path::new(&export_path_str).is_absolute() {
+        PathBuf::from(&export_path_str)
+    } else {
+        base_path.join(&export_path_str)
+    };
     // Normalize path components
     let export_path: PathBuf = export_path.components().collect();
     let sh_degree = init_splats.sh_degree();
@@ -268,9 +278,9 @@ pub(crate) async fn train_stream(
             let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(current_lod as i32);
             dataloader = if lod_img_pct < 100 {
                 let lod_scene = dataset.train.clone().with_image_scale(cumulative_scale);
-                SceneLoader::new(&lod_scene, 42)
+                SceneLoader::new(&lod_scene, 42, train_stream_config.load_config.max_cache_bytes)
             } else {
-                SceneLoader::new(&dataset.train, 42)
+                SceneLoader::new(&dataset.train, 42, train_stream_config.load_config.max_cache_bytes)
             };
 
             let bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
@@ -337,6 +347,23 @@ pub(crate) async fn train_stream(
 
         let step_dur = step_time.elapsed();
         train_duration += step_dur;
+
+        // Opt-in resource logging: GPU/unified memory in use + splat count.
+        // The memory query stalls behind queued GPU work, so it only runs on
+        // the user-requested cadence (or the final step).
+        if let Some(every) = process_config.log_resources_every
+            && (iter.is_multiple_of(every) || is_last_step)
+        {
+            let bytes = WgpuRuntime::<AutoCompiler>::client(wgpu_device)
+                .memory_usage()
+                .map(|m| m.bytes_in_use)
+                .unwrap_or(0);
+            log::info!(
+                "[resources] iter {iter}: {} splats, GPU {} MiB in use",
+                splats.num_splats(),
+                bytes / (1024 * 1024)
+            );
+        }
 
         // Do evals. We skip this for LODs as it'd be confusing for rerun, but, could
         // revisit this.

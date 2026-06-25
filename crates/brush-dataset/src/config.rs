@@ -36,4 +36,9 @@ pub struct LoadDataseConfig {
     /// Whether to interpret an alpha channel (or masks) as transparency or masking.
     #[arg(long, help_heading = "Dataset Options")]
     pub alpha_mode: Option<AlphaMode>,
+    /// Max bytes for the host-side packed-batch cache. Defaults to
+    /// min(6 GiB, 1/4 of system RAM) on native — lower it on memory-constrained
+    /// machines (e.g. `--max-cache-bytes 2147483648` for ~2 GiB).
+    #[arg(long, help_heading = "Dataset Options")]
+    pub max_cache_bytes: Option<usize>,
 }
