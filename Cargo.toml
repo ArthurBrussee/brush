@@ -75,6 +75,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 indicatif = "0.18"
 env_logger = "0.11"
 clap = { version = "4.5.23", features = ["derive"] }
+parse-size = "1.1"
 
 web-time = "1.1.0"
 humantime = "2.1.0"

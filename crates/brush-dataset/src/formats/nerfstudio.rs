@@ -1,7 +1,7 @@
 use super::{DatasetLoadResult, FormatError, find_mask_path, opengl_c2w_to_pose};
 use crate::{
     Dataset,
-    config::LoadDataseConfig,
+    config::LoadDatasetConfig,
     scene::{LoadImage, SceneView},
 };
 use brush_render::camera::fov_to_focal;
@@ -141,7 +141,7 @@ async fn read_transforms_file(
     scene: JsonScene,
     transforms_path: &Path,
     vfs: Arc<BrushVfs>,
-    load_args: &LoadDataseConfig,
+    load_args: &LoadDatasetConfig,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<SceneView>, FormatError> {
     let mut results = vec![];
@@ -268,7 +268,7 @@ async fn read_transforms_file(
 
 pub async fn read_dataset(
     vfs: Arc<BrushVfs>,
-    load_args: &LoadDataseConfig,
+    load_args: &LoadDatasetConfig,
 ) -> Option<Result<DatasetLoadResult, FormatError>> {
     log::info!("Loading nerfstudio dataset");
 
@@ -289,7 +289,7 @@ pub async fn read_dataset(
 
 async fn read_dataset_inner(
     vfs: Arc<BrushVfs>,
-    load_args: &LoadDataseConfig,
+    load_args: &LoadDatasetConfig,
     json_files: Vec<std::path::PathBuf>,
     transforms_path: std::path::PathBuf,
 ) -> Result<DatasetLoadResult, FormatError> {

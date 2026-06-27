@@ -171,7 +171,7 @@ pub(crate) async fn train_stream(
     let mut eval_scene = dataset.eval;
 
     let mut train_duration = Duration::from_secs(0);
-    let mut dataloader = SceneLoader::new(&dataset.train, 42);
+    let mut dataloader = SceneLoader::new(&dataset.train, 42, &train_stream_config.load_config);
     let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
 
     // Per-train-view (world center, focal-px at native res) for the
@@ -268,9 +268,9 @@ pub(crate) async fn train_stream(
             let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(current_lod as i32);
             dataloader = if lod_img_pct < 100 {
                 let lod_scene = dataset.train.clone().with_image_scale(cumulative_scale);
-                SceneLoader::new(&lod_scene, 42)
+                SceneLoader::new(&lod_scene, 42, &train_stream_config.load_config)
             } else {
-                SceneLoader::new(&dataset.train, 42)
+                SceneLoader::new(&dataset.train, 42, &train_stream_config.load_config)
             };
 
             let bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
