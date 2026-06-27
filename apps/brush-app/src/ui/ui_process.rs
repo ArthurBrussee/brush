@@ -185,6 +185,13 @@ impl UiProcess {
         inner.repaint();
     }
 
+    #[allow(dead_code)] // Only used on native (animation config load).
+    pub fn set_model_local_to_world(&self, transform: Affine3A) {
+        let mut inner = self.write();
+        inner.controls.model_local_to_world = transform;
+        inner.repaint();
+    }
+
     /// Connect to an existing running process.
     pub fn connect_to_process(&self, process: RunningProcess) {
         {

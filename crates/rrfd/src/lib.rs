@@ -73,6 +73,36 @@ pub async fn pick_directory() -> Result<PathBuf, PickFileError> {
     }
 }
 
+/// Pick a location to save a file and return the chosen path, without writing
+/// anything. Use this when the bytes are produced out-of-band (e.g. an external
+/// encoder writes to the path directly). For data you already have, use
+/// [`save_file`] instead.
+///
+/// Nb: Does not work on Android currently.
+#[cfg(not(target_family = "wasm"))]
+pub async fn pick_save_path(
+    default_name: &str,
+    filter_name: &str,
+    extensions: &[&str],
+) -> Result<PathBuf, PickFileError> {
+    #[cfg(not(target_os = "android"))]
+    {
+        let file = rfd::AsyncFileDialog::new()
+            .set_file_name(default_name)
+            .add_filter(filter_name, extensions)
+            .save_file()
+            .await
+            .ok_or(PickFileError::NoFileSelected)?;
+        Ok(file.path().to_path_buf())
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let _ = (default_name, filter_name, extensions);
+        panic!("No saving on Android yet.")
+    }
+}
+
 /// Saves data to a file and returns the filename the data was saved too.
 ///
 /// Nb: Does not work on Android currently.

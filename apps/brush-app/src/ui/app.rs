@@ -10,9 +10,10 @@ use std::sync::Arc;
 use tracing::trace_span;
 
 use crate::ui::{
-    UiMode, camera_controls::CameraClamping, datasets::DatasetPanel, log_panel::LogPanel,
-    panels::AppPane, scene::ScenePanel, settings_panel::SettingsPanel, stats::StatsPanel,
-    training_panel::TrainingPanel, ui_process::UiProcess,
+    UiMode, animation_panel::AnimationPanel, camera_controls::CameraClamping,
+    datasets::DatasetPanel, log_panel::LogPanel, panels::AppPane, scene::ScenePanel,
+    settings_panel::SettingsPanel, stats::StatsPanel, training_panel::TrainingPanel,
+    ui_process::UiProcess,
 };
 
 /// Pane enum that wraps all panel types for serialization.
@@ -25,6 +26,7 @@ pub enum Pane {
     Training(#[serde(skip)] TrainingPanel),
     Settings(#[serde(skip)] SettingsPanel),
     Log(#[serde(skip)] LogPanel),
+    Animation(#[serde(skip)] AnimationPanel),
 }
 
 impl Pane {
@@ -36,6 +38,7 @@ impl Pane {
             Self::Training(p) => p,
             Self::Settings(p) => p,
             Self::Log(p) => p,
+            Self::Animation(p) => p,
         }
     }
 
@@ -47,6 +50,7 @@ impl Pane {
             Self::Training(p) => p,
             Self::Settings(p) => p,
             Self::Log(p) => p,
+            Self::Animation(p) => p,
         }
     }
 
@@ -75,6 +79,10 @@ impl Pane {
     fn log() -> RefCell<Self> {
         #[allow(clippy::default_constructed_unit_structs)] // Pane derives Default via serde.
         RefCell::new(Self::Log(LogPanel::default()))
+    }
+
+    fn animation() -> RefCell<Self> {
+        RefCell::new(Self::Animation(AnimationPanel::default()))
     }
 }
 
@@ -170,6 +178,7 @@ impl App {
             let training_pane = tiles.insert_pane(Pane::training());
             let settings_pane = tiles.insert_pane(Pane::settings());
             let log_pane = tiles.insert_pane(Pane::log());
+            let animation_pane = tiles.insert_pane(Pane::animation());
             Self::build_default_layout(
                 &mut tiles,
                 scene_pane,
@@ -178,6 +187,7 @@ impl App {
                 training_pane,
                 settings_pane,
                 log_pane,
+                animation_pane,
             )
         };
 
@@ -197,6 +207,7 @@ impl App {
             && has(tree, |p| matches!(p, Pane::Training(_)))
             && has(tree, |p| matches!(p, Pane::Settings(_)))
             && has(tree, |p| matches!(p, Pane::Log(_)))
+            && has(tree, |p| matches!(p, Pane::Animation(_)))
     }
 
     pub fn new(
@@ -257,6 +268,7 @@ impl App {
         training_pane: TileId,
         settings_pane: TileId,
         log_pane: TileId,
+        animation_pane: TileId,
     ) -> TileId {
         // Stats / Log / Settings share a tabbed area
         let bottom_tabs = tiles.insert_tab_tile(vec![stats_pane, log_pane, settings_pane]);
@@ -275,7 +287,15 @@ impl App {
             vec![scene_pane, sidebar_id],
         );
         content.shares.set_share(sidebar_id, 0.35);
-        tiles.insert_container(content)
+        let content_id = tiles.insert_container(content);
+
+        // Animation timeline spans the full width along the bottom.
+        let mut root = egui_tiles::Linear::new(
+            egui_tiles::LinearDir::Vertical,
+            vec![content_id, animation_pane],
+        );
+        root.shares.set_share(animation_pane, 0.2);
+        tiles.insert_container(root)
     }
 
     fn receive_messages(&mut self) {
@@ -333,6 +353,7 @@ impl eframe::App for App {
             let training_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Training(_)));
             let settings_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Settings(_)));
             let log_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Log(_)));
+            let animation_pane = find_pane(&tree.tiles, |p| matches!(p, Pane::Animation(_)));
 
             // Remove all container tiles
             let container_ids: Vec<TileId> = tree
@@ -353,6 +374,7 @@ impl eframe::App for App {
                 training_pane,
                 settings_pane,
                 log_pane,
+                animation_pane,
             ));
         }
 
