@@ -171,9 +171,20 @@ pub(crate) async fn train_stream(
     let mut eval_scene = dataset.eval;
 
     let mut train_duration = Duration::from_secs(0);
-    let mut dataloader = SceneLoader::new(&dataset.train, 42);
+    let mut dataloader = SceneLoader::new(&dataset.train, 42, &train_stream_config.load_config);
     let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
+
+    // Per-train-view (world center, focal-px at native res) for the
+    // Mip-Splatting 3D filter (always on).
+    let mut view_cams: Vec<(glam::Vec3, f32)> = Vec::with_capacity(dataset.train.views.len());
+    for view in dataset.train.views.iter() {
+        let (w, h) = view.image.dimensions().await.unwrap_or((1, 1));
+        let focal = view.camera.focal(glam::uvec2(w, h)).x;
+        view_cams.push((view.camera.position, focal));
+    }
+
     let mut trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
+    trainer.set_view_cams(view_cams.clone());
 
     // Get the dataset name from the base path (if available) for interpolation.
     let dataset_name = vfs
@@ -257,13 +268,14 @@ pub(crate) async fn train_stream(
             let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(current_lod as i32);
             dataloader = if lod_img_pct < 100 {
                 let lod_scene = dataset.train.clone().with_image_scale(cumulative_scale);
-                SceneLoader::new(&lod_scene, 42)
+                SceneLoader::new(&lod_scene, 42, &train_stream_config.load_config)
             } else {
-                SceneLoader::new(&dataset.train, 42)
+                SceneLoader::new(&dataset.train, 42, &train_stream_config.load_config)
             };
 
             let bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
             trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
+            trainer.set_view_cams(view_cams.clone());
 
             log::info!(
                 "LOD {current_lod}/{lod_levels}: Training for {lod_refine_steps} steps (image scale {:.0}%)",
@@ -403,13 +415,30 @@ pub(crate) async fn train_stream(
                     .unwrap();
             }
 
-            visualize.log_memory(
-                iter,
-                &WgpuRuntime::<AutoCompiler>::client(wgpu_device).memory_usage_total()?,
-            )?;
+            // The memory query goes through the compute server and stalls
+            // behind all queued GPU work — keep it off the hot path unless
+            // rerun is actually recording, and then only on the stats cadence.
+            if rerun_config.rerun_enabled
+                && (iter.is_multiple_of(rerun_config.rerun_log_train_stats_every) || is_last_step)
+            {
+                visualize.log_memory(
+                    iter,
+                    &WgpuRuntime::<AutoCompiler>::client(wgpu_device).memory_usage()?,
+                )?;
+            }
+
             if refine.num_added > 0 {
                 visualize
                     .log_refine_stats(iter, &refine, refine_dur)
+                    .unwrap();
+            }
+
+            // Distribution stats need a GPU read-back, so sample them on a
+            // coarser cadence than the per-refine stats.
+            if iter.is_multiple_of(rerun_config.rerun_log_distribution_every) || is_last_step {
+                visualize
+                    .log_splat_distribution_stats(iter, splats.clone())
+                    .await
                     .unwrap();
             }
         }

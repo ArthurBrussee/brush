@@ -116,42 +116,48 @@ pub unsafe extern "C" fn train_and_save(
         return TrainExitCode::Error;
     }
 
-    let dataset_path_str =
-        // SAFETY: Checked if dataset_path is not null, caller guarantees the string is a valid C-string.
-        unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
+    // A Rust panic must not unwind across this `extern "C"` boundary (that
+    // aborts the whole process). Catch it and surface it as an error code.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dataset_path_str =
+            // SAFETY: Checked if dataset_path is not null, caller guarantees the string is a valid C-string.
+            unsafe { CStr::from_ptr(dataset_path).to_string_lossy().into_owned() };
 
-    let source = DataSource::Path(dataset_path_str);
+        let source = DataSource::Path(dataset_path_str);
 
-    // SAFETY: Option is checked to not be null before the future.
-    let train_options = unsafe { *options };
-    // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
-    let process_args = unsafe { train_options.into_train_stream_config() };
-    let mut process = create_process(source, async move |_| Some(process_args));
+        // SAFETY: Option is checked to not be null before the future.
+        let train_options = unsafe { *options };
+        // SAFETY: Caller guarantees the output_path is a valid C-string if not null.
+        let process_args = unsafe { train_options.into_train_stream_config() };
+        let mut process = create_process(source, async move |_| Some(process_args));
 
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create tokio runtime")
-        .block_on(async {
-            SETUP
-                .get_or_init(async move || {
-                    burn_init_setup().await;
-                })
-                .await;
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create tokio runtime")
+            .block_on(async {
+                SETUP
+                    .get_or_init(async move || {
+                        burn_init_setup().await;
+                    })
+                    .await;
 
-            while let Some(message_result) = process.stream.next().await {
-                match message_result {
-                    Ok(message) => {
-                        if let Ok(progress_message) = message.try_into() {
-                            progress_callback(progress_message, user_data);
+                while let Some(message_result) = process.stream.next().await {
+                    match message_result {
+                        Ok(message) => {
+                            if let Ok(progress_message) = message.try_into() {
+                                progress_callback(progress_message, user_data);
+                            }
+                        }
+                        Err(_) => {
+                            return TrainExitCode::Error;
                         }
                     }
-                    Err(_) => {
-                        return TrainExitCode::Error;
-                    }
                 }
-            }
 
-            TrainExitCode::Success
-        })
+                TrainExitCode::Success
+            })
+    }));
+
+    result.unwrap_or(TrainExitCode::Error)
 }

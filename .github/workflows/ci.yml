@@ -20,7 +20,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.93.0
+          toolchain: 1.95.0
           components: rustfmt, clippy
 
       - name: Install packages (Linux)
@@ -58,6 +58,34 @@ jobs:
 
   # ---------------------------------------------------------------------------
 
+  wasm-check:
+    name: Check wasm32
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v2"
+          shared-key: "brush-wasm"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-workspace-crates: true
+
+      # The browser build (brush-app / brush-js cdylibs) is only compiled for
+      # wasm32; the host-only jobs above never exercise it. Check it here so a
+      # wasm-only break can't ship green.
+      - name: check wasm32 (browser crates)
+        run: cargo check --locked -p brush-app -p brush-js --lib --target wasm32-unknown-unknown
+
+  # ---------------------------------------------------------------------------
+
   cargo-deny:
     strategy:
       fail-fast: false
@@ -75,7 +103,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          rust-version: "1.92.0"
+          rust-version: "1.95.0"
           log-level: error
           command: check
           arguments: --target  ${{ matrix.target }}
@@ -93,7 +121,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.93.0
+          toolchain: 1.95.0
 
       - uses: Swatinem/rust-cache@v2
         with:

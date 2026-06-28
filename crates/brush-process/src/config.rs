@@ -58,7 +58,7 @@ pub struct TrainStreamConfig {
     pub model_config: brush_dataset::config::ModelConfig,
     #[clap(flatten)]
     #[serde(flatten)]
-    pub load_config: brush_dataset::config::LoadDataseConfig,
+    pub load_config: brush_dataset::config::LoadDatasetConfig,
     #[clap(flatten)]
     #[serde(flatten)]
     pub process_config: ProcessConfig,

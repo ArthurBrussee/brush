@@ -37,7 +37,7 @@ pub struct TrainConfig {
     pub lr_opac: f64,
 
     /// Learning rate for the scale parameters.
-    #[arg(long, help_heading = "Training options", default_value = "7e-3")]
+    #[arg(long, help_heading = "Training options", default_value = "5e-3")]
     pub lr_scale: f64,
 
     /// Learning rate for the rotation parameters.
@@ -71,9 +71,10 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "15000")]
     pub growth_stop_iter: u32,
 
-    /// Force-split any splat whose screen-space extent exceeds this fraction of the
-    /// image dimension in any training view since the last refine. 0 disables.
-    #[arg(long, help_heading = "Refine options", default_value = "0.25")]
+    /// Split any splat whose max screen-space extent exceeds this fraction of
+    /// the image dimension, shrinking the children so they land at (at most)
+    /// this size on screen. 0 disables.
+    #[arg(long, help_heading = "Refine options", default_value = "0.5")]
     pub split_at_screen_size: f32,
 
     /// Weight of SSIM loss (compared to l1 loss)

@@ -2,8 +2,8 @@
 
 use brush_cube::{MainBackend, MainBackendBase};
 use burn::backend::{
-    Autodiff, BackendTensor, CheckpointingStrategy, DispatchTensor, DispatchTensorKind,
-    TensorMetadata,
+    Autodiff, AutodiffBackend, BackendTensor, CheckpointingStrategy, DispatchTensor,
+    DispatchTensorKind, TensorMetadata,
     tensor::{FloatTensor, IntTensor},
 };
 use burn::tensor::{DType, Int, Tensor};
@@ -31,17 +31,16 @@ pub type AutodiffMain = Autodiff<MainBackend>;
 //
 // `Tensor<D>` is pinned to burn's `Dispatch` backend; brush only ever runs on
 // a wgpu device, so every helper here assumes a `DispatchTensorKind::Wgpu`
-// (optionally wrapped in `Autodiff`) and panics otherwise.
-//
-// The autodiff wraps explicitly set `checkpointing: Some(NoCheckpointing)`:
-// burn-dispatch's stock `from_inner` / `inner` paths leave that field
-// inconsistent with the `kind` enum, which trips macro-dispatched ops.
+// (optionally wrapped in `Autodiff`) and panics otherwise. The forward render
+// now goes through the `#[backend_extension]`-generated `Dispatch` impl
+// instead; these stay for the hand-rolled backward path (brush-render-bwd)
+// and the LPIPS custom ops (brush-loss).
 // ---------------------------------------------------------------------------
 
 /// Extract the inner fusion-Wgpu float tensor from a non-autodiff
 /// `Tensor<D>`.
 pub fn unwrap_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<MainBackend> {
-    let dispatch: DispatchTensor = t.into_primitive();
+    let dispatch: DispatchTensor = t.into_dispatch();
     match dispatch.kind {
         wgpu_kind!(bt) => bt.float(),
         other => panic!(
@@ -54,7 +53,7 @@ pub fn unwrap_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<MainBacken
 /// Extract the inner fusion-Wgpu int tensor from a non-autodiff
 /// `Tensor<D, Int>`.
 pub fn unwrap_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBackend> {
-    let dispatch: DispatchTensor = t.into_primitive();
+    let dispatch: DispatchTensor = t.into_dispatch();
     match dispatch.kind {
         wgpu_kind!(bt) => bt.int(),
         other => panic!(
@@ -67,7 +66,7 @@ pub fn unwrap_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBacke
 /// Inverse of [`unwrap_wgpu_float`]: wraps a fusion-Wgpu float tensor as a
 /// user-facing `Tensor<D>`.
 pub fn wrap_wgpu_float<const D: usize>(t: FloatTensor<MainBackend>) -> Tensor<D> {
-    Tensor::from_primitive(DispatchTensor {
+    Tensor::from_dispatch(DispatchTensor {
         kind: wgpu_kind!(BackendTensor::Float(t)),
         checkpointing: None,
     })
@@ -75,7 +74,7 @@ pub fn wrap_wgpu_float<const D: usize>(t: FloatTensor<MainBackend>) -> Tensor<D>
 
 /// Like [`wrap_wgpu_float`] for an int tensor.
 pub fn wrap_wgpu_int<const D: usize>(t: IntTensor<MainBackend>) -> Tensor<D, Int> {
-    Tensor::from_primitive(DispatchTensor {
+    Tensor::from_dispatch(DispatchTensor {
         kind: wgpu_kind!(BackendTensor::Int(t)),
         checkpointing: None,
     })
@@ -84,7 +83,7 @@ pub fn wrap_wgpu_int<const D: usize>(t: IntTensor<MainBackend>) -> Tensor<D, Int
 /// Extract the inner `AutodiffTensor<MainBackend>` from a `Tensor<D>` on an
 /// autodiff-enabled Wgpu device. Panics on any other shape.
 pub fn unwrap_ad_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<AutodiffMain> {
-    let prim: DispatchTensor = t.into_primitive();
+    let prim: DispatchTensor = t.into_dispatch();
     match prim.kind {
         DispatchTensorKind::Autodiff(inner) => match *inner {
             wgpu_kind!(BackendTensor::Autodiff(t)) => t,
@@ -103,7 +102,7 @@ pub fn unwrap_ad_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<Autodif
 /// Extract the inner Wgpu `IntTensor` regardless of whether the tensor is
 /// wrapped in an autodiff device — ints are never autodiff-tracked.
 pub fn unwrap_ad_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBackend> {
-    let dispatch: DispatchTensor = t.into_primitive();
+    let dispatch: DispatchTensor = t.into_dispatch();
     let kind = match dispatch.kind {
         DispatchTensorKind::Autodiff(inner) => *inner,
         other => other,
@@ -120,43 +119,84 @@ pub fn unwrap_ad_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBa
 /// Inverse of [`unwrap_ad_wgpu_float`]: wraps an autodiff tensor as a
 /// user-facing `Tensor<D>` on the autodiff device.
 pub fn wrap_ad_wgpu_float<const D: usize>(t: FloatTensor<AutodiffMain>) -> Tensor<D> {
-    Tensor::from_primitive(DispatchTensor {
+    Tensor::from_dispatch(DispatchTensor {
         kind: DispatchTensorKind::Autodiff(Box::new(wgpu_kind!(BackendTensor::Autodiff(t)))),
         checkpointing: Some(CheckpointingStrategy::None),
     })
 }
 
 /// Strip the autodiff wrapping from a `Tensor<D>` and clear the residual
-/// `checkpointing` field that `Tensor::inner()` leaves behind.
+/// `checkpointing` field.
 ///
-/// Upstream burn-dispatch's `inner()` preserves the original tensor's
-/// `checkpointing: Some(…)` even after the kind has been downgraded from
-/// `Autodiff(...)` to plain `Wgpu(...)`. Downstream macros (e.g. the
-/// `Float` variant of `unary_op_arms!`) use `checkpointing.is_some()` as
-/// a "this came from autodiff" signal and silently re-lift the output to
-/// the autodiff backend, which then trips cross-backend assertions when
-/// it's combined with a tensor whose checkpointing is `None`. Using this
-/// helper instead of bare `.inner()` avoids the trap.
+/// Operates directly on the `DispatchTensor` kind so it works both for an
+/// autodiff input (unwrap one level) and an already-inner input (passthrough),
+/// always landing with `checkpointing: None`. The high-level `.inner()` can't
+/// stand in here: it panics on a non-autodiff input, and (via the Bridge path)
+/// doesn't reliably normalise `checkpointing`, which downstream ops read as a
+/// "came from autodiff" signal and use to re-lift — tripping cross-backend
+/// asserts when mixed with a genuinely-inner tensor.
 pub fn detach_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
-    let dispatch: DispatchTensor = t.into_primitive();
+    let dispatch: DispatchTensor = t.into_dispatch();
     let kind = match dispatch.kind {
         DispatchTensorKind::Autodiff(inner) => *inner,
         other => other,
     };
-    Tensor::from_primitive(DispatchTensor {
+    Tensor::from_dispatch(DispatchTensor {
         kind,
         checkpointing: None,
     })
 }
 
+/// Lift a non-autodiff `Tensor<D>` into the autodiff graph as a constant.
+/// A no-op if `t` is already autodiff.
+///
+/// Lifts at the concrete-Wgpu autodiff level and re-wraps with an explicit
+/// `checkpointing`. The high-level `Tensor::from_inner` goes through the
+/// Bridge/Dispatch path, which doesn't set `checkpointing` the way the mixed
+/// inner/autodiff folds (e.g. `fold_min_scale`) need — a lifted constant then
+/// degrades to the inner backend on the next op and trips a cross-backend
+/// assert. Keep the hand-rolled lift.
+pub fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
+    let dispatch: DispatchTensor = t.into_dispatch();
+    match dispatch.kind {
+        wgpu_kind!(BackendTensor::Float(inner)) => {
+            wrap_ad_wgpu_float(<AutodiffMain as AutodiffBackend>::from_inner(inner))
+        }
+        DispatchTensorKind::Autodiff(_) => Tensor::from_dispatch(dispatch),
+        _ => panic!("expected Wgpu tensor to lift to autodiff"),
+    }
+}
+
+fn is_autodiff<const D: usize>(t: &Tensor<D>) -> bool {
+    matches!(
+        t.clone().into_dispatch().kind,
+        DispatchTensorKind::Autodiff(_)
+    )
+}
+
+/// Put `t` on the same autodiff/inner backend variant as `reference`. Brush
+/// keeps some frozen tensors (e.g. the 3D-filter floor) on the inner backend
+/// but folds them against params that may be lifted to autodiff; this aligns
+/// both operands so dispatch ops don't trip a cross-backend assertion.
+pub fn match_backend<const D: usize, const DR: usize>(
+    t: Tensor<D>,
+    reference: &Tensor<DR>,
+) -> Tensor<D> {
+    if is_autodiff(reference) {
+        lift_to_autodiff(t)
+    } else {
+        detach_autodiff(t)
+    }
+}
+
 /// Like [`detach_autodiff`] for `Tensor<D, Int>`.
 pub fn detach_autodiff_int<const D: usize>(t: Tensor<D, Int>) -> Tensor<D, Int> {
-    let dispatch: DispatchTensor = t.into_primitive();
+    let dispatch: DispatchTensor = t.into_dispatch();
     let kind = match dispatch.kind {
         DispatchTensorKind::Autodiff(inner) => *inner,
         other => other,
     };
-    Tensor::from_primitive(DispatchTensor {
+    Tensor::from_dispatch(DispatchTensor {
         kind,
         checkpointing: None,
     })
@@ -171,7 +211,7 @@ pub fn resolve_to_cube_float<const D: usize>(tensor: Tensor<D>) -> CubeTensor<Wg
     client.resolve_tensor_float::<MainBackendBase>(fusion)
 }
 
-impl SplatOps<Self> for Fusion<MainBackendBase> {
+impl SplatOps for Fusion<MainBackendBase> {
     async fn render(
         camera: &Camera,
         img_size: glam::UVec2,

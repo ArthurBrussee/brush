@@ -27,6 +27,7 @@ rand.workspace = true
 
 brush-async.path = "../brush-async"
 clap.workspace = true
+parse-size.workspace = true
 itertools = "0.14"
 
 [target.'cfg(target_family = "wasm")'.dependencies]

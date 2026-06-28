@@ -1,3 +1,5 @@
+use std::f32::consts::FRAC_1_SQRT_2;
+
 use crate::{
     adam_scaled::{AdamScaled, AdamScaledConfig, AdamState},
     config::TrainConfig,
@@ -7,9 +9,8 @@ use crate::{
     splat_init::bounds_from_pos,
     stats::RefineRecord,
 };
-
 use brush_dataset::scene::SceneBatch;
-use brush_loss::{ImageLossConfig, image_loss, unpack_gt_rgb};
+use brush_loss::{ImageLossConfig, image_loss};
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use brush_render_bwd::render_splats;
@@ -19,7 +20,7 @@ use burn::{
         LrScheduler,
         exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig},
     },
-    module::ParamId,
+    module::{AutodiffModule, ParamId},
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
     tensor::{
         Bool, Device, Distribution, IndexingUpdateOp, Int, Tensor, TensorData, activation::sigmoid,
@@ -35,6 +36,18 @@ pub const BOUND_PERCENTILE: f32 = 0.8;
 
 const MIN_OPACITY: f32 = 1.0 / 255.0;
 
+/// Fraction of training after which the Mip-Splatting 3D-filter floor stops
+/// being recomputed and is held frozen (still applied), so splats settle
+/// against a fixed target instead of chasing a moving floor.
+const MIN_SCALE_FREEZE_FRAC: f32 = 0.9;
+
+/// Mip-Splatting 3D-filter strength (the paper's `s`): each splat gets a frozen
+/// per-splat world-space scale floor `f = sqrt(MIN_SCALE_FACTOR) · pixel size at
+/// the nearest observing camera`, i.e. a ~0.32px std-dev floor. Folded into
+/// scales/opacity at render (and baked at export), never optimized. Fundamental
+/// to well-behaved splats, so not a tunable.
+const MIN_SCALE_FACTOR: f32 = 0.1;
+
 type OptimizerType = OptimizerAdaptor<AdamScaled, Splats>;
 
 pub struct SplatTrainer {
@@ -46,6 +59,10 @@ pub struct SplatTrainer {
     bounds: BoundingBox,
     step_count: u32,
     max_sh_degree: u32,
+    /// Per-train-view (world center, focal in px at native res) for the
+    /// Mip-Splatting 3D filter. Empty disables it. The floor itself lives on
+    /// the splats (recomputed at each refine), not here.
+    view_cams: Vec<(glam::Vec3, f32)>,
     #[cfg(not(target_family = "wasm"))]
     lpips: Option<lpips::LpipsModel>,
 }
@@ -56,6 +73,35 @@ fn inv_sigmoid(x: Tensor<1>) -> Tensor<1> {
 
 fn create_optimizer_from_config() -> OptimizerType {
     AdamScaledConfig::new().with_epsilon(1e-15).init()
+}
+
+/// Per-splat world-space scale floor for the Mip-Splatting 3D filter:
+/// `f_i = sqrt(factor) · min_v(||mean_i - cam_v|| / focal_px_v)`. `means` and
+/// the result are on the inner (non-autodiff) backend; `f` is a frozen
+/// constant. Returns `None` if disabled or there are no cameras.
+fn compute_min_scale(
+    means: &Tensor<2>,
+    view_cams: &[(glam::Vec3, f32)],
+    factor: f32,
+) -> Option<Tensor<1>> {
+    if factor <= 0.0 || view_cams.is_empty() {
+        return None;
+    }
+    let device = means.device();
+    let n = means.dims()[0] as i32;
+
+    let mut min_ratio: Option<Tensor<1>> = None;
+    for (center, focal) in view_cams {
+        let c = Tensor::<1>::from_floats([center.x, center.y, center.z], &device).reshape([1, 3]);
+        let diff = means.clone() - c;
+        let dist = diff.clone().mul(diff).sum_dim(1).sqrt().reshape([n]);
+        let ratio = dist.div_scalar(focal.max(1e-6));
+        min_ratio = Some(match min_ratio {
+            Some(m) => m.min_pair(ratio),
+            None => ratio,
+        });
+    }
+    min_ratio.map(|r| r.mul_scalar(factor.sqrt()))
 }
 
 pub async fn get_splat_bounds(splats: Splats, percentile: f32) -> BoundingBox {
@@ -96,9 +142,16 @@ impl SplatTrainer {
             bounds,
             step_count: 0,
             max_sh_degree: 0,
+            view_cams: Vec::new(),
             #[cfg(not(target_family = "wasm"))]
             lpips,
         }
+    }
+
+    /// Supply per-train-view (world center, focal-px at native res) to enable
+    /// the Mip-Splatting 3D filter (gated on `config.min_scale_factor > 0`).
+    pub fn set_view_cams(&mut self, view_cams: Vec<(glam::Vec3, f32)>) {
+        self.view_cams = view_cams;
     }
 
     pub async fn step(&mut self, batch: SceneBatch, splats: Splats) -> (Splats, TrainStepStats) {
@@ -118,7 +171,12 @@ impl SplatTrainer {
         // GT lives on the GPU as packed `[H, W]` u32 (RGBA u8). All mixing
         // (bg compositing, alpha matching, mask) is folded into the loss
         // kernels; no f32 GT image is ever materialised here.
-        let gt_packed: Tensor<2, Int> = Tensor::from_data(batch.img_packed, &device);
+        // GT is pure data — never differentiated. Build it on the inner
+        // backend so it doesn't inherit the autodiff device's residual
+        // checkpointing flag (the LPIPS `unpack_gt_rgb` path, via
+        // `unwrap_wgpu_int`, expects a clean Wgpu tensor).
+        let gt_packed: Tensor<2, Int> =
+            Tensor::from_data(batch.img_packed, &device.clone().inner());
         let img_size = glam::uvec2(img_w as u32, img_h as u32);
         let base = &self.config.background_color;
         let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
@@ -127,6 +185,8 @@ impl SplatTrainer {
         let median_scale = self.bounds.median_size();
 
         let (mut grads, visible, num_visible, loss_inner) = {
+            // The splats already carry their 3D-filter floor (set at refine);
+            // the render path folds it in. Optimizer/refine work on raw params.
             let render_input = splats.clone();
             let diff_out = render_splats(render_input, &camera, img_size, background)
                 .instrument(trace_span!("Forward"))
@@ -169,6 +229,9 @@ impl SplatTrainer {
             };
             let loss_map = image_loss(pred_for_loss, gt_packed.clone(), cfg);
 
+            // `loss` is only reassigned by the LPIPS path below, which is
+            // compiled out on wasm — so `mut` is unused there.
+            #[cfg_attr(target_family = "wasm", allow(unused_mut))]
             let mut loss = if do_alpha_match {
                 let rgb = loss_map.clone().slice(s![.., .., 0..3]).mean();
                 let alpha = loss_map.slice(s![.., .., 3..4]).mean();
@@ -181,7 +244,7 @@ impl SplatTrainer {
             // here costs ~99 MB at 4K, only when LPIPS is enabled.
             #[cfg(not(target_family = "wasm"))]
             if let Some(lpips) = &self.lpips {
-                let gt_rgb = unpack_gt_rgb(gt_packed.clone(), composite_bg);
+                let gt_rgb = brush_loss::unpack_gt_rgb(gt_packed.clone(), composite_bg);
                 let gt_rgb_diff: Tensor<3> = Tensor::from_inner(gt_rgb);
                 loss = loss
                     + lpips.lpips(
@@ -209,11 +272,10 @@ impl SplatTrainer {
                 let record = self
                     .refine_record
                     .get_or_insert_with(|| RefineRecord::new(splats.num_splats(), &device));
-                record.gather_stats(
-                    detach_autodiff(refine_weight),
-                    detach_autodiff(visible.clone().inner()),
-                    detach_autodiff(max_radius.inner()),
-                );
+                // `visible` / `max_radius` already arrive on the inner backend;
+                // only the freshly-extracted `refine_weight` gradient needs the
+                // autodiff stripped off.
+                record.gather_stats(detach_autodiff(refine_weight), visible.clone(), max_radius);
             });
 
             (grads, visible, diff_out.num_visible, loss_inner)
@@ -303,8 +365,12 @@ impl SplatTrainer {
 
         // Add random noise. Only do this in the growth phase, otherwise
         // let the splats settle in without noise, not much point in exploring regions anymore.
-        let inv_opac: Tensor<1> = 1.0 - splats.opacities();
-        let noise_weight = inv_opac.inner().powi_scalar(150.0).clamp(0.0, 1.0) * visible.inner();
+        // The noise gate is non-differentiable bookkeeping. Read opacity from
+        // the valid (inner) splats so the sigmoid never lands on the autodiff
+        // graph, and `visible` is already inner — so nothing here builds a
+        // node that won't get a backward pass.
+        let inv_opac: Tensor<1> = 1.0 - splats.valid().opacities();
+        let noise_weight = inv_opac.powi_scalar(150.0).clamp(0.0, 1.0) * visible;
         let noise_weight = noise_weight.unsqueeze_dim(1);
         // `samples` is pure data — keep it on the inner device so it can
         // multiply with the `.inner()`-stripped `noise_weight` without
@@ -346,6 +412,12 @@ impl SplatTrainer {
     }
 
     pub async fn refine(&mut self, iter: u32, splats: Splats) -> (Splats, RefineStats) {
+        let progress = iter as f32 / self.config.total_train_iters.max(1) as f32;
+        // Refine manipulates the canonical (un-floored) params, so bake the
+        // current 3D-filter floor into them first — split/clone/prune then see
+        // the splat's true scales with no double-apply. A freshly recomputed
+        // floor is attached at the end (below), once positions/count are known.
+        let splats = splats.bake_min_scale();
         let device = splats.device();
         // `memory_cleanup` lives on the wgpu client, not on `Device`.
         let client = WgpuRuntime::<AutoCompiler>::client(&WgpuDevice::default());
@@ -354,6 +426,44 @@ impl SplatTrainer {
             .refine_record
             .take()
             .expect("Can only refine if refine stats are initialized");
+
+        // Track how many splats are visually large (the "big-low-α" failure
+        // mode). `max_screen_size` is the larger 2D ellipse extent as a
+        // fraction of the image dim; area is approximated by its square.
+        let ss_data = refiner
+            .max_screen_size
+            .clone()
+            .into_data_async()
+            .await
+            .expect("Failed to read screen size")
+            .into_vec::<f32>()
+            .expect("Failed to read screen size vec");
+        if !ss_data.is_empty() {
+            let mut sorted: Vec<f32> = ss_data.iter().copied().filter(|v| v.is_finite()).collect();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let n = sorted.len();
+            let pct = |p: f32| sorted[((p * (n - 1) as f32) as usize).min(n - 1)];
+            let n_total = n as f64;
+            let n_gt_025 = ss_data.iter().filter(|v| **v > 0.25).count();
+            let n_gt_010 = ss_data.iter().filter(|v| **v > 0.10).count();
+            let n_gt_005 = ss_data.iter().filter(|v| **v > 0.05).count();
+            let n_area_gt_005 = ss_data.iter().filter(|v| (*v * *v) > 0.05).count();
+            let n_area_gt_010 = ss_data.iter().filter(|v| (*v * *v) > 0.10).count();
+            log::info!(
+                "screen_size iter={} n={} max_dim p50={:.4} p95={:.4} p99={:.4} max={:.4} frac>0.05={:.4} frac>0.10={:.4} frac>0.25={:.4} frac_area>0.05={:.4} frac_area>0.10={:.4}",
+                iter,
+                n,
+                pct(0.5),
+                pct(0.95),
+                pct(0.99),
+                pct(1.0),
+                n_gt_005 as f64 / n_total,
+                n_gt_010 as f64 / n_total,
+                n_gt_025 as f64 / n_total,
+                n_area_gt_005 as f64 / n_total,
+                n_area_gt_010 as f64 / n_total,
+            );
+        }
 
         let max_allowed_bounds = self.bounds.extent.max_element() * 100.0;
 
@@ -367,8 +477,12 @@ impl SplatTrainer {
         let alpha_mask = splats.opacities().lower_elem(MIN_OPACITY);
         let scales = splats.scales();
 
-        let scale_small = scales.clone().lower_elem(1e-10).any_dim(1).squeeze_dim(1);
+        // Note: we do NOT cull on a minimum scale. A genuinely flat splat
+        // (a thin "pancake" representing a surface) legitimately has a tiny
+        // smallest axis, so there's no correct min-scale threshold — the
+        // non-finite check below still removes actually-degenerate splats.
         let scale_big = scales
+            .clone()
             .greater_elem(max_allowed_bounds)
             .any_dim(1)
             .squeeze_dim(1);
@@ -398,8 +512,8 @@ impl SplatTrainer {
             .into_scalar_async::<i32>()
             .await
             .expect("Failed to count non-finite splats") as u32;
+
         let prune_mask = alpha_mask
-            .bool_or(scale_small)
             .bool_or(scale_big)
             .bool_or(bound_mask)
             .bool_or(non_finite_mask);
@@ -425,34 +539,36 @@ impl SplatTrainer {
             split_inds.extend(resampled_inds);
         }
 
+        // Force-split splats that are too big on screen (every refine). Rather
+        // than killing them (the old `kill_at_screen_size`), we split them and
+        // shrink the children down to `split_at_screen_size` on screen — see
+        // `refine_splats`. Capped by the remaining `max_splats` budget.
         let pre_oversized = split_inds.len();
-        // Force-split oversized splats, gated by growth_stop_iter. Without
-        // the gate, oversized splats from an init ply keep splitting past
-        // the stop iter when there isn't enough training time for them to
-        // shrink first.
-        if self.config.split_at_screen_size > 0.0 && iter < self.config.growth_stop_iter {
+        if self.config.split_at_screen_size > 0.0 {
             let oversized = refiner.above_screen_size(self.config.split_at_screen_size);
-            let oversized_vec = oversized
-                .float()
-                .into_data_async()
-                .await
-                .expect("Failed to get oversized mask")
-                .into_vec::<f32>()
-                .expect("Failed to read oversized mask");
-            let mut budget = self
-                .config
-                .max_splats
-                .saturating_sub(splats.num_splats() + split_inds.len() as u32);
-            for (i, &v) in oversized_vec.iter().enumerate() {
-                if budget == 0 {
-                    break;
-                }
-                if v > 0.0 && split_inds.insert(i as i32) {
-                    budget -= 1;
+            let oversized_inds = oversized.argwhere_async().await;
+            if oversized_inds.dims()[0] > 0 {
+                let oversized_inds = oversized_inds
+                    .squeeze_dim::<1>(1)
+                    .into_data_async()
+                    .await
+                    .expect("Failed to get oversized indices")
+                    .into_vec::<i32>()
+                    .expect("Failed to read oversized indices");
+                let mut budget = self
+                    .config
+                    .max_splats
+                    .saturating_sub(splats.num_splats() + split_inds.len() as u32);
+                for ind in oversized_inds {
+                    if budget == 0 {
+                        break;
+                    }
+                    if split_inds.insert(ind) {
+                        budget -= 1;
+                    }
                 }
             }
         }
-
         let num_split_oversized = (split_inds.len() - pre_oversized) as u32;
 
         let pre_high_grad = split_inds.len();
@@ -495,11 +611,27 @@ impl SplatTrainer {
 
         let num_split_high_grad = (split_inds.len() - pre_high_grad) as u32;
         let refine_count = split_inds.len();
-        splats = self.refine_splats(&device, record, splats, split_inds, iter);
+        // Per-splat max on-screen extent, used by `refine_splats` to cap the
+        // split shrink so oversized splats' children land at `split_at_screen_size`.
+        let screen_sizes = refiner.max_screen_size.clone();
+        splats = self.refine_splats(&device, record, splats, split_inds, screen_sizes, iter);
 
         // Update current bounds based on the splats.
         self.bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
         client.memory_cleanup();
+
+        // Recompute the per-splat 3D-filter floor against the new positions/
+        // count and attach it — the floor is part of the splat from here until
+        // the next refine. Past the freeze fraction we stop refreshing and leave
+        // it baked in, so the tail settles against fixed params.
+        if progress < MIN_SCALE_FREEZE_FRAC {
+            // `splats` is already on the inner backend here, so `means()` is too.
+            // No-op when there are no view cameras (e.g. unit tests).
+            let means = splats.means();
+            if let Some(f) = compute_min_scale(&means, &self.view_cams, MIN_SCALE_FACTOR) {
+                splats = splats.with_min_scale(f);
+            }
+        }
 
         let splat_count = splats.num_splats();
 
@@ -522,6 +654,7 @@ impl SplatTrainer {
         mut record: HashMap<ParamId, AdaptorRecord<AdamScaled>>,
         mut splats: Splats,
         split_inds: HashSet<i32>,
+        screen_sizes: Tensor<1>,
         iter: u32,
     ) -> Splats {
         let refine_count = split_inds.len();
@@ -544,36 +677,47 @@ impl SplatTrainer {
             let cur_sh_coeffs = splats.sh_coeffs.val().select(0, refine_inds.clone());
             let cur_raw_opac = splats.raw_opacities.val().select(0, refine_inds.clone());
 
-            // The amount to offset the scale and opacity should maybe depend on how far away we have sampled these gaussians,
-            // but a fixed amount seems to work ok. The only note is that divide by _less_ than SQRT(2) seems to exponentially
-            // blow up, as more 'mass' is added each refine.
-            // let scale_div = Tensor::ones_like(&cur_log_scale) * SQRT_2.ln();
-            //
             let cur_scales = cur_log_scale.clone().exp();
 
             let cur_opac = sigmoid(cur_raw_opac.clone());
             let inv_opac: Tensor<1> = 1.0 - cur_opac;
-            let new_opac: Tensor<1> = 1.0 - inv_opac.sqrt();
+            // Post-split child opacity as a power law in transmittance,
+            // p = 0.5 would keep the transmittance for cloning splats but as we offset them
+            // choose a higher p.
+            let new_opac: Tensor<1> = 1.0 - inv_opac.powf_scalar(FRAC_1_SQRT_2);
             let new_raw_opac = inv_sigmoid(new_opac.clamp(MIN_OPACITY, 1.0 - MIN_OPACITY));
 
-            let f_clamped = std::f32::consts::FRAC_1_SQRT_2;
-            let offset_std = (1.0_f32 - f_clamped * f_clamped).sqrt();
-            let (new_log_scales, samples) = {
-                // Mirror split (.sample): 2-component mixture exactly
-                // preserves parent's covariance. Sample from parent's
-                // anisotropic gaussian with math-correct std.
-                let log_factor = f_clamped.ln();
-                let new_log_scales = cur_log_scale.clone() + log_factor;
-                let sample_local = Tensor::random(
-                    [refine_count, 3],
-                    Distribution::Normal(0.0, offset_std as f64),
-                    device,
-                ) * cur_scales;
-                let samples = quaternion_vec_multiply(cur_rots.clone(), sample_local);
-                (new_log_scales, samples)
+            // Smooth covariance-aware split. Per-axis shrink + mass-conserving
+            // deterministic offset (one child at +offset, the other at -offset).
+            // Children inherit the
+            // parent's rotation; the split is the scale shrink + ±offset.
+            let cur_scales_sq = cur_scales.clone().powi_scalar(2);
+            let max_scale_sq = cur_scales_sq.clone().max_dim(1).clamp_min(1e-30);
+            let ratio = cur_scales_sq / max_scale_sq;
+            // Max-axis shrink factor `k` (per splat). The standard split uses
+            // 1/√2 (mass-conserving). When `split_at_screen_size` is set, splats
+            // that are too big on screen shrink harder so their children land at
+            // (at most) the cap: `k = min(1/√2, split_at_screen_size / screen)`.
+            // Splats already within √2× of the cap are unaffected (min → 1/√2).
+            let k_per_axis: Tensor<2> = if self.config.split_at_screen_size > 0.0 {
+                let k_max = screen_sizes
+                    .select(0, refine_inds.clone())
+                    .unsqueeze_dim(1)
+                    .clamp_min(1e-6)
+                    .recip()
+                    .mul_scalar(self.config.split_at_screen_size)
+                    .clamp_max(FRAC_1_SQRT_2);
+                -(ratio * (-k_max + 1.0)) + 1.0
+            } else {
+                -(ratio * (1.0_f32 - FRAC_1_SQRT_2)) + 1.0
             };
-
-            // Shrink & offset existing splats.
+            let offset_factor = (-k_per_axis.clone().powi_scalar(2) + 1.0)
+                .clamp_min(0.0)
+                .sqrt();
+            let offset_local = offset_factor * cur_scales;
+            let samples = quaternion_vec_multiply(cur_rots.clone(), offset_local);
+            let new_log_scales = cur_log_scale.clone() + k_per_axis.log();
+            let child_rots = cur_rots;
 
             // Scatter into transforms: build a [refine_count, 10] update tensor
             // with means offset in cols 0..3 and log_scales difference in cols 7..10
@@ -594,14 +738,19 @@ impl SplatTrainer {
                 m.scatter(0, refine_inds.clone(), difference, IndexingUpdateOp::Add)
             });
 
+            // Child sits at parent_mean + samples (parent moves to
+            // parent_mean - samples) — anti-correlated, centroid-preserving.
             // Build new transforms row: means(3) + rotations(4) + log_scales(3)
             let new_transforms =
-                Tensor::cat(vec![cur_means + samples, cur_rots, new_log_scales], 1);
+                Tensor::cat(vec![cur_means + samples, child_rots, new_log_scales], 1);
+
             // Optimizer state lives on the inner (non-autodiff) device.
             let opt_device = device.clone().inner();
             let refine_inds_opt = refine_inds.to_device(&opt_device);
-            // Both halves of a split start with zero Adam moments; only the
-            // ±sample position offset tells them apart. Burn's scatter bridge
+
+            // Both halves of a split start with zero Adam moments.
+            //
+            // Burn's scatter bridge
             // only implements Add, so we add the negated parent value to zero
             // it out instead of using Assign.
             splats = map_splats_and_opt(
@@ -652,6 +801,7 @@ impl SplatTrainer {
             let new_opac = sigmoid(f) - minus_opac;
             inv_sigmoid(new_opac.clamp(1e-12, 1.0 - 1e-12))
         });
+
         self.optim = Some(create_optimizer_from_config().load_record(record));
         splats
     }

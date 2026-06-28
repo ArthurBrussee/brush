@@ -177,6 +177,9 @@ async fn read_splat_data(splats: Splats) -> Result<DynamicPly, ExportError> {
 }
 
 pub async fn splat_to_ply(splats: Splats) -> Result<Vec<u8>, ExportError> {
+    // Fold any 3D-filter floor into the stored scales/opacity so the ply holds
+    // ordinary derived values — the floor is never written as a separate field.
+    let splats = splats.bake_min_scale();
     let sh_degree = splats.sh_degree();
     let ply = read_splat_data(splats.clone()).await?;
 

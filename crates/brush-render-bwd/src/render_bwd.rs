@@ -18,7 +18,7 @@ use crate::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};
 use crate::kernels;
 use brush_render::shaders::helpers::ProjectUniforms;
 
-impl SplatBwdOps<Self> for MainBackendBase {
+impl SplatBwdOps for MainBackendBase {
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
         projected_splats: FloatTensor<Self>,
@@ -114,6 +114,8 @@ impl SplatBwdOps<Self> for MainBackendBase {
     ) -> SplatGrads<Self> {
         let _span = tracing::trace_span!("project_bwd").entered();
 
+        // The screen-area regulariser only acts in this backward kernel, so we
+        // stamp the weight onto the uniforms here rather than in the forward.
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
         let raw_opac = into_contiguous(raw_opac);

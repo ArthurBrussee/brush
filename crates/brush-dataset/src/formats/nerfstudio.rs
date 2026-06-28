@@ -1,8 +1,7 @@
-use super::find_mask_path;
-use super::{DatasetLoadResult, FormatError};
+use super::{DatasetLoadResult, FormatError, find_mask_path, opengl_c2w_to_pose};
 use crate::{
     Dataset,
-    config::LoadDataseConfig,
+    config::LoadDatasetConfig,
     scene::{LoadImage, SceneView},
 };
 use brush_render::camera::fov_to_focal;
@@ -15,7 +14,6 @@ use brush_render::kernels::camera_model::kannala_brandt_4::KannalaBrandt4Params;
 use brush_render::kernels::camera_model::radial_tangential_8::RadialTangential8Params;
 use brush_serde::load_splat_from_ply;
 use brush_vfs::BrushVfs;
-use image::GenericImageView;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
@@ -143,7 +141,7 @@ async fn read_transforms_file(
     scene: JsonScene,
     transforms_path: &Path,
     vfs: Arc<BrushVfs>,
-    load_args: &LoadDataseConfig,
+    load_args: &LoadDatasetConfig,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<SceneView>, FormatError> {
     let mut results = vec![];
@@ -157,11 +155,15 @@ async fn read_transforms_file(
 
         // NeRF 'transform_matrix' is a camera-to-world transform
         let transform_matrix: Vec<f32> = frame.transform_matrix.iter().flatten().copied().collect();
-        let mut transform = glam::Mat4::from_cols_slice(&transform_matrix).transpose();
-        // Swap basis to match camera format and reconstrunstion ply (if included).
-        transform.y_axis *= -1.0;
-        transform.z_axis *= -1.0;
-        let (_, rotation, translation) = transform.to_scale_rotation_translation();
+        if transform_matrix.len() != 16 {
+            return Err(FormatError::InvalidFormat(format!(
+                "frame '{}' has a {}-element transform_matrix, expected a 4x4 (16 elements)",
+                frame.file_path,
+                transform_matrix.len()
+            )));
+        }
+        let transform = glam::Mat4::from_cols_slice(&transform_matrix).transpose();
+        let (translation, rotation) = opengl_c2w_to_pose(transform);
 
         let mut path = transforms_path
             .parent()
@@ -192,11 +194,11 @@ async fn read_transforms_file(
 
         let w = frame.w.or(scene.w);
         let h = frame.h.or(scene.h);
-        // If we have some missing format, just get it from the image.
-        // This does require loading the image which is not great...
+        // If the json omits the size, read it from the image header (cheap, no
+        // full decode).
         let (w, h) = match (w, h) {
             (Some(w), Some(h)) => (w as u32, h as u32),
-            _ => image.load().await?.dimensions(),
+            _ => image.dimensions().await?,
         };
 
         let camera_model = resolve_camera_model(
@@ -266,7 +268,7 @@ async fn read_transforms_file(
 
 pub async fn read_dataset(
     vfs: Arc<BrushVfs>,
-    load_args: &LoadDataseConfig,
+    load_args: &LoadDatasetConfig,
 ) -> Option<Result<DatasetLoadResult, FormatError>> {
     log::info!("Loading nerfstudio dataset");
 
@@ -287,7 +289,7 @@ pub async fn read_dataset(
 
 async fn read_dataset_inner(
     vfs: Arc<BrushVfs>,
-    load_args: &LoadDataseConfig,
+    load_args: &LoadDatasetConfig,
     json_files: Vec<std::path::PathBuf>,
     transforms_path: std::path::PathBuf,
 ) -> Result<DatasetLoadResult, FormatError> {
