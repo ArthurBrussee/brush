@@ -91,8 +91,8 @@ impl TrainingPanel {
     }
 }
 
-async fn export(splat: Splats) -> Result<(), Error> {
-    let data = brush_serde::splat_to_ply(splat).await?;
+async fn export(splat: Splats, up_axis: Option<glam::Vec3>) -> Result<(), Error> {
+    let data = brush_serde::splat_to_ply(splat, up_axis).await?;
     rrfd::save_file("export.ply", data).await?;
     Ok(())
 }
@@ -293,10 +293,11 @@ impl AppPane for TrainingPanel {
                         let Some(splats) = process.current_splats().latest() else {
                             return;
                         };
+                        let up_axis = process.up_axis();
 
                         self.export_actor
                             .run(move || async move {
-                                if let Err(e) = export(splats).await {
+                                if let Err(e) = export(splats, up_axis).await {
                                     let _ = sender.send(e);
                                     ctx.request_repaint();
                                 }

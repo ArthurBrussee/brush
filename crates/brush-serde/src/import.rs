@@ -197,15 +197,26 @@ pub fn stream_splat_from_ply<T: AsyncRead + Unpin>(
             .comments
             .iter()
             .filter_map(|c| {
-                match c
-                    .to_lowercase()
-                    .strip_prefix("vertical axis: ")
-                    .map(|s| s.trim())
-                {
-                    Some("x") => Some(Vec3::X),
-                    Some("y") => Some(Vec3::NEG_Y),
-                    Some("z") => Some(Vec3::NEG_Z),
-                    _ => None,
+                let s = c.to_lowercase();
+                let suffix = s.strip_prefix("vertical axis: ")?.trim();
+                match suffix {
+                    "x" => Some(Vec3::X),
+                    "y" => Some(Vec3::NEG_Y),
+                    "z" => Some(Vec3::NEG_Z),
+                    _ => {
+                        let parts: Vec<f32> = suffix
+                            .split(|ch: char| {
+                                ch == ',' || ch.is_whitespace() || ch == '[' || ch == ']'
+                            })
+                            .filter(|s| !s.is_empty())
+                            .filter_map(|p| p.parse::<f32>().ok())
+                            .collect();
+                        if parts.len() == 3 {
+                            Some(Vec3::new(parts[0], parts[1], parts[2]))
+                        } else {
+                            None
+                        }
+                    }
                 }
             })
             .next_back();
@@ -602,7 +613,7 @@ mod tests {
     async fn test_import_basic_functionality() {
         let _device = brush_cube::test_helpers::test_device().await;
         let original_splats = create_test_splats(1);
-        let ply_bytes = splat_to_ply(original_splats.clone()).await.unwrap();
+        let ply_bytes = splat_to_ply(original_splats.clone(), None).await.unwrap();
 
         let cursor = Cursor::new(ply_bytes);
         let imported_message = load_splat_from_ply(cursor, None).await.unwrap();
@@ -621,7 +632,7 @@ mod tests {
         let _device = brush_cube::test_helpers::test_device().await;
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);
-            let ply_bytes = splat_to_ply(original_splats).await.unwrap();
+            let ply_bytes = splat_to_ply(original_splats, None).await.unwrap();
 
             let cursor = Cursor::new(ply_bytes);
             let imported_message = load_splat_from_ply(cursor, None).await.unwrap();
@@ -640,7 +651,7 @@ mod tests {
         let original_splats = create_test_splats_with_count(0, 4);
         assert_eq!(original_splats.num_splats(), 4);
 
-        let ply_bytes = splat_to_ply(original_splats).await.unwrap();
+        let ply_bytes = splat_to_ply(original_splats, None).await.unwrap();
 
         // Test no subsampling
         let cursor = Cursor::new(ply_bytes.clone());
@@ -694,5 +705,24 @@ mod tests {
         assert_eq!(&sh[0..6], &[0., 0., 0., 0., 0., 0.]);
         assert_eq!(&sh[6..12], &[4., 4., 4., 4., 4., 4.]);
         assert_eq!(sub.raw_opacities.unwrap(), vec![0., 4., 8.]);
+    }
+
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_import_custom_up_axis() {
+        let _device = brush_cube::test_helpers::test_device().await;
+        let original_splats = create_test_splats(1);
+        let custom_up = Vec3::new(0.123, 0.456, -0.789);
+        let ply_bytes = splat_to_ply(original_splats, Some(custom_up))
+            .await
+            .unwrap();
+
+        let cursor = Cursor::new(ply_bytes);
+        let imported_message = load_splat_from_ply(cursor, None).await.unwrap();
+
+        assert!(imported_message.meta.up_axis.is_some());
+        let imported_up = imported_message.meta.up_axis.unwrap();
+        assert!((imported_up.x - custom_up.x).abs() < 1e-5);
+        assert!((imported_up.y - custom_up.y).abs() < 1e-5);
+        assert!((imported_up.z - custom_up.z).abs() < 1e-5);
     }
 }
