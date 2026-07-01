@@ -107,7 +107,7 @@ async fn test_reference() -> anyhow::Result<()> {
 
         let tensors = SafeTensors::deserialize(data)?;
         let splats: Splats = splats_from_safetensors(&tensors, &device)?;
-        let img_ref = safetensor_to_burn::<3>(&tensors.tensor("out_img")?, &device);
+        let img_ref = safetensor_to_burn::<3>(&tensors.tensor("out_img")?, &device)?;
         let [h, w, _] = img_ref.dims();
 
         let fov = std::f64::consts::PI * 0.5;
