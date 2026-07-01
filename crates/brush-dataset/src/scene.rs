@@ -118,24 +118,13 @@ pub fn sample_to_packed_data(sample: DynamicImage) -> (TensorData, bool) {
     let _span = tracing::trace_span!("sample_to_packed").entered();
     let (w, h) = (sample.width(), sample.height());
     let has_alpha = sample.color().has_alpha();
-    let bytes = if has_alpha {
-        sample.into_rgba8().into_vec()
-    } else {
-        let rgb = sample.into_rgb8().into_vec();
-        let mut bytes = Vec::with_capacity((w * h * 4) as usize);
-        for px in rgb.chunks_exact(3) {
-            bytes.extend_from_slice(px);
-            bytes.push(255);
-        }
-        bytes
-    };
+    let packed: Vec<i32> = bytemuck::pod_collect_to_vec(&sample.into_rgba8().into_vec());
     // Reinterpret the `[r g b a r g b a ...]` byte stream as `[i32]` little-endian
     // (i32 bit-pattern same as the underlying u32; we use i32 because the burn
     // dispatch backend's default int dtype is i32 and refuses to cast u32
     // values >= 2^31). The kernel reads the same way (`val & 0xff` is `r`,
     // `>> 24` is `a`) — the signedness only affects the host-side TensorData
     // metadata, not the GPU bytes.
-    let packed: Vec<i32> = bytemuck::pod_collect_to_vec(&bytes);
     (TensorData::new(packed, [h as usize, w as usize]), has_alpha)
 }
 
@@ -153,5 +142,41 @@ pub struct SceneBatch {
 impl SceneBatch {
     pub fn img_size(&self) -> [usize; 2] {
         [self.img_packed.shape[0], self.img_packed.shape[1]]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sample_to_packed_data;
+    use image::{DynamicImage, ImageBuffer, RgbImage, RgbaImage};
+
+    #[test]
+    fn packs_rgba_samples_without_changing_channels() {
+        let image =
+            RgbaImage::from_raw(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).expect("valid RGBA image");
+
+        let (packed, has_alpha) = sample_to_packed_data(DynamicImage::ImageRgba8(image));
+
+        assert!(has_alpha);
+        assert_eq!(packed.shape.dims(), [1, 2]);
+        assert_eq!(
+            packed.as_slice::<i32>().expect("i32 tensor"),
+            &[0x0403_0201, 0x0807_0605]
+        );
+    }
+
+    #[test]
+    fn fills_missing_alpha_with_opaque_for_rgb_samples() {
+        let image: RgbImage =
+            ImageBuffer::from_raw(2, 1, vec![9, 10, 11, 12, 13, 14]).expect("valid RGB image");
+
+        let (packed, has_alpha) = sample_to_packed_data(DynamicImage::ImageRgb8(image));
+
+        assert!(!has_alpha);
+        assert_eq!(packed.shape.dims(), [1, 2]);
+        assert_eq!(
+            packed.as_slice::<i32>().expect("i32 tensor"),
+            &[0xff0b_0a09_u32 as i32, 0xff0e_0d0c_u32 as i32]
+        );
     }
 }

@@ -298,10 +298,11 @@ pub(crate) async fn train_stream(
 
         // Lift splats onto the autodiff graph for this step, run training,
         // then strip back to inner so the viewer slot sees plain splats.
-        let diff_splats = brush_render_bwd::burn_glue::lift_splats_to_autodiff(splats.clone());
+        // `step` immediately replaces `splats` with the returned value, so we
+        // can move it here instead of cloning every iteration.
+        let diff_splats = brush_render_bwd::burn_glue::lift_splats_to_autodiff(splats);
         let (new_diff_splats, stats) = trainer.step(batch, diff_splats).await;
         splats = new_diff_splats.valid();
-        slot.set(0, splats.clone());
 
         // Phase-local iteration for refine gating
         let phase_iter = if current_lod == 0 {
@@ -323,7 +324,6 @@ pub(crate) async fn train_stream(
         {
             let (new_splats, refine_stats) = trainer.refine(iter, splats).await;
             splats = new_splats;
-            slot.set(0, splats.clone());
             refine_stats
         } else {
             RefineStats {
@@ -335,6 +335,7 @@ pub(crate) async fn train_stream(
                 total_splats: splats.num_splats(),
             }
         };
+        slot.set(0, splats.clone());
         let refine_dur = refine_start.elapsed();
 
         // We just finished iter 'iter', now starting iter + 1.
