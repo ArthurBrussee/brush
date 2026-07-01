@@ -109,30 +109,12 @@ pub fn view_to_sample_image(image: DynamicImage, alpha_mode: AlphaMode) -> Dynam
     }
 }
 
-/// Convert a sample into the GPU-side packed representation: `[H, W]` u32,
-/// each entry packing `[r8 g8 b8 a8]`. Images without alpha get `a = 255`
-/// (fully opaque) so the kernel always sees a valid alpha byte. Returns
-/// `(packed, has_alpha)` so the trainer knows whether to apply
-/// alpha-dependent loss terms.
-fn pack_rgba_bytes(bytes: &[u8]) -> Vec<i32> {
-    bytes
-        .chunks_exact(4)
-        .map(|px| {
-            (u32::from(px[0])
-                | (u32::from(px[1]) << 8)
-                | (u32::from(px[2]) << 16)
-                | (u32::from(px[3]) << 24)) as i32
-        })
-        .collect()
-}
-
 pub fn sample_to_packed_data(sample: DynamicImage) -> (TensorData, bool) {
     let _span = tracing::trace_span!("sample_to_packed").entered();
     let (w, h) = (sample.width(), sample.height());
     let has_alpha = sample.color().has_alpha();
     let packed = if has_alpha {
-        let rgba = sample.into_rgba8();
-        pack_rgba_bytes(rgba.as_raw())
+        bytemuck::pod_collect_to_vec(&sample.into_rgba8().into_vec())
     } else {
         let rgb = sample.into_rgb8().into_vec();
         rgb.chunks_exact(3)
