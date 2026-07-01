@@ -178,11 +178,16 @@ impl UiProcess {
 
     pub fn set_model_up(&self, up_axis: Vec3) {
         let mut inner = self.write();
+        inner.up_axis = Some(up_axis);
         inner.controls.model_local_to_world = Affine3A::from_rotation_translation(
             Quat::from_rotation_arc(Vec3::NEG_Y, up_axis.normalize()),
             Vec3::ZERO,
         );
         inner.repaint();
+    }
+
+    pub fn up_axis(&self) -> Option<Vec3> {
+        self.read().up_axis
     }
 
     /// Connect to an existing running process.
@@ -345,6 +350,7 @@ struct UiProcessInner {
     ui_ctx: egui::Context,
     burn_device: WgpuDevice,
     actor: Actor,
+    up_axis: Option<Vec3>,
 }
 
 impl UiProcessInner {
@@ -378,6 +384,7 @@ impl UiProcessInner {
             burn_device,
             ui_ctx,
             actor,
+            up_axis: None,
         }
     }
 

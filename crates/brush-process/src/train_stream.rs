@@ -235,10 +235,16 @@ pub(crate) async fn train_stream(
                         .replace(".ply", &format!("_lod{current_lod}.ply"));
                     (lod_name, lod_refine_steps, lod_refine_steps)
                 };
-                let res =
-                    export_checkpoint(splats.clone(), &export_path, &name, exp_iter, exp_total)
-                        .await
-                        .with_context(|| "Export at LOD boundary failed");
+                let res = export_checkpoint(
+                    splats.clone(),
+                    &export_path,
+                    &name,
+                    exp_iter,
+                    exp_total,
+                    up_axis,
+                )
+                .await
+                .with_context(|| "Export at LOD boundary failed");
 
                 if let Err(error) = res {
                     emitter.emit(ProcessMessage::Warning { error }).await;
@@ -385,10 +391,16 @@ pub(crate) async fn train_stream(
                         .replace(".ply", &format!("_lod{current_lod}.ply"));
                     (lod_name, lod_refine_steps, lod_refine_steps)
                 };
-                let res =
-                    export_checkpoint(splats.clone(), &export_path, &name, exp_iter, exp_total)
-                        .await
-                        .with_context(|| format!("Export at iteration {iter} failed"));
+                let res = export_checkpoint(
+                    splats.clone(),
+                    &export_path,
+                    &name,
+                    exp_iter,
+                    exp_total,
+                    up_axis,
+                )
+                .await
+                .with_context(|| format!("Export at iteration {iter} failed"));
 
                 if let Err(error) = res {
                     emitter.emit(ProcessMessage::Warning { error }).await;
@@ -566,13 +578,14 @@ async fn export_checkpoint(
     export_name: &str,
     iter: u32,
     total_steps: u32,
+    up_axis: Option<glam::Vec3>,
 ) -> Result<(), anyhow::Error> {
     tokio::fs::create_dir_all(&export_path)
         .await
         .with_context(|| format!("Creating export directory {}", export_path.display()))?;
     let digits = ((total_steps as f64).log10().floor() as usize) + 1;
     let export_name = export_name.replace("{iter}", &format!("{iter:0digits$}"));
-    let splat_data = brush_serde::splat_to_ply(splats)
+    let splat_data = brush_serde::splat_to_ply(splats, up_axis)
         .await
         .context("Serializing splat data")?;
     tokio::fs::write(export_path.join(&export_name), splat_data)

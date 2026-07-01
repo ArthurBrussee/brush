@@ -3,6 +3,7 @@ use std::vec;
 use brush_render::gaussian_splats::Splats;
 use brush_render::sh::sh_coeffs_for_degree;
 use burn::tensor::Transaction;
+use glam::Vec3;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use serde_ply::{SerializeError, SerializeOptions};
@@ -176,7 +177,7 @@ async fn read_splat_data(splats: Splats) -> Result<DynamicPly, ExportError> {
     Ok(DynamicPly { vertex: vertices })
 }
 
-pub async fn splat_to_ply(splats: Splats) -> Result<Vec<u8>, ExportError> {
+pub async fn splat_to_ply(splats: Splats, up_axis: Option<Vec3>) -> Result<Vec<u8>, ExportError> {
     // Fold any 3D-filter floor into the stored scales/opacity so the ply holds
     // ordinary derived values — the floor is never written as a separate field.
     let splats = splats.bake_min_scale();
@@ -185,12 +186,15 @@ pub async fn splat_to_ply(splats: Splats) -> Result<Vec<u8>, ExportError> {
 
     let render_mode_str = if splats.render_mip { "mip" } else { "default" };
 
-    let comments = vec![
-        "Exported from Brush".to_owned(),
-        "Vertical axis: y".to_owned(),
-        format!("SH degree: {}", sh_degree),
-        format!("SplatRenderMode: {}", render_mode_str),
-    ];
+    let mut comments = vec!["Exported from Brush".to_owned()];
+    if let Some(up) = up_axis {
+        comments.push(format!("Vertical axis: {} {} {}", up.x, up.y, up.z));
+    } else {
+        comments.push("Vertical axis: y".to_owned());
+    }
+    comments.push(format!("SH degree: {sh_degree}"));
+    comments.push(format!("SplatRenderMode: {render_mode_str}"));
+
     Ok(serde_ply::to_bytes(
         &ply,
         SerializeOptions::binary_le().with_comments(comments),
@@ -255,7 +259,7 @@ mod tests {
                 ply_data.vertex[0].rest_coeffs.len(),
                 expected_rest_coeffs as usize
             );
-            assert!(splat_to_ply(splats).await.is_ok());
+            assert!(splat_to_ply(splats, None).await.is_ok());
         }
     }
 
@@ -266,7 +270,7 @@ mod tests {
 
         for (degree, expected_rest_fields) in test_cases {
             let splats = create_test_splats(degree);
-            let ply_bytes = splat_to_ply(splats).await.unwrap();
+            let ply_bytes = splat_to_ply(splats, None).await.unwrap();
             let ply_string = String::from_utf8_lossy(&ply_bytes);
 
             let actual_rest_fields = ply_string.matches("property float f_rest_").count();
@@ -291,7 +295,7 @@ mod tests {
 
         for degree in [0, 1, 2] {
             let original_splats = create_test_splats(degree);
-            let ply_bytes = splat_to_ply(original_splats.clone())
+            let ply_bytes = splat_to_ply(original_splats.clone(), None)
                 .await
                 .expect("Failed to serialize splats");
 
@@ -319,7 +323,7 @@ mod tests {
             let original = create_test_splats_with_count(degree, num_splats);
             assert_eq!(original.num_splats(), num_splats as u32);
 
-            let ply_bytes = splat_to_ply(original.clone())
+            let ply_bytes = splat_to_ply(original.clone(), None)
                 .await
                 .expect("Failed to export splats");
 
