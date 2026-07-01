@@ -118,19 +118,7 @@ pub fn sample_to_packed_data(sample: DynamicImage) -> (TensorData, bool) {
     let _span = tracing::trace_span!("sample_to_packed").entered();
     let (w, h) = (sample.width(), sample.height());
     let has_alpha = sample.color().has_alpha();
-    let packed = if has_alpha {
-        bytemuck::pod_collect_to_vec(&sample.into_rgba8().into_vec())
-    } else {
-        let rgb = sample.into_rgb8().into_vec();
-        rgb.chunks_exact(3)
-            .map(|px| {
-                (u32::from(px[0])
-                    | (u32::from(px[1]) << 8)
-                    | (u32::from(px[2]) << 16)
-                    | (0xff << 24)) as i32
-            })
-            .collect()
-    };
+    let packed: Vec<i32> = bytemuck::pod_collect_to_vec(&sample.into_rgba8().into_vec());
     // Reinterpret the `[r g b a r g b a ...]` byte stream as `[i32]` little-endian
     // (i32 bit-pattern same as the underlying u32; we use i32 because the burn
     // dispatch backend's default int dtype is i32 and refuses to cast u32
