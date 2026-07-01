@@ -109,6 +109,11 @@ pub fn view_to_sample_image(image: DynamicImage, alpha_mode: AlphaMode) -> Dynam
     }
 }
 
+/// Convert a sample into the GPU-side packed representation: `[H, W]` u32,
+/// each entry packing `[r8 g8 b8 a8]`. Images without alpha get `a = 255`
+/// (fully opaque) so the kernel always sees a valid alpha byte. Returns
+/// `(packed, has_alpha)` so the trainer knows whether to apply
+/// alpha-dependent loss terms.
 pub fn sample_to_packed_data(sample: DynamicImage) -> (TensorData, bool) {
     let _span = tracing::trace_span!("sample_to_packed").entered();
     let (w, h) = (sample.width(), sample.height());
