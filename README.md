@@ -33,6 +33,22 @@ Brush also works well as a splat viewer, including on the web. It can load .ply 
 
 Brush also can load .zip of splat files to display them as an animation, or a special ply that includes delta frames (see [cat-4D](https://cat-4d.github.io/) and [Cap4D](https://felixtaubner.github.io/cap4d/)!).
 
+## DINO feature training (DiG)
+
+Brush can train per-Gaussian DINO feature embeddings alongside RGB — a Metal-native port of the DiG model from [Robot See Robot Do](https://arxiv.org/abs/2409.18121), useful for downstream part segmentation and tracking.
+
+```sh
+# 1. One-off preprocessing: extract DINOv2 feature maps (uv resolves deps automatically)
+uv run scripts/extract_dino_features.py --data /path/to/dataset
+
+# 2. Train with feature supervision + the live feature view
+brush /path/to/dataset --dino --dino-view
+```
+
+`--dino` enables feature training (it warns and falls back to RGB-only if no `dino_features/` cache is found). The viewer gains a **"DINO feature view"** toggle that recolors the splats by their learned features live during training; `--dino-view` starts with it enabled. Exports write a `*_dig_features.npy` feature table and `*_dig_mlp.json` decoder next to the PLY.
+
+See [docs/dig-port/dig-port-usage.md](docs/dig-port/dig-port-usage.md) for all flags, output formats, and verification tips.
+
 ## CLI
 Brush can be used as a CLI. Run `brush --help` to get an overview. Every CLI command can work with `--with-viewer` which also opens the UI, for easy debugging.
 

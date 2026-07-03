@@ -3,6 +3,7 @@ use std::f32::consts::FRAC_1_SQRT_2;
 use crate::{
     adam_scaled::{AdamScaled, AdamScaledConfig, AdamState},
     config::TrainConfig,
+    dig::{self, DigTrainState},
     msg::{RefineStats, TrainStepStats},
     multinomial::multinomial_sample,
     quat_vec::quaternion_vec_multiply,
@@ -11,16 +12,16 @@ use crate::{
 };
 use brush_dataset::scene::SceneBatch;
 use brush_loss::{ImageLossConfig, image_loss};
-use brush_render::gaussian_splats::Splats;
+use brush_render::gaussian_splats::{Splats, fold_min_scale};
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
-use brush_render_bwd::render_splats;
+use brush_render_bwd::{render_splat_features, render_splats};
 use burn::{
     backend::wgpu::{AutoCompiler, WgpuDevice, WgpuRuntime},
     lr_scheduler::{
         LrScheduler,
         exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig},
     },
-    module::{AutodiffModule, ParamId},
+    module::{AutodiffModule, Param, ParamId},
     optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
     tensor::{
         Bool, Device, Distribution, IndexingUpdateOp, Int, Tensor, TensorData, activation::sigmoid,
@@ -63,6 +64,9 @@ pub struct SplatTrainer {
     /// Mip-Splatting 3D filter. Empty disables it. The floor itself lives on
     /// the splats (recomputed at each refine), not here.
     view_cams: Vec<(glam::Vec3, f32)>,
+    /// `DiG` feature-training state; created lazily on the first batch that
+    /// carries feature maps.
+    dig: Option<DigTrainState>,
     #[cfg(not(target_family = "wasm"))]
     lpips: Option<lpips::LpipsModel>,
 }
@@ -143,6 +147,7 @@ impl SplatTrainer {
             step_count: 0,
             max_sh_degree: 0,
             view_cams: Vec::new(),
+            dig: None,
             #[cfg(not(target_family = "wasm"))]
             lpips,
         }
@@ -152,6 +157,46 @@ impl SplatTrainer {
     /// the Mip-Splatting 3D filter (gated on `config.min_scale_factor > 0`).
     pub fn set_view_cams(&mut self, view_cams: Vec<(glam::Vec3, f32)>) {
         self.view_cams = view_cams;
+    }
+
+    /// Snapshot the `DiG` features + decoder for export, if feature
+    /// training is active.
+    pub async fn dig_export(&self) -> Option<dig::DigExport> {
+        match &self.dig {
+            Some(d) => Some(d.module.export().await),
+            None => None,
+        }
+    }
+
+    /// A viewer-friendly recoloring of `splats` by their current `DiG`
+    /// features, if feature training is active: decode each gaussian's
+    /// feature through the MLP and map the first three output channels to
+    /// RGB. The decoder targets the dataset's PCA space, whose channels
+    /// are variance-ordered, so channels 0..3 are already the top PCA
+    /// components — no extra projection needed. `splats` must be on the
+    /// inner (non-autodiff) backend, as between training steps.
+    pub fn dig_view_splats(&self, splats: &Splats) -> Option<Splats> {
+        let dig = self.dig.as_ref()?;
+        if splats.num_splats() as usize != dig.module.features.dims()[0] {
+            // Mid-refine mismatch; skip this preview tick.
+            return None;
+        }
+        let module = dig.module.valid();
+        let decoded = module.decode(module.features.val());
+        let rgb = decoded.slice(s![.., 0..3]);
+        // Robust per-channel normalization: mean ± 2σ → [0, 1].
+        let mean = rgb.clone().mean_dim(0);
+        let std = rgb.clone().var(0).sqrt().clamp_min(1e-6);
+        let color = ((rgb - mean) / (std * 4.0) + 0.5).clamp(0.0, 1.0);
+        let sh = ((color - 0.5) / brush_render::kernels::sh::SH_C0).unsqueeze_dim(1);
+
+        Some(Splats {
+            transforms: Param::initialized(ParamId::new(), splats.transforms.val()),
+            sh_coeffs: Param::initialized(ParamId::new(), sh),
+            raw_opacities: Param::initialized(ParamId::new(), splats.raw_opacities.val()),
+            render_mip: splats.render_mip,
+            min_scale: splats.min_scale.clone(),
+        })
     }
 
     pub async fn step(&mut self, batch: SceneBatch, splats: Splats) -> (Splats, TrainStepStats) {
@@ -251,6 +296,89 @@ impl SplatTrainer {
                         pred_image.clone().slice(s![.., .., 0..3]).unsqueeze_dim(0),
                         gt_rgb_diff.unsqueeze_dim(0),
                     ) * self.config.lpips_loss_weight;
+            }
+
+            // DiG: DINO feature MSE on a rendered feature image (geometry
+            // detached, matching the reference), plus a neighbor feature-
+            // variance regularizer after warmup.
+            if self.config.dino
+                && self.config.dino_loss_weight > 0.0
+                && let Some((feat_data, feat_c)) = &batch.features
+            {
+                let feature_dim = self.config.dino_feature_dim as usize;
+                let dig = self.dig.get_or_insert_with(|| {
+                    DigTrainState::new(splats.num_splats(), feature_dim, *feat_c, &device)
+                });
+                let gt_dims = feat_data.shape.clone();
+                let (gt_h, gt_w) = (gt_dims[0], gt_dims[1]);
+                let rescale = self.config.dino_rescale_factor as usize;
+                let feat_size = glam::uvec2((gt_w * rescale) as u32, (gt_h * rescale) as u32);
+                // Render with the same 3D-filter-folded geometry as the RGB
+                // pass; `render_splat_features` detaches it internally.
+                let (t_fold, o_fold) = match &splats.min_scale {
+                    Some(f) => fold_min_scale(
+                        splats.transforms.val(),
+                        splats.raw_opacities.val(),
+                        f.clone(),
+                    ),
+                    None => (splats.transforms.val(), splats.raw_opacities.val()),
+                };
+                let render_mode = if splats.render_mip {
+                    brush_render::gaussian_splats::SplatRenderMode::Mip
+                } else {
+                    brush_render::gaussian_splats::SplatRenderMode::Default
+                };
+                let feat_img = render_splat_features(
+                    t_fold,
+                    o_fold,
+                    dig.module.features.val(),
+                    &camera,
+                    feat_size,
+                    render_mode,
+                )
+                .instrument(trace_span!("Feature forward"))
+                .await;
+                let [fh, fw, _] = feat_img.dims();
+                let alpha = feat_img
+                    .clone()
+                    .slice(s![.., .., feature_dim..feature_dim + 1])
+                    .detach();
+                let raw = feat_img.slice(s![.., .., 0..feature_dim]);
+                let normed = raw / alpha.clamp_min(1e-10);
+                let decoded = dig
+                    .module
+                    .decode(normed.reshape([-1, feature_dim as i32]))
+                    .reshape([fh as i32, fw as i32, *feat_c as i32]);
+
+                // Bilinear-upsample the GT feature map to the rendered size
+                // (the reference resizes GT up to the rendered resolution).
+                let gt: Tensor<3> = Tensor::from_data(feat_data.clone(), &device);
+                let gt = gt.permute([2, 0, 1]).unsqueeze::<4>();
+                let gt = burn::tensor::module::interpolate(
+                    gt,
+                    [fh, fw],
+                    burn::tensor::ops::InterpolateOptions::new(
+                        burn::tensor::ops::InterpolateMode::Bilinear,
+                    ),
+                );
+                let gt = gt.squeeze_dim::<3>(0).permute([1, 2, 0]);
+
+                let dino_loss = (decoded - gt).powi_scalar(2).mean();
+                loss = loss + dino_loss * self.config.dino_loss_weight;
+
+                if self.step_count > dig::NN_REG_START_STEP && self.config.dino_nn_reg_weight > 0.0
+                {
+                    let means = splats.valid().means();
+                    let inds = dig.neighbor_indices(&means, &device).await;
+                    let n = inds.dims()[0];
+                    let nn_feats = dig
+                        .module
+                        .features
+                        .val()
+                        .select(0, inds.reshape([(n * dig::NN_K) as i32]))
+                        .reshape([n as i32, dig::NN_K as i32, feature_dim as i32]);
+                    loss = loss + nn_feats.var(1).sum() * self.config.dino_nn_reg_weight;
+                }
             }
 
             // Strip the autodiff graph off the loss so consumers can read the
@@ -362,6 +490,23 @@ impl SplatTrainer {
             });
             splats
         });
+
+        if let Some(dig) = &mut self.dig {
+            trace_span!("DiG step").in_scope(|| {
+                let lr = dig::dig_lr(
+                    self.step_count,
+                    self.config.dino_lr,
+                    self.config.dino_lr_end,
+                );
+                let module = dig.module.clone();
+                let grad_feat =
+                    GradientsParams::from_params(&mut grads, &module, &[module.features.id]);
+                let module = dig.optim.step(lr, module, grad_feat);
+                let grad_mlp =
+                    GradientsParams::from_params(&mut grads, &module, &module.mlp_param_ids());
+                dig.module = dig.optim.step(lr, module, grad_mlp);
+            });
+        }
 
         // Add random noise. Only do this in the growth phase, otherwise
         // let the splats settle in without noise, not much point in exploring regions anymore.
@@ -519,7 +664,7 @@ impl SplatTrainer {
             .bool_or(non_finite_mask);
 
         let (mut splats, refiner, pruned_count) =
-            prune_points(splats, &mut record, refiner, prune_mask).await;
+            prune_points(splats, &mut record, refiner, prune_mask, self.dig.as_mut()).await;
         let mut split_inds = HashSet::new();
 
         // Always replace dead gaussians, so that the pruned budget is reused.
@@ -615,6 +760,9 @@ impl SplatTrainer {
         // split shrink so oversized splats' children land at `split_at_screen_size`.
         let screen_sizes = refiner.max_screen_size.clone();
         splats = self.refine_splats(&device, record, splats, split_inds, screen_sizes, iter);
+        if let Some(dig) = &mut self.dig {
+            dig.invalidate_neighbors();
+        }
 
         // Update current bounds based on the splats.
         self.bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
@@ -746,7 +894,13 @@ impl SplatTrainer {
 
             // Optimizer state lives on the inner (non-autodiff) device.
             let opt_device = device.clone().inner();
-            let refine_inds_opt = refine_inds.to_device(&opt_device);
+            let refine_inds_opt = refine_inds.clone().to_device(&opt_device);
+
+            // DiG features split alongside the splats — the remap details
+            // (copy parents, zero Adam moments) live on `DigTrainState`.
+            if let Some(dig) = &mut self.dig {
+                dig.split(&refine_inds, &refine_inds_opt, &opt_device);
+            }
 
             // Both halves of a split start with zero Adam moments.
             //
@@ -830,7 +984,7 @@ fn map_splats_and_opt(
 /// Apply `map_fn` to `moment_1` and `moment_2`. `map_fn` must be shape-agnostic
 /// along trailing dims since `moment_2` may have size-1 trailing dims under
 /// `reduce_moment_2`.
-fn map_opt<const D: usize>(
+pub(crate) fn map_opt<const D: usize>(
     param_id: ParamId,
     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled>>,
     map_fn: &impl Fn(Tensor<D>) -> Tensor<D>,
@@ -858,6 +1012,7 @@ async fn prune_points(
     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled>>,
     mut refiner: RefineRecord,
     prune: Tensor<1, Bool>,
+    dig: Option<&mut DigTrainState>,
 ) -> (Splats, RefineRecord, u32) {
     assert_eq!(
         prune.dims()[0] as u32,
@@ -895,6 +1050,9 @@ async fn prune_points(
             |x| x.select(0, valid_inds.clone()),
             |x| x.select(0, valid_inds.clone()),
         );
+        if let Some(dig) = dig {
+            dig.keep(&valid_inds);
+        }
         refiner = refiner.keep(inner_valid_inds);
     }
     (splats, refiner, start_splats - new_points)

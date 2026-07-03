@@ -560,6 +560,19 @@ impl ScenePanel {
             process.set_cam_settings(&settings);
         }
 
+        // DiG feature view toggle — only meaningful when a feature-view
+        // splat has been published (slot index 1, single-frame training).
+        if process.current_splats().len() > 1 {
+            let mut settings = process.get_cam_settings();
+            if ui
+                .checkbox(&mut settings.dino_view, "DINO feature view")
+                .on_hover_text("Color splats by their learned DINO features (PCA)")
+                .changed()
+            {
+                process.set_cam_settings(&settings);
+            }
+        }
+
         ui.label(RichText::new("Background").size(12.0));
 
         ui.separator();
@@ -1059,12 +1072,21 @@ impl AppPane for ScenePanel {
                 }
 
                 if let Some(backbuffer) = &mut self.backbuffer {
+                    // The DiG feature view lives at slot index 1 during
+                    // (single-frame) training; animations use the frames.
+                    let splat_slot = process.current_splats();
+                    let frame =
+                        if settings.dino_view && self.frame_count <= 1 && splat_slot.len() > 1 {
+                            1
+                        } else {
+                            self.frame as usize
+                        };
                     backbuffer.paint(
                         rect,
                         ui,
-                        &process.current_splats(),
+                        &splat_slot,
                         &camera,
-                        self.frame as usize,
+                        frame,
                         settings.background.unwrap_or(Vec3::ZERO),
                         settings.splat_scale,
                         self.splats_dirty,

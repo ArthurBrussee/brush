@@ -73,7 +73,51 @@ pub(crate) async fn train_stream(
             .await;
     }
 
-    let dataset = load_result.dataset;
+    let mut dataset = load_result.dataset;
+
+    // DiG feature training is explicit opt-in (--dino). Warn when the flag
+    // and the data disagree, and drop unused feature handles so batches
+    // don't pay the .npy loads for nothing.
+    let has_features = dataset.train.views.iter().any(|v| v.features.is_some());
+    if train_stream_config.train_config.dino && !has_features {
+        emitter
+            .emit(ProcessMessage::Warning {
+                error: anyhow::anyhow!(
+                    "--dino was set but no per-view feature maps were found (expected \
+                     `<features-dir-name>/<image_stem>.npy` next to the images). Run \
+                     scripts/extract_dino_features.py first; training continues RGB-only."
+                ),
+            })
+            .await;
+    }
+    if train_stream_config.train_config.dino
+        && has_features
+        && train_stream_config.train_config.lod_levels > 0
+    {
+        // LOD decimation changes the splat count outside the trainer's
+        // prune/split bookkeeping and then rebuilds the trainer, which
+        // would silently discard the DiG feature table + decoder.
+        anyhow::bail!(
+            "--dino is not supported together with --lod-levels: LOD decimation resets the \
+             trainer and would discard the trained DiG features. Set --lod-levels 0."
+        );
+    }
+    if !train_stream_config.train_config.dino {
+        if has_features {
+            log::info!("Feature maps found but --dino not set; skipping DiG feature training.");
+        }
+        let stripped: Vec<_> = dataset
+            .train
+            .views
+            .iter()
+            .cloned()
+            .map(|mut v| {
+                v.features = None;
+                v
+            })
+            .collect();
+        dataset.train.views = std::sync::Arc::new(stripped);
+    }
 
     log::info!("Log scene to rerun");
     if let Err(error) = visualize.log_scene(
@@ -185,6 +229,35 @@ pub(crate) async fn train_stream(
 
     let mut trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
     trainer.set_view_cams(view_cams.clone());
+
+    // The DiG export embeds the feature-extraction metadata (model, patch
+    // size, PCA dim) so the artifact is self-describing.
+    #[cfg(not(target_family = "wasm"))]
+    let dig_extraction_meta: Option<serde_json::Value> = {
+        let features_dir = &train_stream_config.load_config.features_dir_name;
+        let meta_path = vfs
+            .files_ending_in("meta.json")
+            .find(|p| {
+                p.parent()
+                    .and_then(|d| d.file_name())
+                    .is_some_and(|d| d.eq_ignore_ascii_case(features_dir))
+            })
+            .map(Path::to_path_buf);
+        match meta_path {
+            Some(path) => {
+                let mut bytes = vec![];
+                use tokio::io::AsyncReadExt as _;
+                if let Ok(mut reader) = vfs.reader_at_path(&path).await
+                    && reader.read_to_end(&mut bytes).await.is_ok()
+                {
+                    serde_json::from_slice(&bytes).ok()
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    };
 
     // Get the dataset name from the base path (if available) for interpolation.
     let dataset_name = vfs
@@ -336,6 +409,14 @@ pub(crate) async fn train_stream(
             }
         };
         slot.set(0, splats.clone());
+        // Publish a DiG feature-view recoloring alongside the RGB splats
+        // (slot index 1); the viewer's "DINO feature view" toggle renders
+        // it. Cheap (one MLP decode), refreshed on a small cadence.
+        if iter % 50 == 0
+            && let Some(feature_view) = trainer.dig_view_splats(&splats)
+        {
+            slot.set(1, feature_view);
+        }
         let refine_dur = refine_start.elapsed();
 
         // We just finished iter 'iter', now starting iter + 1.
@@ -404,6 +485,17 @@ pub(crate) async fn train_stream(
 
                 if let Err(error) = res {
                     emitter.emit(ProcessMessage::Warning { error }).await;
+                }
+
+                // Alongside the PLY, export the DiG feature table + decoder
+                // when feature training is active. Rows match the PLY order.
+                if let Some(dig) = trainer.dig_export().await {
+                    let res = export_dig(&dig, dig_extraction_meta.as_ref(), &export_path, &name)
+                        .await
+                        .with_context(|| format!("DiG export at iteration {iter} failed"));
+                    if let Err(error) = res {
+                        emitter.emit(ProcessMessage::Warning { error }).await;
+                    }
                 }
             }
         }
@@ -591,5 +683,75 @@ async fn export_checkpoint(
     tokio::fs::write(export_path.join(&export_name), splat_data)
         .await
         .context(format!("Failed to export ply {export_path:?}"))?;
+    Ok(())
+}
+
+/// Minimal `NumPy` `.npy` (v1.0, `<f4`, C-order) serializer for the `DiG`
+/// feature export.
+#[cfg(not(target_family = "wasm"))]
+fn npy_bytes_f32(shape: [usize; 2], data: &[f32]) -> Vec<u8> {
+    let dict = format!(
+        "{{'descr': '<f4', 'fortran_order': False, 'shape': ({}, {}), }}",
+        shape[0], shape[1]
+    );
+    // Magic (6) + version (2) + header-len field (2) + header, padded with
+    // spaces to a multiple of 64, terminated by '\n'.
+    let header_len = (10 + dict.len() + 1).div_ceil(64) * 64 - 10;
+    let mut header = dict.into_bytes();
+    header.resize(header_len - 1, b' ');
+    header.push(b'\n');
+
+    let mut out = Vec::with_capacity(10 + header.len() + data.len() * 4);
+    out.extend_from_slice(b"\x93NUMPY\x01\x00");
+    out.extend_from_slice(
+        &u16::try_from(header.len())
+            .expect("npy header too large")
+            .to_le_bytes(),
+    );
+    out.extend_from_slice(&header);
+    for v in data {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+/// Write `<name>_dig_features.npy` and `<name>_dig_mlp.json` next to the
+/// exported PLY.
+#[cfg(not(target_family = "wasm"))]
+async fn export_dig(
+    dig: &brush_train::dig::DigExport,
+    extraction_meta: Option<&serde_json::Value>,
+    export_path: &Path,
+    export_name: &str,
+) -> Result<(), anyhow::Error> {
+    let stem = export_name.trim_end_matches(".ply");
+    let feat_bytes = npy_bytes_f32([dig.num_splats, dig.feat_dim], &dig.features);
+    tokio::fs::write(
+        export_path.join(format!("{stem}_dig_features.npy")),
+        feat_bytes,
+    )
+    .await
+    .context("Failed to write DiG features")?;
+
+    let out_dim = dig.mlp.last().map_or(0, |(_, dims, _)| dims[1]);
+    let mlp = serde_json::json!({
+        "layers": dig.mlp.iter().map(|(name, dims, data)| {
+            serde_json::json!({ "name": name, "shape": dims, "weight": data })
+        }).collect::<Vec<_>>(),
+        "activation": "relu",
+        "bias": false,
+        // Self-describing: the decoder maps [feature_dim] stored features
+        // into the extraction's PCA space ([out_dim]); `extraction_meta`
+        // is the dino_features/meta.json this run trained against.
+        "feature_dim": dig.feat_dim,
+        "out_dim": out_dim,
+        "extraction_meta": extraction_meta,
+    });
+    tokio::fs::write(
+        export_path.join(format!("{stem}_dig_mlp.json")),
+        serde_json::to_vec(&mlp).context("Failed to serialize DiG MLP")?,
+    )
+    .await
+    .context("Failed to write DiG MLP")?;
     Ok(())
 }

@@ -16,5 +16,6 @@ pub mod map_gaussians;
 pub mod project_forward;
 pub mod project_visible;
 pub mod rasterize;
+pub mod rasterize_features;
 pub mod sh;
 pub mod types;

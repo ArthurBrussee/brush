@@ -8,8 +8,8 @@ use super::{DatasetLoadResult, FormatError};
 use crate::{
     Dataset,
     config::LoadDatasetConfig,
-    formats::{find_image_by_name, find_mask_path, split_eval_every},
-    scene::{LoadImage, SceneView},
+    formats::{find_features_path, find_image_by_name, find_mask_path, split_eval_every},
+    scene::{LoadFeatures, LoadImage, SceneView},
 };
 use brush_render::kernels::camera_model::CameraModel;
 use brush_render::kernels::camera_model::CameraModel::{
@@ -145,6 +145,7 @@ async fn load_dataset_inner(
     // parse and the points3d parse run concurrently on the same thread
     // (no cross-stream GPU concerns; this is pure CPU/I/O).
     let actor = brush_async::Actor::new("colmap-loader");
+    let features_dir_name = load_args.features_dir_name.clone();
     let dataset = actor.run(move || async move {
         let mut cam_file = vfs.reader_at_path(&cam_path).await?;
         let cam_model_data = colmap_reader::read_cameras(&mut cam_file, is_binary).await?;
@@ -193,6 +194,9 @@ async fn load_dataset_inner(
 
             let mask_path = find_mask_path(&vfs, path);
 
+            let features = find_features_path(&vfs, path, &features_dir_name)
+                .map(|p| LoadFeatures::new(vfs.clone(), p.to_path_buf()));
+
             // Convert w2c to c2w.
             let world_to_cam =
                 glam::Affine3A::from_rotation_translation(img_info.quat, img_info.tvec);
@@ -217,7 +221,11 @@ async fn load_dataset_inner(
                 load_args.alpha_mode,
             );
 
-            views.push(SceneView { camera, image });
+            views.push(SceneView {
+                camera,
+                image,
+                features,
+            });
         }
 
         let (train_views, eval_views) = split_eval_every(views, load_args.eval_split_every);

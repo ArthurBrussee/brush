@@ -92,6 +92,39 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "0.0")]
     pub lpips_loss_weight: f32,
 
+    /// Enable `DiG` DINO feature training. Requires per-view feature maps
+    /// extracted with `scripts/extract_dino_features.py` (see
+    /// `--features-dir-name`).
+    #[arg(long, help_heading = "Training options", default_value = "false")]
+    pub dino: bool,
+
+    /// Weight of the `DiG` DINO feature MSE loss.
+    #[arg(long, help_heading = "Training options", default_value = "1.0")]
+    pub dino_loss_weight: f32,
+
+    /// Per-gaussian stored feature dimension for `DiG` training.
+    #[arg(long, help_heading = "Training options", default_value = "64")]
+    pub dino_feature_dim: u32,
+
+    /// Upscale of the rendered feature image vs. the GT feature-map
+    /// resolution (the reference's `dino_rescale_factor`).
+    #[arg(long, help_heading = "Training options", default_value = "5")]
+    pub dino_rescale_factor: u32,
+
+    /// Start learning rate for the `DiG` features and decoder MLP.
+    #[arg(long, help_heading = "Training options", default_value = "1e-2")]
+    pub dino_lr: f64,
+
+    /// Final learning rate for the `DiG` features and decoder MLP
+    /// (exponential decay over 6000 steps, then held).
+    #[arg(long, help_heading = "Training options", default_value = "1e-3")]
+    pub dino_lr_end: f64,
+
+    /// Weight of the 3-nearest-neighbor feature-variance regularizer
+    /// (enabled after step 1000; 0 disables).
+    #[arg(long, help_heading = "Training options", default_value = "0.01")]
+    pub dino_nn_reg_weight: f32,
+
     /// Base background color (R,G,B) used during training.
     #[arg(
         long,

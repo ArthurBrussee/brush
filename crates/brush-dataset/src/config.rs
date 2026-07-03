@@ -46,6 +46,13 @@ pub struct LoadDatasetConfig {
     /// Max size of the cache for frames of the dataset, larger values usually improve performance for large datasets at the cost of more memory usage, can be e.g. 6G, 6000M, 6000MiB, 6000MB
     #[arg(long, help_heading = "Dataset Options", default_value = DEFAULT_MAX_SCENE_BATCH_CACHE_SIZE, value_parser = parse_size)]
     pub max_scene_batch_cache_size: u64,
+    /// Name of the folder containing per-view feature maps (`<image_stem>.npy`)
+    #[arg(
+        long,
+        help_heading = "Dataset Options",
+        default_value = "dino_features"
+    )]
+    pub features_dir_name: String,
 }
 
 fn parse_size(s: &str) -> Result<u64, parse_size::Error> {

@@ -188,6 +188,39 @@ fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
     })
 }
 
+/// Locate a per-image feature map (`<features_dir_name>/<image_stem>.npy`).
+pub(crate) fn find_features_path<'a>(
+    vfs: &'a BrushVfs,
+    path: &'a Path,
+    features_dir_name: &str,
+) -> Option<&'a Path> {
+    let search_stem = path.file_stem().expect("File must have a name");
+
+    vfs.iter_files().find(|candidate| {
+        let Some(stem) = candidate.file_stem() else {
+            return false;
+        };
+
+        let is_npy = candidate
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("npy"));
+        if !is_npy || !stem.eq_ignore_ascii_case(search_stem) {
+            return false;
+        }
+
+        let features_idx = candidate
+            .components()
+            .position(|c| c.as_os_str().eq_ignore_ascii_case(features_dir_name));
+        features_idx.is_some_and(|idx| {
+            let candidate_components: Vec<_> = candidate.components().collect();
+            let path_dir_components: Vec<_> = path.parent().unwrap().components().collect();
+            let features_dir_subpath =
+                &candidate_components[idx + 1..candidate_components.len() - 1];
+            path_dir_components.ends_with(features_dir_subpath)
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

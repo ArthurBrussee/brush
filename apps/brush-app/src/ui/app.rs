@@ -149,6 +149,8 @@ pub struct CameraSettings {
     pub splat_scale: Option<f32>,
     pub background: Option<Vec3>,
     pub grid_enabled: Option<bool>,
+    /// Render the `DiG` feature-view splats (slot index 1) instead of RGB.
+    pub dino_view: bool,
     pub clamping: CameraClamping,
 }
 
@@ -202,6 +204,7 @@ impl App {
     pub fn new(
         cc: &eframe::CreationContext,
         init_process: Option<brush_process::RunningProcess>,
+        dino_view: bool,
     ) -> Self {
         let state = cc
             .wgpu_render_state
@@ -219,6 +222,12 @@ impl App {
 
         if let Some(process) = init_process {
             context.connect_to_process(process);
+        }
+
+        if dino_view {
+            let mut settings = context.get_cam_settings();
+            settings.dino_view = true;
+            context.set_cam_settings(&settings);
         }
 
         cc.egui_ctx

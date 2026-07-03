@@ -77,10 +77,11 @@ fn main() -> Result<(), anyhow::Error> {
                     "Brush"
                 };
 
+                let dino_view = args.dino_view;
                 eframe::run_native(
                     title,
                     native_options,
-                    Box::new(move |cc| Ok(Box::new(App::new(cc, init_process)))),
+                    Box::new(move |cc| Ok(Box::new(App::new(cc, init_process, dino_view)))),
                 )?;
             } else {
                 let process = init_process.expect("Must provide a source");

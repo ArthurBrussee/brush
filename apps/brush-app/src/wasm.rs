@@ -60,6 +60,7 @@ impl CameraSettings {
             },
             background: background.map(|v| v.to_glam()),
             grid_enabled,
+            dino_view: false,
         })
     }
 }
@@ -102,7 +103,7 @@ impl EmbeddedApp {
                     wgpu_options,
                     ..Default::default()
                 },
-                Box::new(|cc| Ok(Box::new(App::new(cc, None)))),
+                Box::new(|cc| Ok(Box::new(App::new(cc, None, false)))),
             )
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to start eframe: {e:?}")))?;

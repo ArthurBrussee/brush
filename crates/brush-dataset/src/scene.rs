@@ -4,6 +4,7 @@ use glam::{Affine3A, Vec3, vec3};
 use image::DynamicImage;
 use std::sync::Arc;
 
+pub use crate::load_features::LoadFeatures;
 pub use crate::load_image::LoadImage;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -17,6 +18,7 @@ pub enum ViewType {
 pub struct SceneView {
     pub image: LoadImage,
     pub camera: Camera,
+    pub features: Option<LoadFeatures>,
 }
 
 // Encapsulates a multi-view scene including cameras and the splats.
@@ -64,6 +66,7 @@ impl Scene {
             .map(|v| SceneView {
                 image: v.image.with_scale(scale),
                 camera: v.camera,
+                features: v.features,
             })
             .collect();
         Self::new(views)
@@ -136,6 +139,8 @@ pub struct SceneBatch {
     /// should consume (mask weight, alpha-matching loss, bg compositing).
     pub has_alpha: bool,
     pub alpha_mode: AlphaMode,
+    /// Optional `[H, W, C]` f32 feature map plus its channel count `C`.
+    pub features: Option<(TensorData, usize)>,
     pub camera: Camera,
 }
 

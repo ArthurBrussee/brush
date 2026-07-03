@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 pub mod config;
+pub mod dig;
 pub mod eval;
 pub mod lod;
 pub mod msg;

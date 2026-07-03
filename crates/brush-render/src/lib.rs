@@ -30,6 +30,7 @@ pub mod gaussian_splats;
 #[doc(hidden)]
 pub mod get_tile_offset;
 pub mod render;
+pub mod render_features;
 pub mod validation;
 
 /// `DispatchTensorKind` variant for the active wgpu backend. burn-dispatch
