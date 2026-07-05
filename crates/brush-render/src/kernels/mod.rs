@@ -17,4 +17,5 @@ pub mod project_forward;
 pub mod project_visible;
 pub mod rasterize;
 pub mod sh;
+pub mod tile_intersect;
 pub mod types;

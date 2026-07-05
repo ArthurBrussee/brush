@@ -8,7 +8,7 @@ fn float_from_u8(data: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-pub(crate) fn safetensor_to_burn<const D: usize>(
+pub fn safetensor_to_burn<const D: usize>(
     t: &TensorView,
     device: &Device,
 ) -> anyhow::Result<Tensor<D, Float>> {

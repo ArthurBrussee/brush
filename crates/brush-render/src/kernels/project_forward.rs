@@ -6,9 +6,10 @@
 //! internally.
 
 use super::helpers::{
-    calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, get_tile_bbox,
-    is_finite_f32, read_mean_viewspace, read_quat_unorm, read_scale, sigmoid,
+    calc_cov2d, compensate_cov2d, is_finite_f32, read_mean_viewspace, read_quat_unorm, read_scale,
+    sigmoid,
 };
+use super::tile_intersect::{accutile_tile_count, compute_snugbox, snugbox_is_valid};
 use super::types::ProjectUniforms;
 use crate::kernels::camera_model::{CameraModel, project};
 use burn_cubecl::cubecl;
@@ -95,28 +96,36 @@ pub fn project_forward_kernel(
 
     let power_threshold = f32::ln(opac * 255.0f32);
     let conic = cov.inverse();
-    let (ex, ey) = compute_bbox_extent(conic, power_threshold);
-    if !(ex >= 0.0f32 && ey >= 0.0f32) {
+    let sb = compute_snugbox(
+        conic,
+        power_threshold,
+        mean2d_x,
+        mean2d_y,
+        u.tile_bw,
+        u.tile_bh,
+    );
+    if !snugbox_is_valid(sb) {
         terminate!();
     }
 
     let img_w_f = u.img_w as f32;
     let img_h_f = u.img_h as f32;
-    let on_screen = mean2d_x + ex > 0.0f32
-        && mean2d_x - ex < img_w_f
-        && mean2d_y + ey > 0.0f32
-        && mean2d_y - ey < img_h_f;
+    let on_screen = sb.bbox_max_x > 0.0f32
+        && sb.bbox_min_x < img_w_f
+        && sb.bbox_max_y > 0.0f32
+        && sb.bbox_min_y < img_h_f;
     if !on_screen {
         terminate!();
     }
 
-    let bb = get_tile_bbox(mean2d_x, mean2d_y, ex, ey, u.tile_bw, u.tile_bh);
-    let num_tiles_hit = count_contributing_tiles(bb, mean2d_x, mean2d_y, conic, power_threshold);
+    let num_tiles_hit = accutile_tile_count(sb, conic);
 
     intersect_counts[global_gid as usize] = num_tiles_hit;
     Atomic::fetch_add(&num_intersections[0], num_tiles_hit);
 
     // Screen-space radius (pixels) for the small-splat prior.
+    let ex = sb.bbox_max_x - mean2d_x;
+    let ey = sb.bbox_max_y - mean2d_y;
     max_radius[global_gid as usize] = f32::max(ex / img_w_f, ey / img_h_f);
 
     let write_id = Atomic::fetch_add(&num_visible[0], 1u32);

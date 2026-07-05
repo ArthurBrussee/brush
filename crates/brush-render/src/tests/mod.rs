@@ -13,6 +13,9 @@ use burn::tensor::{Distribution, Tensor};
 use glam::Vec3;
 use wasm_bindgen_test::wasm_bindgen_test;
 
+mod tile_intersect;
+mod tile_intersect_ref;
+
 #[cfg(target_family = "wasm")]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
