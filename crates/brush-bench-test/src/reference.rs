@@ -2,8 +2,9 @@
 //!
 //! Each `<name>.safetensors` in `test_cases/` holds the splat input
 //! data (means, quats, scales, coeffs, opacities) plus an `out_img`
-//! tensor — the ground-truth forward render produced by an external
-//! gsplat implementation.
+//! tensor — the golden forward render from brush (regenerate with
+//! `cargo run -p brush-bench-test --bin regenerate_references` after
+//! raster/tile changes; `generate_reference.py` is gsplat-only input).
 //!
 //! We don't compare backward gradients against the gsplat reference —
 //! it does `dirs = dirs.detach()` before SH eval and so misses the

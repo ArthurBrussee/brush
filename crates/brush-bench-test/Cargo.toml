@@ -10,8 +10,10 @@ brush-render = { path = "../brush-render", features = ["debug-validation"] }
 brush-render-bwd.path = "../brush-render-bwd"
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
+brush-cube = { path = "../brush-cube" }
 
 anyhow.workspace = true
+bytemuck.workspace = true
 glam.workspace = true
 log.workspace = true
 burn = { workspace = true, features = ["autodiff"] }
@@ -28,12 +30,15 @@ rerun = { workspace = true }
 
 [dev-dependencies]
 brush-async = { path = "../brush-async" }
-brush-cube = { path = "../brush-cube" }
 
 burn-wgpu.workspace = true
 bytemuck.workspace = true
 
 wasm-bindgen-test = "0.3"
+
+[[bin]]
+name = "regenerate_references"
+path = "src/bin/regenerate_references.rs"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
