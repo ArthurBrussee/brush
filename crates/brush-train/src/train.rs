@@ -67,7 +67,7 @@ fn step_param<const D: usize>(
         let Some(grad) = t.grad_remove(grads) else {
             return t;
         };
-        let stepped = adam.step(lr, t.inner(), grad, state);
+        let stepped = adam.step(lr, t.inner(), &grad, state);
         Tensor::from_inner(stepped).require_grad()
     })
 }

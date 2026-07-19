@@ -73,10 +73,10 @@ impl AdamScaled {
         &self,
         lr: f64,
         tensor: Tensor<D>,
-        grad: Tensor<D>,
+        grad: &Tensor<D>,
         state: &mut AdamState<D>,
     ) -> Tensor<D> {
-        let (grad, momentum) = self.transform(&grad, state.momentum.take(), state.reduce_moment_2);
+        let (grad, momentum) = self.transform(grad, state.momentum.take(), state.reduce_moment_2);
         state.momentum = Some(momentum);
 
         let delta = if let Some(scale) = &state.scaling {
