@@ -81,7 +81,7 @@ web-time = "1.1.0"
 humantime = "2.1.0"
 async-fn-stream = "0.3"
 assert_approx_eq = "1.1.0"
-safetensors = "0.7"
+safetensors = "0.8"
 log = "0.4.22"
 wasm-bindgen = "0.2.100"
 wasm-bindgen-futures = "0.4"
@@ -144,6 +144,11 @@ alphanumeric-sort = "1.5.3"
 opt-level = 1
 # Reduce debuginfo for faster linking
 debug = 1
+
+# No debuginfo for dependencies: they're rarely stepped into, and dropping it
+# cuts link time and target-dir size noticeably (workspace crates keep theirs).
+[profile.dev.package."*"]
+debug = false
 
 [profile.release]
 lto = "thin"
