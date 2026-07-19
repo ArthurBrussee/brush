@@ -395,7 +395,7 @@ impl eframe::App for App {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style().as_ref()).inner_margin(0.0))
-            .show_inside(ui, |ui| self.tree.ui(&mut self.tree_ctx, ui));
+            .show(ui, |ui| self.tree.ui(&mut self.tree_ctx, ui));
 
         if ui.ctx().input(|i| i.key_pressed(egui::Key::F)) && !ui.ctx().egui_wants_keyboard_input()
         {

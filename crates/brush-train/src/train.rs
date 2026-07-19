@@ -1,7 +1,7 @@
 use std::f32::consts::FRAC_1_SQRT_2;
 
 use crate::{
-    adam_scaled::{AdamScaled, AdamScaledConfig, AdamState},
+    adam_scaled::{AdamScaled, AdamState},
     config::TrainConfig,
     msg::{RefineStats, TrainStepStats},
     multinomial::multinomial_sample,
@@ -16,20 +16,15 @@ use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degre
 use brush_render_bwd::render_splats;
 use burn::{
     backend::wgpu::{AutoCompiler, WgpuDevice, WgpuRuntime},
-    lr_scheduler::{
-        LrScheduler,
-        exponential::{ExponentialLrScheduler, ExponentialLrSchedulerConfig},
-    },
-    module::{AutodiffModule, ParamId},
-    optim::{GradientsParams, Optimizer, adaptor::OptimizerAdaptor, record::AdaptorRecord},
+    module::{AutodiffModule, Param},
     tensor::{
-        Bool, Device, Distribution, IndexingUpdateOp, Int, Tensor, TensorData, activation::sigmoid,
-        s,
+        Bool, Device, Distribution, Gradients, IndexingUpdateOp, Int, Tensor, TensorData,
+        activation::sigmoid, s,
     },
 };
 
 use burn_cubecl::cubecl::Runtime;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashSet;
 use tracing::{Instrument, trace_span};
 
 pub const BOUND_PERCENTILE: f32 = 0.8;
@@ -48,13 +43,42 @@ const MIN_SCALE_FREEZE_FRAC: f32 = 0.9;
 /// to well-behaved splats, so not a tunable.
 const MIN_SCALE_FACTOR: f32 = 0.1;
 
-type OptimizerType = OptimizerAdaptor<AdamScaled, Splats>;
+/// The three per-parameter Adam states of a [`Splats`] module, owned directly
+/// so the trainer can update LR scaling every step and surgically edit the
+/// momentum tensors during refine — all GPU-side, no record round-trips.
+struct SplatOptim {
+    adam: AdamScaled,
+    transforms: AdamState<2>,
+    sh_coeffs: AdamState<3>,
+    opacities: AdamState<1>,
+}
+
+/// Step one parameter: pull its gradient, run Adam on the inner
+/// (autodiff-free) tensor, and re-wrap tracking. Parameters without a
+/// gradient this step are left untouched.
+fn step_param<const D: usize>(
+    adam: &AdamScaled,
+    lr: f64,
+    param: Param<Tensor<D>>,
+    state: &mut AdamState<D>,
+    grads: &mut Gradients,
+) -> Param<Tensor<D>> {
+    param.map(|t| {
+        let Some(grad) = t.grad_remove(grads) else {
+            return t;
+        };
+        let stepped = adam.step(lr, t.inner(), grad, state);
+        Tensor::from_inner(stepped).require_grad()
+    })
+}
 
 pub struct SplatTrainer {
     config: TrainConfig,
-    sched_mean: ExponentialLrScheduler,
+    /// Per-step multiplier of the exponential mean-LR schedule:
+    /// `lr(n) = lr_mean * decay^(n-1)`.
+    lr_mean_decay: f64,
     refine_record: Option<RefineRecord>,
-    optim: Option<OptimizerType>,
+    optim: Option<SplatOptim>,
     ssim_enabled: bool,
     bounds: BoundingBox,
     step_count: u32,
@@ -69,10 +93,6 @@ pub struct SplatTrainer {
 
 fn inv_sigmoid(x: Tensor<1>) -> Tensor<1> {
     (x.clone() / (1.0f32 - x)).log()
-}
-
-fn create_optimizer_from_config() -> OptimizerType {
-    AdamScaledConfig::new().with_epsilon(1e-15).init()
 }
 
 /// Per-splat world-space scale floor for the Mip-Splatting 3D filter:
@@ -120,7 +140,6 @@ impl SplatTrainer {
     pub fn new(config: &TrainConfig, device: &Device, bounds: BoundingBox) -> Self {
         let decay =
             (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_train_iters as f64);
-        let lr_mean = ExponentialLrSchedulerConfig::new(config.lr_mean, decay);
 
         let ssim_enabled = config.ssim_weight > 0.0;
 
@@ -135,7 +154,7 @@ impl SplatTrainer {
 
         Self {
             config,
-            sched_mean: lr_mean.init().expect("Mean lr schedule must be valid."),
+            lr_mean_decay: decay,
             optim: None,
             refine_record: None,
             ssim_enabled,
@@ -281,8 +300,8 @@ impl SplatTrainer {
             (grads, visible, diff_out.num_visible, loss_inner)
         };
 
-        // OptimizerAdaptor strips autodiff before calling SimpleOptimizer::step,
-        // so optimizer state (scaling, momentum) lives on the inner device.
+        // The optimizer strips autodiff before stepping, so optimizer state
+        // (scaling, momentum) lives on the inner device.
         let opt_device = device.clone().inner();
         let optimizer =
             self.optim.get_or_insert_with(|| {
@@ -298,23 +317,21 @@ impl SplatTrainer {
                 let sh_lr_scales = Tensor::<1>::from_floats(scales.as_slice(), &opt_device)
                     .reshape([1, num_coeffs as i32, 1]);
 
-                create_optimizer_from_config().load_record(HashMap::from([(
-                    splats.sh_coeffs.id,
-                    AdaptorRecord::from_state(AdamState {
-                        momentum: None,
-                        scaling: Some(sh_lr_scales),
-                        reduce_moment_2: true,
-                    }),
-                )]))
+                SplatOptim {
+                    adam: AdamScaled::new(1e-15),
+                    transforms: AdamState::new(None, false),
+                    sh_coeffs: AdamState::new(Some(sh_lr_scales), true),
+                    opacities: AdamState::new(None, false),
+                }
             });
 
-        let lr_mean = self.sched_mean.step() * median_scale as f64;
+        let lr_mean = self.config.lr_mean
+            * self.lr_mean_decay.powi(self.step_count as i32 - 1)
+            * median_scale as f64;
 
         // Update per-component LR scaling for the transforms param.
         // transforms layout: means(3) + rotations(4) + log_scales(3)
         // We use base_lr=1.0 and encode actual LRs in the scaling tensor.
-        //
-        // TODO: Ideally we don't have to do this every step... but idk as long as mean is on a schedule not much to do!
         {
             let lr_values: [f32; 10] = [
                 lr_mean as f32,
@@ -328,37 +345,37 @@ impl SplatTrainer {
                 self.config.lr_scale as f32,
                 self.config.lr_scale as f32,
             ];
-            let transform_scaling =
-                Tensor::<1>::from_floats(lr_values.as_slice(), &opt_device).reshape([1, 10]);
-            let mut record = optimizer.to_record();
-            let existing = record.remove(&splats.transforms.id);
-            let momentum = existing.and_then(|r| r.into_state::<2>().momentum);
-            record.insert(
-                splats.transforms.id,
-                AdaptorRecord::from_state(AdamState {
-                    momentum,
-                    scaling: Some(transform_scaling),
-                    reduce_moment_2: false,
-                }),
-            );
-            *optimizer = create_optimizer_from_config().load_record(record);
+            optimizer.transforms.scaling =
+                Some(Tensor::<1>::from_floats(lr_values.as_slice(), &opt_device).reshape([1, 10]));
         }
 
         splats = trace_span!("Optimizer step").in_scope(|| {
-            splats = trace_span!("Transforms step").in_scope(|| {
-                let grad_transforms =
-                    GradientsParams::from_params(&mut grads, &splats, &[splats.transforms.id]);
-                optimizer.step(1.0, splats, grad_transforms)
+            splats.transforms = trace_span!("Transforms step").in_scope(|| {
+                step_param(
+                    &optimizer.adam,
+                    1.0,
+                    splats.transforms,
+                    &mut optimizer.transforms,
+                    &mut grads,
+                )
             });
-            splats = trace_span!("SH Coeffs step").in_scope(|| {
-                let grad_coeff =
-                    GradientsParams::from_params(&mut grads, &splats, &[splats.sh_coeffs.id]);
-                optimizer.step(self.config.lr_coeffs_dc, splats, grad_coeff)
+            splats.sh_coeffs = trace_span!("SH Coeffs step").in_scope(|| {
+                step_param(
+                    &optimizer.adam,
+                    self.config.lr_coeffs_dc,
+                    splats.sh_coeffs,
+                    &mut optimizer.sh_coeffs,
+                    &mut grads,
+                )
             });
-            splats = trace_span!("Opacity step").in_scope(|| {
-                let grad_opac =
-                    GradientsParams::from_params(&mut grads, &splats, &[splats.raw_opacities.id]);
-                optimizer.step(self.config.lr_opac, splats, grad_opac)
+            splats.raw_opacities = trace_span!("Opacity step").in_scope(|| {
+                step_param(
+                    &optimizer.adam,
+                    self.config.lr_opac,
+                    splats.raw_opacities,
+                    &mut optimizer.opacities,
+                    &mut grads,
+                )
             });
             splats
         });
@@ -469,11 +486,10 @@ impl SplatTrainer {
 
         // If not refining, update splat to step with gradients applied.
         // Prune dead splats. This ALWAYS happen even if we're not "refining" anymore.
-        let mut record = self
+        let mut optim = self
             .optim
             .take()
-            .expect("Can only refine after optimizer is initialized")
-            .to_record();
+            .expect("Can only refine after optimizer is initialized");
         let alpha_mask = splats.opacities().lower_elem(MIN_OPACITY);
         let scales = splats.scales();
 
@@ -519,14 +535,12 @@ impl SplatTrainer {
             .bool_or(non_finite_mask);
 
         let (mut splats, refiner, pruned_count) =
-            prune_points(splats, &mut record, refiner, prune_mask).await;
+            prune_points(splats, &mut optim, refiner, prune_mask).await;
         let mut split_inds = HashSet::new();
 
         // Always replace dead gaussians, so that the pruned budget is reused.
         if pruned_count > 0 {
-            // Replacement weighting. By default opacity × visibility. With
-            // `replace_by_gradient > 0`, interpolate toward the gradient-
-            // weighted distribution (where error actually lives).
+            // Replacement weighting: opacity × visibility.
             let vis_f = refiner.vis_mask().float();
             let resampled_weights = splats.opacities() * vis_f.clone();
             let resampled_weights = resampled_weights
@@ -614,7 +628,7 @@ impl SplatTrainer {
         // Per-splat max on-screen extent, used by `refine_splats` to cap the
         // split shrink so oversized splats' children land at `split_at_screen_size`.
         let screen_sizes = refiner.max_screen_size.clone();
-        splats = self.refine_splats(&device, record, splats, split_inds, screen_sizes, iter);
+        splats = self.refine_splats(&device, optim, splats, split_inds, screen_sizes, iter);
 
         // Update current bounds based on the splats.
         self.bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
@@ -651,7 +665,7 @@ impl SplatTrainer {
     fn refine_splats(
         &mut self,
         device: &Device,
-        mut record: HashMap<ParamId, AdaptorRecord<AdamScaled>>,
+        mut optim: SplatOptim,
         mut splats: Splats,
         split_inds: HashSet<i32>,
         screen_sizes: Tensor<1>,
@@ -755,7 +769,7 @@ impl SplatTrainer {
             // it out instead of using Assign.
             splats = map_splats_and_opt(
                 splats,
-                &mut record,
+                &mut optim,
                 |x| Tensor::cat(vec![x, new_transforms], 0),
                 |x| Tensor::cat(vec![x, cur_sh_coeffs], 0),
                 |x| Tensor::cat(vec![x, new_raw_opac], 0),
@@ -802,14 +816,14 @@ impl SplatTrainer {
             inv_sigmoid(new_opac.clamp(1e-12, 1.0 - 1e-12))
         });
 
-        self.optim = Some(create_optimizer_from_config().load_record(record));
+        self.optim = Some(optim);
         splats
     }
 }
 
 fn map_splats_and_opt(
     mut splats: Splats,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled>>,
+    optim: &mut SplatOptim,
     map_transforms: impl FnOnce(Tensor<2>) -> Tensor<2>,
     map_sh_coeffs: impl FnOnce(Tensor<3>) -> Tensor<3>,
     map_opac: impl FnOnce(Tensor<1>) -> Tensor<1>,
@@ -819,34 +833,12 @@ fn map_splats_and_opt(
     map_opt_opac: impl Fn(Tensor<1>) -> Tensor<1>,
 ) -> Splats {
     splats.transforms = splats.transforms.map(map_transforms);
-    map_opt(splats.transforms.id, record, &map_opt_transforms);
+    optim.transforms.map_momentum(map_opt_transforms);
     splats.sh_coeffs = splats.sh_coeffs.map(map_sh_coeffs);
-    map_opt(splats.sh_coeffs.id, record, &map_opt_sh_coeffs);
+    optim.sh_coeffs.map_momentum(map_opt_sh_coeffs);
     splats.raw_opacities = splats.raw_opacities.map(map_opac);
-    map_opt(splats.raw_opacities.id, record, &map_opt_opac);
+    optim.opacities.map_momentum(map_opt_opac);
     splats
-}
-
-/// Apply `map_fn` to `moment_1` and `moment_2`. `map_fn` must be shape-agnostic
-/// along trailing dims since `moment_2` may have size-1 trailing dims under
-/// `reduce_moment_2`.
-fn map_opt<const D: usize>(
-    param_id: ParamId,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled>>,
-    map_fn: &impl Fn(Tensor<D>) -> Tensor<D>,
-) {
-    let mut state: AdamState<D> = record
-        .remove(&param_id)
-        .expect("failed to get optimizer record")
-        .into_state();
-
-    state.momentum = state.momentum.map(|mut moment| {
-        moment.moment_1 = map_fn(moment.moment_1);
-        moment.moment_2 = map_fn(moment.moment_2);
-        moment
-    });
-
-    record.insert(param_id, AdaptorRecord::from_state(state));
 }
 
 // Prunes points based on the given mask.
@@ -855,7 +847,7 @@ fn map_opt<const D: usize>(
 //   mask: bool[n]. If True, prune this Gaussian.
 async fn prune_points(
     mut splats: Splats,
-    record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled>>,
+    optim: &mut SplatOptim,
     mut refiner: RefineRecord,
     prune: Tensor<1, Bool>,
 ) -> (Splats, RefineRecord, u32) {
@@ -887,7 +879,7 @@ async fn prune_points(
         let inner_valid_inds = detach_autodiff_int(valid_inds.clone().inner());
         splats = map_splats_and_opt(
             splats,
-            record,
+            optim,
             |x| x.select(0, valid_inds.clone()),
             |x| x.select(0, valid_inds.clone()),
             |x| x.select(0, valid_inds.clone()),

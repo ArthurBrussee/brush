@@ -1,9 +1,4 @@
 //! Latest-value request/response worker.
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering::SeqCst},
-};
-
 use tokio::sync::watch;
 
 use crate::Actor;
@@ -11,7 +6,6 @@ use crate::Actor;
 pub struct AsyncMap<Req, Out> {
     req: watch::Sender<Option<Req>>,
     out: watch::Receiver<Option<Out>>,
-    running: Arc<AtomicBool>,
     _actor: Actor,
 }
 
@@ -30,18 +24,13 @@ where
         let (req, mut req_rx) = watch::channel::<Option<Req>>(None);
         let (out_tx, out) = watch::channel::<Option<Out>>(None);
 
-        let running = Arc::new(AtomicBool::new(false));
-        let running_task = running.clone();
-
         actor
             .run(move || async move {
                 while req_rx.changed().await.is_ok() {
                     let Some(r) = req_rx.borrow_and_update().clone() else {
                         continue;
                     };
-                    running_task.store(true, SeqCst);
                     let output = map(&r).await;
-                    running_task.store(false, SeqCst);
                     if out_tx.send(Some(output)).is_err() {
                         break;
                     }
@@ -53,7 +42,6 @@ where
         Self {
             req,
             out,
-            running,
             _actor: actor,
         }
     }
@@ -71,10 +59,5 @@ where
     /// The most recently submitted request, if any.
     pub fn last_request(&self) -> Option<Req> {
         self.req.borrow().clone()
-    }
-
-    /// Whether the worker is currently processing a request.
-    pub fn is_running(&self) -> bool {
-        self.running.load(SeqCst)
     }
 }

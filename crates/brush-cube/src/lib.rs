@@ -369,11 +369,6 @@ impl Mat2x3 {
         }
     }
 
-    /// `M^T * v`.
-    pub fn transpose_mul_vec2(self, v: Vec2) -> Vec3A {
-        self.row0().scale(v.x()).add(self.row1().scale(v.y()))
-    }
-
     pub fn gram_matrix(self) -> Sym2 {
         let c00 = self.c0.x() * self.c0.x() + self.c1.x() * self.c1.x() + self.c2.x() * self.c2.x();
         let c01 = self.c0.x() * self.c0.y() + self.c1.x() * self.c1.y() + self.c2.x() * self.c2.y();

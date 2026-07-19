@@ -72,14 +72,6 @@ pub fn wrap_wgpu_float<const D: usize>(t: FloatTensor<MainBackend>) -> Tensor<D>
     })
 }
 
-/// Like [`wrap_wgpu_float`] for an int tensor.
-pub fn wrap_wgpu_int<const D: usize>(t: IntTensor<MainBackend>) -> Tensor<D, Int> {
-    Tensor::from_dispatch(DispatchTensor {
-        kind: wgpu_kind!(BackendTensor::Int(t)),
-        checkpointing: None,
-    })
-}
-
 /// Extract the inner `AutodiffTensor<MainBackend>` from a `Tensor<D>` on an
 /// autodiff-enabled Wgpu device. Panics on any other shape.
 pub fn unwrap_ad_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<AutodiffMain> {

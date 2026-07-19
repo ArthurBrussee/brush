@@ -79,18 +79,3 @@ pub struct RenderAux {
     pub tile_offsets: Tensor<3, Int>,
     pub img_size: glam::UVec2,
 }
-
-impl RenderAux {
-    /// Calculate tile depth map for visualization.
-    pub fn calc_tile_depth(&self) -> Tensor<2, Int> {
-        use crate::shaders::helpers::TILE_WIDTH;
-        use burn::tensor::s;
-
-        let tile_offsets = self.tile_offsets.clone();
-        let max = tile_offsets.clone().slice(s![.., .., 1]);
-        let min = tile_offsets.slice(s![.., .., 0]);
-        let [w, h] = self.img_size.into();
-        let [ty, tx] = [h.div_ceil(TILE_WIDTH), w.div_ceil(TILE_WIDTH)];
-        (max - min).reshape([ty as usize, tx as usize])
-    }
-}
