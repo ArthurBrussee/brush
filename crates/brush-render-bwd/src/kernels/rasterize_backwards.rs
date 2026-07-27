@@ -366,7 +366,10 @@ fn accumulate_grads_for_batch(
                         grad.rgb_b += select(splat.color_b >= 0.0f32, vis * v_o_z, 0.0f32);
 
                         let ra = 1.0f32 / (1.0f32 - alpha_eff);
-                        let mut dot_rgb = ((state_w * clamped_r - state_x) * v_o_x
+                        // Depth no longer contributes to this dot accumulator
+                        // (see the render_depth block below), so it is written
+                        // once and never mutated.
+                        let dot_rgb = ((state_w * clamped_r - state_x) * v_o_x
                             + (state_w * clamped_g - state_y) * v_o_y
                             + (state_w * clamped_b - state_z) * v_o_z)
                             * ra;
@@ -376,8 +379,19 @@ fn accumulate_grads_for_batch(
                         if comptime![render_depth] {
                             let v_o_d = v_output[pix_base + 4];
                             let state_d = pix_state[s + 4];
+                            // Depth supervises gaussian positions only. Route the
+                            // depth-channel gradient to the per-splat depth value
+                            // (grad.depth), but do NOT fold it into the alpha VJP.
+                            // The term
+                            //   dot_rgb += (state_w * splat.depth - state_d) * v_o_d * ra
+                            // is dropped on purpose so depth loss cannot lower its
+                            // error by changing blending weights (opacity/shape)
+                            // instead of moving. This detaches the depth blending
+                            // weights, matching LFS detach_depth_weights and
+                            // DN-Splatter. The paired denominator detach lives in
+                            // brush-train train.rs. The state update below stays
+                            // for the front-to-back depth bookkeeping.
                             grad.depth += vis * v_o_d;
-                            dot_rgb += (state_w * splat.depth - state_d) * v_o_d * ra;
                             pix_state[s + 4] = state_d - vis * splat.depth;
                         }
                         // Chain through the cutoff. Hard step (production):

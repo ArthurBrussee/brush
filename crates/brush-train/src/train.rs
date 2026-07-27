@@ -270,7 +270,16 @@ impl SplatTrainer {
             if use_depth && let Some(depth_data) = &batch.depth {
                 let gt_depth: Tensor<2> = Tensor::from_data(depth_data.clone(), &device);
                 let accumulated_depth = pred_image.clone().slice(s![.., .., 4..5]);
-                let alpha = pred_image.clone().slice(s![.., .., 3..4]);
+                // Detach the alpha denominator so depth loss cannot lower its
+                // error by changing transparency. A differentiable denominator
+                // lets depth error flow into opacity. This closes one of two
+                // coupling routes; the other lives in the rasterize backward,
+                // where the depth-channel gradient feeds the alpha term (see
+                // rasterize_backwards.rs, the dropped dot_rgb depth term).
+                // Together they detach the blending weights from depth, so depth
+                // supervision moves gaussian positions only, matching LFS
+                // detach_depth_weights and DN-Splatter.
+                let alpha = pred_image.clone().slice(s![.., .., 3..4]).detach();
                 let expected_depth =
                     (accumulated_depth / alpha.clamp_min(1e-10)).reshape([img_h, img_w]);
                 loss = loss + depth_loss(expected_depth, gt_depth) * self.config.depth_loss_weight;
@@ -936,4 +945,125 @@ fn sample_background_color(base: glam::Vec3, strength: f32) -> glam::Vec3 {
         rng.random_range(-strength..strength),
     );
     (base + noise).clamp(glam::Vec3::ZERO, glam::Vec3::ONE)
+}
+
+#[cfg(test)]
+mod depth_loss_grad_tests {
+    use super::*;
+    use brush_render::camera::Camera;
+    use brush_render::gaussian_splats::SplatRenderMode;
+    use brush_render::kernels::camera_model::CameraModel;
+
+    /// A depth-only loss must move gaussian positions and leave opacity untouched.
+    ///
+    /// The rendered depth is the alpha-normalized expected depth,
+    /// `accum(ch4) / alpha(ch3)`. Two routes let depth error reach opacity. The
+    /// alpha denominator is differentiable, and the depth-loss term detaches it.
+    /// The rasterize backward also folds the depth-channel gradient into the
+    /// alpha gradient, and `rasterize_backwards.rs` drops that term. With both
+    /// routes closed the depth blending weights are detached, so depth
+    /// supervision moves the per-splat depth values only. This matches the
+    /// `detach_depth_weights` behavior; see the kernel comment for the citation.
+    /// The test renders the differentiable depth path, applies a depth-only
+    /// loss, and asserts the raw opacities get no gradient while the positions do.
+    #[tokio::test]
+    async fn depth_loss_does_not_touch_opacity() {
+        let device =
+            burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+
+        // A handful of near-opaque gaussians spread in depth in front of a
+        // camera that looks down +z.
+        let means = vec![
+            0.0, 0.0, 0.0, //
+            0.3, 0.0, 0.5, //
+            -0.3, 0.2, 1.0, //
+            0.1, -0.2, 1.5, //
+        ];
+        let n = means.len() / 3;
+        let rotations: Vec<f32> = (0..n).flat_map(|_| [1.0, 0.0, 0.0, 0.0]).collect();
+        let log_scales: Vec<f32> = (0..n).flat_map(|_| [-1.0, -1.0, -1.0]).collect();
+        let sh: Vec<f32> = (0..n).flat_map(|_| [0.5, 0.5, 0.5]).collect();
+        // High raw opacity so the depth channel carries real weight.
+        let opac: Vec<f32> = vec![4.0; n];
+
+        let splats = Splats::from_raw(
+            means,
+            rotations,
+            log_scales,
+            sh,
+            opac,
+            SplatRenderMode::Default,
+            &device,
+        );
+
+        let camera = Camera::new(
+            glam::vec3(0.0, 0.0, -5.0),
+            glam::Quat::IDENTITY,
+            0.7,
+            0.7,
+            glam::vec2(0.5, 0.5),
+            CameraModel::Pinhole,
+        );
+        let img_size = glam::uvec2(48, 48);
+
+        let diff_out = render_splats_with_pass(
+            splats.clone(),
+            &camera,
+            img_size,
+            glam::Vec3::ZERO,
+            RasterPass::Backward,
+            RasterizationMode::RgbaAndDepth,
+        )
+        .await;
+
+        let [img_h, img_w, _] = diff_out.img.dims();
+        let accumulated_depth = diff_out.img.clone().slice(s![.., .., 4..5]);
+        // Same detached denominator as the training depth-loss term.
+        let alpha = diff_out.img.clone().slice(s![.., .., 3..4]).detach();
+        let expected_depth = (accumulated_depth / alpha.clamp_min(1e-10)).reshape([img_h, img_w]);
+
+        // A positive constant target, so the disparity error and its gradient are
+        // nonzero wherever a gaussian was rendered.
+        let gt_depth = Tensor::<2>::ones([img_h, img_w], &device) * 3.0;
+        let loss = depth_loss(expected_depth, gt_depth);
+
+        let grads = splats.bwd_validate(loss).await;
+
+        // Positions live in transforms columns 0..3 and must receive gradient.
+        let transforms_grad = splats
+            .transforms
+            .grad(&grads)
+            .expect("depth loss must reach gaussian positions");
+        let means_grad_absmax = transforms_grad
+            .slice(s![.., 0..3])
+            .abs()
+            .max()
+            .into_data_async()
+            .await
+            .expect("means grad readback")
+            .to_vec::<f32>()
+            .expect("f32 means grad")[0];
+        assert!(
+            means_grad_absmax > 1e-8,
+            "expected a nonzero position gradient, got {means_grad_absmax}"
+        );
+
+        // Opacity must receive no gradient. burn either prunes the leaf (None) or
+        // returns an all-zero gradient. A nonzero one means depth error can still
+        // push opacity, which is the regression this test guards.
+        if let Some(opac_grad) = splats.raw_opacities.grad(&grads) {
+            let opac_grad_absmax = opac_grad
+                .abs()
+                .max()
+                .into_data_async()
+                .await
+                .expect("opacity grad readback")
+                .to_vec::<f32>()
+                .expect("f32 opacity grad")[0];
+            assert!(
+                opac_grad_absmax < 1e-8,
+                "depth loss must not push opacity, got {opac_grad_absmax}"
+            );
+        }
+    }
 }
