@@ -346,7 +346,7 @@ impl SplatOps for AutodiffMain {
 
         output.clone().validate().await;
 
-        let img_ad: FloatTensor<AutodiffMain> = match prep_nodes {
+        let img_ad: FloatTensor<Self> = match prep_nodes {
             OpsKind::Tracked(prep) => {
                 let state = GaussianBackwardState {
                     transforms: transforms_inner,
@@ -373,7 +373,7 @@ impl SplatOps for AutodiffMain {
         // extension trait's output is uniformly `RenderOutput<Self>`, so they
         // ride along as untracked autodiff tensors. Int tensors share the
         // inner backend's primitive and pass through unchanged.
-        let lift = <AutodiffMain as AutodiffBackend>::from_inner;
+        let lift = <Self as AutodiffBackend>::from_inner;
 
         crate::RenderOutput {
             out_img: img_ad,
