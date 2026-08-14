@@ -114,8 +114,8 @@ burn-fusion = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 # crypto family (digest 0.11, hmac 0.13, ...).
 burn-store = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 
-egui = { version = "0.35" }
-eframe = { version = "0.35", default-features = false, features = [
+egui = { version = "0.36" }
+eframe = { version = "0.36", default-features = false, features = [
     "wgpu",
     "android-game-activity",
     "wayland",
@@ -123,9 +123,9 @@ eframe = { version = "0.35", default-features = false, features = [
     "persistence",
 ] }
 
-egui_tiles = { version = "0.16", features = ["serde"] }
+egui_tiles = { version = "0.17", features = ["serde"] }
 
-rerun = { version = "0.34", default-features = false, features = [
+rerun = { version = "0.36", default-features = false, features = [
     'sdk',
     'glam',
 ] }
@@ -333,22 +333,14 @@ single_range_in_vec_init = "allow"
 # `as_webgpu` accessors, and #9287's relaxed Metal buffer limits), so the fork
 # is much smaller than it used to be.
 #
-# egui fork: 0.35.0 + the (not yet merged) wgpu-30 upgrade PR emilk/egui#8289.
+# egui 0.36 ships the wgpu-30 upgrade (emilk/egui#8289) upstream, so the
+# egui fork is no longer needed.
 [patch.crates-io]
 wgpu                 = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
 wgpu-core            = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
 wgpu-hal             = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
 wgpu-types           = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
 naga                 = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
-egui                 = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu30-0.35" }
-eframe               = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu30-0.35" }
-egui-wgpu            = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu30-0.35" }
-egui-winit           = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu30-0.35" }
-egui_glow            = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu30-0.35" }
-ecolor               = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu30-0.35" }
-emath                = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu30-0.35" }
-epaint               = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu30-0.35" }
-epaint_default_fonts = { git = "https://github.com/ArthurBrussee/egui", branch = "wgpu30-0.35" }
 
 # cubecl-runtime at the rev burn pins doesn't build for wasm (missing
 # wasm-bindgen-futures dep; cubecl-common serde/hash features only enabled in

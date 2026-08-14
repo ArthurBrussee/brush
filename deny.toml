@@ -71,6 +71,12 @@ skip = [
     # pliron (via cubecl) is on downcast-rs 2, wayland-backend still on 1.
     { name = 'downcast-rs' },
 
+    # rerun's re_auth is on base64 0.23, arrow/reqwest/tonic still on 0.22.
+    { name = 'base64' },
+
+    # eframe 0.36 moved to pollster 1.0, rfd (latest 0.17.2) still on 0.4.
+    { name = 'pollster' },
+
     # Other
     { name = "core-foundation" },     # Egui has two?
     { name = 'windows_x86_64_msvc' }, # Old version from winit.
