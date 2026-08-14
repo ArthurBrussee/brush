@@ -297,41 +297,16 @@ impl SplatOps for Fusion<MainBackendBase> {
             }
         }
 
-        let out_img_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.out_img.shape(),
-            DType::F32,
-        );
-        let visible_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.aux.visible.shape(),
-            DType::F32,
-        );
-        let max_radius_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.aux.max_radius.shape(),
-            DType::F32,
-        );
-        let projected_splats_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.projected_splats.shape(),
-            DType::F32,
-        );
-        let tile_offsets_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.aux.tile_offsets.shape(),
-            DType::U32,
-        );
-        let compact_gid_from_isect_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.compact_gid_from_isect.shape(),
-            DType::U32,
-        );
-        let global_from_compact_gid_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.global_from_compact_gid.shape(),
-            DType::U32,
-        );
+        // Every output is a fresh handle the bind op fills in; only shape and
+        // dtype differ.
+        let new_out = |shape, dtype| TensorIr::uninit(client.create_empty_handle(), shape, dtype);
+        let out_img_ir = new_out(out.out_img.shape(), DType::F32);
+        let visible_ir = new_out(out.aux.visible.shape(), DType::F32);
+        let max_radius_ir = new_out(out.aux.max_radius.shape(), DType::F32);
+        let projected_splats_ir = new_out(out.projected_splats.shape(), DType::F32);
+        let tile_offsets_ir = new_out(out.aux.tile_offsets.shape(), DType::U32);
+        let compact_gid_from_isect_ir = new_out(out.compact_gid_from_isect.shape(), DType::U32);
+        let global_from_compact_gid_ir = new_out(out.global_from_compact_gid.shape(), DType::U32);
 
         let stream = StreamId::current();
         let desc = CustomOpIr::new(

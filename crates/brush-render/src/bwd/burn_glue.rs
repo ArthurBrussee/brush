@@ -552,26 +552,13 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
         ];
 
         let outputs = {
-            let v_transforms_out = TensorIr::uninit(
-                client.create_empty_handle(),
-                Shape::new([num_points, 10]),
-                DType::F32,
-            );
-            let v_coeffs_out = TensorIr::uninit(
-                client.create_empty_handle(),
-                Shape::new([num_points, coeffs, 3]),
-                DType::F32,
-            );
-            let v_raw_opac_out = TensorIr::uninit(
-                client.create_empty_handle(),
-                Shape::new([num_points]),
-                DType::F32,
-            );
-            let v_refine_weight_out = TensorIr::uninit(
-                client.create_empty_handle(),
-                Shape::new([num_points]),
-                DType::F32,
-            );
+            // All four grads are fresh f32 handles; only the shape differs.
+            let new_grad =
+                |shape| TensorIr::uninit(client.create_empty_handle(), shape, DType::F32);
+            let v_transforms_out = new_grad(Shape::new([num_points, 10]));
+            let v_coeffs_out = new_grad(Shape::new([num_points, coeffs, 3]));
+            let v_raw_opac_out = new_grad(Shape::new([num_points]));
+            let v_refine_weight_out = new_grad(Shape::new([num_points]));
 
             let stream = StreamId::current();
             let desc = CustomOpIr::new(
