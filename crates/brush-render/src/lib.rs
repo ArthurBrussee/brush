@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 
 use brush_cube::MainBackend as Wgpu;
-use burn::backend::Backend;
+use burn::backend::{Autodiff, Backend};
 use burn::backend::tensor::FloatTensor;
 use camera::Camera;
 use clap::ValueEnum;
@@ -59,11 +59,15 @@ macro_rules! __wgpu_kind {
 /// the `RenderOutput` via its `ExtensionType` derive. Only the non-autodiff
 /// arm is generated: the differentiable path is a hand-rolled `Backward` in
 /// `brush-render-bwd` and never dispatches `render` through `Autodiff`.
-#[burn::backend::backend_extension(Wgpu)]
+#[burn::backend::backend_extension(Wgpu, Autodiff)]
 pub trait SplatOps: Backend {
     /// Render gaussian splats to an image.
     ///
     /// Full forward pipeline: cull, depth sort, readback, project, rasterize.
+    ///
+    /// `refine_weight` is a zero-filled accumulator that catches the per-splat
+    /// refinement weight gradient. Only the `Autodiff` impl reads it; the
+    /// concrete backends ignore it.
     /// `pass` picks forward-only vs. forward+backward-bookkeeping, and (only
     /// for tests) toggles the C^1 smoothstep around the alpha cutoff.
     #[allow(clippy::too_many_arguments)]
@@ -73,6 +77,7 @@ pub trait SplatOps: Backend {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: gaussian_splats::RasterPass,

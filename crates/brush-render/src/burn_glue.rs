@@ -210,6 +210,7 @@ impl SplatOps for Fusion<MainBackendBase> {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: crate::gaussian_splats::RasterPass,
@@ -227,6 +228,9 @@ impl SplatOps for Fusion<MainBackendBase> {
         let base_raw_opac = client
             .clone()
             .resolve_tensor_float::<MainBackendBase>(raw_opacities);
+        let base_refine_weight = client
+            .clone()
+            .resolve_tensor_float::<MainBackendBase>(refine_weight);
 
         // Run the full pipeline on MainBackendBase.
         let out = MainBackendBase::render(
@@ -235,6 +239,7 @@ impl SplatOps for Fusion<MainBackendBase> {
             base_transforms,
             base_sh_coeffs,
             base_raw_opac,
+            base_refine_weight,
             render_mode,
             background,
             pass,

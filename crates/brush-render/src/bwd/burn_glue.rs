@@ -2,7 +2,7 @@
 
 use brush_cube::{MainBackend, MainBackendBase};
 use crate::burn_glue::{
-    AutodiffMain, lift_to_autodiff, unwrap_ad_wgpu_float, wrap_ad_wgpu_float, wrap_wgpu_float,
+    AutodiffMain, lift_to_autodiff, unwrap_ad_wgpu_float, wrap_ad_wgpu_float,
 };
 use crate::{
     SplatOps,
@@ -14,6 +14,7 @@ use crate::{
 use burn::{
     backend::{
         Backend, TensorMetadata,
+        AutodiffBackend,
         autodiff::{
             checkpoint::{base::Checkpointer, strategy::NoCheckpointing},
             grads::Gradients,
@@ -263,84 +264,128 @@ pub async fn render_splats_with_pass(
         None => (splats.transforms.val(), splats.raw_opacities.val()),
     };
 
-    let transforms_ad = unwrap_ad_wgpu_float(transforms_val);
-    let sh_coeffs_ad = unwrap_ad_wgpu_float(splats.sh_coeffs.val());
-    let raw_opac_ad = unwrap_ad_wgpu_float(raw_opac_val);
-    let refine_weight_ad = unwrap_ad_wgpu_float(refine_weight_holder.clone());
-
-    let prep_nodes = RenderBackwards
-        .prepare::<NoCheckpointing>([
-            transforms_ad.node.clone(),
-            refine_weight_ad.node.clone(),
-            sh_coeffs_ad.node.clone(),
-            raw_opac_ad.node.clone(),
-        ])
-        .compute_bound()
-        .stateful();
-
     let render_mode = if splats.render_mip {
         SplatRenderMode::Mip
     } else {
         SplatRenderMode::Default
     };
 
-    let transforms_inner: FloatTensor<MainBackend> = transforms_ad.primitive.clone();
-    let sh_inner: FloatTensor<MainBackend> = sh_coeffs_ad.primitive;
-    let raw_opac_inner: FloatTensor<MainBackend> = raw_opac_ad.primitive.clone();
-
     assert!(
         pass.bwd_info(),
         "render_splats_with_pass requires a Backward variant"
     );
-    let output = <MainBackend as SplatOps>::render(
+
+    // Dispatch through the `#[backend_extension]` glue: the generated
+    // `impl SplatOps for Dispatch` routes these autodiff tensors to
+    // `impl SplatOps for AutodiffMain` below and re-wraps the result.
+    let output = <AutodiffMain as SplatOps>::render(
         camera,
         img_size,
-        transforms_inner.clone(),
-        sh_inner.clone(),
-        raw_opac_inner.clone(),
+        unwrap_ad_wgpu_float(transforms_val),
+        unwrap_ad_wgpu_float(splats.sh_coeffs.val()),
+        unwrap_ad_wgpu_float(raw_opac_val),
+        unwrap_ad_wgpu_float(refine_weight_holder.clone()),
         render_mode,
         background,
         pass,
     )
     .await;
 
-    output.clone().validate().await;
-
-    let num_visible = output.aux.num_visible;
-    let visible_inner = output.aux.visible.clone();
-    let max_radius_inner = output.aux.max_radius.clone();
-
-    let img_ad: FloatTensor<AutodiffMain> = match prep_nodes {
-        OpsKind::Tracked(prep) => {
-            let state = GaussianBackwardState {
-                transforms: transforms_inner,
-                sh_coeffs: sh_inner,
-                raw_opacity: raw_opac_inner,
-                out_img: output.out_img.clone(),
-                projected_splats: output.projected_splats,
-                project_uniforms: output.project_uniforms,
-                tile_offsets: output.aux.tile_offsets.clone(),
-                compact_gid_from_isect: output.compact_gid_from_isect,
-                render_mode,
-                pass,
-                global_from_compact_gid: output.global_from_compact_gid,
-                background,
-                img_size,
-            };
-            prep.finish(state, output.out_img)
-        }
-        OpsKind::UnTracked(prep) => prep.finish(output.out_img),
-    };
-
     SplatOutputDiff {
-        img: wrap_ad_wgpu_float(img_ad),
-        num_visible,
-        // `visible` / `max_radius` are render aux — they only feed refine
-        // bookkeeping and never get a backward. Hand them back on the inner
-        // backend directly so callers don't have to strip autodiff off them.
-        visible: wrap_wgpu_float(visible_inner),
-        max_radius: wrap_wgpu_float(max_radius_inner),
+        img: wrap_ad_wgpu_float(output.out_img),
+        num_visible: output.aux.num_visible,
+        visible: wrap_ad_wgpu_float(output.aux.visible),
+        max_radius: wrap_ad_wgpu_float(output.aux.max_radius),
         refine_weight_holder,
+    }
+}
+
+impl SplatOps for AutodiffMain {
+    #[allow(clippy::too_many_arguments)]
+    async fn render(
+        camera: &Camera,
+        img_size: glam::UVec2,
+        transforms: FloatTensor<Self>,
+        sh_coeffs: FloatTensor<Self>,
+        raw_opacities: FloatTensor<Self>,
+        refine_weight: FloatTensor<Self>,
+        render_mode: SplatRenderMode,
+        background: Vec3,
+        pass: crate::gaussian_splats::RasterPass,
+    ) -> crate::RenderOutput<Self> {
+        let prep_nodes = RenderBackwards
+            .prepare::<NoCheckpointing>([
+                transforms.node.clone(),
+                refine_weight.node.clone(),
+                sh_coeffs.node.clone(),
+                raw_opacities.node.clone(),
+            ])
+            .compute_bound()
+            .stateful();
+
+        let transforms_inner: FloatTensor<MainBackend> = transforms.primitive.clone();
+        let sh_inner: FloatTensor<MainBackend> = sh_coeffs.primitive;
+        let raw_opac_inner: FloatTensor<MainBackend> = raw_opacities.primitive.clone();
+
+        let output = <MainBackend as SplatOps>::render(
+            camera,
+            img_size,
+            transforms_inner.clone(),
+            sh_inner.clone(),
+            raw_opac_inner.clone(),
+            refine_weight.primitive,
+            render_mode,
+            background,
+            pass,
+        )
+        .await;
+
+        output.clone().validate().await;
+
+        let img_ad: FloatTensor<AutodiffMain> = match prep_nodes {
+            OpsKind::Tracked(prep) => {
+                let state = GaussianBackwardState {
+                    transforms: transforms_inner,
+                    sh_coeffs: sh_inner,
+                    raw_opacity: raw_opac_inner,
+                    out_img: output.out_img.clone(),
+                    projected_splats: output.projected_splats.clone(),
+                    project_uniforms: output.project_uniforms,
+                    tile_offsets: output.aux.tile_offsets.clone(),
+                    compact_gid_from_isect: output.compact_gid_from_isect.clone(),
+                    render_mode,
+                    pass,
+                    global_from_compact_gid: output.global_from_compact_gid.clone(),
+                    background,
+                    img_size,
+                };
+                prep.finish(state, output.out_img)
+            }
+            OpsKind::UnTracked(prep) => prep.finish(output.out_img),
+        };
+
+        // Lift the remaining float aux onto the autodiff graph. None of these
+        // carry a backward — they only feed refine bookkeeping — but the
+        // extension trait's output is uniformly `RenderOutput<Self>`, so they
+        // ride along as untracked autodiff tensors. Int tensors share the
+        // inner backend's primitive and pass through unchanged.
+        let lift = <AutodiffMain as AutodiffBackend>::from_inner;
+
+        crate::RenderOutput {
+            out_img: img_ad,
+            aux: crate::RenderAuxInner {
+                num_visible: output.aux.num_visible,
+                num_intersections: output.aux.num_intersections,
+                visible: lift(output.aux.visible),
+                max_radius: lift(output.aux.max_radius),
+                tile_offsets: output.aux.tile_offsets,
+                img_size: output.aux.img_size,
+            },
+            projected_splats: lift(output.projected_splats),
+            compact_gid_from_isect: output.compact_gid_from_isect,
+            project_uniforms: output.project_uniforms,
+            global_from_compact_gid: output.global_from_compact_gid,
+        }
     }
 }
 
