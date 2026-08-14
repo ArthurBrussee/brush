@@ -193,7 +193,7 @@ pub struct SplatOutputDiff {
 }
 
 /// Equivalent to `Module::train()` for [`Splats`], routing through
-/// [`lift_to_autodiff`] so the autodiff `checkpointing` field is set. Use this
+/// `lift_to_autodiff` so the autodiff `checkpointing` field is set. Use this
 /// instead of `splats.train()` until upstream burn-dispatch fixes `from_inner`.
 pub fn lift_splats_to_autodiff(splats: Splats) -> Splats {
     let mip = splats.render_mip;
