@@ -2,7 +2,7 @@
 
 use brush_cube::{MainBackend, MainBackendBase};
 use crate::burn_glue::{
-    AutodiffMain, lift_to_autodiff, unwrap_ad_wgpu_float, wrap_ad_wgpu_float,
+    AutodiffMain, lift_to_autodiff, unwrap_ad_wgpu_float, wrap_ad_wgpu_float, wrap_wgpu_float,
 };
 use crate::{
     SplatOps,
@@ -294,8 +294,13 @@ pub async fn render_splats_with_pass(
     SplatOutputDiff {
         img: wrap_ad_wgpu_float(output.out_img),
         num_visible: output.aux.num_visible,
-        visible: wrap_ad_wgpu_float(output.aux.visible),
-        max_radius: wrap_ad_wgpu_float(output.aux.max_radius),
+        // Hand the aux back on the inner backend. The extension trait's
+        // output is uniformly `RenderOutput<Self>`, so these come back lifted,
+        // but they carry no gradient and the trainer mixes them with
+        // inner-backend tensors — leaving them autodiff-wrapped trips
+        // burn-dispatch's same-backend check.
+        visible: wrap_wgpu_float(output.aux.visible.primitive),
+        max_radius: wrap_wgpu_float(output.aux.max_radius.primitive),
         refine_weight_holder,
     }
 }
