@@ -1,6 +1,5 @@
 #![allow(clippy::match_wildcard_for_single_variants)]
 
-use brush_cube::{MainBackend, MainBackendBase};
 use crate::burn_glue::{
     AutodiffMain, lift_to_autodiff, unwrap_ad_wgpu_float, wrap_ad_wgpu_float, wrap_wgpu_float,
 };
@@ -11,10 +10,10 @@ use crate::{
     sh::sh_coeffs_for_degree,
     shaders::helpers::ProjectUniforms,
 };
+use brush_cube::{MainBackend, MainBackendBase};
 use burn::{
     backend::{
-        Backend, TensorMetadata,
-        AutodiffBackend,
+        AutodiffBackend, Backend, TensorMetadata,
         autodiff::{
             checkpoint::{base::Checkpointer, strategy::NoCheckpointing},
             grads::Gradients,

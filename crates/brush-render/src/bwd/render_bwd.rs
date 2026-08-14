@@ -1,7 +1,7 @@
-use brush_cube::{MainBackendBase, calc_cube_count_1d};
 use crate::gaussian_splats::SplatRenderMode;
 use crate::kernels::types::RasterizeUniformsLaunch;
 use crate::sh::sh_coeffs_for_degree;
+use brush_cube::{MainBackendBase, calc_cube_count_1d};
 use burn::backend::TensorMetadata;
 use burn::backend::ops::FloatTensorOps;
 use burn::backend::tensor::{FloatTensor, IntTensor};
@@ -40,12 +40,8 @@ impl SplatBwdOps for MainBackendBase {
         let v_combined = Self::float_zeros([num_visible, 10].into(), &device, FloatDType::F32);
 
         let tile_bounds = uvec2(
-            img_size
-                .x
-                .div_ceil(crate::shaders::helpers::TILE_WIDTH),
-            img_size
-                .y
-                .div_ceil(crate::shaders::helpers::TILE_WIDTH),
+            img_size.x.div_ceil(crate::shaders::helpers::TILE_WIDTH),
+            img_size.y.div_ceil(crate::shaders::helpers::TILE_WIDTH),
         );
 
         let hard_floats = client

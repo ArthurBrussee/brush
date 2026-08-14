@@ -11,9 +11,9 @@ use crate::{
 };
 use brush_dataset::scene::SceneBatch;
 use brush_loss::{ImageLossConfig, image_loss};
+use brush_render::bwd::render_splats;
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
-use brush_render::bwd::render_splats;
 use burn::{
     backend::wgpu::{AutoCompiler, WgpuDevice, WgpuRuntime},
     module::{AutodiffModule, Param},

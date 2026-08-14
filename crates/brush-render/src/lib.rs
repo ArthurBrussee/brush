@@ -1,8 +1,8 @@
 #![recursion_limit = "256"]
 
 use brush_cube::MainBackend as Wgpu;
-use burn::backend::{Autodiff, Backend};
 use burn::backend::tensor::FloatTensor;
+use burn::backend::{Autodiff, Backend};
 use camera::Camera;
 use clap::ValueEnum;
 use glam::Vec3;

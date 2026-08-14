@@ -11,6 +11,7 @@
 //! away from f16 quantization limits) so central differences are
 //! second-order accurate.
 
+use brush_render::bwd::render_splats_with_pass;
 use brush_render::gaussian_splats::RasterPass;
 use brush_render::{
     camera::Camera,
@@ -20,7 +21,6 @@ use brush_render::{
         radial_tangential_8::RadialTangential8Params, thin_prism_fisheye::ThinPrismFisheyeParams,
     },
 };
-use brush_render::bwd::render_splats_with_pass;
 
 /// Finite-diff tests need the C^1 cutoff so analytical and numerical
 /// agree at typical eps; production paths use the hard step.
