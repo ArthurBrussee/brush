@@ -65,6 +65,12 @@ skip = [
     # syn 2 -> 3 ecosystem transition (async-trait is on 3, most derives on 2).
     { name = 'syn' },
 
+    # burn pins spin 0.11, cubecl pins 0.12. Remove once they agree.
+    { name = 'spin' },
+
+    # pliron (via cubecl) is on downcast-rs 2, wayland-backend still on 1.
+    { name = 'downcast-rs' },
+
     # Other
     { name = "core-foundation" },     # Egui has two?
     { name = 'windows_x86_64_msvc' }, # Old version from winit.
