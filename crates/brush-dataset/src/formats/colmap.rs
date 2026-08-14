@@ -409,7 +409,7 @@ mod tests {
         )
     }
 
-    /// Write a minimal COLMAP text-format model plus tiny PNGs to `dir`.
+    /// Write a minimal COLMAP text-format model plus tiny PNG files to `dir`.
     /// `missing.png` is referenced in images.txt but has no image file, so the
     /// loader should skip it with a warning.
     async fn write_test_dataset(dir: &Path) {
