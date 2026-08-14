@@ -52,8 +52,14 @@ pub(crate) struct SplatGrads<B: Backend> {
     pub v_refine_weight: FloatTensor<B>,
 }
 
-/// Backward pass trait mirroring [`SplatOps`].
-pub(crate) trait SplatBwdOps: SplatOps {
+/// Concrete backward kernels behind [`SplatOps::render`].
+///
+/// Deliberately not `: SplatOps`. This is the set of backends that have
+/// backward kernels, which is smaller than the set you can render on:
+/// `AutodiffMain` and the generated `Dispatch` impl `SplatOps` but have no
+/// meaningful `rasterize_bwd`, since these run on concrete tensors and are
+/// called from the `Backward` impl on the inner backend.
+pub(crate) trait SplatBwdOps: Backend {
     /// Backward pass for rasterization.
     /// Returns sparse `v_combined` [`num_visible`, 10] indexed by `compact_gid`.
     #[allow(clippy::too_many_arguments)]
