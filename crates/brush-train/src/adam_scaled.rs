@@ -3,10 +3,13 @@ use burn::tensor::{ElementConversion, Tensor};
 /// Adam with per-parameter second-moment reduction (via [`AdamState::reduce_moment_2`])
 /// and per-component learning-rate scaling (via [`AdamState::scaling`]).
 ///
-/// Hand-rolled rather than wrapped in burn's `ModuleOptimizer`: the trainer
-/// edits momentum tensors in place during refine (split/prune) and swaps the
-/// transforms LR scaling every step, which needs direct typed access to the
-/// live state — burn only exposes it through host-side serialized records.
+/// Hand-rolled rather than built on burn's `Adam`, which has neither the
+/// per-component LR scaling nor the second-moment reduction below. The
+/// trainer also edits momentum tensors in place during refine (split/prune)
+/// and swaps the transforms LR scaling every step; burn's low-level
+/// `Optimizer` trait does now hand back live `Tensor` state rather than only
+/// serialized records, so that part is no longer a blocker — the two missing
+/// behaviours are what keep this separate.
 #[derive(Clone)]
 pub(crate) struct AdamScaled {
     beta_1: f32,
