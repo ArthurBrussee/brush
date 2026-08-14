@@ -36,18 +36,10 @@ pub mod validation;
 /// `DispatchTensorKind` variant for the active wgpu backend. burn-dispatch
 /// uses different variant names per backend; brush only ever runs on the
 /// `WebGpu` variant, so this macro hides the variant name from match arms.
-#[macro_export]
 macro_rules! wgpu_kind {
-    ($($t:tt)*) => {
-        $crate::__wgpu_kind!($($t)*)
-    };
-}
-
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __wgpu_kind {
     ($($t:tt)*) => { ::burn::backend::DispatchTensorKind::Wgpu($($t)*) };
 }
+pub(crate) use wgpu_kind;
 
 /// Trait for the gaussian splatting rendering pipeline.
 ///

@@ -39,13 +39,13 @@ use glam::Vec3;
 /// Slots 0..8 are projected splat gradients, slot 8 is the raw opacity
 /// gradient, slot 9 is the refinement weight.
 #[derive(Debug, Clone)]
-pub struct RasterizeGrads<B: Backend> {
+pub(crate) struct RasterizeGrads<B: Backend> {
     pub v_combined: FloatTensor<B>,
 }
 
 /// Final gradients w.r.t. splat inputs from the project backward pass.
 #[derive(Debug, Clone)]
-pub struct SplatGrads<B: Backend> {
+pub(crate) struct SplatGrads<B: Backend> {
     pub v_transforms: FloatTensor<B>,
     pub v_coeffs: FloatTensor<B>,
     pub v_raw_opac: FloatTensor<B>,
@@ -53,7 +53,7 @@ pub struct SplatGrads<B: Backend> {
 }
 
 /// Backward pass trait mirroring [`SplatOps`].
-pub trait SplatBwdOps: SplatOps {
+pub(crate) trait SplatBwdOps: SplatOps {
     /// Backward pass for rasterization.
     /// Returns sparse `v_combined` [`num_visible`, 10] indexed by `compact_gid`.
     #[allow(clippy::too_many_arguments)]
