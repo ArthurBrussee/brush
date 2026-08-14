@@ -4,8 +4,6 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
 use tokio::runtime::LocalRuntime;
@@ -62,19 +60,15 @@ impl Actor {
         // ride back to the caller with their original location + msg
         // (via `resume_unwind`), not flattened into a generic string.
         let (tx, rx) = oneshot::channel::<Result<R, tokio::task::JoinError>>();
-        let state = Arc::new(AtomicBool::new(false));
-        let state_task = state.clone();
         let setup: Setup = Box::new(move || {
             let user_task = tokio::task::spawn_local(f());
             // Waiter forwards the user task's join result to the caller.
             tokio::task::spawn_local(async move {
-                let result = user_task.await;
-                state_task.store(true, Ordering::SeqCst);
-                let _ = tx.send(result);
+                let _ = tx.send(user_task.await);
             });
         });
         let _ = self.tx.send(setup);
-        JoinHandle { rx, state }
+        JoinHandle { rx }
     }
 }
 
@@ -86,17 +80,11 @@ impl Actor {
 /// payload type are preserved.
 pub struct JoinHandle<R> {
     rx: oneshot::Receiver<Result<R, tokio::task::JoinError>>,
-    state: Arc<AtomicBool>,
 }
 
 impl<R> JoinHandle<R> {
     /// Drop the handle without awaiting.
     pub fn detach(self) {}
-
-    /// `true` once the task has finished.
-    pub fn is_finished(&self) -> bool {
-        self.state.load(Ordering::SeqCst)
-    }
 }
 
 impl<R> Future for JoinHandle<R> {

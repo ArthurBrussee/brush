@@ -1,67 +1,34 @@
-use burn::{
-    config::Config,
-    grad_clipping::GradientClippingConfig,
-    module::AutodiffModule,
-    optim::LearningRate,
-    optim::{
-        SimpleOptimizer,
-        adaptor::OptimizerAdaptor,
-        decay::{WeightDecay, WeightDecayConfig},
-    },
-    record::Record,
-    tensor::{Device, ElementConversion, Tensor},
-};
+use burn::tensor::{ElementConversion, Tensor};
 
-/// Adam with per-parameter second-moment reduction (via [`AdamState::reduce_moment_2`]).
+/// Adam with per-parameter second-moment reduction (via [`AdamState::reduce_moment_2`])
+/// and per-component learning-rate scaling (via [`AdamState::scaling`]).
+///
+/// Hand-rolled rather than built on burn's `Adam`, which has neither the
+/// per-component LR scaling nor the second-moment reduction below. The
+/// trainer also edits momentum tensors in place during refine (split/prune)
+/// and swaps the transforms LR scaling every step; burn's low-level
+/// `Optimizer` trait does now hand back live `Tensor` state rather than only
+/// serialized records, so that part is no longer a blocker — the two missing
+/// behaviours are what keep this separate.
 #[derive(Clone)]
 pub(crate) struct AdamScaled {
-    momentum: AdaptiveMomentum,
-    weight_decay: Option<WeightDecay>,
-}
-
-#[derive(Config, Debug)]
-pub(crate) struct AdamScaledConfig {
-    #[config(default = 0.9)]
-    beta_1: f32,
-    #[config(default = 0.999)]
-    beta_2: f32,
-    /// A value required for numerical stability.
-    #[config(default = 1e-5)]
-    epsilon: f32,
-    weight_decay: Option<WeightDecayConfig>,
-    grad_clipping: Option<GradientClippingConfig>,
-}
-
-#[derive(Clone)]
-struct AdaptiveMomentum {
     beta_1: f32,
     beta_2: f32,
     epsilon: f32,
 }
 
 /// Per-parameter momentum state. When `reduce_moment_2` is set on the owning
-/// [`AdamState`], `moment_2` has size 1 in trailing dims; `map_opt` callers
-/// must stay shape-agnostic along those.
-#[derive(Record, Clone)]
+/// [`AdamState`], `moment_2` has size 1 in trailing dims; [`AdamState::map_momentum`]
+/// callers must stay shape-agnostic along those.
+#[derive(Clone)]
 pub(crate) struct MomentumState<const D: usize> {
     pub moment_1: Tensor<D>,
     pub moment_2: Tensor<D>,
     pub time: usize,
 }
 
-impl<const D: usize> MomentumState<D> {
-    #[allow(clippy::wrong_self_convention)]
-    pub fn to_device(self, device: &Device) -> Self {
-        Self {
-            moment_1: self.moment_1.to_device(device),
-            moment_2: self.moment_2.to_device(device),
-            time: self.time,
-        }
-    }
-}
-
 /// Per-parameter optimizer state.
-#[derive(Record, Clone)]
+#[derive(Clone)]
 pub(crate) struct AdamState<const D: usize> {
     pub momentum: Option<MomentumState<D>>,
     /// Per-component learning rate scaling (e.g. different LR for means vs
@@ -73,88 +40,56 @@ pub(crate) struct AdamState<const D: usize> {
     pub reduce_moment_2: bool,
 }
 
-impl AdamScaledConfig {
-    pub(crate) fn init<M: AutodiffModule>(&self) -> OptimizerAdaptor<AdamScaled, M> {
-        let optim = AdamScaled {
-            momentum: AdaptiveMomentum {
-                beta_1: self.beta_1,
-                beta_2: self.beta_2,
-                epsilon: self.epsilon,
-            },
-            weight_decay: self.weight_decay.as_ref().map(WeightDecay::new),
-        };
-        let mut optim = OptimizerAdaptor::from(optim);
-        if let Some(config) = &self.grad_clipping {
-            optim = optim.with_grad_clipping(config.init());
+impl<const D: usize> AdamState<D> {
+    pub fn new(scaling: Option<Tensor<D>>, reduce_moment_2: bool) -> Self {
+        Self {
+            momentum: None,
+            scaling,
+            reduce_moment_2,
         }
-        optim
+    }
+
+    /// Apply `map_fn` to both momentum tensors (no-op before the first step).
+    /// `map_fn` must be shape-agnostic along trailing dims since `moment_2`
+    /// may have size-1 trailing dims under `reduce_moment_2`.
+    pub fn map_momentum(&mut self, map_fn: impl Fn(Tensor<D>) -> Tensor<D>) {
+        self.momentum = self.momentum.take().map(|mut moment| {
+            moment.moment_1 = map_fn(moment.moment_1);
+            moment.moment_2 = map_fn(moment.moment_2);
+            moment
+        });
     }
 }
 
-impl SimpleOptimizer for AdamScaled {
-    type State<const D: usize> = AdamState<D>;
+impl AdamScaled {
+    pub fn new(epsilon: f32) -> Self {
+        Self {
+            beta_1: 0.9,
+            beta_2: 0.999,
+            epsilon,
+        }
+    }
 
-    fn step<const D: usize>(
+    /// One Adam step for a single parameter. `tensor` and `grad` live on the
+    /// inner (non-autodiff) backend; `state` is updated in place.
+    pub fn step<const D: usize>(
         &self,
-        lr: LearningRate,
+        lr: f64,
         tensor: Tensor<D>,
-        mut grad: Tensor<D>,
-        state: Option<Self::State<D>>,
-    ) -> (Tensor<D>, Option<Self::State<D>>) {
-        let mut state_momentum = None;
-        let mut scaling = None;
-        let reduce = state.as_ref().is_some_and(|s| s.reduce_moment_2);
+        grad: &Tensor<D>,
+        state: &mut AdamState<D>,
+    ) -> Tensor<D> {
+        let (grad, momentum) = self.transform(grad, state.momentum.take(), state.reduce_moment_2);
+        state.momentum = Some(momentum);
 
-        if let Some(state) = state {
-            state_momentum = state.momentum;
-            scaling = state.scaling;
-        }
-
-        if let Some(weight_decay) = &self.weight_decay {
-            grad = weight_decay.transform(grad, tensor.clone());
-        }
-
-        let (grad, state_momentum) = self.momentum.transform(&grad, state_momentum, reduce);
-
-        let state = AdamState {
-            momentum: Some(state_momentum),
-            scaling: scaling.clone(),
-            reduce_moment_2: reduce,
-        };
-
-        let delta = if let Some(scale) = scaling {
-            grad * (scale * lr).unsqueeze()
+        let delta = if let Some(scale) = &state.scaling {
+            grad * (scale.clone() * lr).unsqueeze()
         } else {
             grad * lr
         };
-
-        (tensor - delta, Some(state))
+        tensor - delta
     }
 
-    fn to_device<const D: usize>(mut state: Self::State<D>, device: &Device) -> Self::State<D> {
-        state.momentum = state.momentum.map(|m| m.to_device(device));
-        state
-    }
-}
-
-/// Reduce to a single mean per row by averaging across all trailing dims (1..D).
-/// Result has size 1 in each trailing dim so it broadcasts back to the full shape.
-fn mean_trailing_dims<const D: usize>(t: Tensor<D>) -> Tensor<D> {
-    debug_assert!(D > 1, "mean_trailing_dims requires D > 1");
-    let shape = t.dims();
-    let n = shape[0];
-    let trailing_count: usize = shape[1..].iter().product();
-
-    // Single flatten + sum avoids one kernel launch per trailing dim.
-    let flat: Tensor<2> = t.flatten(1, D - 1);
-    let reduced: Tensor<2> = flat.sum_dim(1) / trailing_count as f32;
-
-    let mut target = [1usize; D];
-    target[0] = n;
-    reduced.reshape(target)
-}
-
-impl AdaptiveMomentum {
     fn transform<const D: usize>(
         &self,
         grad: &Tensor<D>,
@@ -210,4 +145,21 @@ impl AdaptiveMomentum {
         let grad = moment_1_corrected.div(moment_2_corrected.sqrt().add_scalar(self.epsilon));
         (grad, state)
     }
+}
+
+/// Reduce to a single mean per row by averaging across all trailing dims (1..D).
+/// Result has size 1 in each trailing dim so it broadcasts back to the full shape.
+fn mean_trailing_dims<const D: usize>(t: Tensor<D>) -> Tensor<D> {
+    debug_assert!(D > 1, "mean_trailing_dims requires D > 1");
+    let shape = t.dims();
+    let n = shape[0];
+    let trailing_count: usize = shape[1..].iter().product();
+
+    // Single flatten + sum avoids one kernel launch per trailing dim.
+    let flat: Tensor<2> = t.flatten(1, D - 1);
+    let reduced: Tensor<2> = flat.sum_dim(1) / trailing_count as f32;
+
+    let mut target = [1usize; D];
+    target[0] = n;
+    reduced.reshape(target)
 }

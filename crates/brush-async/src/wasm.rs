@@ -7,8 +7,6 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
 use tokio::sync::oneshot;
@@ -36,37 +34,21 @@ impl Actor {
         R: 'static,
     {
         let (tx, rx) = oneshot::channel::<R>();
-        let state = Arc::new(HandleState::default());
-        let state_task = state.clone();
         spawn_local(async move {
-            let r = f().await;
-            state_task.finished.store(true, Ordering::SeqCst);
-            let _ = tx.send(r);
+            let _ = tx.send(f().await);
         });
-        JoinHandle { rx, state }
+        JoinHandle { rx }
     }
-}
-
-#[derive(Default)]
-struct HandleState {
-    /// Set by the spawned task when it returns.
-    finished: AtomicBool,
 }
 
 /// Awaitable handle to the result of [`Actor::run`].
 pub struct JoinHandle<R> {
     rx: oneshot::Receiver<R>,
-    state: Arc<HandleState>,
 }
 
 impl<R> JoinHandle<R> {
     /// Drop the handle without awaiting.
     pub fn detach(self) {}
-
-    /// `true` once the task has finished.
-    pub fn is_finished(&self) -> bool {
-        self.state.finished.load(Ordering::SeqCst)
-    }
 }
 
 impl<R> Future for JoinHandle<R> {

@@ -381,3 +381,199 @@ fn build_camera_model(colmap_camera: &ColmapCamera) -> CameraModel {
         }
     }
 }
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use crate::config::LoadDatasetConfig;
+    use crate::formats::{DatasetLoadResult, load_dataset};
+    use brush_render::camera::focal_to_fov;
+    use brush_render::kernels::camera_model::CameraModel;
+    use brush_render::sh::rgb_to_sh;
+    use brush_vfs::BrushVfs;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    const IMG_W: u32 = 64;
+    const IMG_H: u32 = 48;
+    const FX: f64 = 80.0;
+    const FY: f64 = 70.0;
+    const CX: f64 = 30.0;
+    const CY: f64 = 20.0;
+
+    /// World-to-cam pose written to images.txt for `img1.png`: a 90° rotation
+    /// about Y plus a translation.
+    fn img1_w2c() -> (glam::Quat, glam::Vec3) {
+        (
+            glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            glam::vec3(1.0, 0.0, 2.0),
+        )
+    }
+
+    /// Write a minimal COLMAP text-format model plus tiny PNG files to `dir`.
+    /// `missing.png` is referenced in images.txt but has no image file, so the
+    /// loader should skip it with a warning.
+    async fn write_test_dataset(dir: &Path) {
+        let sparse = dir.join("sparse/0");
+        tokio::fs::create_dir_all(&sparse).await.unwrap();
+
+        let cameras = format!(
+            "# Camera list with one line of data per camera:\n\
+             #   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n\
+             1 PINHOLE {IMG_W} {IMG_H} {FX} {FY} {CX} {CY}\n"
+        );
+        tokio::fs::write(sparse.join("cameras.txt"), cameras)
+            .await
+            .unwrap();
+
+        let (q, t) = img1_w2c();
+        let images = format!(
+            "# Image list with two lines of data per image:\n\
+             #   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n\
+             #   POINTS2D[] as (X, Y, POINT3D_ID)\n\
+             1 1.0 0.0 0.0 0.0 1.0 2.0 3.0 1 img0.png\n\
+             \n\
+             2 {} {} {} {} {} {} {} 1 img1.png\n\
+             10.0 20.0 1 30.0 40.0 -1\n\
+             3 1.0 0.0 0.0 0.0 0.0 0.0 0.0 1 img2.png\n\
+             \n\
+             4 1.0 0.0 0.0 0.0 5.0 5.0 5.0 1 missing.png\n\
+             \n",
+            q.w, q.x, q.y, q.z, t.x, t.y, t.z
+        );
+        tokio::fs::write(sparse.join("images.txt"), images)
+            .await
+            .unwrap();
+
+        let points = "# 3D point list with one line of data per point:\n\
+                      #   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n\
+                      1 1.5 2.5 3.5 255 0 0 0.5 1 0\n\
+                      2 -1.0 0.0 1.0 0 255 0 0.5 2 1\n\
+                      3 0.0 1.0 0.0 0 0 255 0.5 3 0\n\
+                      4 2.0 2.0 2.0 128 128 128 0.5 1 1\n";
+        tokio::fs::write(sparse.join("points3D.txt"), points)
+            .await
+            .unwrap();
+
+        let images_dir = dir.join("images");
+        tokio::fs::create_dir_all(&images_dir).await.unwrap();
+        for name in ["img0.png", "img1.png", "img2.png"] {
+            let img = image::RgbImage::from_pixel(4, 3, image::Rgb([10, 20, 30]));
+            img.save(images_dir.join(name)).unwrap();
+        }
+    }
+
+    fn test_config(eval_split_every: Option<usize>) -> LoadDatasetConfig {
+        LoadDatasetConfig {
+            max_frames: None,
+            max_resolution: 1920,
+            eval_split_every,
+            subsample_frames: None,
+            subsample_points: None,
+            alpha_mode: None,
+            max_scene_batch_cache_size: 0,
+        }
+    }
+
+    async fn load_test_dataset(dir: &Path, eval_split_every: Option<usize>) -> DatasetLoadResult {
+        let vfs = Arc::new(BrushVfs::from_path(dir).await.unwrap());
+        load_dataset(vfs, &test_config(eval_split_every))
+            .await
+            .unwrap()
+    }
+
+    fn assert_vec3_close(a: glam::Vec3, b: glam::Vec3) {
+        assert!((a - b).length() < 1e-4, "expected {b:?}, got {a:?}");
+    }
+
+    #[tokio::test]
+    async fn loads_text_model() {
+        let dir = tempfile::tempdir().unwrap();
+        write_test_dataset(dir.path()).await;
+        let result = load_test_dataset(dir.path(), None).await;
+
+        // All three found images are train views; the missing one is skipped
+        // with a warning instead of failing the load.
+        let views = &result.dataset.train.views;
+        assert_eq!(views.len(), 3);
+        assert!(result.dataset.eval.is_none());
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("missing.png"));
+
+        // Intrinsics: fov derives from the written focal, and roundtrips back.
+        let cam = &views[0].camera;
+        assert!(matches!(cam.camera_model, CameraModel::Pinhole));
+        let expected_fov_x = focal_to_fov(FX, IMG_W, &CameraModel::Pinhole);
+        let expected_fov_y = focal_to_fov(FY, IMG_H, &CameraModel::Pinhole);
+        assert!((cam.fov_x - expected_fov_x).abs() < 1e-6);
+        assert!((cam.fov_y - expected_fov_y).abs() < 1e-6);
+        let focal = cam.focal(glam::uvec2(IMG_W, IMG_H));
+        assert!((focal.x - FX as f32).abs() < 1e-3);
+        assert!((focal.y - FY as f32).abs() < 1e-3);
+        let center = cam.center(glam::uvec2(IMG_W, IMG_H));
+        assert!((center.x - CX as f32).abs() < 1e-3);
+        assert!((center.y - CY as f32).abs() < 1e-3);
+
+        // Views are sorted by image name. img0 has identity rotation and
+        // translation (1, 2, 3) in world-to-cam, so cam-to-world is just the
+        // negated translation.
+        assert_vec3_close(views[0].camera.position, glam::vec3(-1.0, -2.0, -3.0));
+        // Note: angle_between amplifies ulp-level differences (acos near 1),
+        // so 1e-3 rad (~0.06 degrees) is as tight as is meaningful here.
+        assert!(views[0].camera.rotation.angle_between(glam::Quat::IDENTITY) < 1e-3);
+        // img2 sits at the origin.
+        assert_vec3_close(views[2].camera.position, glam::Vec3::ZERO);
+
+        // img1 has a non-trivial pose: compare against inverting the same
+        // world-to-cam transform that was written to images.txt.
+        let (q, t) = img1_w2c();
+        let cam_to_world = glam::Affine3A::from_rotation_translation(q, t).inverse();
+        let (_, expected_rot, expected_pos) = cam_to_world.to_scale_rotation_translation();
+        assert_vec3_close(views[1].camera.position, expected_pos);
+        assert!(
+            views[1].camera.rotation.angle_between(expected_rot) < 1e-3,
+            "expected {expected_rot:?}, got {:?}",
+            views[1].camera.rotation
+        );
+        // Sanity-check the hand-derived value too: -R^T * (1, 0, 2).
+        assert_vec3_close(views[1].camera.position, glam::vec3(2.0, 0.0, -1.0));
+
+        // Initial point cloud comes from points3D.txt.
+        let init = result.init_splat.expect("expected an initial point cloud");
+        assert_eq!(init.meta.total_splats, 4);
+        assert_eq!(init.data.means.len(), 4 * 3);
+        assert_eq!(&init.data.means[0..3], &[1.5, 2.5, 3.5]);
+        let sh_coeffs = init.data.sh_coeffs.expect("expected sh coefficients");
+        assert_eq!(sh_coeffs.len(), 4 * 3);
+        let expected_sh = rgb_to_sh(glam::vec3(1.0, 0.0, 0.0));
+        assert_eq!(&sh_coeffs[0..3], expected_sh.to_array().as_slice());
+    }
+
+    #[tokio::test]
+    async fn splits_eval_views() {
+        let dir = tempfile::tempdir().unwrap();
+        write_test_dataset(dir.path()).await;
+        let result = load_test_dataset(dir.path(), Some(2)).await;
+
+        // Every 2nd view (indices 0 and 2) goes to eval, the rest to train.
+        let train = &result.dataset.train.views;
+        let eval = &result
+            .dataset
+            .eval
+            .as_ref()
+            .expect("expected eval split")
+            .views;
+        assert_eq!(train.len(), 1);
+        assert_eq!(eval.len(), 2);
+
+        // Identify views by their distinct camera positions: img1 (the
+        // rotated view) trains, img0 and img2 evaluate.
+        let (q, t) = img1_w2c();
+        let expected_train_pos = glam::Affine3A::from_rotation_translation(q, t)
+            .inverse()
+            .translation
+            .into();
+        assert_vec3_close(train[0].camera.position, expected_train_pos);
+        assert_vec3_close(eval[0].camera.position, glam::vec3(-1.0, -2.0, -3.0));
+        assert_vec3_close(eval[1].camera.position, glam::Vec3::ZERO);
+    }
+}

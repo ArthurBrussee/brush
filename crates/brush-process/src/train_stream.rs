@@ -300,7 +300,7 @@ pub(crate) async fn train_stream(
         // then strip back to inner so the viewer slot sees plain splats.
         // `step` immediately replaces `splats` with the returned value, so we
         // can move it here instead of cloning every iteration.
-        let diff_splats = brush_render_bwd::burn_glue::lift_splats_to_autodiff(splats);
+        let diff_splats = brush_render::bwd::burn_glue::lift_splats_to_autodiff(splats);
         let (new_diff_splats, stats) = trainer.step(batch, diff_splats).await;
         splats = new_diff_splats.valid();
 

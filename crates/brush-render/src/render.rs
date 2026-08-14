@@ -42,6 +42,7 @@ impl SplatOps for MainBackendBase {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        _refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: RasterPass,
@@ -288,6 +289,9 @@ impl SplatOps for MainBackendBase {
                 global_from_compact_gid.clone().into_tensor_arg(),
                 visible.clone().into_tensor_arg(),
                 uniforms,
+                // Precomputed divisor for the tiles-per-row split in the
+                // per-pixel index math.
+                project_uniforms.tile_bounds[0],
                 bwd_info,
                 smooth_cutoff,
             );

@@ -1,7 +1,7 @@
 use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
 use brush_loss::{ImageLossConfig, image_loss};
+use brush_render::bwd::render_splats;
 use brush_render::gaussian_splats::Splats;
-use brush_render_bwd::render_splats;
 use burn::{
     prelude::Module,
     tensor::{Device, Int, Tensor, TensorData, s},

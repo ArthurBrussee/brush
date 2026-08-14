@@ -72,14 +72,6 @@ pub fn wrap_wgpu_float<const D: usize>(t: FloatTensor<MainBackend>) -> Tensor<D>
     })
 }
 
-/// Like [`wrap_wgpu_float`] for an int tensor.
-pub fn wrap_wgpu_int<const D: usize>(t: IntTensor<MainBackend>) -> Tensor<D, Int> {
-    Tensor::from_dispatch(DispatchTensor {
-        kind: wgpu_kind!(BackendTensor::Int(t)),
-        checkpointing: None,
-    })
-}
-
 /// Extract the inner `AutodiffTensor<MainBackend>` from a `Tensor<D>` on an
 /// autodiff-enabled Wgpu device. Panics on any other shape.
 pub fn unwrap_ad_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<AutodiffMain> {
@@ -156,7 +148,7 @@ pub fn detach_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
 /// inner/autodiff folds (e.g. `fold_min_scale`) need — a lifted constant then
 /// degrades to the inner backend on the next op and trips a cross-backend
 /// assert. Keep the hand-rolled lift.
-pub fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
+pub(crate) fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
     let dispatch: DispatchTensor = t.into_dispatch();
     match dispatch.kind {
         wgpu_kind!(BackendTensor::Float(inner)) => {
@@ -178,7 +170,7 @@ fn is_autodiff<const D: usize>(t: &Tensor<D>) -> bool {
 /// keeps some frozen tensors (e.g. the 3D-filter floor) on the inner backend
 /// but folds them against params that may be lifted to autodiff; this aligns
 /// both operands so dispatch ops don't trip a cross-backend assertion.
-pub fn match_backend<const D: usize, const DR: usize>(
+pub(crate) fn match_backend<const D: usize, const DR: usize>(
     t: Tensor<D>,
     reference: &Tensor<DR>,
 ) -> Tensor<D> {
@@ -218,6 +210,7 @@ impl SplatOps for Fusion<MainBackendBase> {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: crate::gaussian_splats::RasterPass,
@@ -235,6 +228,9 @@ impl SplatOps for Fusion<MainBackendBase> {
         let base_raw_opac = client
             .clone()
             .resolve_tensor_float::<MainBackendBase>(raw_opacities);
+        let base_refine_weight = client
+            .clone()
+            .resolve_tensor_float::<MainBackendBase>(refine_weight);
 
         // Run the full pipeline on MainBackendBase.
         let out = MainBackendBase::render(
@@ -243,6 +239,7 @@ impl SplatOps for Fusion<MainBackendBase> {
             base_transforms,
             base_sh_coeffs,
             base_raw_opac,
+            base_refine_weight,
             render_mode,
             background,
             pass,
@@ -300,41 +297,16 @@ impl SplatOps for Fusion<MainBackendBase> {
             }
         }
 
-        let out_img_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.out_img.shape(),
-            DType::F32,
-        );
-        let visible_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.aux.visible.shape(),
-            DType::F32,
-        );
-        let max_radius_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.aux.max_radius.shape(),
-            DType::F32,
-        );
-        let projected_splats_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.projected_splats.shape(),
-            DType::F32,
-        );
-        let tile_offsets_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.aux.tile_offsets.shape(),
-            DType::U32,
-        );
-        let compact_gid_from_isect_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.compact_gid_from_isect.shape(),
-            DType::U32,
-        );
-        let global_from_compact_gid_ir = TensorIr::uninit(
-            client.create_empty_handle(),
-            out.global_from_compact_gid.shape(),
-            DType::U32,
-        );
+        // Every output is a fresh handle the bind op fills in; only shape and
+        // dtype differ.
+        let new_out = |shape, dtype| TensorIr::uninit(client.create_empty_handle(), shape, dtype);
+        let out_img_ir = new_out(out.out_img.shape(), DType::F32);
+        let visible_ir = new_out(out.aux.visible.shape(), DType::F32);
+        let max_radius_ir = new_out(out.aux.max_radius.shape(), DType::F32);
+        let projected_splats_ir = new_out(out.projected_splats.shape(), DType::F32);
+        let tile_offsets_ir = new_out(out.aux.tile_offsets.shape(), DType::U32);
+        let compact_gid_from_isect_ir = new_out(out.compact_gid_from_isect.shape(), DType::U32);
+        let global_from_compact_gid_ir = new_out(out.global_from_compact_gid.shape(), DType::U32);
 
         let stream = StreamId::current();
         let desc = CustomOpIr::new(

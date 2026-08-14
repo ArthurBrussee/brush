@@ -28,10 +28,13 @@ version = 2
 ignore = [
     # Paste is unmaintained, used by Cube and rerun, wait for them to upgrade.
     "RUSTSEC-2024-0436",
-    # bincode is unmaintained, used by Cube and rerun, wait for them to upgrade.
-    "RUSTSEC-2025-0141",
     # ttf-parser is unmaintained, used transitively by winit.
     "RUSTSEC-2026-0192",
+    # quick-xml DoS advisories (fixed in 0.41). Only reachable through
+    # wayland-scanner, a build-time proc-macro parsing trusted protocol XML;
+    # wayland-scanner pins 0.39, wait for it to upgrade.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]
 
 [bans]
@@ -58,6 +61,21 @@ skip = [
 
     { name = 'thiserror' },
     { name = 'thiserror-impl' },
+
+    # syn 2 -> 3 ecosystem transition (async-trait is on 3, most derives on 2).
+    { name = 'syn' },
+
+    # burn pins spin 0.11, cubecl pins 0.12. Remove once they agree.
+    { name = 'spin' },
+
+    # pliron (via cubecl) is on downcast-rs 2, wayland-backend still on 1.
+    { name = 'downcast-rs' },
+
+    # rerun's re_auth is on base64 0.23, arrow/reqwest/tonic still on 0.22.
+    { name = 'base64' },
+
+    # eframe 0.36 moved to pollster 1.0, rfd (latest 0.17.2) still on 0.4.
+    { name = 'pollster' },
 
     # Other
     { name = "core-foundation" },     # Egui has two?

@@ -292,3 +292,87 @@ pub async fn run_cli_ui(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parses_source_and_overrides() {
+        let cli = Cli::try_parse_from([
+            "brush-cli",
+            "some/dataset/path",
+            "--total-train-iters",
+            "50",
+            "--eval-split-every",
+            "2",
+            "--max-resolution",
+            "512",
+            "--sh-degree",
+            "2",
+            "--seed",
+            "7",
+        ])
+        .unwrap();
+
+        assert!(matches!(
+            &cli.source,
+            Some(DataSource::Path(p)) if p == "some/dataset/path"
+        ));
+        // Passing a source flips the viewer default off.
+        assert!(!cli.with_viewer);
+
+        let ts = &cli.train_stream;
+        assert_eq!(ts.train_config.total_train_iters, 50);
+        assert_eq!(ts.train_config.total_iters(), 50); // No LOD levels by default.
+        assert_eq!(ts.load_config.eval_split_every, Some(2));
+        assert_eq!(ts.load_config.max_resolution, 512);
+        assert_eq!(ts.model_config.sh_degree, 2);
+        assert_eq!(ts.process_config.seed, 7);
+
+        // A source without a viewer is a valid combination.
+        assert!(cli.validate().is_ok());
+    }
+
+    #[test]
+    fn parses_url_source() {
+        let cli = Cli::try_parse_from(["brush-cli", "https://example.com/data.zip"]).unwrap();
+        assert!(matches!(
+            &cli.source,
+            Some(DataSource::Url(u)) if u == "https://example.com/data.zip"
+        ));
+    }
+
+    #[test]
+    fn defaults_to_viewer_without_source() {
+        let cli = Cli::try_parse_from(["brush-cli"]).unwrap();
+        assert!(cli.source.is_none());
+        assert!(cli.with_viewer);
+        // Viewer without a source is valid (brush-app's default mode).
+        assert!(cli.validate().is_ok());
+    }
+
+    #[test]
+    fn viewer_flag_with_source() {
+        let cli = Cli::try_parse_from(["brush-cli", "some/path", "--with-viewer"]).unwrap();
+        assert!(cli.with_viewer);
+        assert!(cli.source.is_some());
+        assert!(cli.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_headless_without_source() {
+        let mut cli = Cli::try_parse_from(["brush-cli"]).unwrap();
+        cli.with_viewer = false;
+        let Err(err) = cli.validate() else {
+            panic!("expected validation error")
+        };
+        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn rejects_unknown_flag() {
+        assert!(Cli::try_parse_from(["brush-cli", "--not-a-real-flag"]).is_err());
+    }
+}

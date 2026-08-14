@@ -143,17 +143,18 @@ impl LpipsModel {
 }
 
 pub fn load_vgg_lpips(device: &Device) -> LpipsModel {
-    use burn::record::{BinBytesRecorder, HalfPrecisionSettings, Recorder};
+    use burn::store::ModuleRecord;
+    use burn::tensor::Bytes;
     let model = LpipsModel::new(device);
 
+    // Weights are stored as f16 burnpack; cast up to the model's f32 on load.
     #[allow(clippy::large_include_file)]
-    let bytes = include_bytes!("../burn_mapped.bin");
+    static PACKED_WEIGHTS: &[u8] = include_bytes!("../burn_mapped.bpk");
 
-    model.load_record(
-        BinBytesRecorder::<HalfPrecisionSettings, &[u8]>::default()
-            .load(bytes, device)
-            .expect("Should decode state successfully"),
-    )
+    let record = ModuleRecord::from_bytes(Bytes::from_bytes_vec(PACKED_WEIGHTS.to_vec()))
+        .expect("Should decode packed weights")
+        .cast_to_module_dtype();
+    model.load_record(record)
 }
 
 #[cfg(test)]

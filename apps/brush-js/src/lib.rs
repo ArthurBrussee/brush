@@ -427,7 +427,12 @@ async fn bridge_config_callback(
 fn tensor_buffer_js<const D: usize>(tensor: burn::tensor::Tensor<D>) -> Option<JsValue> {
     let cube_tensor = brush_render::burn_glue::resolve_to_cube_float::<D>(tensor);
     let resource = cube_tensor.client.get_resource(cube_tensor.handle).ok()?;
-    resource.resource().buffer.as_webgpu().map(|w| w.raw_js())
+    // Upstream wgpu 30 returns the raw `web_sys::GpuBuffer` handle directly.
+    resource
+        .resource()
+        .buffer
+        .as_webgpu()
+        .map(|w| JsValue::from(w.clone()))
 }
 
 fn js_err_str(s: &str) -> JsValue {

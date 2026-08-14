@@ -184,6 +184,8 @@ async fn render_raw(
         cube_tensor(device, [n, 10], &transforms),
         cube_tensor(device, [n, 1, 3], dc),
         cube_tensor(device, [n], opac),
+        // Unused on the non-autodiff path.
+        cube_tensor(device, [1], &[0.0]),
         mode,
         glam::Vec3::ZERO,
         brush_render::gaussian_splats::RasterPass::Forward,
@@ -506,7 +508,8 @@ async fn fuzz_bwd_random_scenes_gradients_are_finite() {
         let device_d = burn::tensor::Device::from(device.clone()).autodiff();
         let splats = Splats::from_raw(means, rots, ls, dc, opac, mode, &device_d);
         let diff =
-            brush_render_bwd::render_splats(splats.clone(), &cam, img_size, glam::Vec3::ZERO).await;
+            brush_render::bwd::render_splats(splats.clone(), &cam, img_size, glam::Vec3::ZERO)
+                .await;
         splats.bwd_validate(diff.img.mean()).await;
     }
 }
@@ -542,7 +545,7 @@ async fn fuzz_bwd_extreme_inputs_stay_finite() {
                 &device_d,
             );
             let diff =
-                brush_render_bwd::render_splats(splats.clone(), &cam, img_size, glam::Vec3::ZERO)
+                brush_render::bwd::render_splats(splats.clone(), &cam, img_size, glam::Vec3::ZERO)
                     .await;
             splats.bwd_validate(diff.img.mean()).await;
         }

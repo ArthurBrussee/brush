@@ -38,23 +38,20 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-workspace-crates: true
 
-      - name: check --all-features
-        run: cargo check --locked --workspace --all-features --all-targets
+      - name: Rustfmt
+        run: cargo fmt --all -- --check
+
+      # clippy subsumes `cargo check` (same lints plus more), so no separate
+      # check step for the all-features config.
+      - name: clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: check --no-default-features
         run: cargo check --locked --workspace --no-default-features --all-targets
 
-      - name: Rustfmt
-        run: cargo fmt --all -- --check
-
+      # `--document-private-items` is a superset of the public-docs run.
       - name: cargo doc
-        run: cargo doc --workspace --no-deps --all-features
-
-      - name: cargo doc --document-private-items
         run: cargo doc --workspace --document-private-items --no-deps --all-features
-
-      - name: clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   # ---------------------------------------------------------------------------
 
@@ -86,18 +83,10 @@ jobs:
 
   # ---------------------------------------------------------------------------
 
+  # One job for all targets: deny.toml's [graph] targets list drives the
+  # resolution, so no per-target matrix is needed.
   cargo-deny:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-          - target: aarch64-linux-android
-          - target: wasm32-unknown-unknown
-          - target: x86_64-pc-windows-msvc
-          - target: x86_64-unknown-linux-musl
-
-    name: cargo-deny ${{ matrix.target }}
+    name: cargo-deny
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
@@ -106,7 +95,6 @@ jobs:
           rust-version: "1.95.0"
           log-level: error
           command: check
-          arguments: --target  ${{ matrix.target }}
 
   # ---------------------------------------------------------------------------
 
@@ -130,8 +118,7 @@ jobs:
           cache-workspace-crates: true
           cache-on-failure: true
 
+      # Doc-tests are included in the default `cargo test` target set, so no
+      # separate --doc step is needed.
       - name: Run tests
         run: cargo test --all --all-features
-
-      - name: Run doc-tests
-        run: cargo test --all --all-features --doc

@@ -3,12 +3,9 @@ use burn_wgpu::{AutoCompiler, WgpuDevice, WgpuRuntime};
 use bytemuck::Pod;
 
 pub use burn_cubecl::cubecl::prelude::KernelId;
-use burn_cubecl::cubecl::server::MetadataBindingInfo;
 pub use burn_cubecl::cubecl::{CubeCount, CubeDim, client::ComputeClient, server::ComputeServer};
 pub use burn_cubecl::cubecl::{CubeTask, Runtime};
 pub use burn_cubecl::{CubeRuntime, tensor::CubeTensor};
-
-use bytemuck::NoUninit;
 
 // Re-export bytemuck for use by generated code
 pub use bytemuck;
@@ -28,13 +25,6 @@ pub fn calc_cube_count_1d(num_elements: u32, workgroup_size: u32) -> CubeCount {
     } else {
         CubeCount::Static(total_wgs, 1, 1)
     }
-}
-
-pub fn calc_cube_count_3d(sizes: [u32; 3], workgroup_size: [u32; 3]) -> CubeCount {
-    let wg_x = sizes[0].div_ceil(workgroup_size[0]);
-    let wg_y = sizes[1].div_ceil(workgroup_size[1]);
-    let wg_z = sizes[2].div_ceil(workgroup_size[2]);
-    CubeCount::Static(wg_x, wg_y, wg_z)
 }
 
 // Reserve a buffer from the client for the given shape.
@@ -80,28 +70,5 @@ pub fn create_tensor_from_slice<T: Pod>(
         Shape::new([data.len()]),
         handle,
         dtype,
-    )
-}
-
-pub fn create_meta_binding<T: NoUninit>(val: T) -> MetadataBindingInfo {
-    // Copy data to u64. If length of T is not % 8, this will correctly
-    // pad with zeros.
-    let data: Vec<u64> = bytemuck::pod_collect_to_vec(&[val]);
-    MetadataBindingInfo::new(data, 0)
-}
-
-/// Create a buffer to use as a shader uniform, from a structure.
-pub fn create_uniform_buffer<R: CubeRuntime, T: NoUninit>(
-    val: T,
-    device: &R::Device,
-    client: &ComputeClient<R>,
-) -> CubeTensor<R> {
-    let binding = create_meta_binding(val);
-    CubeTensor::new_contiguous(
-        client.clone(),
-        device.clone(),
-        Shape::new([binding.data.len()]),
-        client.create_from_slice(bytemuck::cast_slice(&binding.data)),
-        DType::I32,
     )
 }

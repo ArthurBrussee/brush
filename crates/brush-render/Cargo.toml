@@ -11,13 +11,17 @@ brush-cube.path = "../brush-cube"
 brush-prefix-sum.path = "../brush-prefix-sum"
 brush-sort.path = "../brush-sort"
 
-burn = { workspace = true, features = ["wgpu"] }
+# Force the WebGPU backend on every platform. We previously used Vulkan
+# on Linux/Windows and Metal on macOS, but both produced random crashes
+# (see #423 / #395 — buffer-destroyed validation errors, ARM/AMD instability).
+# WebGPU runs through wgpu's WGSL frontend everywhere so we avoid the
+# per-backend cubecl codegen divergence.
+burn = { workspace = true, features = ["wgpu", "autodiff"] }
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
 
-assert_approx_eq.workspace = true
 glam.workspace = true
 clap.workspace = true
 serde.workspace = true
@@ -30,12 +34,8 @@ tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 [features]
 debug-validation = []
 
-# Force the WebGPU backend on every platform. We previously used Vulkan
-# on Linux/Windows and Metal on macOS, but both produced random crashes
-# (see #423 / #395 — buffer-destroyed validation errors, ARM/AMD instability).
-# WebGPU runs through wgpu's WGSL frontend everywhere so we avoid the
-# per-backend cubecl codegen divergence.
 [dev-dependencies]
+assert_approx_eq.workspace = true
 wasm-bindgen-test = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]

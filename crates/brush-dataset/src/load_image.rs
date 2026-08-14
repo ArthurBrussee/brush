@@ -116,22 +116,6 @@ impl LoadImage {
         (cap * self.scale).min(1.0)
     }
 
-    /// Dimensions `load()` would return, computed from the header without
-    /// decoding pixels. Useful for displaying the real training resolution
-    /// without paying for a full decode.
-    pub async fn output_dimensions(&self) -> image::ImageResult<(u32, u32)> {
-        let (w, h) = self.dimensions().await?;
-        let scale = self.output_scale(w, h);
-        if scale < 1.0 {
-            Ok((
-                (w as f32 * scale).max(1.0) as u32,
-                (h as f32 * scale).max(1.0) as u32,
-            ))
-        } else {
-            Ok((w, h))
-        }
-    }
-
     /// Read just the image dimensions from the file header, without decoding
     /// the pixels. Much cheaper than `load()` when only the size is needed
     /// (e.g. formats that carry intrinsics but not image dimensions).
