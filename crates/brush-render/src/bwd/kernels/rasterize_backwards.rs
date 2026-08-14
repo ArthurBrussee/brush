@@ -16,11 +16,11 @@ use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;
 
-use brush_render::kernels::helpers::{
+use crate::kernels::helpers::{
     ALPHA_CUTOFF_MID, TILE_SIZE, TILE_WIDTH, alpha_cutoff_weight, alpha_cutoff_weight_deriv,
     read_projected_splat,
 };
-use brush_render::kernels::types::{RasterizeUniforms, Splat, Sym2};
+use crate::kernels::types::{RasterizeUniforms, Splat, Sym2};
 
 // SPLAT_BATCH = 32 = one Apple-Silicon SIMD group, so the per-iter
 // sync_cube collapses to a SIMD-lockstep no-op on hardware.

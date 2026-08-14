@@ -11,7 +11,6 @@ debug-validation = ["brush-train/debug-validation"]
 
 [dependencies]
 brush-render.path = "../brush-render"
-brush-render-bwd.path = "../brush-render-bwd"
 brush-vfs.path = "../brush-vfs"
 brush-serde.path = "../brush-serde"
 

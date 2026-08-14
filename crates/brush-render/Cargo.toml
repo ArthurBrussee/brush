@@ -16,7 +16,7 @@ brush-sort.path = "../brush-sort"
 # (see #423 / #395 — buffer-destroyed validation errors, ARM/AMD instability).
 # WebGPU runs through wgpu's WGSL frontend everywhere so we avoid the
 # per-backend cubecl codegen divergence.
-burn = { workspace = true, features = ["wgpu"] }
+burn = { workspace = true, features = ["wgpu", "autodiff"] }
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true

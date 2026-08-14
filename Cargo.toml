@@ -13,7 +13,6 @@ members = [
     "crates/brush-prefix-sum",
     "crates/brush-process",
     "crates/brush-render",
-    "crates/brush-render-bwd",
     "crates/brush-rerun",
     "crates/brush-serde",
     "crates/brush-serde-macros",

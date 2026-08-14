@@ -1,13 +1,13 @@
 //! Backward projection.
 
 use brush_cube::{Vec2, is_finite_f32, sigmoid};
-use brush_render::kernels::camera_model::CameraModel;
-use brush_render::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
-use brush_render::kernels::helpers::{
+use crate::kernels::camera_model::CameraModel;
+use crate::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
+use crate::kernels::helpers::{
     calc_cov2d, compensate_cov2d, read_quat_unorm, read_scale, world_to_cam,
 };
-use brush_render::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp, sh_color_viewdir_vjp};
-use brush_render::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
+use crate::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp, sh_color_viewdir_vjp};
+use crate::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
 use burn_cubecl::cubecl;
 use burn_cubecl::cubecl::cube;
 use burn_cubecl::cubecl::prelude::*;

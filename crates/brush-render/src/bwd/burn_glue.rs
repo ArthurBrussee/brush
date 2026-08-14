@@ -1,10 +1,10 @@
 #![allow(clippy::match_wildcard_for_single_variants)]
 
 use brush_cube::{MainBackend, MainBackendBase};
-use brush_render::burn_glue::{
+use crate::burn_glue::{
     AutodiffMain, lift_to_autodiff, unwrap_ad_wgpu_float, wrap_ad_wgpu_float, wrap_wgpu_float,
 };
-use brush_render::{
+use crate::{
     SplatOps,
     camera::Camera,
     gaussian_splats::{SplatRenderMode, Splats, fold_min_scale},
@@ -101,7 +101,7 @@ struct GaussianBackwardState<B: Backend> {
     tile_offsets: IntTensor<B>,
 
     render_mode: SplatRenderMode,
-    pass: brush_render::gaussian_splats::RasterPass,
+    pass: crate::gaussian_splats::RasterPass,
     background: Vec3,
     img_size: glam::UVec2,
 }
@@ -225,13 +225,13 @@ pub async fn render_splats(
         camera,
         img_size,
         background,
-        brush_render::gaussian_splats::RasterPass::Backward,
+        crate::gaussian_splats::RasterPass::Backward,
     )
     .await
 }
 
 /// Like [`render_splats`] but lets the caller pick the
-/// [`brush_render::gaussian_splats::RasterPass`]. Used by the finite-diff
+/// [`crate::gaussian_splats::RasterPass`]. Used by the finite-diff
 /// test suite to enable the C^1 smooth-cutoff surrogate; production code
 /// should use [`render_splats`].
 pub async fn render_splats_with_pass(
@@ -239,14 +239,14 @@ pub async fn render_splats_with_pass(
     camera: &Camera,
     img_size: glam::UVec2,
     background: Vec3,
-    pass: brush_render::gaussian_splats::RasterPass,
+    pass: crate::gaussian_splats::RasterPass,
 ) -> SplatOutputDiff {
     splats.clone().validate_values().await;
 
     let device = splats.device();
     assert!(
         device.is_autodiff(),
-        "brush_render_bwd::render_splats requires an autodiff-enabled device"
+        "brush_render::bwd::render_splats requires an autodiff-enabled device"
     );
 
     let refine_weight_holder = Tensor::<1>::zeros([1], &device).require_grad();

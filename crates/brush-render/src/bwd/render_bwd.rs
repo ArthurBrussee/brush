@@ -1,7 +1,7 @@
 use brush_cube::{MainBackendBase, calc_cube_count_1d};
-use brush_render::gaussian_splats::SplatRenderMode;
-use brush_render::kernels::types::RasterizeUniformsLaunch;
-use brush_render::sh::sh_coeffs_for_degree;
+use crate::gaussian_splats::SplatRenderMode;
+use crate::kernels::types::RasterizeUniformsLaunch;
+use crate::sh::sh_coeffs_for_degree;
 use burn::backend::TensorMetadata;
 use burn::backend::ops::FloatTensorOps;
 use burn::backend::tensor::{FloatTensor, IntTensor};
@@ -14,9 +14,9 @@ use burn_cubecl::kernel::into_contiguous;
 use burn_wgpu::WgpuRuntime;
 use glam::{Vec3, uvec2};
 
-use crate::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};
-use crate::kernels;
-use brush_render::shaders::helpers::ProjectUniforms;
+use crate::bwd::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};
+use crate::bwd::kernels;
+use crate::shaders::helpers::ProjectUniforms;
 
 impl SplatBwdOps for MainBackendBase {
     fn rasterize_bwd(
@@ -42,10 +42,10 @@ impl SplatBwdOps for MainBackendBase {
         let tile_bounds = uvec2(
             img_size
                 .x
-                .div_ceil(brush_render::shaders::helpers::TILE_WIDTH),
+                .div_ceil(crate::shaders::helpers::TILE_WIDTH),
             img_size
                 .y
-                .div_ceil(brush_render::shaders::helpers::TILE_WIDTH),
+                .div_ceil(crate::shaders::helpers::TILE_WIDTH),
         );
 
         let hard_floats = client

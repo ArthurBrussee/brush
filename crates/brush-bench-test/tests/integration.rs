@@ -12,7 +12,7 @@ use brush_render::{
     gaussian_splats::{SplatRenderMode, Splats},
     kernels::camera_model::CameraModel::Pinhole,
 };
-use brush_render_bwd::render_splats;
+use brush_render::bwd::render_splats;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::module::AutodiffModule;
 use burn::tensor::{Device, TensorData};

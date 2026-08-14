@@ -1010,7 +1010,6 @@ dependencies = [
  "brush-cube",
  "brush-dataset",
  "brush-render",
- "brush-render-bwd",
  "brush-rerun",
  "brush-train",
  "burn",
@@ -1166,7 +1165,6 @@ dependencies = [
  "brush-async",
  "brush-dataset",
  "brush-render",
- "brush-render-bwd",
  "brush-rerun",
  "brush-serde",
  "brush-train",
@@ -1211,21 +1209,6 @@ dependencies = [
  "tokio",
  "tracing",
  "wasm-bindgen-test",
-]
-
-[[package]]
-name = "brush-render-bwd"
-version = "0.3.0"
-dependencies = [
- "brush-cube",
- "brush-render",
- "burn",
- "burn-cubecl",
- "burn-fusion",
- "burn-ir",
- "burn-wgpu",
- "glam",
- "tracing",
 ]
 
 [[package]]
@@ -1304,7 +1287,6 @@ dependencies = [
  "brush-dataset",
  "brush-loss",
  "brush-render",
- "brush-render-bwd",
  "brush-serde",
  "burn",
  "burn-cubecl",

@@ -7,7 +7,7 @@ use brush_render::{
     kernels::camera_model::CameraModel::Pinhole,
     render_splats,
 };
-use brush_render_bwd::render_splats as render_splats_diff;
+use brush_render::bwd::render_splats as render_splats_diff;
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
     module::AutodiffModule,

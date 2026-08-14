@@ -6,12 +6,11 @@ readme.workspace = true
 license.workspace = true
 
 [features]
-debug-validation = ["brush-render-bwd/debug-validation"]
+debug-validation = ["brush-render/debug-validation"]
 
 [dependencies]
 brush-render.path = "../brush-render"
 brush-dataset.path = "../brush-dataset"
-brush-render-bwd.path = "../brush-render-bwd"
 brush-loss.path = "../brush-loss"
 brush-serde.path = "../brush-serde"
 lpips.path = "../lpips"
