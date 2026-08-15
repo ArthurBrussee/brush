@@ -106,6 +106,7 @@ burn-cubecl = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 burn-ir = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", branch = "main", features = [
     "exclusive-memory-only",
+    "metal",
 ] }
 burn-fusion = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 # `pytorch` is only needed by lpips-convert (one-off weight conversion tool).
@@ -344,26 +345,27 @@ naga                 = { git = "https://github.com/ArthurBrussee/wgpu", branch =
 # cubecl-runtime at the rev burn pins doesn't build for wasm (missing
 # wasm-bindgen-futures dep; cubecl-common serde/hash features only enabled in
 # the desktop target section). Fixed on the fork branch (= burn's pinned rev +
-# two manifest commits). The whole family must be patched together — patching
-# one crate would split the tree via its path-deps. Drop once upstream takes
-# the fix and burn re-pins.
+# two manifest commits), plus the barrier fix for `workgroup_uniform_load`
+# that native MSL needs (tracel-ai/cubecl#1525). The whole family must be
+# patched together — patching one crate would split the tree via its
+# path-deps. Drop once upstream takes both and burn re-pins.
 [patch."https://github.com/tracel-ai/cubecl"]
-cubecl                 = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-common          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-core            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-cpp             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-cpu             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-cuda            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-environment     = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-hip             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-ir              = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-macros          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-macros-internal = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-opt             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-runtime         = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-std             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-wgpu            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
-cubecl-zspace          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "fix/runtime-wasm-bindgen-futures" }
+cubecl                 = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-common          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-core            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-cpp             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-cpu             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-cuda            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-environment     = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-hip             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-ir              = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-macros          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-macros-internal = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-opt             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-runtime         = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-std             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-wgpu            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
+cubecl-zspace          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
 
 # To iterate locally on a checkout, swap each `git = "..."` for
 # `path = "../cubecl/crates/<name>"`.

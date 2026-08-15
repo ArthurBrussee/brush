@@ -2540,7 +2540,7 @@ dependencies = [
 [[package]]
 name = "cubecl"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "cubecl-core",
  "cubecl-cpu",
@@ -2557,7 +2557,7 @@ dependencies = [
 [[package]]
 name = "cubecl-common"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "bytemuck",
  "cfg_aliases",
@@ -2581,7 +2581,7 @@ dependencies = [
 [[package]]
 name = "cubecl-core"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "bitflags 2.13.1",
  "bytemuck",
@@ -2612,7 +2612,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cpp"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2635,7 +2635,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cpu"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "bytemuck",
  "crossbeam-utils",
@@ -2663,7 +2663,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cuda"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2682,7 +2682,7 @@ dependencies = [
 [[package]]
 name = "cubecl-environment"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "async-channel",
  "backtrace",
@@ -2717,7 +2717,7 @@ dependencies = [
 [[package]]
 name = "cubecl-hip"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2747,7 +2747,7 @@ dependencies = [
 [[package]]
 name = "cubecl-ir"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "bumpalo",
  "cubecl-common",
@@ -2777,7 +2777,7 @@ dependencies = [
 [[package]]
 name = "cubecl-macros"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "cubecl-common",
  "darling 0.24.0",
@@ -2795,7 +2795,7 @@ dependencies = [
 [[package]]
 name = "cubecl-macros-internal"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "darling 0.24.0",
  "inflections",
@@ -2807,7 +2807,7 @@ dependencies = [
 [[package]]
 name = "cubecl-opt"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "cubecl-common",
  "cubecl-core",
@@ -2829,7 +2829,7 @@ dependencies = [
 [[package]]
 name = "cubecl-runtime"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -2859,7 +2859,7 @@ dependencies = [
 [[package]]
 name = "cubecl-std"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "cubecl-common",
  "cubecl-core",
@@ -2876,7 +2876,7 @@ dependencies = [
 [[package]]
 name = "cubecl-wgpu"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -2894,6 +2894,9 @@ dependencies = [
  "hashbrown 0.17.1",
  "itertools 0.15.0",
  "log",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+ "objc2-metal 0.3.2",
  "pliron",
  "sanitize-filename",
  "thiserror 2.0.20",
@@ -2905,7 +2908,7 @@ dependencies = [
 [[package]]
 name = "cubecl-zspace"
 version = "0.11.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=fix%2Fruntime-wasm-bindgen-futures#114e71a914b4890cf1a59b0d9c061bdc1ad4f7fa"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=msl-trial#0e0a3116fbf1afffa11ac630133435ab4402cbde"
 dependencies = [
  "derive-new",
  "serde",
@@ -3853,9 +3856,9 @@ dependencies = [
 
 [[package]]
 name = "error-code"
-version = "3.3.2"
+version = "3.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
+checksum = "05d95ad4acff85fa844260e88b8abd91a1508473086519f4e0a64da21f46dded"
 
 [[package]]
 name = "etcetera"
@@ -6349,6 +6352,7 @@ checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
  "bitflags 2.13.1",
  "block2 0.6.2",
+ "libc",
  "objc2 0.6.4",
  "objc2-core-foundation",
 ]
@@ -6406,7 +6410,9 @@ checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
 dependencies = [
  "bitflags 2.13.1",
  "block2 0.6.2",
+ "dispatch2",
  "objc2 0.6.4",
+ "objc2-core-foundation",
  "objc2-foundation 0.3.2",
 ]
 
@@ -10467,9 +10473,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.24.0"
+version = "1.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf3923a6f5c4c6382e0b653c4117f48d631ea17f38ed86e2a828e6f7412f5239"
+checksum = "2cefc03fd367c0c6d4305de1b312cf00248c4114f4a0418ce6a6af769e3b0bd9"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
