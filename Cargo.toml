@@ -28,7 +28,7 @@ default-members = ["apps/brush-app"]
 
 [workspace.package]
 edition = "2024"
-version = "0.3.0"
+version = "1.0.0"
 readme = "README.md"
 license = "Apache-2.0"
 repository = "https://github.com/ArthurBrussee/brush"
