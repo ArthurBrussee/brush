@@ -21,3 +21,10 @@ wasm-logger = "0.2"
 
 [lints]
 workspace = true
+
+# On macOS compile kernels to MSL rather than going through wgpu's WGSL
+# frontend. This has to be target-gated: the feature turns on cubecl's msl
+# path for the whole graph, and on other platforms that leaks into WGSL
+# codegen (it starts emitting `vec4<u8>`, which WGSL has no such type for).
+[target.'cfg(target_os = "macos")'.dependencies]
+burn-wgpu = { workspace = true, features = ["metal"] }
