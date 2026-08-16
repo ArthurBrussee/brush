@@ -34,6 +34,7 @@ pub async fn burn_init_setup() -> WgpuDevice {
     burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
         .await;
     connect_device(WgpuDevice::DefaultDevice);
+    brush_cube::pin_bool_store(&WgpuDevice::DefaultDevice);
     WgpuDevice::DefaultDevice
 }
 

@@ -72,3 +72,27 @@ pub fn create_tensor_from_slice<T: Pod>(
         dtype,
     )
 }
+
+/// Pin bool tensors to u32 storage.
+///
+/// burn flips `WgpuDevice`'s default bool storage to u8 as soon as the `metal`
+/// feature is on, but cubecl picks the shader compiler at *runtime*: a GPU that
+/// can't do native MSL (a paravirtual one, say) falls back to WGSL, which has
+/// no u8 type, so kernels fail to compile with `vec4<u8>`. u32 is valid under
+/// both compilers, so pin it instead of depending on which one we land on.
+///
+/// Costs 3 bytes per element on the handful of 1-D masks we keep.
+pub fn pin_bool_store(device: &WgpuDevice) {
+    use burn::tensor::{BoolDType, Device};
+    use std::sync::Once;
+
+    // The setting is global, so do it exactly once: calling it repeatedly
+    // while other threads are building tensors races (parallel tests hit it).
+    static PIN: Once = Once::new();
+    PIN.call_once(|| {
+        let mut device: Device = device.clone().into();
+        device
+            .configure(BoolDType::U32)
+            .expect("failed to pin bool storage to u32");
+    });
+}
