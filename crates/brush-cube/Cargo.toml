@@ -21,3 +21,17 @@ wasm-logger = "0.2"
 
 [lints]
 workspace = true
+
+[features]
+# Compile kernels to MSL instead of going through wgpu's WGSL frontend.
+# macOS only, and opt-in on purpose:
+#
+#  * burn switches bool storage to u8 as soon as this is on, but cubecl picks
+#    the shader compiler at runtime and needs MTLGPUFamily::Apple7 plus a
+#    Metal compiler >= 3.2. A GPU that fails that check (a paravirtual one,
+#    say) falls back to WGSL, which has no u8 type, and every kernel touching
+#    a bool fails to compile.
+#  * CI runners are exactly that case, so they build without this.
+#
+# Use it on real hardware: `cargo test --features brush-cube/metal`.
+metal = ["burn-wgpu/metal"]

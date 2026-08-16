@@ -11,11 +11,10 @@ brush-cube.path = "../brush-cube"
 brush-prefix-sum.path = "../brush-prefix-sum"
 brush-sort.path = "../brush-sort"
 
-# Force the WebGPU backend on every platform. We previously used Vulkan
-# on Linux/Windows and Metal on macOS, but both produced random crashes
-# (see #423 / #395 — buffer-destroyed validation errors, ARM/AMD instability).
-# WebGPU runs through wgpu's WGSL frontend everywhere so we avoid the
-# per-backend cubecl codegen divergence.
+# WebGPU everywhere. On macOS you can opt into native MSL with
+# `brush-cube/metal` (see that crate's manifest for why it is not on by
+# default). We still avoid Vulkan on Linux/Windows after the crashes in
+# #423 / #395.
 burn = { workspace = true, features = ["wgpu", "autodiff"] }
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
