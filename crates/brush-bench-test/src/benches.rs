@@ -317,6 +317,30 @@ mod tests {
     #[cfg(target_family = "wasm")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
+    // TEMP diagnostic: lives in this binary so it runs alongside the failing
+    // test (cargo stops at the first failing test *binary*). Revert once we
+    // know what the CI GPU reports.
+    #[test]
+    fn diag_msl_selection() {
+        use burn::backend::Backend;
+        use burn::tensor::DType;
+        use burn_cubecl::cubecl::Runtime;
+        use burn_cubecl::cubecl::ir::{ElemType, UIntKind};
+        use burn_wgpu::{AutoCompiler, WgpuDevice, WgpuRuntime};
+
+        let device = WgpuDevice::default();
+        let client = WgpuRuntime::<AutoCompiler>::client(&device);
+        let props = client.properties();
+        panic!(
+            "MSL DIAG: adapter={:?} u8_usage={:?} supports_u8={} supports_f16={} plane={:?}",
+            props.identity.name,
+            props.type_usage(ElemType::UInt(UIntKind::U8)),
+            <brush_cube::MainBackendBase as Backend>::supports_dtype(&device, DType::U8),
+            <brush_cube::MainBackendBase as Backend>::supports_dtype(&device, DType::F16),
+            props.features.plane,
+        );
+    }
+
     #[wasm_bindgen_test(unsupported = tokio::test)]
     async fn test_fwd_render() {
         let device =
