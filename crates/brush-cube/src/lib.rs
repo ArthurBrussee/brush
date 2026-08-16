@@ -18,6 +18,7 @@
 #![allow(clippy::should_implement_trait)]
 
 mod host;
+pub mod msl_diag;
 pub mod test_helpers;
 use burn_wgpu::CubeBackend;
 use burn_wgpu::Wgpu;
