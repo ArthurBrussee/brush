@@ -178,8 +178,7 @@ pub(crate) async fn train_stream(
     // Mip-Splatting 3D filter (always on).
     let mut view_cams: Vec<(glam::Vec3, f32)> = Vec::with_capacity(dataset.train.views.len());
     for view in dataset.train.views.iter() {
-        let (w, h) = view.image.dimensions().await.unwrap_or((1, 1));
-        let focal = view.camera.focal(glam::uvec2(w, h)).x;
+        let focal = view.camera.focal(view.image_size).x;
         view_cams.push((view.camera.position, focal));
     }
 

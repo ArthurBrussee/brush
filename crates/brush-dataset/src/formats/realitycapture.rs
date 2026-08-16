@@ -140,6 +140,7 @@ async fn read_dataset_inner(
         // independent once expressed as fov + normalized center, so a
         // header-only dimension read (no full decode) is enough.
         let (w, h) = image.dimensions().await?;
+        let image_size = glam::uvec2(w, h);
 
         let camera = row_to_camera(&fields, &header, w, h);
         if !camera.is_valid() {
@@ -149,7 +150,11 @@ async fn read_dataset_inner(
             continue;
         }
 
-        views.push(SceneView { camera, image });
+        views.push(SceneView {
+            camera,
+            image,
+            image_size,
+        });
     }
 
     let (train_views, eval_views) = split_eval_every(views, load_args.eval_split_every);
