@@ -22,16 +22,15 @@ wasm-logger = "0.2"
 [lints]
 workspace = true
 
-[features]
-# Compile kernels to MSL instead of going through wgpu's WGSL frontend.
-# macOS only, and opt-in on purpose:
+# Compile kernels to MSL rather than going through wgpu's WGSL frontend.
+# On by default on macOS, so a plain `cargo run` uses the native path.
 #
-#  * burn switches bool storage to u8 as soon as this is on, but cubecl picks
-#    the shader compiler at runtime and needs MTLGPUFamily::Apple7 plus a
-#    Metal compiler >= 3.2. A GPU that fails that check (a paravirtual one,
-#    say) falls back to WGSL, which has no u8 type, and every kernel touching
-#    a bool fails to compile.
-#  * CI runners are exactly that case, so they build without this.
-#
-# Use it on real hardware: `cargo test --features brush-cube/metal`.
-metal = ["burn-wgpu/metal"]
+# Opt out with `RUSTFLAGS='--cfg brush_no_metal'`, which CI does. burn
+# switches bool storage to u8 as soon as this is on, but cubecl picks the
+# shader compiler at runtime and wants MTLGPUFamily::Apple7 plus a Metal
+# compiler >= 3.2. A GPU failing that check (CI's paravirtual device, say)
+# falls back to WGSL, which has no u8 type, so every kernel touching a bool
+# fails to compile. Cargo evaluates this cfg from RUSTFLAGS, so the opt-out
+# removes the dependency feature entirely rather than patching over it.
+[target.'cfg(all(target_os = "macos", not(brush_no_metal)))'.dependencies]
+burn-wgpu = { workspace = true, features = ["metal"] }

@@ -121,9 +121,8 @@ jobs:
       # Doc-tests are included in the default `cargo test` target set, so no
       # separate --doc step is needed.
       - name: Run tests
-        # Not --all-features: `brush-cube/metal` is opt-in and would be swept
-        # in. CI runners only have a paravirtual GPU, which cannot compile
-        # MSL, and enabling the feature switches burn to u8 bool storage that
-        # the WGSL fallback then chokes on. debug-validation cascades from
-        # brush-app to render/train/process.
-        run: cargo test --all --features brush-app/debug-validation
+        # Runners only have a paravirtual GPU, which cannot compile MSL, so
+        # opt out of the native path (see crates/brush-cube/Cargo.toml).
+        env:
+          RUSTFLAGS: --cfg brush_no_metal
+        run: cargo test --all --all-features
