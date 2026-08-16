@@ -1163,7 +1163,6 @@ dependencies = [
  "anyhow",
  "async-fn-stream",
  "brush-async",
- "brush-cube",
  "brush-dataset",
  "brush-render",
  "brush-rerun",

@@ -11,10 +11,10 @@ brush-cube.path = "../brush-cube"
 brush-prefix-sum.path = "../brush-prefix-sum"
 brush-sort.path = "../brush-sort"
 
-# WebGPU everywhere, except that on macOS cubecl now compiles the kernels to
-# MSL rather than going through wgpu's WGSL frontend (the `metal` feature on
-# burn-wgpu, enabled in the workspace manifest). We still avoid Vulkan on
-# Linux/Windows after the crashes in #423 / #395.
+# WebGPU everywhere. On macOS you can opt into native MSL with
+# `brush-cube/metal` (see that crate's manifest for why it is not on by
+# default). We still avoid Vulkan on Linux/Windows after the crashes in
+# #423 / #395.
 burn = { workspace = true, features = ["wgpu", "autodiff"] }
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true

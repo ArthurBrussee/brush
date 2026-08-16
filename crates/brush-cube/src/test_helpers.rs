@@ -44,6 +44,5 @@ pub async fn test_device() -> WgpuDevice {
             );
         }
     }
-    crate::pin_bool_store(&WgpuDevice::DefaultDevice);
     WgpuDevice::DefaultDevice
 }
