@@ -134,6 +134,7 @@ async fn read_dataset_inner(
             mask_path,
             load_args.max_resolution,
             load_args.alpha_mode,
+            load_args.invert_masks,
         );
 
         // The csv carries no image dimensions; intrinsics are resolution

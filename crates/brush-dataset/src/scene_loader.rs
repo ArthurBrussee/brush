@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use brush_async::Actor;
+use burn::tensor::TensorData;
 use rand::{SeedableRng, seq::SliceRandom};
 use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     config::LoadDatasetConfig,
-    scene::{Scene, SceneBatch, sample_to_packed_data, view_to_sample_image},
+    scene::{Scene, SceneBatch, view_to_packed_data},
 };
 
 /// Shared cache of GPU-ready scene batches. Each slot holds at most one
@@ -14,8 +15,9 @@ use crate::{
 /// the cache and just get re-decoded + re-packed on every visit.
 ///
 /// Caching the packed batch (instead of the decoded `DynamicImage`) skips
-/// the per-hit decode → premultiply → repack work: a cache hit is now a
-/// single copy of the already-packed `[H, W]` u32 buffer.
+/// the per-hit decode → premultiply → repack work. Cached buffers are put
+/// behind a refcount first (see `share_packed`), so a hit doesn't copy the
+/// pixels either: it hands out a view of the same allocation.
 struct BatchCache {
     slots: Vec<Option<Arc<SceneBatch>>>,
     used_bytes: u64,
@@ -35,22 +37,22 @@ impl BatchCache {
         self.slots[index].clone()
     }
 
+    /// Whether `insert` would take this batch: nothing cached for the view
+    /// yet, and it still fits the budget. Checked before caching so the
+    /// packed bytes only get shared when they're actually going to be kept.
+    ///
+    /// Tracks exact bytes: rounding to whole MB let sub-MB images slip in
+    /// for free and bypass the budget entirely.
+    fn admits(&self, index: usize, batch: &SceneBatch) -> bool {
+        self.slots[index].is_none() && self.used_bytes + batch.packed_bytes() < self.budget_bytes
+    }
+
     fn insert(&mut self, index: usize, batch: Arc<SceneBatch>) {
-        if self.slots[index].is_some() {
+        if !self.admits(index, &batch) {
             return;
         }
-        // Track exact bytes: rounding to whole MB let sub-MB images slip in
-        // for free and bypass the budget entirely.
-        let size_bytes: u64 = batch
-            .img_packed
-            .as_bytes()
-            .len()
-            .try_into()
-            .expect("shouldn't exceed ~18 Exabytes...");
-        if self.used_bytes + size_bytes < self.budget_bytes {
-            self.slots[index] = Some(batch);
-            self.used_bytes += size_bytes;
-        }
+        self.used_bytes += batch.packed_bytes();
+        self.slots[index] = Some(batch);
     }
 }
 
@@ -133,31 +135,46 @@ async fn run_loader(
         let index = shuffled.pop().expect("Need at least one view in dataset");
         let view = &views[index];
 
-        let batch = if let Some(batch) = cache.lock().await.get(index) {
-            batch
+        let cached = cache.lock().await.get(index);
+
+        let batch = if let Some(batch) = cached {
+            // The cached buffer is refcounted, so this is a pointer bump
+            // rather than a copy of the whole image.
+            batch.as_ref().clone()
         } else {
             let raw = view
                 .image
                 .load()
                 .await
                 .expect("Scene loader failed to load an image");
-            let sample = view_to_sample_image(raw, view.image.alpha_mode());
-            let (img_packed, has_alpha) = sample_to_packed_data(sample);
-            let batch = Arc::new(SceneBatch {
+            let (img_packed, has_alpha) = view_to_packed_data(raw, view.image.alpha_mode());
+            let mut batch = SceneBatch {
                 img_packed,
                 has_alpha,
                 alpha_mode: view.image.alpha_mode(),
                 camera: view.camera,
-            });
-            cache.lock().await.insert(index, batch.clone());
+            };
+
+            let mut cache = cache.lock().await;
+            if cache.admits(index, &batch) {
+                // Share the pixels before caching: this hand-off and every
+                // later hit then costs a refcount instead of a full copy.
+                batch.img_packed = share_packed(batch.img_packed);
+                cache.insert(index, Arc::new(batch.clone()));
+            }
             batch
         };
 
-        // The channel takes an owned batch; clone the packed buffer out of
-        // the shared cache entry.
-        if tx.send(batch.as_ref().clone()).await.is_err() {
+        if tx.send(batch).await.is_err() {
             break;
         }
         brush_async::yield_now().await;
     }
+}
+
+/// Move the packed pixels behind a refcount, so cloning the batch out of the
+/// cache doesn't copy them. Uploading to the GPU is unaffected: that copies
+/// into a staging buffer either way.
+fn share_packed(data: TensorData) -> TensorData {
+    TensorData::from_bytes(data.bytes.shared(), data.shape, data.dtype)
 }

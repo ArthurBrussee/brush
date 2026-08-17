@@ -1,4 +1,4 @@
-use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
+use brush_dataset::scene::view_to_packed_data;
 use brush_loss::{ImageLossConfig, image_loss};
 use brush_render::bwd::render_splats;
 use brush_render::gaussian_splats::Splats;
@@ -91,9 +91,8 @@ pub async fn compute_pup_scores(
             .load()
             .await
             .expect("Failed to load image for PUP scoring");
-        let sample = view_to_sample_image(image, view.image.alpha_mode());
-        let img_size = glam::uvec2(sample.width(), sample.height());
-        let (gt_data, _has_alpha) = sample_to_packed_data(sample);
+        let img_size = glam::uvec2(image.width(), image.height());
+        let (gt_data, _has_alpha) = view_to_packed_data(image, view.image.alpha_mode());
 
         let mut splats: Splats = splats.clone().train();
         splats.transforms = splats.transforms.map(|t: Tensor<2>| t.require_grad());
