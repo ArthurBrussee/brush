@@ -272,12 +272,13 @@ pub(crate) async fn train_stream(
             client.memory_cleanup();
 
             let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(current_lod as i32);
-            dataloader = if lod_img_pct < 100 {
+            // Only rebuild the loader when the images actually changed size.
+            // A rebuild throws away a warm batch cache and re-decodes the
+            // whole dataset, which at 100% scale buys nothing.
+            if lod_img_pct < 100 {
                 let lod_scene = dataset.train.clone().with_image_scale(cumulative_scale);
-                SceneLoader::new(&lod_scene, 42, &train_stream_config.load_config)
-            } else {
-                SceneLoader::new(&dataset.train, 42, &train_stream_config.load_config)
-            };
+                dataloader = SceneLoader::new(&lod_scene, 42, &train_stream_config.load_config);
+            }
 
             let bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
             trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);

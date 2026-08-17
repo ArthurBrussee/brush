@@ -362,6 +362,15 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
         );
     }
 
+    let mut invert_masks = args.load_config.invert_masks;
+    ui.add_enabled(
+        enabled,
+        egui::Checkbox::new(&mut invert_masks, "Invert masks"),
+    );
+    if enabled {
+        args.load_config.invert_masks = invert_masks;
+    }
+
     let mut alpha_mode_enabled = args.load_config.alpha_mode.is_some();
     ui.add_enabled(
         enabled,

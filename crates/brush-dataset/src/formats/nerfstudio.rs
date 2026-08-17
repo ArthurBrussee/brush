@@ -190,6 +190,7 @@ async fn read_transforms_file(
             mask_path,
             load_args.max_resolution,
             load_args.alpha_mode,
+            load_args.invert_masks,
         );
 
         let w = frame.w.or(scene.w);

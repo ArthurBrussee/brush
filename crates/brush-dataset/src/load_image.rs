@@ -1,6 +1,6 @@
 use brush_render::AlphaMode;
 use brush_vfs::BrushVfs;
-use image::{DynamicImage, GenericImageView, ImageBuffer};
+use image::{DynamicImage, GrayImage, ImageBuffer};
 use std::{
     io::{self, Cursor},
     path::{Path, PathBuf},
@@ -15,6 +15,7 @@ pub struct LoadImage {
     mask_path: Option<PathBuf>,
     max_resolution: u32,
     alpha_mode: AlphaMode,
+    invert_mask: bool,
     scale: f32,
 }
 
@@ -22,6 +23,7 @@ impl PartialEq for LoadImage {
     fn eq(&self, other: &Self) -> bool {
         self.path == other.path
             && self.mask_path == other.mask_path
+            && self.invert_mask == other.invert_mask
             && self.max_resolution == other.max_resolution
             && self.scale == other.scale
     }
@@ -34,6 +36,7 @@ impl LoadImage {
         mask_path: Option<PathBuf>,
         max_resolution: u32,
         override_alpha_mode: Option<AlphaMode>,
+        invert_mask: bool,
     ) -> Self {
         let alpha_mode = override_alpha_mode.unwrap_or_else(|| {
             if mask_path.is_some() {
@@ -49,6 +52,7 @@ impl LoadImage {
             mask_path,
             max_resolution,
             alpha_mode,
+            invert_mask,
             scale: 1.0,
         }
     }
@@ -72,27 +76,37 @@ impl LoadImage {
                 .await?
                 .read_to_end(&mut mask_bytes)
                 .await?;
-            let mut mask_img = image::load_from_memory(&mask_bytes)?;
+            let mask_img = image::load_from_memory(&mask_bytes)?;
+
+            // Only one channel of the mask ever reaches the alpha channel, so
+            // reduce it to 8bpp before doing any work on it. A grayscale mask
+            // (the usual case) then costs no conversion at all, and the resize
+            // below runs over one channel instead of three or four.
+            let mut mask = if mask_img.color().has_alpha() {
+                let rgba = mask_img.into_rgba8();
+                let (w, h) = rgba.dimensions();
+                let alpha = rgba.pixels().map(|p| p[3]).collect();
+                GrayImage::from_raw(w, h, alpha).expect("one byte per pixel")
+            } else {
+                mask_img.into_luma8()
+            };
 
             // Resize mask image if needed. This is allowed to squash the mask.
-            if mask_img.dimensions() != masked_img.dimensions() {
-                mask_img = mask_img.resize_exact(
+            if mask.dimensions() != masked_img.dimensions() {
+                mask = image::imageops::resize(
+                    &mask,
                     masked_img.width(),
                     masked_img.height(),
                     image::imageops::FilterType::Triangle,
                 );
             }
 
-            if mask_img.color().has_alpha() {
-                let mask_img = mask_img.into_rgba8();
-                for (pixel, mask_pixel) in masked_img.pixels_mut().zip(mask_img.pixels()) {
-                    pixel[3] = mask_pixel[3];
-                }
-            } else {
-                let mask_img = mask_img.into_rgb8();
-                for (pixel, mask_pixel) in masked_img.pixels_mut().zip(mask_img.pixels()) {
-                    pixel[3] = mask_pixel[0];
-                }
+            for (pixel, mask_pixel) in masked_img.pixels_mut().zip(mask.pixels()) {
+                pixel[3] = if self.invert_mask {
+                    255 - mask_pixel[0]
+                } else {
+                    mask_pixel[0]
+                };
             }
 
             img = masked_img.into();
@@ -206,5 +220,52 @@ fn decode_jpeg_scaled(bytes: &[u8], max_resolution: u32) -> Option<DynamicImage>
         }
         // CMYK32 / L16 are rare in photogrammetry data; fall back to image crate.
         _ => None,
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::LoadImage;
+    use brush_vfs::BrushVfs;
+    use image::{DynamicImage, GrayImage, Rgb, RgbImage, RgbaImage};
+    use std::sync::Arc;
+
+    /// Write an image + mask pair to a temp dir and load them back.
+    async fn load_with_mask(mask: DynamicImage, invert: bool) -> RgbaImage {
+        let dir = tempfile::tempdir().expect("temp dir");
+        RgbImage::from_pixel(4, 2, Rgb([10, 20, 30]))
+            .save(dir.path().join("img.png"))
+            .expect("save image");
+        mask.save(dir.path().join("mask.png")).expect("save mask");
+
+        let vfs = Arc::new(BrushVfs::from_path(dir.path()).await.expect("vfs"));
+        LoadImage::new(
+            vfs,
+            "img.png".into(),
+            Some("mask.png".into()),
+            1920,
+            None,
+            invert,
+        )
+        .load()
+        .await
+        .expect("load image")
+        .into_rgba8()
+    }
+
+    #[tokio::test]
+    async fn mask_becomes_alpha() {
+        let mask = GrayImage::from_raw(4, 2, (0..8).map(|i| i * 30).collect()).expect("mask");
+        let img = load_with_mask(mask.into(), false).await;
+        let alpha: Vec<u8> = img.pixels().map(|p| p[3]).collect();
+        assert_eq!(alpha, (0..8).map(|i| i * 30).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn inverted_mask_flips_alpha() {
+        let mask = GrayImage::from_raw(4, 2, (0..8).map(|i| i * 30).collect()).expect("mask");
+        let img = load_with_mask(mask.into(), true).await;
+        let alpha: Vec<u8> = img.pixels().map(|p| p[3]).collect();
+        assert_eq!(alpha, (0..8).map(|i| 255 - i * 30).collect::<Vec<_>>());
     }
 }

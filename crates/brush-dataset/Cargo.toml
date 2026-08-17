@@ -13,7 +13,6 @@ colmap-reader.path = "../colmap-reader"
 
 burn.workspace = true
 
-bytemuck.workspace = true
 thiserror = { workspace = true }
 image.workspace = true
 jpeg-decoder.workspace = true

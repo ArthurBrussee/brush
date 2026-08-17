@@ -2,7 +2,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use brush_dataset::scene::{sample_to_packed_data, view_to_sample_image};
+use brush_dataset::scene::view_to_packed_data;
 use brush_loss::{ImageLossConfig, image_loss_eval};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
@@ -28,8 +28,7 @@ pub async fn eval_stats(
 ) -> Result<EvalSample> {
     let res = glam::uvec2(gt_img.width(), gt_img.height());
 
-    let (gt_packed_data, _has_alpha) =
-        sample_to_packed_data(view_to_sample_image(gt_img.clone(), alpha_mode));
+    let (gt_packed_data, _has_alpha) = view_to_packed_data(gt_img.clone(), alpha_mode);
     let gt_packed: Tensor<2, Int> = Tensor::from_data(gt_packed_data, device);
 
     // Render on reference black background.

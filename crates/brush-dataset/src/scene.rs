@@ -84,48 +84,55 @@ impl Scene {
     }
 }
 
-// Converts an image to a train sample. The tensor will be a floating point image with a [0, 1] image.
-//
-// This assume the input image has un-premultiplied alpha, whereas the output has pre-multiplied alpha.
-pub fn view_to_sample_image(image: DynamicImage, alpha_mode: AlphaMode) -> DynamicImage {
-    if image.color().has_alpha() && alpha_mode == AlphaMode::Transparent {
-        let mut rgba_bytes = image.to_rgba8();
-        // Assume image has un-multiplied alpha and convert it to pre-multiplied.
-        // Perform multiplication in byte space before converting to float.
-        for pixel in rgba_bytes.chunks_exact_mut(4) {
-            let r = pixel[0];
-            let g = pixel[1];
-            let b = pixel[2];
-            let a = pixel[3];
+/// Convert a loaded view into the GPU-side packed representation: `[H, W]`
+/// u32, each entry packing `[r8 g8 b8 a8]`. Images without alpha get
+/// `a = 255` (fully opaque) so the kernel always sees a valid alpha byte.
+/// Returns `(packed, has_alpha)` so the trainer knows whether to apply
+/// alpha-dependent loss terms.
+///
+/// Transparent-alpha views arrive un-premultiplied and leave premultiplied.
+/// That happens here rather than in a pass of its own: premultiplying,
+/// widening to RGBA and packing all read the same pixel, so they cost one
+/// walk over the image and one allocation between them.
+pub fn view_to_packed_data(image: DynamicImage, alpha_mode: AlphaMode) -> (TensorData, bool) {
+    let _span = tracing::trace_span!("view_to_packed").entered();
+    let (w, h) = (image.width(), image.height());
+    let has_alpha = image.color().has_alpha();
+    // Premultiplication is what `Transparent` means; a mask multiplies the
+    // loss instead and must keep its colours intact.
+    let premultiply = has_alpha && alpha_mode == AlphaMode::Transparent;
 
-            pixel[0] = ((r as u16 * a as u16 + 127) / 255) as u8;
-            pixel[1] = ((g as u16 * a as u16 + 127) / 255) as u8;
-            pixel[2] = ((b as u16 * a as u16 + 127) / 255) as u8;
-            pixel[3] = a;
-        }
-        DynamicImage::ImageRgba8(rgba_bytes)
-    } else {
-        image
-    }
+    // Pack as `[i32]` little-endian (same bit pattern as u32; i32 because the
+    // burn dispatch backend's default int dtype is i32 and refuses to cast
+    // u32 values >= 2^31). The kernel reads the same way (`val & 0xff` is
+    // `r`, `>> 24` is `a`) — the signedness only affects the host-side
+    // TensorData metadata, not the GPU bytes.
+    let packed: Vec<i32> = match image {
+        DynamicImage::ImageRgb8(img) => img
+            .pixels()
+            .map(|p| i32::from_le_bytes([p[0], p[1], p[2], 255]))
+            .collect(),
+        DynamicImage::ImageRgba8(img) => pack_rgba(&img, premultiply),
+        // 16-bit, luma and cmyk sources are rare; normalise them first.
+        other => pack_rgba(&other.into_rgba8(), premultiply),
+    };
+
+    (TensorData::new(packed, [h as usize, w as usize]), has_alpha)
 }
 
-/// Convert a sample into the GPU-side packed representation: `[H, W]` u32,
-/// each entry packing `[r8 g8 b8 a8]`. Images without alpha get `a = 255`
-/// (fully opaque) so the kernel always sees a valid alpha byte. Returns
-/// `(packed, has_alpha)` so the trainer knows whether to apply
-/// alpha-dependent loss terms.
-pub fn sample_to_packed_data(sample: DynamicImage) -> (TensorData, bool) {
-    let _span = tracing::trace_span!("sample_to_packed").entered();
-    let (w, h) = (sample.width(), sample.height());
-    let has_alpha = sample.color().has_alpha();
-    let packed: Vec<i32> = bytemuck::pod_collect_to_vec(&sample.into_rgba8().into_vec());
-    // Reinterpret the `[r g b a r g b a ...]` byte stream as `[i32]` little-endian
-    // (i32 bit-pattern same as the underlying u32; we use i32 because the burn
-    // dispatch backend's default int dtype is i32 and refuses to cast u32
-    // values >= 2^31). The kernel reads the same way (`val & 0xff` is `r`,
-    // `>> 24` is `a`) — the signedness only affects the host-side TensorData
-    // metadata, not the GPU bytes.
-    (TensorData::new(packed, [h as usize, w as usize]), has_alpha)
+fn pack_rgba(img: &image::RgbaImage, premultiply: bool) -> Vec<i32> {
+    img.pixels()
+        .map(|p| {
+            let [r, g, b, a] = p.0;
+            if premultiply {
+                // Multiply in byte space, before anything converts to float.
+                let mul = |c: u8| ((c as u16 * a as u16 + 127) / 255) as u8;
+                i32::from_le_bytes([mul(r), mul(g), mul(b), a])
+            } else {
+                i32::from_le_bytes([r, g, b, a])
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -140,6 +147,15 @@ pub struct SceneBatch {
 }
 
 impl SceneBatch {
+    /// Host bytes the packed image occupies.
+    pub fn packed_bytes(&self) -> u64 {
+        self.img_packed
+            .as_bytes()
+            .len()
+            .try_into()
+            .expect("shouldn't exceed ~18 Exabytes...")
+    }
+
     pub fn img_size(&self) -> [usize; 2] {
         [self.img_packed.shape[0], self.img_packed.shape[1]]
     }
@@ -147,7 +163,8 @@ impl SceneBatch {
 
 #[cfg(test)]
 mod tests {
-    use super::sample_to_packed_data;
+    use super::view_to_packed_data;
+    use brush_render::AlphaMode;
     use image::{DynamicImage, ImageBuffer, RgbImage, RgbaImage};
 
     #[test]
@@ -155,7 +172,8 @@ mod tests {
         let image =
             RgbaImage::from_raw(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).expect("valid RGBA image");
 
-        let (packed, has_alpha) = sample_to_packed_data(DynamicImage::ImageRgba8(image));
+        let (packed, has_alpha) =
+            view_to_packed_data(DynamicImage::ImageRgba8(image), AlphaMode::Masked);
 
         assert!(has_alpha);
         assert_eq!(packed.shape.dims(), [1, 2]);
@@ -170,7 +188,8 @@ mod tests {
         let image: RgbImage =
             ImageBuffer::from_raw(2, 1, vec![9, 10, 11, 12, 13, 14]).expect("valid RGB image");
 
-        let (packed, has_alpha) = sample_to_packed_data(DynamicImage::ImageRgb8(image));
+        let (packed, has_alpha) =
+            view_to_packed_data(DynamicImage::ImageRgb8(image), AlphaMode::Transparent);
 
         assert!(!has_alpha);
         assert_eq!(packed.shape.dims(), [1, 2]);
