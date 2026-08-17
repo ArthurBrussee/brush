@@ -8,7 +8,7 @@ use super::{DatasetLoadResult, FormatError};
 use crate::{
     Dataset,
     config::LoadDatasetConfig,
-    formats::{find_image_by_name, find_mask_path, split_eval_every},
+    formats::{find_image_by_name, find_mask_path, find_normal_path, split_eval_every},
     scene::{LoadImage, SceneView},
 };
 use brush_render::kernels::camera_model::CameraModel;
@@ -192,6 +192,7 @@ async fn load_dataset_inner(
             };
 
             let mask_path = find_mask_path(&vfs, path);
+            let normal_path = find_normal_path(&vfs, path);
 
             // Convert w2c to c2w.
             let world_to_cam =
@@ -215,7 +216,8 @@ async fn load_dataset_inner(
                 mask_path.map(|p| p.to_path_buf()),
                 load_args.max_resolution,
                 load_args.alpha_mode,
-            );
+            )
+            .with_normal_path(normal_path.map(|p| p.to_path_buf()));
 
             views.push(SceneView { camera, image });
         }

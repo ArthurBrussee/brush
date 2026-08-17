@@ -8,6 +8,7 @@ pub mod train;
 
 mod adam_scaled;
 mod multinomial;
+pub mod normals;
 mod quat_vec;
 mod stats;
 

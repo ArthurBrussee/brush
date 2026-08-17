@@ -203,13 +203,35 @@ impl SplatTrainer {
 
         let median_scale = self.bounds.median_size();
 
+        // Normal-map supervision rides the main render as its generic
+        // per-splat feature channels — same projection/sort/rasterize pass,
+        // ~zero extra cost when off (the feature-free kernel variant is
+        // compiled). Gated on a start iteration so rough geometry can form
+        // from the photometric loss before normals weigh in.
+        let use_normals = self.config.normal_loss_weight > 0.0
+            && self.step_count >= self.config.normal_loss_start_iter
+            && batch.normal_data.is_some();
+
         let (mut grads, visible, num_visible, loss_inner) = {
             // The splats already carry their 3D-filter floor (set at refine);
             // the render path folds it in. Optimizer/refine work on raw params.
             let render_input = splats.clone();
-            let diff_out = render_splats(render_input, &camera, img_size, background)
+            let diff_out = if use_normals {
+                let feats = crate::normals::splat_camera_normals(&render_input, &camera);
+                brush_render::bwd::render_splats_with_features(
+                    render_input,
+                    &camera,
+                    img_size,
+                    background,
+                    feats,
+                )
                 .instrument(trace_span!("Forward"))
-                .await;
+                .await
+            } else {
+                render_splats(render_input, &camera, img_size, background)
+                    .instrument(trace_span!("Forward"))
+                    .await
+            };
 
             let pred_image = diff_out.img;
             let refine_weight_holder = diff_out.refine_weight_holder;
@@ -270,6 +292,17 @@ impl SplatTrainer {
                         pred_image.clone().slice(s![.., .., 0..3]).unsqueeze_dim(0),
                         gt_rgb_diff.unsqueeze_dim(0),
                     ) * self.config.lpips_loss_weight;
+            }
+
+            // Monocular normal-map supervision on the composited feature
+            // channels of the main render (see `normals`).
+            if use_normals && let Some(normal_data) = batch.normal_data {
+                let pred_normal = diff_out
+                    .features
+                    .clone()
+                    .expect("features were requested for the normal loss");
+                let n_loss = crate::normals::normal_loss(pred_normal, normal_data, &device);
+                loss = loss + n_loss * self.config.normal_loss_weight;
             }
 
             // Strip the autodiff graph off the loss so consumers can read the

@@ -128,6 +128,21 @@ pub fn sample_to_packed_data(sample: DynamicImage) -> (TensorData, bool) {
     (TensorData::new(packed, [h as usize, w as usize]), has_alpha)
 }
 
+/// Convert a decoded monocular normal-map image into `[H, W, 4]` u8 data:
+/// RGB is the `(n+1)/2 * 255` encoded unit normal (camera space), A is the
+/// foreground mask baked into the source PNG's alpha channel. Kept as raw
+/// bytes (4 B/px — same footprint as the RGB batch, and it's deep-copied
+/// per batch send); the normal loss decodes to f32 on the GPU. Not
+/// premultiplied by alpha — normal vectors aren't a color to attenuate.
+pub fn normal_sample_to_data(sample: DynamicImage) -> TensorData {
+    let _span = tracing::trace_span!("normal_sample_to_data").entered();
+    let (w, h) = (sample.width(), sample.height());
+    TensorData::new(
+        sample.into_rgba8().into_vec(),
+        [h as usize, w as usize, 4],
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct SceneBatch {
     /// `[H, W]` u32, each entry packs `[r g b a]` u8.
@@ -137,6 +152,12 @@ pub struct SceneBatch {
     pub has_alpha: bool,
     pub alpha_mode: AlphaMode,
     pub camera: Camera,
+    /// `[H, W, 4]` u8 monocular normal-map data (see
+    /// [`normal_sample_to_data`]; decoded to f32 on the GPU by the normal
+    /// loss), when the dataset carries one for this view. `None` when no
+    /// `normals/` sibling was found — the normal loss is simply skipped for
+    /// this batch in that case.
+    pub normal_data: Option<TensorData>,
 }
 
 impl SceneBatch {

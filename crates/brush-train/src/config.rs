@@ -92,6 +92,24 @@ pub struct TrainConfig {
     #[arg(long, help_heading = "Refine options", default_value = "0.0")]
     pub lpips_loss_weight: f32,
 
+    /// Weight of the monocular normal-map supervision loss (L1 + 1-cosine
+    /// against a per-frame monocular normal prior, when the dataset has one
+    /// under a `normals/` sibling directory). 0 disables it entirely — the
+    /// feature-channel render path and the loss are skipped when this is 0,
+    /// not just multiplied by zero. Runs every step once active; normals
+    /// composite in the same render pass as color, so there's no extra
+    /// pipeline cost to amortize. NB: weights tuned against the pre-1.0
+    /// implementation (which compared mismatched normal encodings) will
+    /// roughly halve — the loss now operates on true [-1, 1] normals.
+    #[arg(long, help_heading = "Training options", default_value = "0.0")]
+    pub normal_loss_weight: f32,
+
+    /// Training step at which normal-map supervision starts, so rough
+    /// geometry has time to form before it's penalized for normal mismatch.
+    /// Ignored if `normal_loss_weight` is 0.
+    #[arg(long, help_heading = "Training options", default_value = "5000")]
+    pub normal_loss_start_iter: u32,
+
     /// Base background color (R,G,B) used during training.
     #[arg(
         long,

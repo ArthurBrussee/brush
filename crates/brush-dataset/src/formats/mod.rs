@@ -147,6 +147,38 @@ fn split_eval_every(
     })
 }
 
+/// Find a sibling monocular normal-map image for `path`, by looking for a
+/// `normals/` directory whose subpath (relative to `path`'s own directory)
+/// matches, mirroring [`find_mask_path`]'s convention but for `normals`
+/// instead of `masks`, and without the `.mask` stem-suffix variant (not used
+/// by the normal-map dataset convention this targets).
+fn find_normal_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
+    let search_name = path.file_name().expect("File must have a name");
+    let search_stem = path.file_stem().expect("File must have a name");
+
+    vfs.iter_files().find(|candidate| {
+        let Some(stem) = candidate.file_stem() else {
+            return false;
+        };
+
+        if stem.eq_ignore_ascii_case(search_name) || stem.eq_ignore_ascii_case(search_stem) {
+            let normals_idx = candidate
+                .components()
+                .position(|c| c.as_os_str().eq_ignore_ascii_case("normals"));
+
+            normals_idx.is_some_and(|idx| {
+                let candidate_components: Vec<_> = candidate.components().collect();
+                let path_dir_components: Vec<_> = path.parent().unwrap().components().collect();
+                let normal_dir_subpath =
+                    &candidate_components[idx + 1..candidate_components.len() - 1];
+                path_dir_components.ends_with(normal_dir_subpath)
+            })
+        } else {
+            false
+        }
+    })
+}
+
 fn find_mask_path<'a>(vfs: &'a BrushVfs, path: &'a Path) -> Option<&'a Path> {
     let search_name = path.file_name().expect("File must have a name");
     let search_stem = path.file_stem().expect("File must have a name");

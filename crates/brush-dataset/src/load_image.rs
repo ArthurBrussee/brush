@@ -13,6 +13,7 @@ pub struct LoadImage {
     vfs: Arc<BrushVfs>,
     path: PathBuf,
     mask_path: Option<PathBuf>,
+    normal_path: Option<PathBuf>,
     max_resolution: u32,
     alpha_mode: AlphaMode,
     scale: f32,
@@ -22,6 +23,7 @@ impl PartialEq for LoadImage {
     fn eq(&self, other: &Self) -> bool {
         self.path == other.path
             && self.mask_path == other.mask_path
+            && self.normal_path == other.normal_path
             && self.max_resolution == other.max_resolution
             && self.scale == other.scale
     }
@@ -47,10 +49,20 @@ impl LoadImage {
             vfs,
             path,
             mask_path,
+            normal_path: None,
             max_resolution,
             alpha_mode,
             scale: 1.0,
         }
+    }
+
+    /// Attach a sibling monocular normal-map path (e.g. from a `normals/`
+    /// directory), if one was found for this image. Absent by default —
+    /// callers that don't opt in via [`Self::with_normal_path`] just never
+    /// get a normal map back from [`Self::load_normal`].
+    pub fn with_normal_path(mut self, normal_path: Option<PathBuf>) -> Self {
+        self.normal_path = normal_path;
+        self
     }
 
     pub async fn load(&self) -> image::ImageResult<DynamicImage> {
@@ -105,6 +117,46 @@ impl LoadImage {
             Ok(img.resize_exact(new_w, new_h, image::imageops::FilterType::Lanczos3))
         } else {
             Ok(img)
+        }
+    }
+
+    /// Load the sibling normal-map image (if one was attached via
+    /// [`Self::with_normal_path`]), resized to exactly `target_w`x`target_h`
+    /// (the dimensions [`Self::load`] produced for the RGB image, so the two
+    /// stay pixel-aligned). Returns `None` when no normal map is present —
+    /// callers should treat that as "feature absent", not an error.
+    ///
+    /// Unlike [`Self::load`], resizing uses nearest-neighbor: a normal map's
+    /// RGB bytes encode a unit vector, and smoothly blending encoded vectors
+    /// (as `Lanczos3`/`Triangle` would) produces invalid, non-unit-length
+    /// results, especially at silhouette edges where foreground blends into
+    /// background.
+    pub async fn load_normal(
+        &self,
+        target_w: u32,
+        target_h: u32,
+    ) -> Option<image::ImageResult<DynamicImage>> {
+        let normal_path = self.normal_path.as_ref()?;
+        Some(self.load_normal_inner(normal_path, target_w, target_h).await)
+    }
+
+    async fn load_normal_inner(
+        &self,
+        normal_path: &Path,
+        target_w: u32,
+        target_h: u32,
+    ) -> image::ImageResult<DynamicImage> {
+        let mut bytes = vec![];
+        self.vfs
+            .reader_at_path(normal_path)
+            .await?
+            .read_to_end(&mut bytes)
+            .await?;
+        let img = image::load_from_memory(&bytes)?;
+        if img.width() == target_w && img.height() == target_h {
+            Ok(img)
+        } else {
+            Ok(img.resize_exact(target_w, target_h, image::imageops::FilterType::Nearest))
         }
     }
 

@@ -28,6 +28,10 @@ It also supports masking images:
 - Images with transparency. This will force the final splat to match the transparency of the input.
 - A folder of images called 'masks'. This ignores parts of the image that are masked out.
 
+Optionally, training can also be supervised with monocular normal maps (e.g. from Sapiens2) via a
+folder of images called 'normals' — see [docs/normal-supervision.md](docs/normal-supervision.md)
+for the dataset format and `--normal-loss-weight`/`--normal-loss-start-iter` CLI flags.
+
 ## Viewer
 Brush also works well as a splat viewer, including on the web. It can load .ply & .compressed.ply files. You can stream in data from a URL (for a web app, simply append `?url=`).
 
