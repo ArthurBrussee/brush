@@ -28,6 +28,10 @@ rerun = { workspace = true }
 [dev-dependencies]
 brush-async = { path = "../brush-async" }
 brush-cube = { path = "../brush-cube" }
+brush-serde = { path = "../brush-serde" }
+brush-vfs = { path = "../brush-vfs" }
+clap.workspace = true
+image.workspace = true
 
 burn-wgpu.workspace = true
 bytemuck.workspace = true

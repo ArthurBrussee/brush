@@ -43,13 +43,12 @@ fn broadcast_row<const K: usize>(vals: [f32; K], n: usize, device: &Device) -> T
 /// so the same constant maps either direction) — the rendered feature stays
 /// a plain brush-convention camera-space normal.
 ///
-/// NB: the original calibration (masked mean cosine over all 8 sign
-/// combinations after a short training run; `[+X, -Y, -Z]` won at 0.586 vs
-/// 0.573 runner-up) ran while the loss compared mismatched encodings (the
-/// prediction was still `(n+1)/2`-encoded). The Z-sign margin was large
-/// (~0.25-0.28 for wrong-Z candidates) so the result likely stands, but
-/// re-verify against a trained model on the fixed loss before trusting it
-/// for a new predictor. If it's off, flip signs here — nowhere else.
+/// Calibrated with the `normal_calib` example
+/// (`crates/brush-bench-test/examples/normal_calib.rs`): masked mean
+/// cosine over all 8 sign combinations against a model trained with this
+/// loss for 15k steps — `[+X, -Y, -Z]` won decisively at 0.980 vs 0.762
+/// for the runner-up. Rerun that example to recalibrate for a different
+/// normal predictor; if it disagrees, flip signs here — nowhere else.
 const GT_AXIS_SIGN: [f32; 3] = [1.0, -1.0, -1.0];
 
 /// Per-splat world-space unit pseudo-normal: the splat's local axis with the

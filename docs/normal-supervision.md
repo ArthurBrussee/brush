@@ -125,8 +125,16 @@ boundary (the sign flips are involutive, so one constant maps either
 direction) — the rendered feature stays a plain brush-convention normal.
 It was calibrated by scoring all 8 axis-sign combinations by masked mean
 cosine similarity against a sample dataset's GT maps; `[+X, −Y, −Z]` won
-clearly. If a different normal predictor or dataset ever needs a different
-convention, that's the one place to change.
+decisively (0.980 vs 0.762 for the runner-up, on a model trained with this
+loss). If a different normal predictor or dataset ever needs a different
+convention, rerun the calibration harness —
+
+```
+cargo run -p brush-bench-test --example normal_calib --release -- \
+  <dataset_dir> <trained.ply>
+```
+
+— and change that one constant.
 
 ## What's deliberately out of scope here
 
