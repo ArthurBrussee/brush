@@ -43,6 +43,7 @@ impl SplatOps for MainBackendBase {
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         _refine_weight: FloatTensor<Self>,
+        features: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: RasterPass,
@@ -57,11 +58,23 @@ impl SplatOps for MainBackendBase {
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
         let raw_opacities = into_contiguous(raw_opacities);
+        let features = into_contiguous(features);
 
-        DimCheck::new()
+        // Rank gates the feature path: rank-1 `[1]` dummy = disabled,
+        // rank-2 `[N, 3]` = enabled. See `SplatOps::render`.
+        let with_features = features.shape().num_dims() == 2;
+        assert!(
+            !with_features || bwd_info,
+            "per-splat features require a backward-bookkeeping pass"
+        );
+
+        let dim_check = DimCheck::new()
             .check_dims("transforms", &transforms, &["D".into(), 10.into()])
             .check_dims("sh_coeffs", &sh_coeffs, &["D".into(), "C".into(), 3.into()])
             .check_dims("raw_opacities", &raw_opacities, &["D".into()]);
+        if with_features {
+            dim_check.check_dims("features", &features, &["D".into(), 3.into()]);
+        }
 
         let total_splats = transforms.shape()[0] as u32;
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
@@ -186,7 +199,10 @@ impl SplatOps for MainBackendBase {
         let cum_tiles_hit =
             tracing::trace_span!("PrefixSumGaussHits").in_scope(|| prefix_sum(compact_counts));
         let projected_splats = create_tensor(
-            [num_visible_sz, kernels::helpers::PROJECTED_LANES_USIZE],
+            [
+                num_visible_sz,
+                kernels::helpers::projected_lanes(with_features) as usize,
+            ],
             &device,
             DType::F32,
         );
@@ -199,12 +215,14 @@ impl SplatOps for MainBackendBase {
                 transforms.into_tensor_arg(),
                 sh_coeffs.into_tensor_arg(),
                 raw_opacities.into_tensor_arg(),
+                features.into_tensor_arg(),
                 global_from_compact_gid.clone().into_tensor_arg(),
                 projected_splats.clone().into_tensor_arg(),
                 uniforms,
                 mip_splat,
                 sh_degree,
                 camera.camera_model,
+                with_features,
             );
         });
         let num_tiles = tile_bounds.x * tile_bounds.y;
@@ -223,6 +241,7 @@ impl SplatOps for MainBackendBase {
                 project_uniforms.tile_bounds[0],
                 project_uniforms.tile_bounds[1],
                 num_visible,
+                with_features,
             );
         });
         let bits = u32::BITS - num_tiles.leading_zeros();
@@ -245,7 +264,11 @@ impl SplatOps for MainBackendBase {
                 tile_offsets.clone().into_tensor_arg(),
             );
         });
-        let out_dim = if bwd_info { 4 } else { 1 };
+        let out_dim = if bwd_info {
+            kernels::helpers::out_img_channels(with_features) as usize
+        } else {
+            1
+        };
         let out_img = create_tensor(
             [img_size.y as usize, img_size.x as usize, out_dim],
             &device,
@@ -294,6 +317,7 @@ impl SplatOps for MainBackendBase {
                 project_uniforms.tile_bounds[0],
                 bwd_info,
                 smooth_cutoff,
+                with_features,
             );
         });
         RenderOutput {

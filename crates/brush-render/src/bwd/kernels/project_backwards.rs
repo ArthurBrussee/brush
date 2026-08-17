@@ -6,6 +6,7 @@ use crate::kernels::helpers::{
     calc_cov2d, compensate_cov2d, read_quat_unorm, read_scale, world_to_cam,
 };
 use crate::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp, sh_color_viewdir_vjp};
+use crate::bwd::kernels::rasterize_backwards::v_combined_lanes;
 use crate::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
 use brush_cube::{Vec2, is_finite_f32, sigmoid};
 use burn_cubecl::cubecl;
@@ -108,10 +109,12 @@ pub fn project_backwards_kernel(
     v_coeffs: &mut Tensor<f32>,
     v_raw_opac: &mut Tensor<f32>,
     v_refine_weight: &mut Tensor<f32>,
+    v_features: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
     #[comptime] sh_degree: u32,
     #[comptime] camera_model: CameraModel,
+    #[comptime] with_features: bool,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
     if compact_gid >= u.num_visible {
@@ -124,7 +127,7 @@ pub fn project_backwards_kernel(
     // splats that contributed to a pixel; non-contributing splats leave
     // v_rasterize_grads at zero and (since the dense outputs are zero-
     // init) we can return without writing anything at all.
-    let rg_base = (compact_gid * 10u32) as usize;
+    let rg_base = (compact_gid * comptime![v_combined_lanes(with_features)]) as usize;
     let v_mean2d_x = v_rasterize_grads[rg_base];
     let v_mean2d_y = v_rasterize_grads[rg_base + 1];
     let v_conics_x = v_rasterize_grads[rg_base + 2];
@@ -136,7 +139,7 @@ pub fn project_backwards_kernel(
     let v_alpha_in = v_rasterize_grads[rg_base + 8];
     let v_refine_in = v_rasterize_grads[rg_base + 9];
 
-    let any_grad = v_mean2d_x != 0.0f32
+    let mut any_grad = v_mean2d_x != 0.0f32
         || v_mean2d_y != 0.0f32
         || v_conics_x != 0.0f32
         || v_conics_y != 0.0f32
@@ -146,6 +149,21 @@ pub fn project_backwards_kernel(
         || v_color_b != 0.0f32
         || v_alpha_in != 0.0f32
         || v_refine_in != 0.0f32;
+
+    if comptime![with_features] {
+        // The feature was gathered verbatim in project_visible, so its VJP
+        // is a pure scatter to the dense per-splat gradient — no chain rule
+        // in-kernel; upstream derivation gradients are autodiff's job.
+        let v_feat_x = v_rasterize_grads[rg_base + 10];
+        let v_feat_y = v_rasterize_grads[rg_base + 11];
+        let v_feat_z = v_rasterize_grads[rg_base + 12];
+        let fbase = (global_gid * 3u32) as usize;
+        v_features[fbase] = v_feat_x;
+        v_features[fbase + 1] = v_feat_y;
+        v_features[fbase + 2] = v_feat_z;
+        any_grad = any_grad || v_feat_x != 0.0f32 || v_feat_y != 0.0f32 || v_feat_z != 0.0f32;
+    }
+
     if !any_grad {
         terminate!();
     }

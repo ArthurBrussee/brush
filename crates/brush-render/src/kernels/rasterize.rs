@@ -17,8 +17,8 @@ use burn_cubecl::cubecl::prelude::*;
 use burn_cubecl::cubecl::std::FastDivmod;
 
 use super::helpers::{
-    ALPHA_CUTOFF_MID, PROJECTED_LANES, PROJECTED_LANES_USIZE, TILE_SIZE, TILE_WIDTH,
-    alpha_cutoff_weight, calc_sigma, map_1d_to_2d,
+    ALPHA_CUTOFF_MID, TILE_SIZE, TILE_WIDTH, alpha_cutoff_weight, calc_sigma, map_1d_to_2d,
+    out_img_channels, projected_lanes,
 };
 use super::types::{RasterizeUniforms, Sym2};
 
@@ -36,7 +36,11 @@ pub fn rasterize_kernel(
     tile_bw_div: FastDivmod<u32>,
     #[comptime] bwd_info: bool,
     #[comptime] smooth_cutoff: bool,
+    #[comptime] with_features: bool,
 ) {
+    // Features imply the f32 output path; the host asserts this, the
+    // comptime arm here keeps the packed-u32 writer feature-free.
+    comptime! { assert!(!with_features || bwd_info) };
     let global_id = ABSOLUTE_POS as u32;
     let (pix_x, pix_y) = map_1d_to_2d(global_id, tile_bw_div);
     let pix_id = pix_x + pix_y * u.img_w;
@@ -50,7 +54,8 @@ pub fn rasterize_kernel(
     // Workgroup-shared splat batch + bookkeeping. The bwd-only `load_gid`
     // gets a comptime-tiny size when `bwd_info=false` so we don't pay
     // 1 KiB of static shared mem on the forward-only variant.
-    let mut local_batch = Shared::new_slice((TILE_SIZE * PROJECTED_LANES) as usize);
+    let mut local_batch =
+        Shared::new_slice((TILE_SIZE * comptime![projected_lanes(with_features)]) as usize);
     let mut load_gid =
         Shared::new_slice(comptime![if bwd_info { TILE_SIZE } else { 1u32 }] as usize);
     let num_done_atomic = Shared::<[Atomic<u32>]>::new_slice(1usize);
@@ -77,6 +82,9 @@ pub fn rasterize_kernel(
     let mut pix_r = 0.0f32;
     let mut pix_g = 0.0f32;
     let mut pix_b = 0.0f32;
+    let mut pix_f0 = 0.0f32;
+    let mut pix_f1 = 0.0f32;
+    let mut pix_f2 = 0.0f32;
     let mut done = !inside;
     let mut last_useful_isect = range_lo;
 
@@ -99,10 +107,10 @@ pub fn rasterize_kernel(
             compact_gid = compact_gid_from_isect[load_isect_id as usize];
         }
         if local_idx < remaining {
-            let src_base = (compact_gid * PROJECTED_LANES) as usize;
-            let dst_base = (local_idx * PROJECTED_LANES) as usize;
+            let src_base = (compact_gid * comptime![projected_lanes(with_features)]) as usize;
+            let dst_base = (local_idx * comptime![projected_lanes(with_features)]) as usize;
             #[unroll]
-            for lane in 0..PROJECTED_LANES_USIZE {
+            for lane in 0..comptime![projected_lanes(with_features) as usize] {
                 local_batch[dst_base + lane] = projected[src_base + lane];
             }
             if comptime![bwd_info] {
@@ -114,7 +122,7 @@ pub fn rasterize_kernel(
         let was_done = done;
         let mut t = 0u32;
         while !done && t < remaining {
-            let dst_base = (t * PROJECTED_LANES) as usize;
+            let dst_base = (t * comptime![projected_lanes(with_features)]) as usize;
             // Read the spatial fields first; defer color loads to the
             // contributing branch so non-contributing splats don't pay
             // for the rgb reads.
@@ -147,6 +155,12 @@ pub fn rasterize_kernel(
                     pix_r += max(local_batch[dst_base + 6], 0.0f32) * vis;
                     pix_g += max(local_batch[dst_base + 7], 0.0f32) * vis;
                     pix_b += max(local_batch[dst_base + 8], 0.0f32) * vis;
+                    if comptime![with_features] {
+                        // Features are signed — no `max(.., 0)` clamp.
+                        pix_f0 += local_batch[dst_base + 9] * vis;
+                        pix_f1 += local_batch[dst_base + 10] * vis;
+                        pix_f2 += local_batch[dst_base + 11] * vis;
+                    }
                     t_acc = next_t;
                     last_useful_isect = batch_start + t + 1u32;
                 }
@@ -165,11 +179,18 @@ pub fn rasterize_kernel(
         let final_b = pix_b + t_acc * u.bg_b;
         let final_a = 1.0f32 - t_acc;
         if comptime![bwd_info] {
-            let base = (pix_id * 4u32) as usize;
+            let base = (pix_id * comptime![out_img_channels(with_features)]) as usize;
             out_img_f32[base] = final_r;
             out_img_f32[base + 1] = final_g;
             out_img_f32[base + 2] = final_b;
             out_img_f32[base + 3] = final_a;
+            if comptime![with_features] {
+                // No background contribution for feature channels
+                // (implicit zero background).
+                out_img_f32[base + 4] = pix_f0;
+                out_img_f32[base + 5] = pix_f1;
+                out_img_f32[base + 6] = pix_f2;
+            }
         } else {
             let r = clamp(final_r * 255.0f32, 0.0f32, 255.0f32) as u32;
             let g = clamp(final_g * 255.0f32, 0.0f32, 255.0f32) as u32;

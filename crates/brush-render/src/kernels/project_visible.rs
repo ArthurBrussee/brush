@@ -24,12 +24,14 @@ pub fn project_visible_kernel(
     transforms: &Tensor<f32>,
     coeffs: &Tensor<f32>,
     raw_opacities: &Tensor<f32>,
+    features: &Tensor<f32>,
     global_from_compact_gid: &Tensor<u32>,
     projected: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
     #[comptime] sh_degree: u32,
     #[comptime] camera_model: CameraModel,
+    #[comptime] with_features: bool,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
     if compact_gid >= u.num_visible {
@@ -70,19 +72,34 @@ pub fn project_visible_kernel(
     let cg_c = clamp(select(is_finite_f32(cg), cg, 0.0f32), -100.0f32, 100.0f32);
     let cb_c = clamp(select(is_finite_f32(cb), cb, 0.0f32), -100.0f32, 100.0f32);
 
-    write_projected_splat(
-        projected,
-        compact_gid,
-        Splat {
-            xy_x: mean2d_x,
-            xy_y: mean2d_y,
-            conic_x: conic.c00,
-            conic_y: conic.c01,
-            conic_z: conic.c11,
-            color_a: opac,
-            color_r: cr_c,
-            color_g: cg_c,
-            color_b: cb_c,
-        },
-    );
+    let mut splat = Splat {
+        xy_x: mean2d_x,
+        xy_y: mean2d_y,
+        conic_x: conic.c00,
+        conic_y: conic.c01,
+        conic_z: conic.c11,
+        color_a: opac,
+        color_r: cr_c,
+        color_g: cg_c,
+        color_b: cb_c,
+        feat_x: 0.0f32,
+        feat_y: 0.0f32,
+        feat_z: 0.0f32,
+    };
+
+    if comptime![with_features] {
+        // Per-splat feature, gathered verbatim (the VJP in project_backwards
+        // is a pure scatter). Same NaN-scrub + clamp as colors so the
+        // rasterize backward's gradient terms can't overflow, but no
+        // non-negativity clamp: features are signed.
+        let fbase = (global_gid * 3u32) as usize;
+        let fx = features[fbase];
+        let fy = features[fbase + 1];
+        let fz = features[fbase + 2];
+        splat.feat_x = clamp(select(is_finite_f32(fx), fx, 0.0f32), -100.0f32, 100.0f32);
+        splat.feat_y = clamp(select(is_finite_f32(fy), fy, 0.0f32), -100.0f32, 100.0f32);
+        splat.feat_z = clamp(select(is_finite_f32(fz), fz, 0.0f32), -100.0f32, 100.0f32);
+    }
+
+    write_projected_splat(projected, compact_gid, splat, with_features);
 }

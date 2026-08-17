@@ -421,6 +421,10 @@ pub async fn render_splats(
         // Inference path: no gradients, so the refine-weight accumulator is a
         // throwaway scalar the concrete backends ignore.
         Tensor::<1>::zeros([1], &render_device).into_dispatch(),
+        // Rank-1 dummy disables the per-splat feature path (see
+        // `SplatOps::render`) — the viewer/eval render never composites
+        // features.
+        Tensor::<1>::zeros([1], &render_device).into_dispatch(),
         render_mode,
         background,
         pass,

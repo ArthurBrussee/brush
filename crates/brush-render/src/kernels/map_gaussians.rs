@@ -20,13 +20,14 @@ pub fn map_gaussians_to_intersect_kernel(
     tile_bw: u32,
     tile_bh: u32,
     num_visible: u32,
+    #[comptime] with_features: bool,
 ) {
     let compact_gid = ABSOLUTE_POS as u32;
     if compact_gid >= num_visible {
         terminate!();
     }
 
-    let (xy_x, xy_y, conic, opac) = read_main_splat(projected, compact_gid);
+    let (xy_x, xy_y, conic, opac) = read_main_splat(projected, compact_gid, with_features);
 
     let power_threshold = f32::ln(opac * 255.0f32);
     let (ex, ey) = compute_bbox_extent(conic, power_threshold);

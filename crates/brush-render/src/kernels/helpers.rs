@@ -49,8 +49,31 @@ pub fn alpha_cutoff_weight_deriv(alpha: f32) -> f32 {
 /// `f32` lanes per projected splat. Layout matches `Splat`:
 ///   0:xy_x, 1:xy_y, 2:conic_x, 3:conic_y, 4:conic_z, 5:color_a,
 ///   6:color_r, 7:color_g, 8:color_b.
+/// When the render carries per-splat features (`with_features`), three
+/// extra lanes follow: 9:feat_x, 10:feat_y, 11:feat_z.
 pub const PROJECTED_LANES: u32 = 9;
 pub const PROJECTED_LANES_USIZE: usize = PROJECTED_LANES as usize;
+
+/// Extra lanes appended to a projected splat when per-splat features are
+/// rendered (see [`projected_lanes`]).
+pub const FEATURE_LANES: u32 = 3;
+
+/// Lane count of a projected splat for the given feature configuration.
+/// Kernels take `with_features` as a `#[comptime]` param, so this stays a
+/// plain `const fn` usable inside `comptime![..]` blocks.
+pub const fn projected_lanes(with_features: bool) -> u32 {
+    if with_features {
+        PROJECTED_LANES + FEATURE_LANES
+    } else {
+        PROJECTED_LANES
+    }
+}
+
+/// Channel count of the f32 (bwd_info) output image: RGBA plus the
+/// feature channels when enabled.
+pub const fn out_img_channels(with_features: bool) -> u32 {
+    if with_features { 4 + FEATURE_LANES } else { 4 }
+}
 
 #[cube]
 pub fn compact_bits_16(v: u32) -> u32 {
@@ -267,8 +290,12 @@ pub fn will_primitive_contribute(
 /// splat. Used by `map_gaussians_to_intersect`, which doesn't need the
 /// colors.
 #[cube]
-pub fn read_main_splat(projected: &Tensor<f32>, idx: u32) -> (f32, f32, Sym2, f32) {
-    let b = (idx * PROJECTED_LANES) as usize;
+pub fn read_main_splat(
+    projected: &Tensor<f32>,
+    idx: u32,
+    #[comptime] with_features: bool,
+) -> (f32, f32, Sym2, f32) {
+    let b = (idx * comptime![projected_lanes(with_features)]) as usize;
     (
         projected[b],
         projected[b + 1],
@@ -283,9 +310,13 @@ pub fn read_main_splat(projected: &Tensor<f32>, idx: u32) -> (f32, f32, Sym2, f3
 
 /// Read one projected splat from the flat `Tensor<f32>` storage.
 #[cube]
-pub fn read_projected_splat(projected: &Tensor<f32>, idx: u32) -> Splat {
-    let b = (idx * PROJECTED_LANES) as usize;
-    Splat {
+pub fn read_projected_splat(
+    projected: &Tensor<f32>,
+    idx: u32,
+    #[comptime] with_features: bool,
+) -> Splat {
+    let b = (idx * comptime![projected_lanes(with_features)]) as usize;
+    let mut splat = Splat {
         xy_x: projected[b],
         xy_y: projected[b + 1],
         conic_x: projected[b + 2],
@@ -295,12 +326,26 @@ pub fn read_projected_splat(projected: &Tensor<f32>, idx: u32) -> Splat {
         color_r: projected[b + 6],
         color_g: projected[b + 7],
         color_b: projected[b + 8],
+        feat_x: 0.0f32,
+        feat_y: 0.0f32,
+        feat_z: 0.0f32,
+    };
+    if comptime![with_features] {
+        splat.feat_x = projected[b + 9];
+        splat.feat_y = projected[b + 10];
+        splat.feat_z = projected[b + 11];
     }
+    splat
 }
 
 #[cube]
-pub fn write_projected_splat(projected: &mut Tensor<f32>, idx: u32, splat: Splat) {
-    let b = (idx * PROJECTED_LANES) as usize;
+pub fn write_projected_splat(
+    projected: &mut Tensor<f32>,
+    idx: u32,
+    splat: Splat,
+    #[comptime] with_features: bool,
+) {
+    let b = (idx * comptime![projected_lanes(with_features)]) as usize;
     projected[b] = splat.xy_x;
     projected[b + 1] = splat.xy_y;
     projected[b + 2] = splat.conic_x;
@@ -310,6 +355,11 @@ pub fn write_projected_splat(projected: &mut Tensor<f32>, idx: u32, splat: Splat
     projected[b + 6] = splat.color_r;
     projected[b + 7] = splat.color_g;
     projected[b + 8] = splat.color_b;
+    if comptime![with_features] {
+        projected[b + 9] = splat.feat_x;
+        projected[b + 10] = splat.feat_y;
+        projected[b + 11] = splat.feat_z;
+    }
 }
 
 /// View-space transform of a world-space mean using the project uniforms'

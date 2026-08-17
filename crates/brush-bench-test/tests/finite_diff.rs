@@ -105,7 +105,7 @@ async fn render_value(
         let splats = splats;
         let cam: &Camera = cam;
         let background = Vec3::ZERO;
-        async move { render_splats_with_pass(splats, cam, img_size, background, PASS).await }
+        async move { render_splats_with_pass(splats, cam, img_size, background, None, PASS).await }
     }
     .await;
     diff.img
@@ -126,7 +126,7 @@ async fn analytical_grads(
         let splats = splats.clone();
         let cam: &Camera = cam;
         let background = Vec3::ZERO;
-        async move { render_splats_with_pass(splats, cam, img_size, background, PASS).await }
+        async move { render_splats_with_pass(splats, cam, img_size, background, None, PASS).await }
     }
     .await;
     let grads = diff.img.mean().backward();
@@ -381,7 +381,7 @@ async fn finite_diff_broad_mip_mode() {
             SplatRenderMode::Mip,
             device,
         );
-        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS).await;
+        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, None, PASS).await;
         diff.img
             .mean()
             .into_scalar_async::<f32>()
@@ -404,7 +404,7 @@ async fn finite_diff_broad_mip_mode() {
             SplatRenderMode::Mip,
             device,
         );
-        let diff = render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, PASS).await;
+        let diff = render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, None, PASS).await;
         let g = diff.img.mean().backward();
         (splats, g)
     }
@@ -486,7 +486,7 @@ async fn finite_diff_weighted_loss() {
         device: &burn::tensor::Device,
     ) -> f32 {
         let splats = build_splats(scene, device);
-        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS).await;
+        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, None, PASS).await;
         (diff.img * weights)
             .sum()
             .into_scalar_async::<f32>()
@@ -502,7 +502,7 @@ async fn finite_diff_weighted_loss() {
         device: &burn::tensor::Device,
     ) -> (Splats, Gradients) {
         let splats = build_splats(scene, device);
-        let diff = render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, PASS).await;
+        let diff = render_splats_with_pass(splats.clone(), cam, img_size, Vec3::ZERO, None, PASS).await;
         let loss = (diff.img * weights).sum();
         (splats, loss.backward())
     }
@@ -1502,5 +1502,255 @@ async fn forward_loss_is_deterministic() {
     assert_eq!(
         l_a, l_c,
         "forward loss is nondeterministic ({l_a} vs {l_c})"
+    );
+}
+
+// ---- Per-splat feature channel (normal supervision) tests ----
+
+/// Deterministic signed per-splat features in [-0.8, 0.8] — signed on
+/// purpose, since the feature lanes must composite without the color
+/// path's `max(.., 0)` clamp.
+fn base_features(n: usize) -> Vec<f32> {
+    let mut rng = Sm64::new(0xFEA7);
+    (0..n * 3).map(|_| rng.uniform(-0.8, 0.8)).collect()
+}
+
+fn build_features(vals: &[f32], device: &burn::tensor::Device) -> Tensor<2> {
+    let n = vals.len() / 3;
+    Tensor::from_data(
+        burn::tensor::TensorData::new(vals.to_vec(), [n, 3]),
+        device,
+    )
+    .require_grad()
+}
+
+/// Loss over the composited feature channels only.
+async fn feature_loss_value(
+    scene: &Scene,
+    feats: &[f32],
+    cam: &Camera,
+    img_size: glam::UVec2,
+    device: &burn::tensor::Device,
+) -> f32 {
+    let splats = build_splats(scene, device);
+    let features = build_features(feats, device);
+    let diff =
+        render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, Some(features), PASS).await;
+    diff.features
+        .expect("features were enabled")
+        .mean()
+        .into_scalar_async::<f32>()
+        .await
+        .expect("loss readback")
+}
+
+/// Enabling the feature path must not change the RGBA output: the color
+/// arithmetic is untouched, only buffer strides widen. Guards the
+/// "disabled config == today's kernels" claim from the other side.
+#[tokio::test]
+async fn features_rgba_equivalence() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let cam = std_cam();
+    let img_size = glam::uvec2(32, 32);
+    let scene = base_scene();
+    let n = scene.raw_opac.len();
+
+    let img_plain = {
+        let splats = build_splats(&scene, &device);
+        let diff = render_splats_with_pass(
+            splats,
+            &cam,
+            img_size,
+            Vec3::ZERO,
+            None,
+            RasterPass::Backward,
+        )
+        .await;
+        assert!(diff.features.is_none());
+        diff.img
+            .into_data_async()
+            .await
+            .expect("readback")
+            .into_vec::<f32>()
+            .expect("vec")
+    };
+    let img_feat = {
+        let splats = build_splats(&scene, &device);
+        let features = build_features(&base_features(n), &device);
+        let diff = render_splats_with_pass(
+            splats,
+            &cam,
+            img_size,
+            Vec3::ZERO,
+            Some(features),
+            RasterPass::Backward,
+        )
+        .await;
+        assert!(diff.features.is_some());
+        diff.img
+            .into_data_async()
+            .await
+            .expect("readback")
+            .into_vec::<f32>()
+            .expect("vec")
+    };
+
+    assert_eq!(img_plain.len(), img_feat.len());
+    let max_diff = img_plain
+        .iter()
+        .zip(&img_feat)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_diff < 1e-6,
+        "RGBA output changed when enabling features (max |Δ| = {max_diff:.3e})"
+    );
+}
+
+/// Central-difference check of the gradient w.r.t. the feature input
+/// itself: exercises the fwd compositing + the feature lanes of
+/// `rasterize_backwards` + the scatter in `project_backwards`.
+#[tokio::test]
+async fn finite_diff_feature_input() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let cam = std_cam();
+    let img_size = glam::uvec2(32, 32);
+    let scene = base_scene();
+    let n = scene.raw_opac.len();
+    let feats = base_features(n);
+
+    let eps = 3e-4_f32;
+    let rel_tol = 0.01_f32;
+    let abs_tol = 5e-5_f32;
+
+    let (features, grads) = {
+        let splats = build_splats(&scene, &device);
+        let features = build_features(&feats, &device);
+        let diff = render_splats_with_pass(
+            splats,
+            &cam,
+            img_size,
+            Vec3::ZERO,
+            Some(features.clone()),
+            PASS,
+        )
+        .await;
+        let grads = diff
+            .features
+            .expect("features were enabled")
+            .mean()
+            .backward();
+        (features, grads)
+    };
+    let g = features.grad(&grads).expect("feature grad");
+
+    let mut failed: Vec<String> = Vec::new();
+    for (splat, comp) in [(0usize, 0usize), (0, 2), (1, 1), (2, 0), (3, 2)] {
+        let mut f_plus = feats.clone();
+        f_plus[splat * 3 + comp] += eps;
+        let l_plus = feature_loss_value(&scene, &f_plus, &cam, img_size, &device).await;
+
+        let mut f_minus = feats.clone();
+        f_minus[splat * 3 + comp] -= eps;
+        let l_minus = feature_loss_value(&scene, &f_minus, &cam, img_size, &device).await;
+
+        let numerical = (l_plus - l_minus) / (2.0 * eps);
+        let an = read_first(g.clone().slice(s![splat..splat + 1, comp..comp + 1])).await;
+
+        let abs_err = (numerical - an).abs();
+        let scale = numerical.abs().max(an.abs()).max(1e-8);
+        let tol = abs_tol + rel_tol * scale;
+        if abs_err > tol {
+            failed.push(format!(
+                "features[{splat},{comp}]: numerical {numerical:.6} vs analytical {an:.6} \
+                 (|Δ|={abs_err:.3e} > tol {tol:.3e})"
+            ));
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "feature-input finite-diff mismatch:\n  {}",
+        failed.join("\n  "),
+    );
+}
+
+/// A loss over the feature channels must also produce correct gradients
+/// for the splat params that shape the blend weights — exercises the
+/// feature terms added to `v_alpha_eff` and the feature remainder
+/// walk-back in `rasterize_backwards`.
+#[tokio::test]
+async fn finite_diff_feature_cross_terms() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let cam = std_cam();
+    let img_size = glam::uvec2(32, 32);
+    let scene = base_scene();
+    let n = scene.raw_opac.len();
+    let feats = base_features(n);
+
+    let eps = 3e-4_f32;
+    let rel_tol = 0.01_f32;
+    let abs_tol = 5e-5_f32;
+
+    let (splats, grads) = {
+        let splats = build_splats(&scene, &device);
+        let features = build_features(&feats, &device);
+        let diff = render_splats_with_pass(
+            splats.clone(),
+            &cam,
+            img_size,
+            Vec3::ZERO,
+            Some(features),
+            PASS,
+        )
+        .await;
+        let grads = diff
+            .features
+            .expect("features were enabled")
+            .mean()
+            .backward();
+        (splats, grads)
+    };
+
+    let cases: &[(Lane, usize, usize)] = &[
+        (Lane::Mean, 0, 0),
+        (Lane::Mean, 1, 1),
+        (Lane::Rot, 0, 0),
+        (Lane::LogScale, 1, 1),
+        (Lane::RawOpac, 0, 0),
+        (Lane::RawOpac, 2, 0),
+    ];
+    let mut failed: Vec<String> = Vec::new();
+    for (lane, splat, comp) in cases {
+        let mut s_plus = scene.clone();
+        perturb(&mut s_plus, *lane, *splat, *comp, eps);
+        let l_plus = feature_loss_value(&s_plus, &feats, &cam, img_size, &device).await;
+
+        let mut s_minus = scene.clone();
+        perturb(&mut s_minus, *lane, *splat, *comp, -eps);
+        let l_minus = feature_loss_value(&s_minus, &feats, &cam, img_size, &device).await;
+
+        let numerical = (l_plus - l_minus) / (2.0 * eps);
+        let an = analytical_at(&splats, &grads, *lane, *splat, *comp).await;
+
+        let abs_err = (numerical - an).abs();
+        let scale = numerical.abs().max(an.abs()).max(1e-8);
+        let tol = abs_tol + rel_tol * scale;
+        if abs_err > tol {
+            failed.push(format!(
+                "{}[{},{}] (feature loss): numerical {numerical:.6} vs analytical {an:.6} \
+                 (|Δ|={abs_err:.3e} > tol {tol:.3e})",
+                lane_name(*lane),
+                splat,
+                comp,
+            ));
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "feature cross-term finite-diff mismatch:\n  {}",
+        failed.join("\n  "),
     );
 }

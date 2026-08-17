@@ -35,9 +35,11 @@ use glam::Vec3;
 
 /// Intermediate gradients from the rasterize backward pass.
 ///
-/// Sparse buffer of shape `[num_visible, 10]`, indexed by `compact_gid`.
-/// Slots 0..8 are projected splat gradients, slot 8 is the raw opacity
-/// gradient, slot 9 is the refinement weight.
+/// Sparse buffer of shape `[num_visible, 10]` (or `[num_visible, 13]` when
+/// the render composited per-splat features), indexed by `compact_gid`.
+/// Slots 0..=7 are projected splat gradients, slot 8 is the raw opacity
+/// gradient, slot 9 is the refinement weight, slots 10..=12 (when present)
+/// the feature gradients.
 #[derive(Debug, Clone)]
 pub(crate) struct RasterizeGrads<B: Backend> {
     pub v_combined: FloatTensor<B>,
@@ -50,6 +52,9 @@ pub(crate) struct SplatGrads<B: Backend> {
     pub v_coeffs: FloatTensor<B>,
     pub v_raw_opac: FloatTensor<B>,
     pub v_refine_weight: FloatTensor<B>,
+    /// Dense `[num_points, 3]` per-splat feature gradient when the render
+    /// composited features; a `[1]` dummy otherwise.
+    pub v_features: FloatTensor<B>,
 }
 
 /// Concrete backward kernels behind [`SplatOps::render`].
@@ -115,7 +120,7 @@ struct GaussianBackwardState<B: Backend> {
 #[derive(Debug)]
 struct RenderBackwards;
 
-const NUM_BWD_ARGS: usize = 4;
+const NUM_BWD_ARGS: usize = 5;
 
 // Implement gradient registration when rendering backwards.
 impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
@@ -139,6 +144,7 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
             refine_weight,
             coeffs_parent,
             raw_opacity_parent,
+            features_parent,
         ] = ops.parents;
 
         let rasterize_grads = B::rasterize_bwd(
@@ -178,12 +184,22 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
         if let Some(node) = raw_opacity_parent {
             grads.register::<B>(node.id, splat_grads.v_raw_opac);
         }
+
+        // Only present when a tracked [N, 3] feature tensor was passed; the
+        // untracked rank-1 dummy has no parent node, so nothing registers.
+        if let Some(node) = features_parent {
+            grads.register::<B>(node.id, splat_grads.v_features);
+        }
     }
 }
 
 pub struct SplatOutputDiff {
-    /// Rendered image, on the autodiff graph (this is what the loss backprops through).
+    /// Rendered `[H, W, 4]` RGBA image, on the autodiff graph (this is what
+    /// the loss backprops through).
     pub img: Tensor<3>,
+    /// Composited `[H, W, 3]` per-splat feature image (e.g. normals), on the
+    /// autodiff graph. `Some` iff the render was given a feature tensor.
+    pub features: Option<Tensor<3>>,
     pub num_visible: u32,
     /// Per-splat visibility aux — on the **inner** backend (no gradients).
     pub visible: Tensor<1>,
@@ -231,20 +247,47 @@ pub async fn render_splats(
         camera,
         img_size,
         background,
+        None,
+        crate::gaussian_splats::RasterPass::Backward,
+    )
+    .await
+}
+
+/// Like [`render_splats`] but also alpha-composites a `[N, 3]` per-splat
+/// feature tensor (e.g. camera-space normals) into `SplatOutputDiff::
+/// features`, sharing the whole projection/sort/rasterize pipeline with the
+/// color render. `features` may be on the autodiff graph; gradients flow
+/// back through the compositing into it (and into the splats' transforms /
+/// opacities via the blend weights).
+pub async fn render_splats_with_features(
+    splats: Splats,
+    camera: &Camera,
+    img_size: glam::UVec2,
+    background: Vec3,
+    features: Tensor<2>,
+) -> SplatOutputDiff {
+    render_splats_with_pass(
+        splats,
+        camera,
+        img_size,
+        background,
+        Some(features),
         crate::gaussian_splats::RasterPass::Backward,
     )
     .await
 }
 
 /// Like [`render_splats`] but lets the caller pick the
-/// [`crate::gaussian_splats::RasterPass`]. Used by the finite-diff
-/// test suite to enable the C^1 smooth-cutoff surrogate; production code
-/// should use [`render_splats`].
+/// [`crate::gaussian_splats::RasterPass`] and optionally pass a per-splat
+/// feature tensor. Used by the finite-diff test suite to enable the C^1
+/// smooth-cutoff surrogate; production code should use [`render_splats`] /
+/// [`render_splats_with_features`].
 pub async fn render_splats_with_pass(
     splats: Splats,
     camera: &Camera,
     img_size: glam::UVec2,
     background: Vec3,
+    features: Option<Tensor<2>>,
     pass: crate::gaussian_splats::RasterPass,
 ) -> SplatOutputDiff {
     splats.clone().validate_values().await;
@@ -280,6 +323,15 @@ pub async fn render_splats_with_pass(
         "render_splats_with_pass requires a Backward variant"
     );
 
+    let with_features = features.is_some();
+    // Disabled: an untracked rank-1 dummy (no `.require_grad()`), so the
+    // backward node's feature parent is `None` and no gradient registers.
+    // Unwrapped per-arm since the two ranks share no `Tensor<D>` type.
+    let features_prim = match features {
+        Some(f) => unwrap_ad_wgpu_float(f),
+        None => unwrap_ad_wgpu_float(Tensor::<1>::zeros([1], &device)),
+    };
+
     // Dispatch through the `#[backend_extension]` glue: the generated
     // `impl SplatOps for Dispatch` routes these autodiff tensors to
     // `impl SplatOps for AutodiffMain` below and re-wraps the result.
@@ -290,14 +342,29 @@ pub async fn render_splats_with_pass(
         unwrap_ad_wgpu_float(splats.sh_coeffs.val()),
         unwrap_ad_wgpu_float(raw_opac_val),
         unwrap_ad_wgpu_float(refine_weight_holder.clone()),
+        features_prim,
         render_mode,
         background,
         pass,
     )
     .await;
 
+    // One tracked [H, W, 4|7] tensor comes back; slice the RGBA image and
+    // the feature channels apart — both slices stay on the autodiff graph
+    // and their gradients sum at the render node.
+    let out_img: Tensor<3> = wrap_ad_wgpu_float(output.out_img);
+    let (img, out_features) = if with_features {
+        (
+            out_img.clone().slice(burn::tensor::s![.., .., 0..4]),
+            Some(out_img.slice(burn::tensor::s![.., .., 4..7])),
+        )
+    } else {
+        (out_img, None)
+    };
+
     SplatOutputDiff {
-        img: wrap_ad_wgpu_float(output.out_img),
+        img,
+        features: out_features,
         num_visible: output.aux.num_visible,
         // Hand the aux back on the inner backend. The extension trait's
         // output is uniformly `RenderOutput<Self>`, so these come back lifted,
@@ -319,6 +386,7 @@ impl SplatOps for AutodiffMain {
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         refine_weight: FloatTensor<Self>,
+        features: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: crate::gaussian_splats::RasterPass,
@@ -329,6 +397,7 @@ impl SplatOps for AutodiffMain {
                 refine_weight.node.clone(),
                 sh_coeffs.node.clone(),
                 raw_opacities.node.clone(),
+                features.node.clone(),
             ])
             .compute_bound()
             .stateful();
@@ -344,6 +413,7 @@ impl SplatOps for AutodiffMain {
             sh_inner.clone(),
             raw_opac_inner.clone(),
             refine_weight.primitive,
+            features.primitive,
             render_mode,
             background,
             pass,
@@ -454,6 +524,10 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
         // projected_splats is [num_visible, PROJECTED_LANES], so shape[0] gives num_visible.
         let num_visible_val = projected_splats.shape()[0] as u32;
 
+        // A 7-channel forward image means the render composited per-splat
+        // features, widening the rasterize grads to 13 lanes.
+        let v_lanes = if out_img.shape()[2] == 7 { 13 } else { 10 };
+
         let client = v_output.client.clone();
         let num_visible = (num_visible_val as usize).max(1);
 
@@ -468,7 +542,7 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
         let outputs = {
             let v_combined_out = TensorIr::uninit(
                 client.create_empty_handle(),
-                Shape::new([num_visible, 10]),
+                Shape::new([num_visible, v_lanes]),
                 DType::F32,
             );
             let stream = StreamId::current();
@@ -527,7 +601,13 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
                     v_combined_in,
                 ] = inputs;
 
-                let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
+                let [
+                    v_transforms,
+                    v_coeffs,
+                    v_raw_opac,
+                    v_refine_weight,
+                    v_features,
+                ] = outputs;
 
                 let grads = <MainBackendBase as SplatBwdOps>::project_bwd(
                     h.get_float_tensor::<MainBackendBase>(transforms),
@@ -546,12 +626,23 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
                     &v_refine_weight.id,
                     grads.v_refine_weight,
                 );
+                h.register_float_tensor::<MainBackendBase>(&v_features.id, grads.v_features);
             }
         }
 
         let client = transforms.client.clone();
         let num_points = transforms.shape[0];
         let coeffs = sh_coeffs_for_degree(project_uniforms.sh_degree) as usize;
+
+        // 13-lane rasterize grads mean the render composited features; the
+        // dense feature grad is then real, otherwise a [1] dummy (the op
+        // always has 5 outputs so the IR arity is fixed).
+        let with_features = v_combined.shape()[1] == 13;
+        let v_features_shape = if with_features {
+            Shape::new([num_points, 3])
+        } else {
+            Shape::new([1])
+        };
 
         let input_tensors = [
             transforms,
@@ -562,13 +653,14 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
         ];
 
         let outputs = {
-            // All four grads are fresh f32 handles; only the shape differs.
+            // All five grads are fresh f32 handles; only the shape differs.
             let new_grad =
                 |shape| TensorIr::uninit(client.create_empty_handle(), shape, DType::F32);
             let v_transforms_out = new_grad(Shape::new([num_points, 10]));
             let v_coeffs_out = new_grad(Shape::new([num_points, coeffs, 3]));
             let v_raw_opac_out = new_grad(Shape::new([num_points]));
             let v_refine_weight_out = new_grad(Shape::new([num_points]));
+            let v_features_out = new_grad(v_features_shape);
 
             let stream = StreamId::current();
             let desc = CustomOpIr::new(
@@ -579,6 +671,7 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
                     v_coeffs_out,
                     v_raw_opac_out,
                     v_refine_weight_out,
+                    v_features_out,
                 ],
             );
 
@@ -595,13 +688,14 @@ impl SplatBwdOps for Fusion<MainBackendBase> {
                 .outputs()
         };
 
-        let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
+        let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight, v_features] = outputs;
 
         SplatGrads {
             v_transforms,
             v_coeffs,
             v_raw_opac,
             v_refine_weight,
+            v_features,
         }
     }
 }

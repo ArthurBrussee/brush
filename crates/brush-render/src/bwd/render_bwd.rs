@@ -36,8 +36,25 @@ impl SplatBwdOps for MainBackendBase {
         let num_visible = projected_splats.shape()[0].max(1);
         let client = projected_splats.client.clone();
 
-        // Sparse [num_visible, 10] indexed by compact_gid.
-        let v_combined = Self::float_zeros([num_visible, 10].into(), &device, FloatDType::F32);
+        // Feature-enabled renders carry 3 extra out_img channels; derive the
+        // flag from the forward output rather than threading it separately.
+        let out_channels = out_img.shape()[2];
+        assert!(
+            out_channels == 4 || out_channels == 7,
+            "rasterize_bwd expects a [H, W, 4|7] f32 out_img, got {out_channels} channels"
+        );
+        let with_features = out_channels == 7;
+
+        // Sparse [num_visible, 10|13] indexed by compact_gid.
+        let v_combined = Self::float_zeros(
+            [
+                num_visible,
+                kernels::rasterize_backwards::v_combined_lanes(with_features) as usize,
+            ]
+            .into(),
+            &device,
+            FloatDType::F32,
+        );
 
         let tile_bounds = uvec2(
             img_size.x.div_ceil(crate::shaders::helpers::TILE_WIDTH),
@@ -77,6 +94,7 @@ impl SplatBwdOps for MainBackendBase {
                     v_combined.clone().into_tensor_arg(),
                     uniforms,
                     smooth_cutoff,
+                    with_features,
                 );
             } else {
                 rasterize_backwards_kernel::launch::<CasAtomicAdd, WgpuRuntime>(
@@ -91,6 +109,7 @@ impl SplatBwdOps for MainBackendBase {
                     v_combined.clone().into_tensor_arg(),
                     uniforms,
                     smooth_cutoff,
+                    with_features,
                 );
             }
         });
@@ -135,6 +154,22 @@ impl SplatBwdOps for MainBackendBase {
         let v_raw_opac = Self::float_zeros([num_points].into(), &device, FloatDType::F32);
         let v_refine_weight = Self::float_zeros([num_points].into(), &device, FloatDType::F32);
 
+        // Widened rasterize grads mean the forward composited features;
+        // derive the flag from v_combined rather than threading it in.
+        let v_lanes = v_combined.shape()[1];
+        assert!(
+            v_lanes == 10 || v_lanes == 13,
+            "project_bwd expects [num_visible, 10|13] rasterize grads, got {v_lanes} lanes"
+        );
+        let with_features = v_lanes == 13;
+        // Dense per-splat feature gradient; a [1] dummy when disabled so the
+        // launch signature stays uniform.
+        let v_features = if with_features {
+            Self::float_zeros([num_points, 3].into(), &device, FloatDType::F32)
+        } else {
+            Self::float_zeros([1].into(), &device, FloatDType::F32)
+        };
+
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
         let num_visible = project_uniforms.num_visible;
@@ -155,10 +190,12 @@ impl SplatBwdOps for MainBackendBase {
                 v_coeffs.clone().into_tensor_arg(),
                 v_raw_opac.clone().into_tensor_arg(),
                 v_refine_weight.clone().into_tensor_arg(),
+                v_features.clone().into_tensor_arg(),
                 uniforms,
                 mip_splat,
                 project_uniforms.sh_degree,
                 project_uniforms.camera_model,
+                with_features,
             );
         });
 
@@ -167,6 +204,7 @@ impl SplatBwdOps for MainBackendBase {
             v_coeffs,
             v_raw_opac,
             v_refine_weight,
+            v_features,
         }
     }
 }

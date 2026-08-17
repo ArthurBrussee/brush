@@ -60,6 +60,12 @@ pub trait SplatOps: Backend {
     /// `refine_weight` is a zero-filled accumulator that catches the per-splat
     /// refinement weight gradient. Only the `Autodiff` impl reads it; the
     /// concrete backends ignore it.
+    /// `features` is an optional `[N, 3]` per-splat feature (e.g. a normal)
+    /// alpha-composited into 3 extra output channels alongside RGB. The
+    /// dummy-tensor pattern gates it: a rank-1 `[1]` tensor disables the
+    /// feature path entirely (the kernels compile to the feature-free
+    /// variant); a rank-2 `[N, 3]` tensor enables it, which requires a
+    /// backward-bookkeeping `pass` and widens `out_img` to `[H, W, 7]`.
     /// `pass` picks forward-only vs. forward+backward-bookkeeping, and (only
     /// for tests) toggles the C^1 smoothstep around the alpha cutoff.
     #[allow(clippy::too_many_arguments)]
@@ -70,6 +76,7 @@ pub trait SplatOps: Backend {
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         refine_weight: FloatTensor<Self>,
+        features: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: gaussian_splats::RasterPass,
