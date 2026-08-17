@@ -192,11 +192,19 @@ pub(crate) async fn train_stream(
         .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "dataset".to_owned());
 
-    // Interpolate {dataset} in the export path.
+    // Interpolate {dataset} and {timestamp} in the export path. The
+    // timestamp is computed once per process start (not per export) so all
+    // checkpoints from one run land together, while distinct runs never
+    // collide on the same file.
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let export_path_str = train_stream_config
         .process_config
         .export_path
-        .replace("{dataset}", &dataset_name);
+        .replace("{dataset}", &dataset_name)
+        .replace("{timestamp}", &timestamp.to_string());
 
     // Resolve relative to the dataset's parent directory if available, otherwise CWD.
     let base_path = vfs

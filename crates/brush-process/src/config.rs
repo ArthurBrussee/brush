@@ -30,8 +30,11 @@ pub struct ProcessConfig {
     )]
     pub export_every: u32,
     /// Location to put exported files. Supports {dataset} interpolation for the dataset
-    /// folder name. Path is relative to the dataset's parent directory (or CWD if unavailable).
-    /// Use "./{dataset}/" to export inside the dataset folder.
+    /// folder name, and {timestamp} interpolation for the process start time (as Unix
+    /// seconds) — opt into the latter (e.g. "./{dataset}_exports/{timestamp}/") to give
+    /// repeated runs their own directory so they never overwrite a previous run's
+    /// exports. Path is relative to the dataset's parent directory (or CWD if
+    /// unavailable). Use "./{dataset}/" to export inside the dataset folder.
     #[arg(
         long,
         help_heading = "Process options",
