@@ -190,6 +190,44 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             false,
             enabled,
         );
+
+        // Weight 0 disables normal supervision entirely (the trainer skips
+        // the feature render + loss), so the checkbox just toggles between
+        // 0 and a sensible default weight.
+        let normal_supervision_active = tc.normal_loss_weight > 0.0;
+        let mut normal_supervision = normal_supervision_active;
+        ui.add_enabled(
+            enabled,
+            egui::Checkbox::new(&mut normal_supervision, "Normal map supervision"),
+        );
+        if enabled && normal_supervision != normal_supervision_active {
+            tc.normal_loss_weight = if normal_supervision { 0.05 } else { 0.0 };
+        }
+        if tc.normal_loss_weight > 0.0 {
+            ui.label(
+                egui::RichText::new(
+                    "Supervises geometry with monocular normal maps from a 'normals/' \
+                     folder next to the dataset's images (ignored if absent).",
+                )
+                .weak(),
+            );
+            slider(
+                ui,
+                &mut tc.normal_loss_weight,
+                0.01..=0.5,
+                "Normal loss weight",
+                true,
+                enabled,
+            );
+            slider(
+                ui,
+                &mut tc.normal_loss_start_iter,
+                0..=20000,
+                "Start at step",
+                false,
+                enabled,
+            );
+        }
     });
 
     ui.collapsing("Background", |ui| {

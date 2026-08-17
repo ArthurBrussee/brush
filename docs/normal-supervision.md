@@ -2,8 +2,9 @@
 
 Brush can optionally supervise training with per-frame monocular normal maps
 (e.g. produced by [Sapiens2](https://github.com/facebookresearch/sapiens2)),
-in addition to the usual photometric loss. This is off by default and CLI-only
-for now (no UI wiring yet).
+in addition to the usual photometric loss. This is off by default; enable it
+from the CLI flags below or the viewer's training settings (Losses → "Normal
+map supervision").
 
 ## Dataset format
 
@@ -138,9 +139,6 @@ cargo run -p brush-bench-test --example normal_calib --release -- \
 
 ## What's deliberately out of scope here
 
-- **UI wiring** (`brush-app`): the `TrainConfig`/dataset-loading fields
-  are shared with the CLI, so they'll surface automatically once someone
-  adds UI controls, but no controls exist yet.
 - **Normal-consistency regularizers** (à la 2DGS's depth-normal
   consistency): the feature channel gives a rendered normal map, but no
   rendered depth to check it against — that would be a further (now
