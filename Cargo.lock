@@ -945,12 +945,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "brush-anim"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "brush-render",
+ "burn",
+ "ffmpeg-sidecar",
+ "glam",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "brush-app"
 version = "1.0.0"
 dependencies = [
  "android_logger",
  "anyhow",
  "async-channel",
+ "brush-anim",
  "brush-async",
  "brush-cli",
  "brush-dataset",
@@ -1046,8 +1060,12 @@ name = "brush-cli"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "brush-anim",
  "brush-async",
  "brush-process",
+ "brush-render",
+ "brush-serde",
+ "burn",
  "clap",
  "env_logger",
  "getrandom 0.4.3",
@@ -3955,6 +3973,15 @@ name = "fearless_simd"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
+
+[[package]]
+name = "ffmpeg-sidecar"
+version = "2.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "126522985748cb6a56a966037c3d86d94414be7a01d7749eccf71f7290f6eacd"
+dependencies = [
+ "anyhow",
+]
 
 [[package]]
 name = "filetime"

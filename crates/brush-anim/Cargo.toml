@@ -1,0 +1,27 @@
+[package]
+name = "brush-anim"
+edition.workspace = true
+version.workspace = true
+readme.workspace = true
+license.workspace = true
+
+# Shared animation model: keyframe config + interpolation (all platforms) and
+# the native render/encode pipeline used by the viewer export and the CLI.
+
+[dependencies]
+brush-render.path = "../brush-render"
+
+glam = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+anyhow.workspace = true
+
+# Native-only: rendering frames + encoding to MP4 with ffmpeg.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+burn.workspace = true
+# `download_ffmpeg` is off: it pulls xz2/lzma-sys which conflicts with
+# liblzma-sys already in the tree, so we use ffmpeg from PATH.
+ffmpeg-sidecar = { version = "2", default-features = false }
+
+[lints]
+workspace = true
