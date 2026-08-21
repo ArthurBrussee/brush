@@ -542,7 +542,9 @@ async fn run_eval(
 
         #[cfg(not(target_family = "wasm"))]
         if let Some(path) = &save_path {
-            let img_name = view.image.img_name();
+            // Keep per-camera directory components so COLMAP rig layouts that
+            // share station basenames do not overwrite each other on disk.
+            let img_name = view.image.flattened_path_name();
             let path = path
                 .join(format!("eval_{iter}"))
                 .join(format!("{img_name}.png"));
