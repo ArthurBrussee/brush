@@ -179,8 +179,34 @@ impl LoadImage {
             .to_string()
     }
 
+    /// Dataset-relative path flattened with `-` for collision-free disk names.
+    ///
+    /// COLMAP multi-camera layouts often share basenames across per-camera
+    /// folders (`y000/station_0000.jpg`, `y045/station_0000.jpg`). Using only
+    /// [`Self::img_name`] for `--eval-save-to-disk` would overwrite those
+    /// renders; this keeps the directory components in the output filename.
+    pub fn flattened_path_name(&self) -> String {
+        flattened_path_name(&self.path)
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+/// Flatten a dataset-relative path into a single filename component.
+fn flattened_path_name(path: &Path) -> String {
+    let parts: Vec<_> = path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy()),
+            _ => None,
+        })
+        .collect();
+    if parts.is_empty() {
+        path.to_string_lossy().into_owned()
+    } else {
+        parts.join("-")
     }
 }
 
@@ -220,6 +246,38 @@ fn decode_jpeg_scaled(bytes: &[u8], max_resolution: u32) -> Option<DynamicImage>
         }
         // CMYK32 / L16 are rare in photogrammetry data; fall back to image crate.
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod flattened_path_tests {
+    use super::flattened_path_name;
+    use std::path::Path;
+
+    #[test]
+    fn basename_only_unchanged() {
+        assert_eq!(flattened_path_name(Path::new("station_0000.jpg")), "station_0000.jpg");
+    }
+
+    #[test]
+    fn preserves_camera_subdir_components() {
+        assert_eq!(
+            flattened_path_name(Path::new("images/y000/station_0000.jpg")),
+            "images-y000-station_0000.jpg"
+        );
+        assert_eq!(
+            flattened_path_name(Path::new("images/y045/station_0000.jpg")),
+            "images-y045-station_0000.jpg"
+        );
+    }
+
+    #[test]
+    fn distinct_camera_folders_do_not_collide() {
+        let a = flattened_path_name(Path::new("y000/station_0000.jpg"));
+        let b = flattened_path_name(Path::new("y045/station_0000.jpg"));
+        assert_ne!(a, b);
+        assert_eq!(a, "y000-station_0000.jpg");
+        assert_eq!(b, "y045-station_0000.jpg");
     }
 }
 
