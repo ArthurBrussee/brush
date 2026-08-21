@@ -93,17 +93,50 @@ pub fn fold_min_scale(
     let f = crate::burn_glue::match_backend(f, &transforms);
     let n = transforms.dims()[0] as i32;
     let log_scales = transforms.clone().slice(s![.., 7..10]); // [N,3]
-    let s2 = log_scales.mul_scalar(2.0).exp(); // s² = exp(2·log) [N,3]
+    let s2 = log_scales.clone().mul_scalar(2.0).exp(); // s² = exp(2·log) [N,3]
     let f2 = f.clone().mul(f).reshape([n, 1]); // [N,1]
-    let s2f = s2.clone().add(f2); // s² + f² [N,3]
+    let s2f = s2.add(f2); // s² + f² [N,3]
 
-    let new_log = s2f.clone().log().mul_scalar(0.5); // log(sqrt(s²+f²)) [N,3]
-    let transforms = transforms.slice_assign(s![.., 7..10], new_log);
+    let new_log = s2f.log().mul_scalar(0.5); // log(sqrt(s²+f²)) [N,3]
+    let transforms = transforms.slice_assign(s![.., 7..10], new_log.clone());
 
-    let det = |t: Tensor<2>| {
-        t.clone().slice(s![.., 0..1]) * t.clone().slice(s![.., 1..2]) * t.slice(s![.., 2..3])
-    };
-    let coef = (det(s2).div(det(s2f))).sqrt().reshape([n]); // sqrt(det1/det2) [N]
+    // Opacity energy compensation `sqrt(det(s²) / det(s²+f²))`, evaluated PER
+    // AXIS in log space rather than as a ratio of three-axis determinants:
+    //
+    //     sqrt( Π_i s_i² / Π_i (s_i²+f²) ) = Π_i s_i / sqrt(s_i²+f²)
+    //                                      = exp( Σ_i [ log s_i - log sqrt(s_i²+f²) ] )
+    //
+    // Algebraically identical; numerically bounded, which the determinant form
+    // is not. Each summand is `log s_i - new_log_i <= 0`, so the sum is bounded
+    // and `coef` lands in (0, 1] by construction. `log s_i` is the raw parameter
+    // and `new_log_i` is already computed above, so neither logarithm is
+    // evaluated: the round trip through `s2` (whose `log(exp(·))` would
+    // reintroduce an underflow of its own for very small scales) is skipped.
+    //
+    // Why the determinant form had to go. `det(s²+f²)` CUBES a per-axis variance
+    // that is legitimately tiny on a dense mesh/LiDAR seed — `s² ~ 1e-8` gives
+    // `det ~ 1e-23`. The backward of `div` forms `rhs²`, which is then `~1e-46`:
+    // subnormal. GPU shading languages flush subnormals to zero, so the backward
+    // divides by exactly zero and every scale-lane gradient for that splat
+    // becomes `±inf`, which the three-axis product rule then turns into NaN, and
+    // which Adam writes straight into the parameters on the first step. Measured
+    // on an ARKitScenes mesh seed: 11,525 of 1,129,403 splats poisoned at
+    // iteration 1, the affected set matching `det(s²+f²) < sqrt(f32::MIN_POSITIVE)`
+    // exactly, 11,525 for 11,525.
+    //
+    // The cliff is closer than it looks even on healthy scenes, because
+    // `det² ∝ s¹²` when `s >> f`: a seed sitting a comfortable-sounding 85x above
+    // the boundary is only `85^(1/12) = 1.44x` in scale away from it, i.e. 0.36
+    // in log-scale. Any recipe that deliberately thins splats (a flattening
+    // regularizer, say) walks the population over the edge during training. This
+    // is why clamping the denominator would be the wrong fix: it would keep
+    // producing distorted gradients for a population that is actively migrating
+    // into the band.
+    //
+    // Gradient, for the record: `d coef / d log s_i = coef · f²/(s_i²+f²)`, which
+    // is bounded by `coef <= 1` everywhere. The determinant form's gradient had
+    // no such bound.
+    let coef = log_scales.sub(new_log).sum_dim(1).exp().reshape([n]); // [N]
     let opac = sigmoid(raw_opac).mul(coef).clamp(1e-6, 1.0 - 1e-6);
     let raw_opac = opac.clone().div(opac.neg().add_scalar(1.0)).log(); // logit
 
@@ -443,4 +476,206 @@ pub async fn render_splats(
     };
 
     (Tensor::from_dispatch(output.out_img), aux)
+}
+
+#[cfg(test)]
+mod min_scale_fold_tests {
+    use super::*;
+    use burn::tensor::TensorData;
+
+    /// Smallest positive NORMAL f32. Below this, f32 values are subnormal, and
+    /// GPU shading languages are permitted to flush them to zero.
+    const F32_MIN_POSITIVE: f32 = f32::MIN_POSITIVE;
+
+    /// Build one splat per supplied isotropic log-scale, all at the origin with
+    /// identity rotation and a fixed raw opacity.
+    fn fold_inputs(
+        log_scales: &[f32],
+        floor: f32,
+        device: &Device,
+    ) -> (Tensor<2>, Tensor<1>, Tensor<1>) {
+        let n = log_scales.len();
+        let mut rows = Vec::with_capacity(n * 10);
+        for &l in log_scales {
+            rows.extend_from_slice(&[
+                0.0, 0.0, 0.0, // mean
+                1.0, 0.0, 0.0, 0.0, // quat (w, x, y, z)
+                l, l, l, // isotropic log-scales
+            ]);
+        }
+        let transforms =
+            Tensor::<2>::from_data(TensorData::new(rows, [n, 10]), device).require_grad();
+        let raw_opac =
+            Tensor::<1>::from_data(TensorData::new(vec![-2.2f32; n], [n]), device).require_grad();
+        let f = Tensor::<1>::from_data(TensorData::new(vec![floor; n], [n]), device);
+        (transforms, raw_opac, f)
+    }
+
+    /// `det(s² + f²)` for an isotropic splat, evaluated the way the fold does.
+    fn det_s2f(log_scale: f32, floor: f32) -> f32 {
+        let s2f = (2.0 * log_scale).exp() + floor * floor;
+        s2f * s2f * s2f
+    }
+
+    /// The opacity-compensation coefficient `sqrt(det(s²)/det(s²+f²))`,
+    /// evaluated in f64 so it can serve as a reference for the f32 graph.
+    fn reference_coef(log_scale: f32, floor: f32) -> f64 {
+        let s2 = (2.0 * f64::from(log_scale)).exp();
+        let f2 = f64::from(floor) * f64::from(floor);
+        (s2 / (s2 + f2)).powf(1.5)
+    }
+
+    /// Host-f64 reference for `d/d(log_scale_i)` of
+    /// `sum(new_log) + sum(fold_opacity)` on an isotropic splat.
+    ///
+    /// `new_log_i = ½·ln(s_i²+f²)`                       -> `s_i²/(s_i²+f²)`
+    /// `coef      = exp(Σ_j [L_j - new_log_j])`          -> `coef·f²/(s_i²+f²)`
+    /// `y         = logit(σ(raw)·coef)`, and `σ(raw)·coef = o`, so the second
+    /// term collapses to `(f²/(s_i²+f²)) / (1-o)`.
+    ///
+    /// Valid only while the opacity clamp is inactive; the caller asserts that.
+    fn reference_scale_grad(log_scale: f32, floor: f32, raw: f32) -> (f64, f64) {
+        let s2 = (2.0 * f64::from(log_scale)).exp();
+        let f2 = f64::from(floor) * f64::from(floor);
+        let coef = reference_coef(log_scale, floor);
+        let opac = 1.0 / (1.0 + f64::from(-raw).exp()) * coef;
+        let grad = s2 / (s2 + f2) + (f2 / (s2 + f2)) / (1.0 - opac);
+        (grad, opac)
+    }
+
+    /// The 3D-filter fold must produce finite scale-lane gradients for splats
+    /// whose `det(s² + f²)` squares into the f32 subnormal range.
+    ///
+    /// `fold_min_scale` used to compute its opacity compensation as
+    /// `sqrt(det(s²) / det(s²+f²))`, forming the three-axis product explicitly.
+    /// On a dense mesh/LiDAR seed the per-axis variances are ~1e-8, so the
+    /// product cubes to ~1e-23; `div`'s backward then squares that denominator,
+    /// landing at ~1e-46. GPU backends flush subnormals to zero, so the backward
+    /// divides by exactly zero and every scale-lane gradient for that splat goes
+    /// non-finite. Adam turns the resulting inf/NaN into NaN parameters on the
+    /// very first step.
+    ///
+    /// The scales below straddle `sqrt(f32::MIN_POSITIVE)` in `det(s²+f²)`, so
+    /// the assertion is a real boundary test: rows above must have been finite
+    /// before this fix too, and rows below must be finite after it.
+    #[tokio::test]
+    async fn fold_min_scale_gradient_is_finite_below_the_subnormal_cliff() {
+        let device = Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+
+        // A floor in the range the Mip-Splatting filter actually produces on an
+        // indoor capture (0.3162 * distance / focal).
+        let floor = 1.35e-4f32;
+        // Log-scales spanning the cliff. -9.21 is the smallest scale in the
+        // ARKitScenes mesh seed that first exposed this.
+        let log_scales = [-9.21f32, -8.5, -8.0, -7.5, -7.0, -6.0, -5.0, -4.0, -2.88];
+
+        // Guard the fixture itself: the test is meaningless unless the sample
+        // genuinely straddles the boundary.
+        let sq = |l: f32| {
+            let d = det_s2f(l, floor);
+            d * d
+        };
+        assert!(
+            sq(log_scales[0]) < F32_MIN_POSITIVE,
+            "fixture must include a row whose det² is subnormal, got {}",
+            sq(log_scales[0])
+        );
+        assert!(
+            sq(log_scales[log_scales.len() - 1]) > F32_MIN_POSITIVE,
+            "fixture must include a row whose det² is a normal f32, got {}",
+            sq(log_scales[log_scales.len() - 1])
+        );
+
+        let (transforms, raw_opac, f) = fold_inputs(&log_scales, floor, &device);
+        let (folded_transforms, folded_opac) =
+            fold_min_scale(transforms.clone(), raw_opac.clone(), f);
+
+        // A scalar loss that reaches BOTH fold outputs, so the scale lanes carry
+        // the compensation branch's gradient as well as the scale-replacement
+        // branch's.
+        let loss = folded_transforms.clone().slice(s![.., 7..10]).sum() + folded_opac.sum();
+        let grads = loss.backward();
+
+        let grad = transforms
+            .grad(&grads)
+            .expect("the fold must reach the transforms");
+        let scale_grad: Vec<f32> = grad
+            .slice(s![.., 7..10])
+            .into_data_async()
+            .await
+            .expect("scale-gradient readback")
+            .to_vec()
+            .expect("f32 scale gradients");
+
+        let bad: Vec<(usize, f32, f32)> = scale_grad
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| !g.is_finite())
+            .map(|(i, g)| (i / 3, log_scales[i / 3], *g))
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "non-finite scale gradients from the 3D-filter fold at \
+             (row, log_scale, grad): {bad:?}"
+        );
+
+        // Finite is necessary but not sufficient: a fix that merely clamped the
+        // denominator would also be finite, and WRONG. Pin the VALUE against a
+        // host-f64 evaluation of the same expression — including, and especially,
+        // on the rows that sat below the old cliff.
+        for (row, &l) in log_scales.iter().enumerate() {
+            let (expect, opac) = reference_scale_grad(l, floor, -2.2);
+            assert!(
+                (1e-6..=1.0 - 1e-6).contains(&opac),
+                "row {row}: fixture must not engage the opacity clamp, opac = {opac}"
+            );
+            for axis in 0..3 {
+                let got = f64::from(scale_grad[row * 3 + axis]);
+                let rel = (got - expect).abs() / expect.abs();
+                assert!(
+                    rel < 1e-4,
+                    "row {row} axis {axis} (log_scale {l}, det(s²+f²)² = {:e}): \
+                     scale gradient {got} != host-f64 reference {expect} (rel {rel})",
+                    {
+                        let d = det_s2f(l, floor);
+                        d * d
+                    }
+                );
+            }
+        }
+    }
+
+    /// The reformulated coefficient must agree with the original closed form
+    /// wherever the original was numerically valid.
+    #[tokio::test]
+    async fn fold_min_scale_opacity_matches_the_closed_form() {
+        let device = Device::from(brush_cube::test_helpers::test_device().await);
+
+        let floor = 1.35e-4f32;
+        // Normal-range rows only: this pins the VALUE, and the old expression
+        // is only a valid reference where it did not underflow.
+        let log_scales = [-6.0f32, -5.0, -4.0, -3.0, -2.0];
+        let raw = -2.2f32;
+
+        let (transforms, raw_opac, f) = fold_inputs(&log_scales, floor, &device);
+        let (_, folded_opac) = fold_min_scale(transforms, raw_opac, f);
+        let got: Vec<f32> = folded_opac
+            .into_data_async()
+            .await
+            .expect("opacity readback")
+            .to_vec()
+            .expect("f32 opacities");
+
+        for (i, &l) in log_scales.iter().enumerate() {
+            let coef = reference_coef(l, floor);
+            let opac = (1.0 / (1.0 + f64::from(-raw).exp())) * coef;
+            let expect = (opac / (1.0 - opac)).ln() as f32;
+            let rel = (got[i] - expect).abs() / expect.abs().max(1e-6);
+            assert!(
+                rel < 1e-4,
+                "row {i} (log_scale {l}): folded logit {} != closed form {expect} (rel {rel})",
+                got[i]
+            );
+        }
+    }
 }
