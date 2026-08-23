@@ -20,7 +20,7 @@ mod settings_popup;
 use eframe::egui_wgpu::WgpuConfiguration;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
-use wgpu::{Adapter, ExperimentalFeatures, Features};
+use wgpu::Adapter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[wasm_bindgen]
@@ -35,6 +35,8 @@ pub enum UiMode {
 }
 
 pub fn create_egui_options() -> WgpuConfiguration {
+    // The viewer's device is its own now - training runs on a separate one -
+    // so egui just needs a plain device with its own defaults.
     WgpuConfiguration {
         wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
             eframe::egui_wgpu::WgpuSetupCreateNew {
@@ -43,15 +45,12 @@ pub fn create_egui_options() -> WgpuConfiguration {
                 native_adapter_selector: None,
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 device_descriptor: Arc::new(|adapter: &Adapter| wgpu::DeviceDescriptor {
-                    label: Some("egui+burn"),
-                    required_features: adapter
-                        .features()
-                        .difference(Features::MAPPABLE_PRIMARY_BUFFERS),
+                    label: Some("egui"),
+                    required_features: wgpu::Features::empty(),
                     required_limits: adapter.limits(),
                     memory_hints: wgpu::MemoryHints::MemoryUsage,
                     trace: wgpu::Trace::Off,
-                    // SAFETY: Passthrough shaders are allowed.
-                    experimental_features: unsafe { ExperimentalFeatures::enabled() },
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 }),
             },
         ),

@@ -91,7 +91,7 @@ async fn ssim_in_clamp_range() {
         .into_data_async()
         .await
         .expect("readback")
-        .to_vec()
+        .try_to_vec()
         .expect("vec");
     let min = data.iter().copied().fold(f32::INFINITY, f32::min);
     let max = data.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -127,7 +127,7 @@ async fn image_loss_backward_runs() {
         .into_data_async()
         .await
         .expect("readback")
-        .to_vec()
+        .try_to_vec()
         .expect("vec");
     let max_abs = data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
     assert!(

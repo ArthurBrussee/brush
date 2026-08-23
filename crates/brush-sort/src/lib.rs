@@ -1,3 +1,4 @@
+use burn_cubecl::CubeRuntime;
 mod kernels;
 
 use brush_cube::CubeCount;
@@ -8,16 +9,15 @@ use burn::backend::TensorMetadata;
 use burn::tensor::DType;
 use burn_cubecl::cubecl::CubeDim;
 use burn_wgpu::CubeTensor;
-use burn_wgpu::WgpuRuntime;
 
 use kernels::{BIN_COUNT, BLOCK_SIZE, WG};
 
 /// Perform a radix argsort on the input keys and values.
-pub fn radix_argsort(
-    input_keys: CubeTensor<WgpuRuntime>,
-    input_values: CubeTensor<WgpuRuntime>,
+pub fn radix_argsort<R: CubeRuntime>(
+    input_keys: CubeTensor<R>,
+    input_values: CubeTensor<R>,
     sorting_bits: u32,
-) -> (CubeTensor<WgpuRuntime>, CubeTensor<WgpuRuntime>) {
+) -> (CubeTensor<R>, CubeTensor<R>) {
     assert_eq!(
         input_keys.shape()[0],
         input_values.shape()[0],
@@ -57,7 +57,7 @@ pub fn radix_argsort(
     for pass in 0..sorting_bits.div_ceil(4) {
         let count_buf = create_tensor([(max_needed_wgs as usize) * 16], &device, DType::I32);
 
-        kernels::sort_count_kernel::launch::<WgpuRuntime>(
+        kernels::sort_count_kernel::launch::<R>(
             &client,
             num_wgs.clone(),
             cube_dim,
@@ -76,7 +76,7 @@ pub fn radix_argsort(
             let reduced_buf_size = num_reduce_wgs_count.div_ceil(BLOCK_SIZE).max(1) * BLOCK_SIZE;
             let reduced_buf = create_tensor([reduced_buf_size as usize], &device, DType::I32);
 
-            kernels::sort_reduce_kernel::launch::<WgpuRuntime>(
+            kernels::sort_reduce_kernel::launch::<R>(
                 &client,
                 num_reduce_wgs.clone(),
                 cube_dim,
@@ -84,7 +84,7 @@ pub fn radix_argsort(
                 count_buf.clone().into_tensor_arg(),
                 reduced_buf.clone().into_tensor_arg(),
             );
-            kernels::sort_scan_kernel::launch::<WgpuRuntime>(
+            kernels::sort_scan_kernel::launch::<R>(
                 &client,
                 CubeCount::Static(1, 1, 1),
                 cube_dim,
@@ -92,7 +92,7 @@ pub fn radix_argsort(
                 reduced_buf.clone().into_tensor_arg(),
             );
 
-            kernels::sort_scan_add_kernel::launch::<WgpuRuntime>(
+            kernels::sort_scan_add_kernel::launch::<R>(
                 &client,
                 num_reduce_wgs.clone(),
                 cube_dim,
@@ -105,7 +105,7 @@ pub fn radix_argsort(
         let output_keys = create_tensor([max_n as usize], &device, cur_keys.dtype());
         let output_values = create_tensor([max_n as usize], &device, cur_vals.dtype());
 
-        kernels::sort_scatter_kernel::launch::<WgpuRuntime>(
+        kernels::sort_scatter_kernel::launch::<R>(
             &client,
             num_wgs.clone(),
             cube_dim,
@@ -130,14 +130,15 @@ mod tests {
     use brush_cube::{MainBackendBase, create_tensor_from_slice};
     use burn::backend::ops::IntTensorOps;
     use burn::tensor::DType;
-    use burn_wgpu::{CubeTensor, WgpuRuntime};
+
+    use burn_wgpu::CubeTensor;
     use rand::RngExt;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[cfg(target_family = "wasm")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    async fn read_i32(tensor: CubeTensor<WgpuRuntime>) -> Vec<i32> {
+    async fn read_i32(tensor: CubeTensor<brush_cube::MainRuntime>) -> Vec<i32> {
         let data = MainBackendBase::int_into_data(tensor)
             .await
             .expect("readback");

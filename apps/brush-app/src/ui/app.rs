@@ -208,14 +208,7 @@ impl App {
             .as_ref()
             .expect("Must use wgpu to render UI.");
 
-        let burn_device = brush_process::burn_init_device(
-            state.adapter.clone(),
-            state.device.clone(),
-            state.queue.clone(),
-        );
-
-        log::info!("Connecting context to Burn device & GUI context.");
-        let context = std::sync::Arc::new(UiProcess::new(burn_device, cc.egui_ctx.clone()));
+        let context = std::sync::Arc::new(UiProcess::new(cc.egui_ctx.clone()));
 
         if let Some(process) = init_process {
             context.connect_to_process(process);

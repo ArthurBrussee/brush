@@ -9,7 +9,7 @@ pub mod helpers {
     use crate::kernels::camera_model::pinhole::PinholeParams;
     use crate::kernels::camera_model::{CameraModel, JacobianClampLimits};
     use crate::kernels::types::ProjectUniformsLaunch;
-    use burn_cubecl::cubecl::wgpu::WgpuRuntime;
+    use burn_cubecl::CubeRuntime;
 
     pub const TILE_WIDTH: u32 = 16;
     pub const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;
@@ -34,7 +34,7 @@ pub mod helpers {
     impl ProjectUniforms {
         /// Build the cube-side `ProjectUniforms` launch arg from the camera + img
         /// dims. Shared by the forward and backward projection passes.
-        pub fn to_launch_object(&self) -> ProjectUniformsLaunch<WgpuRuntime> {
+        pub fn to_launch_object<R: CubeRuntime>(&self) -> ProjectUniformsLaunch<R> {
             ProjectUniformsLaunch::new(
                 self.viewmat[0][0],
                 self.viewmat[0][1],

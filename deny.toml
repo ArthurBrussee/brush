@@ -30,11 +30,6 @@ ignore = [
     "RUSTSEC-2024-0436",
     # ttf-parser is unmaintained, used transitively by winit.
     "RUSTSEC-2026-0192",
-    # quick-xml DoS advisories (fixed in 0.41). Only reachable through
-    # wayland-scanner, a build-time proc-macro parsing trusted protocol XML;
-    # wayland-scanner pins 0.39, wait for it to upgrade.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
 ]
 
 [bans]

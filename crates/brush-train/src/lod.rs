@@ -130,7 +130,7 @@ pub async fn compute_pup_scores(
         .into_data_async()
         .await
         .expect("Failed to read Hessian accumulator")
-        .into_vec()
+        .try_into_vec()
         .expect("Failed to convert Hessian data");
 
     hessian_data

@@ -33,13 +33,13 @@ pub mod get_tile_offset;
 pub mod render;
 pub mod validation;
 
-/// `DispatchTensorKind` variant for the active wgpu backend. burn-dispatch
-/// uses different variant names per backend; brush only ever runs on the
-/// `WebGpu` variant, so this macro hides the variant name from match arms.
-macro_rules! wgpu_kind {
+/// `DispatchTensorKind::Wgpu` shorthand, for the helpers that still deal with
+/// wgpu tensors specifically (viewer interop). Backend-agnostic code matches
+/// every variant instead.
+macro_rules! backend_kind {
     ($($t:tt)*) => { ::burn::backend::DispatchTensorKind::Wgpu($($t)*) };
 }
-pub(crate) use wgpu_kind;
+pub(crate) use backend_kind;
 
 /// Trait for the gaussian splatting rendering pipeline.
 ///

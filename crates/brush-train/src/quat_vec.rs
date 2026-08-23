@@ -70,7 +70,7 @@ mod tests {
             .into_data_async()
             .await
             .expect("readback")
-            .into_vec()
+            .try_into_vec()
             .expect("Wrong type");
         let result = glam::vec3(result[0], result[1], result[2]);
         assert!((result_ref - result).length() < 1e-7);

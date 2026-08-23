@@ -1,7 +1,7 @@
 use crate::gaussian_splats::SplatRenderMode;
 use crate::kernels::types::RasterizeUniformsLaunch;
 use crate::sh::sh_coeffs_for_degree;
-use brush_cube::{MainBackendBase, calc_cube_count_1d};
+use brush_cube::calc_cube_count_1d;
 use burn::backend::TensorMetadata;
 use burn::backend::ops::FloatTensorOps;
 use burn::backend::tensor::{FloatTensor, IntTensor};
@@ -11,14 +11,14 @@ use burn_cubecl::cubecl::CubeDim;
 use burn_cubecl::cubecl::features::AtomicUsage;
 use burn_cubecl::cubecl::ir::{ElemType, FloatKind, Type};
 use burn_cubecl::kernel::into_contiguous;
-use burn_wgpu::WgpuRuntime;
+use burn_cubecl::{CubeBackend, CubeRuntime};
 use glam::{Vec3, uvec2};
 
 use crate::bwd::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};
 use crate::bwd::kernels;
 use crate::shaders::helpers::ProjectUniforms;
 
-impl SplatBwdOps for MainBackendBase {
+impl<R: CubeRuntime> SplatBwdOps for CubeBackend<R> {
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
         projected_splats: FloatTensor<Self>,
@@ -65,7 +65,7 @@ impl SplatBwdOps for MainBackendBase {
                 CasAtomicAdd, HfAtomicAdd, rasterize_backwards_kernel,
             };
             if hard_floats {
-                rasterize_backwards_kernel::launch::<HfAtomicAdd, WgpuRuntime>(
+                rasterize_backwards_kernel::launch::<HfAtomicAdd, R>(
                     &client,
                     cube_count,
                     cube_dim,
@@ -79,7 +79,7 @@ impl SplatBwdOps for MainBackendBase {
                     smooth_cutoff,
                 );
             } else {
-                rasterize_backwards_kernel::launch::<CasAtomicAdd, WgpuRuntime>(
+                rasterize_backwards_kernel::launch::<CasAtomicAdd, R>(
                     &client,
                     cube_count,
                     cube_dim,
@@ -142,7 +142,7 @@ impl SplatBwdOps for MainBackendBase {
         let uniforms = project_uniforms.to_launch_object();
 
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
-            kernels::project_backwards::project_backwards_kernel::launch::<WgpuRuntime>(
+            kernels::project_backwards::project_backwards_kernel::launch::<R>(
                 &client,
                 calc_cube_count_1d(num_visible, kernels::project_backwards::WG_SIZE),
                 CubeDim::new_1d(kernels::project_backwards::WG_SIZE),

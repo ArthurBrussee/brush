@@ -2,8 +2,8 @@
 
 use brush_cube::{MainBackend, MainBackendBase};
 use burn::backend::{
-    Autodiff, AutodiffBackend, BackendTensor, CheckpointingStrategy, DispatchTensor,
-    DispatchTensorKind, TensorMetadata,
+    Autodiff, AutodiffBackend, BackendTensor, DispatchTensor, DispatchTensorKind,
+    GradientCheckpointingStrategy, TensorMetadata,
     tensor::{FloatTensor, IntTensor},
 };
 use burn::tensor::{DType, Int, Tensor};
@@ -14,13 +14,13 @@ use burn_fusion::{
     stream::{Operation, StreamId},
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
-use burn_wgpu::WgpuRuntime;
 use glam::Vec3;
 
 use crate::{
-    RenderAuxInner, SplatOps, camera::Camera, gaussian_splats::SplatRenderMode,
-    render_aux::RenderOutput, wgpu_kind,
+    RenderAuxInner, SplatOps, backend_kind, camera::Camera, gaussian_splats::SplatRenderMode,
+    render_aux::RenderOutput,
 };
+use burn_cubecl::{CubeBackend, CubeRuntime};
 
 /// Inner Wgpu autodiff backend (same as `Autodiff<burn::backend::Wgpu>`).
 /// Used as the primitive backend for autodiff `Tensor<D>` operations.
@@ -42,7 +42,7 @@ pub type AutodiffMain = Autodiff<MainBackend>;
 pub fn unwrap_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<MainBackend> {
     let dispatch: DispatchTensor = t.into_dispatch();
     match dispatch.kind {
-        wgpu_kind!(bt) => bt.float(),
+        backend_kind!(bt) => bt.float(),
         other => panic!(
             "expected Wgpu tensor, got: {:?}",
             std::mem::discriminant(&other)
@@ -55,7 +55,7 @@ pub fn unwrap_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<MainBacken
 pub fn unwrap_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBackend> {
     let dispatch: DispatchTensor = t.into_dispatch();
     match dispatch.kind {
-        wgpu_kind!(bt) => bt.int(),
+        backend_kind!(bt) => bt.int(),
         other => panic!(
             "expected Wgpu int tensor, got: {:?}",
             std::mem::discriminant(&other)
@@ -67,7 +67,7 @@ pub fn unwrap_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBacke
 /// user-facing `Tensor<D>`.
 pub fn wrap_wgpu_float<const D: usize>(t: FloatTensor<MainBackend>) -> Tensor<D> {
     Tensor::from_dispatch(DispatchTensor {
-        kind: wgpu_kind!(BackendTensor::Float(t)),
+        kind: backend_kind!(BackendTensor::Float(t)),
         checkpointing: None,
     })
 }
@@ -78,7 +78,7 @@ pub fn unwrap_ad_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<Autodif
     let prim: DispatchTensor = t.into_dispatch();
     match prim.kind {
         DispatchTensorKind::Autodiff(inner) => match *inner {
-            wgpu_kind!(BackendTensor::Autodiff(t)) => t,
+            backend_kind!(BackendTensor::Autodiff(t)) => t,
             other => panic!(
                 "autodiff inner kind is not Wgpu: {:?}",
                 std::mem::discriminant(&other)
@@ -100,7 +100,7 @@ pub fn unwrap_ad_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBa
         other => other,
     };
     match kind {
-        wgpu_kind!(bt) => bt.int(),
+        backend_kind!(bt) => bt.int(),
         other => panic!(
             "expected Wgpu int tensor; got: {:?}",
             std::mem::discriminant(&other)
@@ -112,8 +112,8 @@ pub fn unwrap_ad_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBa
 /// user-facing `Tensor<D>` on the autodiff device.
 pub fn wrap_ad_wgpu_float<const D: usize>(t: FloatTensor<AutodiffMain>) -> Tensor<D> {
     Tensor::from_dispatch(DispatchTensor {
-        kind: DispatchTensorKind::Autodiff(Box::new(wgpu_kind!(BackendTensor::Autodiff(t)))),
-        checkpointing: Some(CheckpointingStrategy::None),
+        kind: DispatchTensorKind::Autodiff(Box::new(backend_kind!(BackendTensor::Autodiff(t)))),
+        checkpointing: Some(GradientCheckpointingStrategy::Disabled),
     })
 }
 
@@ -149,14 +149,56 @@ pub fn detach_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
 /// degrades to the inner backend on the next op and trips a cross-backend
 /// assert. Keep the hand-rolled lift.
 pub(crate) fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
+    /// Lift within one backend, keeping the variant it came in on.
+    macro_rules! lift_in {
+        ($variant:ident, $backend:ty, $inner:expr) => {
+            Tensor::from_dispatch(DispatchTensor {
+                kind: DispatchTensorKind::Autodiff(Box::new(DispatchTensorKind::$variant(
+                    BackendTensor::Autodiff(<Autodiff<$backend> as AutodiffBackend>::from_inner(
+                        $inner,
+                    )),
+                ))),
+                checkpointing: Some(GradientCheckpointingStrategy::Disabled),
+            })
+        };
+    }
+
     let dispatch: DispatchTensor = t.into_dispatch();
     match dispatch.kind {
-        wgpu_kind!(BackendTensor::Float(inner)) => {
-            wrap_ad_wgpu_float(<AutodiffMain as AutodiffBackend>::from_inner(inner))
+        DispatchTensorKind::Wgpu(BackendTensor::Float(inner)) => {
+            lift_in!(Wgpu, burn::backend::Wgpu, inner)
         }
         DispatchTensorKind::Autodiff(_) => Tensor::from_dispatch(dispatch),
-        _ => panic!("expected Wgpu tensor to lift to autodiff"),
+        _ => panic!("unsupported backend for autodiff lift"),
     }
+}
+
+/// Fully strip autodiff from a dispatch tensor: both the outer
+/// `DispatchTensorKind::Autodiff` wrapper and the inner
+/// `BackendTensor::Autodiff`, landing on the plain inner-backend float.
+///
+/// `detach_autodiff` only removes the outer level, which leaves a tensor that
+/// still reports as autodiff to ops that inspect the `BackendTensor`.
+pub fn strip_autodiff_float<const D: usize>(t: Tensor<D>) -> Tensor<D> {
+    macro_rules! strip_in {
+        ($variant:ident, $inner:expr) => {
+            DispatchTensorKind::$variant(BackendTensor::Float($inner.primitive))
+        };
+    }
+
+    let dispatch: DispatchTensor = t.into_dispatch();
+    let kind = match dispatch.kind {
+        DispatchTensorKind::Autodiff(inner) => *inner,
+        other => other,
+    };
+    let kind = match kind {
+        DispatchTensorKind::Wgpu(BackendTensor::Autodiff(ad)) => strip_in!(Wgpu, ad),
+        other => other,
+    };
+    Tensor::from_dispatch(DispatchTensor {
+        kind,
+        checkpointing: None,
+    })
 }
 
 fn is_autodiff<const D: usize>(t: &Tensor<D>) -> bool {
@@ -194,16 +236,19 @@ pub fn detach_autodiff_int<const D: usize>(t: Tensor<D, Int>) -> Tensor<D, Int> 
     })
 }
 
-/// Resolve a `Tensor<D>` on a Wgpu device down to the underlying
-/// `CubeTensor<WgpuRuntime>`, draining any pending fusion ops. Useful for
-/// direct GPU resource access (e.g. binding the buffer into a wgpu pipeline).
-pub fn resolve_to_cube_float<const D: usize>(tensor: Tensor<D>) -> CubeTensor<WgpuRuntime> {
+/// Resolve a `Tensor<D>` down to the underlying `CubeTensor`, draining any
+/// pending fusion ops. Used for direct GPU resource access, e.g. binding the
+/// buffer into a wgpu pipeline, so it stays tied to the main backend rather
+/// than being generic over the runtime.
+pub fn resolve_to_cube_float<const D: usize>(
+    tensor: Tensor<D>,
+) -> CubeTensor<brush_cube::MainRuntime> {
     let fusion = unwrap_wgpu_float(tensor);
     let client = fusion.client.clone();
     client.resolve_tensor_float::<MainBackendBase>(fusion)
 }
 
-impl SplatOps for Fusion<MainBackendBase> {
+impl<R: CubeRuntime> SplatOps for Fusion<CubeBackend<R>> {
     async fn render(
         camera: &Camera,
         img_size: glam::UVec2,
@@ -221,19 +266,19 @@ impl SplatOps for Fusion<MainBackendBase> {
         // drains any pending fusion operations into a concrete buffer.
         let base_transforms = client
             .clone()
-            .resolve_tensor_float::<MainBackendBase>(transforms);
+            .resolve_tensor_float::<CubeBackend<R>>(transforms);
         let base_sh_coeffs = client
             .clone()
-            .resolve_tensor_float::<MainBackendBase>(sh_coeffs);
+            .resolve_tensor_float::<CubeBackend<R>>(sh_coeffs);
         let base_raw_opac = client
             .clone()
-            .resolve_tensor_float::<MainBackendBase>(raw_opacities);
+            .resolve_tensor_float::<CubeBackend<R>>(raw_opacities);
         let base_refine_weight = client
             .clone()
-            .resolve_tensor_float::<MainBackendBase>(refine_weight);
+            .resolve_tensor_float::<CubeBackend<R>>(refine_weight);
 
-        // Run the full pipeline on MainBackendBase.
-        let out = MainBackendBase::render(
+        // Run the full pipeline on the concrete cube backend.
+        let out = <CubeBackend<R> as SplatOps>::render(
             camera,
             img_size,
             base_transforms,
@@ -248,22 +293,19 @@ impl SplatOps for Fusion<MainBackendBase> {
 
         // Bind precomputed outputs back into the fusion stream.
         #[derive(Debug)]
-        struct BindOp {
+        struct BindOp<R: CubeRuntime> {
             desc: CustomOpIr,
-            out_img: FloatTensor<MainBackendBase>,
-            visible: FloatTensor<MainBackendBase>,
-            max_radius: FloatTensor<MainBackendBase>,
-            projected_splats: FloatTensor<MainBackendBase>,
-            tile_offsets: IntTensor<MainBackendBase>,
-            compact_gid_from_isect: IntTensor<MainBackendBase>,
-            global_from_compact_gid: IntTensor<MainBackendBase>,
+            out_img: FloatTensor<CubeBackend<R>>,
+            visible: FloatTensor<CubeBackend<R>>,
+            max_radius: FloatTensor<CubeBackend<R>>,
+            projected_splats: FloatTensor<CubeBackend<R>>,
+            tile_offsets: IntTensor<CubeBackend<R>>,
+            compact_gid_from_isect: IntTensor<CubeBackend<R>>,
+            global_from_compact_gid: IntTensor<CubeBackend<R>>,
         }
 
-        impl Operation<FusionCubeRuntime<WgpuRuntime>> for BindOp {
-            fn execute(
-                &self,
-                h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<WgpuRuntime>>>,
-            ) {
+        impl<R: CubeRuntime> Operation<FusionCubeRuntime<R>> for BindOp<R> {
+            fn execute(&self, h: &mut HandleContainer<FusionHandle<FusionCubeRuntime<R>>>) {
                 let (_, outputs) = self.desc.as_fixed::<0, 7>();
                 let [
                     out_img,
@@ -275,22 +317,22 @@ impl SplatOps for Fusion<MainBackendBase> {
                     global_from_compact_gid,
                 ] = outputs;
 
-                h.register_float_tensor::<MainBackendBase>(&out_img.id, self.out_img.clone());
-                h.register_float_tensor::<MainBackendBase>(&visible.id, self.visible.clone());
-                h.register_float_tensor::<MainBackendBase>(&max_radius.id, self.max_radius.clone());
-                h.register_float_tensor::<MainBackendBase>(
+                h.register_float_tensor::<CubeBackend<R>>(&out_img.id, self.out_img.clone());
+                h.register_float_tensor::<CubeBackend<R>>(&visible.id, self.visible.clone());
+                h.register_float_tensor::<CubeBackend<R>>(&max_radius.id, self.max_radius.clone());
+                h.register_float_tensor::<CubeBackend<R>>(
                     &projected_splats.id,
                     self.projected_splats.clone(),
                 );
-                h.register_int_tensor::<MainBackendBase>(
+                h.register_int_tensor::<CubeBackend<R>>(
                     &tile_offsets.id,
                     self.tile_offsets.clone(),
                 );
-                h.register_int_tensor::<MainBackendBase>(
+                h.register_int_tensor::<CubeBackend<R>>(
                     &compact_gid_from_isect.id,
                     self.compact_gid_from_isect.clone(),
                 );
-                h.register_int_tensor::<MainBackendBase>(
+                h.register_int_tensor::<CubeBackend<R>>(
                     &global_from_compact_gid.id,
                     self.global_from_compact_gid.clone(),
                 );
@@ -322,7 +364,7 @@ impl SplatOps for Fusion<MainBackendBase> {
                 global_from_compact_gid_ir,
             ],
         );
-        let op = BindOp {
+        let op = BindOp::<R> {
             desc: desc.clone(),
             out_img: out.out_img,
             visible: out.aux.visible,

@@ -144,7 +144,7 @@ async fn test_splat_generation() {
         .into_data_async()
         .await
         .expect("readback")
-        .into_vec::<f32>()
+        .try_into_vec::<f32>()
         .unwrap();
     assert_eq!(means_data.len(), 3000);
 
@@ -177,7 +177,7 @@ async fn test_forward_rendering() {
         .into_data_async()
         .await
         .expect("readback")
-        .into_vec::<f32>()
+        .try_into_vec::<f32>()
         .expect("Wrong type");
     assert!(data.iter().all(|&v| v.is_finite()));
 }
@@ -204,7 +204,7 @@ fn test_batch_generation() {
     let batch = generate_test_batch((256, 128));
     let img_dims = batch.img_packed.shape.as_slice();
     assert_eq!(img_dims, &[128, 256]);
-    let img_data = batch.img_packed.into_vec::<i32>().unwrap();
+    let img_data = batch.img_packed.try_into_vec::<i32>().unwrap();
     assert_eq!(img_data.len(), 128 * 256);
 }
 
