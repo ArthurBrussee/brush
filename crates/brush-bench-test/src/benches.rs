@@ -158,6 +158,8 @@ pub async fn run_forward_render(
     resolution: (u32, u32),
     iters: u32,
 ) {
+    // Timing entry point: never measure validation readbacks.
+    brush_render::validation::set_enabled(false);
     let splats = gen_splats(device, splat_count).valid();
     let camera = bench_camera();
     for _ in 0..iters {
@@ -180,6 +182,8 @@ pub async fn run_backward_render(
     resolution: (u32, u32),
     iters: u32,
 ) {
+    // Timing entry point: never measure validation readbacks.
+    brush_render::validation::set_enabled(false);
     let splats = gen_splats(device, splat_count);
     let camera = bench_camera();
     for _ in 0..iters {
@@ -201,6 +205,8 @@ pub async fn run_training_steps(
     resolution: (u32, u32),
     iters: u32,
 ) {
+    // Timing entry point: never measure validation readbacks.
+    brush_render::validation::set_enabled(false);
     let batch1 = generate_training_batch(resolution, Vec3::new(0.0, 0.0, 5.0));
     let batch2 = generate_training_batch(resolution, Vec3::new(2.0, 0.0, 5.0));
     let batches = [batch1, batch2];
