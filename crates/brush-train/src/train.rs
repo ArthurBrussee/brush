@@ -15,7 +15,6 @@ use brush_render::bwd::render_splats;
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use burn::{
-    backend::wgpu::{AutoCompiler, WgpuDevice, WgpuRuntime},
     module::{AutodiffModule, Param},
     tensor::{
         Bool, Device, Distribution, Gradients, IndexingUpdateOp, Int, Tensor, TensorData,
@@ -23,7 +22,7 @@ use burn::{
     },
 };
 
-use burn_cubecl::cubecl::Runtime;
+use brush_cube::MainRuntime;
 use hashbrown::HashSet;
 use tracing::{Instrument, trace_span};
 
@@ -130,7 +129,7 @@ pub async fn get_splat_bounds(splats: Splats, percentile: f32) -> BoundingBox {
         .into_data_async()
         .await
         .expect("Failed to fetch splat data")
-        .to_vec()
+        .try_to_vec()
         .expect("Failed to get means");
     bounds_from_pos(percentile, &means)
 }
@@ -436,8 +435,9 @@ impl SplatTrainer {
         // floor is attached at the end (below), once positions/count are known.
         let splats = splats.bake_min_scale();
         let device = splats.device();
-        // `memory_cleanup` lives on the wgpu client, not on `Device`.
-        let client = WgpuRuntime::<AutoCompiler>::client(&WgpuDevice::default());
+        // `memory_cleanup` lives on the runtime's client, not on `Device`.
+        let client =
+            <MainRuntime as burn::cubecl::Runtime>::client(&brush_cube::MainDevice::default());
 
         let refiner = self
             .refine_record
@@ -453,7 +453,7 @@ impl SplatTrainer {
             .into_data_async()
             .await
             .expect("Failed to read screen size")
-            .into_vec::<f32>()
+            .try_into_vec::<f32>()
             .expect("Failed to read screen size vec");
         if !ss_data.is_empty() {
             let mut sorted: Vec<f32> = ss_data.iter().copied().filter(|v| v.is_finite()).collect();
@@ -547,7 +547,7 @@ impl SplatTrainer {
                 .into_data_async()
                 .await
                 .expect("Failed to get weights")
-                .into_vec::<f32>()
+                .try_into_vec::<f32>()
                 .expect("Failed to read weights");
             let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
             split_inds.extend(resampled_inds);
@@ -567,7 +567,7 @@ impl SplatTrainer {
                     .into_data_async()
                     .await
                     .expect("Failed to get oversized indices")
-                    .into_vec::<i32>()
+                    .try_into_vec::<i32>()
                     .expect("Failed to read oversized indices");
                 let mut budget = self
                     .config
@@ -616,7 +616,7 @@ impl SplatTrainer {
                     .into_data_async()
                     .await
                     .expect("Failed to get weights")
-                    .into_vec::<f32>()
+                    .try_into_vec::<f32>()
                     .expect("Failed to read weights");
                 let growth_inds = multinomial_sample(&weights, grow_count);
                 split_inds.extend(growth_inds);

@@ -15,7 +15,6 @@ brush-vfs.path = "../brush-vfs"
 brush-serde.path = "../brush-serde"
 
 burn.workspace = true
-burn-cubecl.workspace = true
 burn-wgpu.workspace = true
 
 alphanumeric-sort.workspace = true

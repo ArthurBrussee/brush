@@ -24,7 +24,7 @@ mod visualize_tools_impl {
 
     use anyhow::Result;
 
-    use burn_cubecl::cubecl::MemoryUsage;
+    use burn::cubecl::MemoryUsage;
     use image::imageops::FilterType;
     use rerun::external::glam;
 
@@ -108,14 +108,18 @@ mod visualize_tools_impl {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
 
-                let means = splats.means().into_data_async().await?.into_vec::<f32>()?;
+                let means = splats
+                    .means()
+                    .into_data_async()
+                    .await?
+                    .try_into_vec::<f32>()?;
                 let means = means.chunks(3).map(|c| glam::vec3(c[0], c[1], c[2]));
 
                 let base_rgb = splats.sh_coeffs.val().slice(s![.., 0..1]) * SH_C0 + 0.5;
 
                 let transparency = splats.opacities();
 
-                let colors = base_rgb.into_data_async().await?.into_vec::<f32>()?;
+                let colors = base_rgb.into_data_async().await?.try_into_vec::<f32>()?;
                 let colors = colors.chunks(3).map(|c| {
                     rerun::Color::from_rgb(
                         (c[0] * 255.0) as u8,
@@ -129,13 +133,13 @@ mod visualize_tools_impl {
                     + 0.004)
                     .into_data_async()
                     .await?
-                    .into_vec()?;
+                    .try_into_vec()?;
 
                 let rotations = splats
                     .rotations()
                     .into_data_async()
                     .await?
-                    .into_vec::<f32>()?;
+                    .try_into_vec::<f32>()?;
                 let rotations = rotations
                     .chunks(4)
                     .map(|q| glam::Quat::from_array([q[1], q[2], q[3], q[0]]));
@@ -372,7 +376,7 @@ mod visualize_tools_impl {
                 c == 3,
                 "Expected 3-channel eval render, got {c} (would need updating to log alpha)"
             );
-            let f32_buf = data.into_vec::<f32>()?;
+            let f32_buf = data.try_into_vec::<f32>()?;
             let render_u8: Vec<u8> = f32_buf
                 .into_iter()
                 .map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
@@ -443,13 +447,13 @@ mod visualize_tools_impl {
                 .scales()
                 .into_data_async()
                 .await?
-                .into_vec::<f32>()
+                .try_into_vec::<f32>()
                 .expect("scales");
             let opac_data = splats
                 .opacities()
                 .into_data_async()
                 .await?
-                .into_vec::<f32>()
+                .try_into_vec::<f32>()
                 .expect("opacities");
 
             let n = opac_data.len();
@@ -703,7 +707,7 @@ mod visualize_tools_impl {
 
     use super::VisualizeTools;
     use anyhow::Result;
-    use burn_cubecl::cubecl::MemoryUsage;
+    use burn::cubecl::MemoryUsage;
 
     impl VisualizeTools {
         pub async fn new(_enabled: bool) -> Self {

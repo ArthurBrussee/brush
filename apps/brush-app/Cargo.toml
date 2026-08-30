@@ -30,7 +30,6 @@ brush-serde.path = "../../crates/brush-serde"
 rrfd.path = "../../crates/rrfd"
 
 
-burn-cubecl.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 

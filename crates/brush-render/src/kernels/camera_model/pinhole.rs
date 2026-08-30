@@ -1,8 +1,8 @@
 use crate::kernels::camera_model::JacobianClampLimits;
 use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::prelude::*;
+use burn::cubecl;
+use burn::cubecl::prelude::*;
 use bytemuck::{ByteHash, NoUninit};
 
 #[derive(CubeLaunch, CubeType, Copy, Clone, NoUninit, ByteHash, PartialEq, Debug, Default)]

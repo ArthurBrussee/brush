@@ -3,10 +3,10 @@
 //! `det2_strict`) lives in [`brush_cube`] — re-exported here for
 //! convenience.
 
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::prelude::*;
-use burn_cubecl::cubecl::std::FastDivmod;
+use burn::cubecl;
+use burn::cubecl::cube;
+use burn::cubecl::prelude::*;
+use burn::cubecl::std::FastDivmod;
 
 use super::types::{PixelRect, ProjectUniforms, Quat, Splat, Sym2, TileBbox, Vec3A};
 use crate::kernels::camera_model::{CameraModel, calculate_project_jacobian};

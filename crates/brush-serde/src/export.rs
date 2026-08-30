@@ -91,7 +91,10 @@ async fn read_splat_data(splats: Splats) -> Result<DynamicPly, ExportError> {
 
     let vecs: Vec<Vec<f32>> = data
         .into_iter()
-        .map(|x| x.into_vec().map_err(|_convert| ExportError::DataConversion))
+        .map(|x| {
+            x.try_into_vec()
+                .map_err(|_convert| ExportError::DataConversion)
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     let [transforms, raw_opacities, sh_coeffs]: [Vec<f32>; 3] = vecs
@@ -221,7 +224,7 @@ mod tests {
             .into_data_async()
             .await
             .unwrap()
-            .into_vec()
+            .try_into_vec()
             .expect("Failed to convert SH coefficients to vector");
         let import_sh: Vec<f32> = imported
             .sh_coeffs
@@ -229,7 +232,7 @@ mod tests {
             .into_data_async()
             .await
             .unwrap()
-            .into_vec()
+            .try_into_vec()
             .expect("Failed to convert SH coefficients to vector");
 
         assert_eq!(orig_sh.len(), import_sh.len());

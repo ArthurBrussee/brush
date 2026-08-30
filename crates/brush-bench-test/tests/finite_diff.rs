@@ -169,7 +169,7 @@ async fn read_first<const D: usize>(t: Tensor<D>) -> f32 {
     t.into_data_async()
         .await
         .expect("readback")
-        .into_vec::<f32>()
+        .try_into_vec::<f32>()
         .expect("vec")[0]
 }
 
@@ -300,7 +300,7 @@ async fn finite_diff_tangential_quat() {
         .into_data_async()
         .await
         .expect("rb")
-        .into_vec::<f32>()
+        .try_into_vec::<f32>()
         .expect("v");
 
     // Radial direction (parallel to identity quat) must have ~0 grad —

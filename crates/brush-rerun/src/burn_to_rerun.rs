@@ -1,5 +1,5 @@
+use burn::cubecl::future::block_on;
 use burn::tensor::{Bool, Int, Tensor};
-use burn_cubecl::cubecl::future::block_on;
 use rerun::{ChannelDatatype, ColorModel};
 
 trait BurnToRerunData {
@@ -14,7 +14,7 @@ impl<const D: usize> BurnToRerunData for Tensor<D> {
                 self.into_data_async()
                     .await
                     .expect("Failed to fetch data")
-                    .into_vec::<f32>()
+                    .try_into_vec::<f32>()
                     .expect("Wrong type")
                     .into(),
             ),
@@ -30,7 +30,7 @@ impl<const D: usize> BurnToRerunData for Tensor<D, Int> {
                 self.into_data_async()
                     .await
                     .expect("Failed to fetch data")
-                    .into_vec::<u32>()
+                    .try_into_vec::<u32>()
                     .expect("Wrong type")
                     .into(),
             ),
@@ -47,7 +47,7 @@ impl<const D: usize> BurnToRerunData for Tensor<D, Bool> {
                     .await
                     .expect("Failed to fetch data")
                     .convert::<u8>()
-                    .into_vec()
+                    .try_into_vec()
                     .expect("Wrong type")
                     .into(),
             ),

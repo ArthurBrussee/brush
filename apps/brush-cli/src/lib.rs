@@ -68,6 +68,8 @@ pub async fn run_headless(
     process: RunningProcess,
     train_stream_config: TrainStreamConfig,
 ) -> Result<(), anyhow::Error> {
+    // Open the device up front so it overlaps with mounting the dataset,
+    // rather than on the first kernel.
     brush_process::burn_init_setup().await;
     run_cli_ui(process, train_stream_config).await
 }
@@ -112,6 +114,10 @@ pub async fn run_cli_ui(
 
         multi
     };
+
+    if let Some(device) = brush_process::try_device() {
+        log::info!("Compute backend: {device:?}");
+    }
 
     let main_spinner = ProgressBar::new_spinner().with_style(
         ProgressStyle::with_template("{spinner:.blue} {msg}")

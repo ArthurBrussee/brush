@@ -4,8 +4,8 @@ use crate::kernels::camera_model::kannala_brandt_4::{
 use crate::kernels::camera_model::pinhole::PinholeParams;
 use crate::kernels::types::ProjectUniforms;
 use brush_cube::{Mat2x3, Sym2, Sym3, Vec2, Vec3A};
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::prelude::*;
+use burn::cubecl;
+use burn::cubecl::prelude::*;
 use bytemuck::{ByteHash, NoUninit};
 
 /// COLMAP `THIN_PRISM_FISHEYE` parameters: Kannala-Brandt 4 radial distortion

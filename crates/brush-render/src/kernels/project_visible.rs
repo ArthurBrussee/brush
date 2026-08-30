@@ -8,9 +8,9 @@ use super::helpers::{
 use super::sh::{num_sh_coeffs, sh_coeffs_to_color};
 use super::types::{ProjectUniforms, Splat, Vec3A};
 use crate::kernels::camera_model::{CameraModel, project};
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::prelude::*;
+use burn::cubecl;
+use burn::cubecl::cube;
+use burn::cubecl::prelude::*;
 
 pub const WG_SIZE: u32 = 256;
 

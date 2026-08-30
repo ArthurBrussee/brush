@@ -68,7 +68,7 @@ impl EvalSample {
         log::info!("Saving eval image to disk.");
         let img = self.rendered.clone();
         let [h, w, _] = [img.dims()[0], img.dims()[1], img.dims()[2]];
-        let data = img.clone().into_data_async().await?.into_vec::<f32>()?;
+        let data = img.clone().into_data_async().await?.try_into_vec::<f32>()?;
         let img: image::DynamicImage = Rgb32FImage::from_raw(w as u32, h as u32, data)
             .expect("Failed to create image from tensor")
             .into();

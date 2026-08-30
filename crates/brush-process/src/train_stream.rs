@@ -1,9 +1,9 @@
 use crate::{
     Emitter,
     config::TrainStreamConfig,
+    device,
     message::{ProcessMessage, TrainMessage},
     slot::SlotSender,
-    wait_for_device,
 };
 use anyhow::Context;
 use brush_dataset::{load_dataset, scene::Scene, scene_loader::SceneLoader};
@@ -19,8 +19,6 @@ use brush_train::{
 };
 use brush_vfs::BrushVfs;
 use burn::module::AutodiffModule;
-use burn_cubecl::cubecl::Runtime;
-use burn_wgpu::{AutoCompiler, WgpuRuntime};
 use rand::SeedableRng;
 use std::{path::PathBuf, sync::Arc};
 
@@ -50,12 +48,11 @@ pub(crate) async fn train_stream(
     let process_config = &train_stream_config.process_config;
     log::info!("Using seed {}", process_config.seed);
 
-    let wgpu_device = wait_for_device().await;
+    let device = device().await;
     // Splats live on the inner (non-autodiff) device between steps; each
     // training step lifts them via [`lift_splats_to_autodiff`] then strips
     // back via `.valid()`. Going through `Module::train()` would hit
     // burn-dispatch's `from_inner` checkpointing bug.
-    let device: burn::tensor::Device = wgpu_device.clone().into();
     device.seed(process_config.seed);
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
@@ -119,7 +116,7 @@ pub(crate) async fn train_stream(
                 })
                 .await;
         }
-        let splats = to_init_splats(data, render_mode, &device);
+        let splats = to_init_splats(data, render_mode, device);
         (msg.meta.up_axis, splats)
     } else {
         // Default: just use random splats
@@ -137,7 +134,7 @@ pub(crate) async fn train_stream(
             scene_scale,
             &mut rng,
             render_mode,
-            &device,
+            device,
         );
         (None, splats)
     };
@@ -165,8 +162,7 @@ pub(crate) async fn train_stream(
     emitter.emit(ProcessMessage::DoneLoading).await;
 
     // Start with memory cleared out.
-    let client = WgpuRuntime::<AutoCompiler>::client(wgpu_device);
-    client.memory_cleanup();
+    crate::device_memory_cleanup(device);
 
     let mut eval_scene = dataset.eval;
 
@@ -183,7 +179,7 @@ pub(crate) async fn train_stream(
         view_cams.push((view.camera.position, focal));
     }
 
-    let mut trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
+    let mut trainer = SplatTrainer::new(&train_stream_config.train_config, device, bounds);
     trainer.set_view_cams(view_cams.clone());
 
     // Get the dataset name from the base path (if available) for interpolation.
@@ -261,15 +257,14 @@ pub(crate) async fn train_stream(
             let target_count = (before as f32 * lod_keep_pct as f32 / 100.0).max(1.0) as u32;
 
             log::info!("LOD {current_lod}/{lod_levels}: Computing sensitivity scores...");
-            let scores = compute_pup_scores(splats.clone(), &dataset.train, &device).await;
+            let scores = compute_pup_scores(splats.clone(), &dataset.train, device).await;
             splats = decimate_to_count(splats, &scores, target_count).await;
             slot.set(0, splats.clone());
 
             let after = splats.num_splats();
             log::info!("LOD {current_lod}/{lod_levels}: {before} -> {after} splats");
 
-            let client = WgpuRuntime::<AutoCompiler>::client(wgpu_device);
-            client.memory_cleanup();
+            crate::device_memory_cleanup(device);
 
             let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(current_lod as i32);
             // Only rebuild the loader when the images actually changed size.
@@ -281,7 +276,7 @@ pub(crate) async fn train_stream(
             }
 
             let bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
-            trainer = SplatTrainer::new(&train_stream_config.train_config, &device, bounds);
+            trainer = SplatTrainer::new(&train_stream_config.train_config, device, bounds);
             trainer.set_view_cams(view_cams.clone());
 
             log::info!(
@@ -358,7 +353,7 @@ pub(crate) async fn train_stream(
                 .then(|| export_path.clone());
 
             let eval = run_eval(
-                &device,
+                device,
                 emitter,
                 &visualize,
                 splats.clone(),
@@ -437,7 +432,7 @@ pub(crate) async fn train_stream(
             {
                 visualize.log_memory(
                     iter,
-                    &WgpuRuntime::<AutoCompiler>::client(wgpu_device).memory_usage()?,
+                    &crate::device_memory_usage(device).unwrap_or_default(),
                 )?;
             }
 

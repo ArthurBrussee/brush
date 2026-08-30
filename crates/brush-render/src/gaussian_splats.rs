@@ -270,10 +270,10 @@ impl Splats {
     pub async fn validate_values(self) {
         #[cfg(any(test, feature = "debug-validation"))]
         {
-            #[cfg(not(target_family = "wasm"))]
-            if std::env::args().any(|a| a == "--bench") {
+            if !crate::validation::enabled() {
                 return;
             }
+            crate::validation::warn_once();
 
             use crate::validation::validate_tensor_val;
 
@@ -342,10 +342,10 @@ impl Splats {
         {
             use crate::validation::validate_gradient;
 
-            #[cfg(not(target_family = "wasm"))]
-            if std::env::args().any(|a| a == "--bench") {
+            if !crate::validation::enabled() {
                 return grads;
             }
+            crate::validation::warn_once();
             if let Some(g) = t {
                 validate_gradient(g, "transforms").await;
             }

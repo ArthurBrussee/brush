@@ -101,6 +101,9 @@ burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-fea
     'std',
     'optim',
     'extension',
+    # Re-exports cubecl as `burn::cubecl`, so nothing here has to name the
+    # crate just to reach it.
+    'cubecl',
 ] }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 burn-ir = { git = "https://github.com/tracel-ai/burn", branch = "main" }
@@ -340,31 +343,3 @@ wgpu-core            = { git = "https://github.com/ArthurBrussee/wgpu", branch =
 wgpu-hal             = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
 wgpu-types           = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
 naga                 = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
-
-# cubecl-runtime at the rev burn pins doesn't build for wasm (missing
-# wasm-bindgen-futures dep; cubecl-common serde/hash features only enabled in
-# the desktop target section). Fixed on the fork branch (= burn's pinned rev +
-# two manifest commits), plus the barrier fix for `workgroup_uniform_load`
-# that native MSL needs (tracel-ai/cubecl#1525). The whole family must be
-# patched together — patching one crate would split the tree via its
-# path-deps. Drop once upstream takes both and burn re-pins.
-[patch."https://github.com/tracel-ai/cubecl"]
-cubecl                 = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-common          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-core            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-cpp             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-cpu             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-cuda            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-environment     = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-hip             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-ir              = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-macros          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-macros-internal = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-opt             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-runtime         = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-std             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-wgpu            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-cubecl-zspace          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "msl-trial" }
-
-# To iterate locally on a checkout, swap each `git = "..."` for
-# `path = "../cubecl/crates/<name>"`.

@@ -158,6 +158,8 @@ pub async fn run_forward_render(
     resolution: (u32, u32),
     iters: u32,
 ) {
+    // Timing entry point: never measure validation readbacks.
+    brush_render::validation::set_enabled(false);
     let splats = gen_splats(device, splat_count).valid();
     let camera = bench_camera();
     for _ in 0..iters {
@@ -180,6 +182,8 @@ pub async fn run_backward_render(
     resolution: (u32, u32),
     iters: u32,
 ) {
+    // Timing entry point: never measure validation readbacks.
+    brush_render::validation::set_enabled(false);
     let splats = gen_splats(device, splat_count);
     let camera = bench_camera();
     for _ in 0..iters {
@@ -201,6 +205,8 @@ pub async fn run_training_steps(
     resolution: (u32, u32),
     iters: u32,
 ) {
+    // Timing entry point: never measure validation readbacks.
+    brush_render::validation::set_enabled(false);
     let batch1 = generate_training_batch(resolution, Vec3::new(0.0, 0.0, 5.0));
     let batch2 = generate_training_batch(resolution, Vec3::new(2.0, 0.0, 5.0));
     let batches = [batch1, batch2];
@@ -225,8 +231,8 @@ mod forward_rendering {
     const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
     const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
 
+    use burn::cubecl::future::block_on;
     use burn::{backend::wgpu::WgpuDevice, prelude::Device};
-    use burn_cubecl::cubecl::future::block_on;
 
     use crate::benches::{ITERS_PER_SYNC, run_forward_render};
 
@@ -258,8 +264,8 @@ mod forward_rendering {
 mod backward_rendering {
     const RESOLUTIONS: [(u32, u32); 4] = [(1024, 1024), (1920, 1080), (2560, 1440), (3200, 1800)];
 
+    use burn::cubecl::future::block_on;
     use burn::{backend::wgpu::WgpuDevice, prelude::Device};
-    use burn_cubecl::cubecl::future::block_on;
 
     use crate::benches::{ITERS_PER_SYNC, run_backward_render};
 
@@ -291,8 +297,8 @@ mod backward_rendering {
 mod training {
     const SPLAT_COUNTS: [usize; 3] = [500_000, 1_000_000, 2_500_000];
 
+    use burn::cubecl::future::block_on;
     use burn::{backend::wgpu::WgpuDevice, prelude::Device};
-    use burn_cubecl::cubecl::future::block_on;
 
     use crate::benches::{ITERS_PER_SYNC, run_training_steps};
 

@@ -54,13 +54,13 @@ async fn assert_img_matches(name: &str, ours: Tensor<3>, reference: Tensor<3>) {
         .into_data_async()
         .await
         .expect("readback ours")
-        .into_vec::<f32>()
+        .try_into_vec::<f32>()
         .expect("vec ours");
     let reference = reference
         .into_data_async()
         .await
         .expect("readback reference")
-        .into_vec::<f32>()
+        .try_into_vec::<f32>()
         .expect("vec reference");
     for (i, (&a, &b)) in ours.iter().zip(&reference).enumerate() {
         assert!(

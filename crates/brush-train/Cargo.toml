@@ -29,10 +29,9 @@ rayon.workspace = true
 
 tokio = { workspace = true, features = ["io-util", "rt"] }
 burn = { workspace = true, features = ["autodiff"] }
-burn-cubecl.workspace = true
+brush-cube.path = "../brush-cube"
 
 [dev-dependencies]
-brush-cube = { path = "../brush-cube" }
 tokio = { workspace = true, features = ["macros", "rt"] }
 wasm-bindgen-test = "0.3"
 
