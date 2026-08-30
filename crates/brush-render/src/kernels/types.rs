@@ -3,8 +3,8 @@
 //! [`brush_cube`]; this module hosts the render-specific aggregates and
 //! re-exports the math types for convenience.
 
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::prelude::*;
+use burn::cubecl;
+use burn::cubecl::prelude::*;
 
 use crate::kernels::camera_model::JacobianClampLimits;
 use crate::kernels::camera_model::pinhole::PinholeParams;

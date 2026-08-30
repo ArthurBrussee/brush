@@ -15,7 +15,6 @@ burn = { workspace = true, features = ["autodiff"] }
 brush-render.path = "../brush-render"
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
-burn-cubecl.workspace = true
 
 tokio.workspace = true
 

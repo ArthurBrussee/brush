@@ -1,10 +1,15 @@
 use burn::tensor::{DType, Scalar, Shape};
 use bytemuck::Pod;
 
-pub use burn_cubecl::cubecl::prelude::KernelId;
-pub use burn_cubecl::cubecl::{CubeCount, CubeDim, client::ComputeClient, server::ComputeServer};
-pub use burn_cubecl::cubecl::{CubeTask, Runtime};
-pub use burn_cubecl::{CubeRuntime, tensor::CubeTensor};
+pub use burn::cubecl::prelude::KernelId;
+pub use burn::cubecl::{CubeCount, CubeDim, client::ComputeClient, server::ComputeServer};
+pub use burn::cubecl::{CubeTask, Runtime};
+// The cube pieces burn does not re-export itself. Everything downstream takes
+// them from here, so `burn-cubecl` is named in one manifest rather than six.
+pub use burn_cubecl::{
+    CubeRuntime, fusion::FusionCubeRuntime, kernel::into_contiguous, ops::numeric::zeros_client,
+    tensor::CubeTensor,
+};
 
 // Re-export bytemuck for use by generated code
 pub use bytemuck;
@@ -48,7 +53,7 @@ pub fn create_tensor<R: CubeRuntime, const D: usize>(
             DType::F32,
         );
         let noised =
-            <burn_cubecl::CubeBackend<R> as FloatTensorOps<burn_cubecl::CubeBackend<R>>>::float_add_scalar(
+            <burn_wgpu::CubeBackend<R> as FloatTensorOps<burn_wgpu::CubeBackend<R>>>::float_add_scalar(
                 f,
                 Scalar::Float(-12345.0),
             );

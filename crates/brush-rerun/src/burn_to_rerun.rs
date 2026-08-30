@@ -1,5 +1,5 @@
+use burn::cubecl::future::block_on;
 use burn::tensor::{Bool, Int, Tensor};
-use burn_cubecl::cubecl::future::block_on;
 use rerun::{ChannelDatatype, ColorModel};
 
 trait BurnToRerunData {

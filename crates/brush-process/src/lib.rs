@@ -95,18 +95,16 @@ use tokio::sync::OnceCell;
 /// is wired up today; another cubecl runtime would add an arm here.
 pub fn device_memory_cleanup(device: &burn::tensor::Device) {
     use burn::backend::DispatchDevice;
-    use burn_cubecl::cubecl::Runtime;
+    use burn::cubecl::Runtime;
     if let DispatchDevice::Wgpu(d) = device.as_dispatch() {
         burn_wgpu::WgpuRuntime::<burn_wgpu::AutoCompiler>::client(d).memory_cleanup();
     }
 }
 
 /// Bytes currently reserved by the runtime's memory pool, if it reports them.
-pub fn device_memory_usage(
-    device: &burn::tensor::Device,
-) -> Option<burn_cubecl::cubecl::MemoryUsage> {
+pub fn device_memory_usage(device: &burn::tensor::Device) -> Option<burn::cubecl::MemoryUsage> {
     use burn::backend::DispatchDevice;
-    use burn_cubecl::cubecl::Runtime;
+    use burn::cubecl::Runtime;
     match device.as_dispatch() {
         DispatchDevice::Wgpu(d) => {
             Some(burn_wgpu::WgpuRuntime::<burn_wgpu::AutoCompiler>::client(d).memory_usage())

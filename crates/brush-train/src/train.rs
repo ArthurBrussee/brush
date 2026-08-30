@@ -436,9 +436,8 @@ impl SplatTrainer {
         let splats = splats.bake_min_scale();
         let device = splats.device();
         // `memory_cleanup` lives on the runtime's client, not on `Device`.
-        let client = <MainRuntime as burn_cubecl::cubecl::Runtime>::client(
-            &brush_cube::MainDevice::default(),
-        );
+        let client =
+            <MainRuntime as burn::cubecl::Runtime>::client(&brush_cube::MainDevice::default());
 
         let refiner = self
             .refine_record

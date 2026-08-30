@@ -1,9 +1,9 @@
 //! Map per-splat tile counts to per-intersection (tile_id, compact_gid)
 //! pairs.
 
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::prelude::*;
+use burn::cubecl;
+use burn::cubecl::cube;
+use burn::cubecl::prelude::*;
 
 use super::helpers::{
     compute_bbox_extent, get_tile_bbox, read_main_splat, tile_rect, will_primitive_contribute,

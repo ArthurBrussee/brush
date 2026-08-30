@@ -12,9 +12,9 @@
 //! supports it, `CasAtomicAdd` (`Atomic<u32>` + CAS over the bit pattern)
 //! otherwise. The host picks the impl based on `AtomicUsage::Add`.
 
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::prelude::*;
+use burn::cubecl;
+use burn::cubecl::cube;
+use burn::cubecl::prelude::*;
 
 use crate::kernels::helpers::{
     ALPHA_CUTOFF_MID, TILE_SIZE, TILE_WIDTH, alpha_cutoff_weight, alpha_cutoff_weight_deriv,

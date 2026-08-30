@@ -1,5 +1,5 @@
+use brush_cube::CubeRuntime;
 use burn::backend::TensorMetadata;
-use burn_cubecl::CubeRuntime;
 use burn_wgpu::CubeTensor;
 use std::collections::HashMap;
 

@@ -11,10 +11,10 @@
 //! outer loop ends early. When `bwd_info=false` the kernel writes a
 //! packed u8x4 to `out_img` and skips the backward bookkeeping.
 
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::prelude::*;
-use burn_cubecl::cubecl::std::FastDivmod;
+use burn::cubecl;
+use burn::cubecl::cube;
+use burn::cubecl::prelude::*;
+use burn::cubecl::std::FastDivmod;
 
 use super::helpers::{
     ALPHA_CUTOFF_MID, PROJECTED_LANES, PROJECTED_LANES_USIZE, TILE_SIZE, TILE_WIDTH,

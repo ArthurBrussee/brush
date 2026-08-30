@@ -9,7 +9,7 @@ pub mod helpers {
     use crate::kernels::camera_model::pinhole::PinholeParams;
     use crate::kernels::camera_model::{CameraModel, JacobianClampLimits};
     use crate::kernels::types::ProjectUniformsLaunch;
-    use burn_cubecl::CubeRuntime;
+    use brush_cube::CubeRuntime;
 
     pub const TILE_WIDTH: u32 = 16;
     pub const TILE_SIZE: u32 = TILE_WIDTH * TILE_WIDTH;

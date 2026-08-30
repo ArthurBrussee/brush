@@ -1,4 +1,4 @@
-use burn_cubecl::CubeRuntime;
+use brush_cube::CubeRuntime;
 mod kernels;
 
 use brush_cube::CubeCount;
@@ -6,8 +6,8 @@ use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
 use brush_cube::create_tensor_from_slice;
 use burn::backend::TensorMetadata;
+use burn::cubecl::CubeDim;
 use burn::tensor::DType;
-use burn_cubecl::cubecl::CubeDim;
 use burn_wgpu::CubeTensor;
 
 use kernels::{BIN_COUNT, BLOCK_SIZE, WG};

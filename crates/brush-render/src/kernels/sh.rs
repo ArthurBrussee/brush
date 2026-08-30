@@ -8,9 +8,9 @@
 //! Bases & weight constants follow Sloan, "Efficient Spherical Harmonic
 //! Evaluation" (JCGT 2013) — see <https://jcgt.org/published/0002/02/06/>.
 
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::prelude::*;
+use burn::cubecl;
+use burn::cubecl::cube;
+use burn::cubecl::prelude::*;
 
 use super::types::Vec3A;
 

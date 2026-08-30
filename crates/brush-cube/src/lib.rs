@@ -19,7 +19,7 @@
 
 mod host;
 pub mod test_helpers;
-use burn_wgpu::CubeBackend;
+pub use burn_wgpu::CubeBackend;
 pub use host::*;
 
 /// The wgpu runtime.
@@ -30,16 +30,16 @@ pub use host::*;
 pub type MainRuntime = burn_wgpu::WgpuRuntime;
 
 /// Device for [`MainRuntime`].
-pub type MainDevice = <MainRuntime as burn_cubecl::cubecl::Runtime>::Device;
+pub type MainDevice = <MainRuntime as burn::cubecl::Runtime>::Device;
 
 pub type MainBackendBase = CubeBackend<MainRuntime>;
 
 /// Fusion-wrapped wgpu backend, matching what burn's dispatch layer expects.
 pub type MainBackend = burn_wgpu::Wgpu;
 
-use burn_cubecl::cubecl;
-use burn_cubecl::cubecl::cube;
-use burn_cubecl::cubecl::prelude::*;
+use burn::cubecl;
+use burn::cubecl::cube;
+use burn::cubecl::prelude::*;
 
 /// 3-component f32 vector, padded to 4 lanes — same shape as
 /// `glam::Vec3A`. See the module-level note on the cubecl-cpp

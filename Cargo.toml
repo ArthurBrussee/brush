@@ -101,6 +101,9 @@ burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-fea
     'std',
     'optim',
     'extension',
+    # Re-exports cubecl as `burn::cubecl`, so the kernels reach it through burn
+    # rather than depending on it directly.
+    'cubecl',
 ] }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 burn-ir = { git = "https://github.com/tracel-ai/burn", branch = "main" }

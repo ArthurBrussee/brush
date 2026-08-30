@@ -24,7 +24,7 @@ mod visualize_tools_impl {
 
     use anyhow::Result;
 
-    use burn_cubecl::cubecl::MemoryUsage;
+    use burn::cubecl::MemoryUsage;
     use image::imageops::FilterType;
     use rerun::external::glam;
 
@@ -707,7 +707,7 @@ mod visualize_tools_impl {
 
     use super::VisualizeTools;
     use anyhow::Result;
-    use burn_cubecl::cubecl::MemoryUsage;
+    use burn::cubecl::MemoryUsage;
 
     impl VisualizeTools {
         pub async fn new(_enabled: bool) -> Self {

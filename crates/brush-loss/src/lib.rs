@@ -15,6 +15,7 @@
 //! across the autograd tape.
 
 use brush_cube::MainBackend as Wgpu;
+use brush_cube::{CubeBackend, CubeRuntime, CubeTensor, FusionCubeRuntime, into_contiguous};
 use burn::backend::autodiff::checkpoint::strategy::CheckpointStrategy;
 use burn::backend::{Autodiff, AutodiffBackend};
 use burn::{
@@ -29,10 +30,6 @@ use burn::{
     },
     tensor::{DType, Int, Shape, Tensor},
 };
-use burn_cubecl::{
-    CubeBackend, CubeRuntime, fusion::FusionCubeRuntime, kernel::into_contiguous,
-    tensor::CubeTensor,
-};
 use burn_fusion::{
     Fusion, FusionHandle,
     stream::{Operation, StreamId},
@@ -41,11 +38,11 @@ use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorI
 use glam::Vec3;
 
 mod kernels {
-    use burn_cubecl::cubecl;
-    use burn_cubecl::cubecl::cube;
-    use burn_cubecl::cubecl::frontend::CompilationArg;
-    use burn_cubecl::cubecl::frontend::IndexMutExpand;
-    use burn_cubecl::cubecl::prelude::*;
+    use burn::cubecl;
+    use burn::cubecl::cube;
+    use burn::cubecl::frontend::CompilationArg;
+    use burn::cubecl::frontend::IndexMutExpand;
+    use burn::cubecl::prelude::*;
 
     /// 11-tap Gaussian weights at sigma = 1.5, normalised to sum to 1.
     /// Called from `comptime!` so it runs once per kernel build, baking each
@@ -740,7 +737,7 @@ pub trait LossOps: Backend {
 }
 
 fn alloc_zeros<R: CubeRuntime>(template: &CubeTensor<R>) -> CubeTensor<R> {
-    burn_cubecl::ops::numeric::zeros_client::<R>(
+    brush_cube::zeros_client::<R>(
         template.client.clone(),
         template.device.clone(),
         Shape::from(template.shape().as_slice().to_vec()),
@@ -805,8 +802,8 @@ where
     out
 }
 
-fn cube_count_3d(c: u32, h: u32, w: u32) -> burn_cubecl::cubecl::prelude::CubeCount {
-    use burn_cubecl::cubecl::prelude::CubeCount;
+fn cube_count_3d(c: u32, h: u32, w: u32) -> burn::cubecl::prelude::CubeCount {
+    use burn::cubecl::prelude::CubeCount;
     CubeCount::Static(
         w.div_ceil(kernels::BLOCK_X),
         h.div_ceil(kernels::BLOCK_Y),
@@ -814,8 +811,8 @@ fn cube_count_3d(c: u32, h: u32, w: u32) -> burn_cubecl::cubecl::prelude::CubeCo
     )
 }
 
-fn cube_count_3d_bwd(c: u32, h: u32, w: u32) -> burn_cubecl::cubecl::prelude::CubeCount {
-    use burn_cubecl::cubecl::prelude::CubeCount;
+fn cube_count_3d_bwd(c: u32, h: u32, w: u32) -> burn::cubecl::prelude::CubeCount {
+    use burn::cubecl::prelude::CubeCount;
     CubeCount::Static(
         w.div_ceil(kernels::BLOCK_X_BWD),
         h.div_ceil(kernels::BLOCK_Y_BWD),
@@ -828,7 +825,7 @@ fn launch_image_forward<R: CubeRuntime>(
     gt_packed: CubeTensor<R>,
     cfg: ImageLossConfig,
 ) -> CubeTensor<R> {
-    use burn_cubecl::cubecl::prelude::CubeDim;
+    use burn::cubecl::prelude::CubeDim;
 
     let pred = into_contiguous(pred);
     let gt_packed = into_contiguous(gt_packed);
@@ -876,7 +873,7 @@ fn launch_image_backward<R: CubeRuntime>(
     dl_dmap: CubeTensor<R>,
     cfg: ImageLossConfig,
 ) -> CubeTensor<R> {
-    use burn_cubecl::cubecl::prelude::CubeDim;
+    use burn::cubecl::prelude::CubeDim;
 
     let pred = into_contiguous(pred);
     let gt_packed = into_contiguous(gt_packed);
@@ -915,8 +912,8 @@ fn launch_unpack_gt_rgb<R: CubeRuntime>(
     gt_packed: CubeTensor<R>,
     composite_bg: Option<Vec3>,
 ) -> CubeTensor<R> {
+    use burn::cubecl::prelude::{CubeCount, CubeDim};
     use burn::tensor::{DType, Shape};
-    use burn_cubecl::cubecl::prelude::{CubeCount, CubeDim};
 
     let gt_packed = into_contiguous(gt_packed);
     let dims = gt_packed.shape().as_slice().to_vec();
@@ -926,7 +923,7 @@ fn launch_unpack_gt_rgb<R: CubeRuntime>(
     let bg = composite_bg.unwrap_or(Vec3::ZERO);
 
     let client = gt_packed.client.clone();
-    let out = burn_cubecl::ops::numeric::zeros_client::<R>(
+    let out = brush_cube::zeros_client::<R>(
         client.clone(),
         gt_packed.device.clone(),
         Shape::new([h as usize, w as usize, 3]),
