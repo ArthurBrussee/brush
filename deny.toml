@@ -33,6 +33,10 @@ ignore = [
 ]
 
 [bans]
+# Some duplicates are resolved by pinning rather than skipping, so they have to
+# be re-applied after a bare `cargo update`:
+#   flate2 1.1.9  — 1.1.10 moves to miniz_oxide 0.9 while png/exr/backtrace are
+#                   still on 0.8, which adds a second copy.
 multiple-versions = "deny"
 deny = [
     { name = "openssl-sys", reason = "Use rustls" },
