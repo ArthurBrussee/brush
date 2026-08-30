@@ -26,7 +26,7 @@ use brush_render::{
 };
 use burn::backend::wgpu::WgpuDevice;
 use burn::tensor::DType;
-use burn_wgpu::CubeTensor;
+use burn_cubecl::tensor::CubeTensor;
 use burn_wgpu::WgpuRuntime;
 use std::num::Wrapping;
 

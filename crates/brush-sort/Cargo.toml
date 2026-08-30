@@ -10,6 +10,7 @@ brush-cube.path = "../brush-cube"
 burn.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 burn-wgpu.workspace = true
+burn-cubecl.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

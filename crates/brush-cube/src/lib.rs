@@ -19,7 +19,7 @@
 
 mod host;
 pub mod test_helpers;
-pub use burn_wgpu::CubeBackend;
+use burn_wgpu::CubeBackend;
 pub use host::*;
 
 /// The wgpu runtime.

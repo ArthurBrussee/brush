@@ -1,6 +1,5 @@
 #![allow(clippy::match_wildcard_for_single_variants)]
 
-use brush_cube::FusionCubeRuntime;
 use brush_cube::{MainBackend, MainBackendBase};
 use burn::backend::{
     Autodiff, AutodiffBackend, BackendTensor, DispatchTensor, DispatchTensorKind,
@@ -8,19 +7,20 @@ use burn::backend::{
     tensor::{FloatTensor, IntTensor},
 };
 use burn::tensor::{DType, Int, Tensor};
+use burn_cubecl::fusion::FusionCubeRuntime;
+use burn_cubecl::tensor::CubeTensor;
 use burn_fusion::{
     Fusion, FusionHandle,
     stream::{Operation, StreamId},
 };
 use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
-use burn_wgpu::CubeTensor;
 use glam::Vec3;
 
 use crate::{
     RenderAuxInner, SplatOps, backend_kind, camera::Camera, gaussian_splats::SplatRenderMode,
     render_aux::RenderOutput,
 };
-use brush_cube::{CubeBackend, CubeRuntime};
+use burn_cubecl::{CubeBackend, CubeRuntime};
 
 /// Inner Wgpu autodiff backend (same as `Autodiff<burn::backend::Wgpu>`).
 /// Used as the primitive backend for autodiff `Tensor<D>` operations.

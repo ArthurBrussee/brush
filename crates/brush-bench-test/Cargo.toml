@@ -14,6 +14,7 @@ anyhow.workspace = true
 glam.workspace = true
 log.workspace = true
 burn = { workspace = true, features = ["autodiff"] }
+burn-cubecl.workspace = true
 rand.workspace = true
 
 divan = "0.1.17"

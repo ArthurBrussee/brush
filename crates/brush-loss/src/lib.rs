@@ -15,7 +15,6 @@
 //! across the autograd tape.
 
 use brush_cube::MainBackend as Wgpu;
-use brush_cube::{CubeBackend, CubeRuntime, CubeTensor, FusionCubeRuntime, into_contiguous};
 use burn::backend::autodiff::checkpoint::strategy::CheckpointStrategy;
 use burn::backend::{Autodiff, AutodiffBackend};
 use burn::{
@@ -29,6 +28,10 @@ use burn::{
         tensor::{FloatTensor, IntTensor},
     },
     tensor::{DType, Int, Shape, Tensor},
+};
+use burn_cubecl::{
+    CubeBackend, CubeRuntime, fusion::FusionCubeRuntime, kernel::into_contiguous,
+    tensor::CubeTensor,
 };
 use burn_fusion::{
     Fusion, FusionHandle,
@@ -737,7 +740,7 @@ pub trait LossOps: Backend {
 }
 
 fn alloc_zeros<R: CubeRuntime>(template: &CubeTensor<R>) -> CubeTensor<R> {
-    brush_cube::zeros_client::<R>(
+    burn_cubecl::ops::numeric::zeros_client::<R>(
         template.client.clone(),
         template.device.clone(),
         Shape::from(template.shape().as_slice().to_vec()),
@@ -923,7 +926,7 @@ fn launch_unpack_gt_rgb<R: CubeRuntime>(
     let bg = composite_bg.unwrap_or(Vec3::ZERO);
 
     let client = gt_packed.client.clone();
-    let out = brush_cube::zeros_client::<R>(
+    let out = burn_cubecl::ops::numeric::zeros_client::<R>(
         client.clone(),
         gt_packed.device.clone(),
         Shape::new([h as usize, w as usize, 3]),

@@ -8,8 +8,6 @@ use crate::{
     sh::sh_coeffs_for_degree,
     shaders::helpers::ProjectUniforms,
 };
-use brush_cube::FusionCubeRuntime;
-use brush_cube::{CubeBackend, CubeRuntime};
 use burn::backend::Autodiff;
 use burn::backend::autodiff::checkpoint::strategy::CheckpointStrategy;
 use burn::{
@@ -25,6 +23,8 @@ use burn::{
     module::Param,
     tensor::{DType, Shape, Tensor},
 };
+use burn_cubecl::fusion::FusionCubeRuntime;
+use burn_cubecl::{CubeBackend, CubeRuntime};
 use burn_fusion::{
     Fusion, FusionHandle,
     stream::{Operation, StreamId},

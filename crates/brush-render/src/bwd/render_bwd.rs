@@ -2,8 +2,6 @@ use crate::gaussian_splats::SplatRenderMode;
 use crate::kernels::types::RasterizeUniformsLaunch;
 use crate::sh::sh_coeffs_for_degree;
 use brush_cube::calc_cube_count_1d;
-use brush_cube::into_contiguous;
-use brush_cube::{CubeBackend, CubeRuntime};
 use burn::backend::TensorMetadata;
 use burn::backend::ops::FloatTensorOps;
 use burn::backend::tensor::{FloatTensor, IntTensor};
@@ -12,6 +10,8 @@ use burn::cubecl::CubeDim;
 use burn::cubecl::features::AtomicUsage;
 use burn::cubecl::ir::{ElemType, FloatKind, Type};
 use burn::tensor::FloatDType;
+use burn_cubecl::kernel::into_contiguous;
+use burn_cubecl::{CubeBackend, CubeRuntime};
 use glam::{Vec3, uvec2};
 
 use crate::bwd::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};

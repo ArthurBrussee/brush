@@ -1,4 +1,4 @@
-use brush_cube::CubeRuntime;
+use burn_cubecl::CubeRuntime;
 mod kernels;
 
 use brush_cube::calc_cube_count_1d;

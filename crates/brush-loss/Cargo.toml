@@ -10,6 +10,7 @@ brush-render.path = "../brush-render"
 brush-cube.path = "../brush-cube"
 
 burn = { workspace = true, features = ["autodiff"] }
+burn-cubecl.workspace = true
 burn-fusion.workspace = true
 burn-ir.workspace = true
 glam.workspace = true
