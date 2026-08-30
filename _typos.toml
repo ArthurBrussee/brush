@@ -1,4 +1,6 @@
 [default.extend-words]
+# Crate name, not a misspelling of "flat".
+flate = "flate"
 lod = "lod"
 Lod = "Lod"
 ba = "ba"

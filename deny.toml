@@ -33,10 +33,11 @@ ignore = [
 ]
 
 [bans]
-# Some duplicates are resolved by pinning rather than skipping, so they have to
-# be re-applied after a bare `cargo update`:
-#   flate2 1.1.9  — 1.1.10 moves to miniz_oxide 0.9 while png/exr/backtrace are
-#                   still on 0.8, which adds a second copy.
+# Some duplicates are resolved by pinning rather than skipping, so the pin has
+# to be re-applied after a bare `cargo update`. Right now that is one crate:
+# `cargo update -p flate2 --precise 1.1.9`, because 1.1.10 moves to
+# miniz_oxide 0.9 while png, exr and backtrace are still on 0.8, which lands a
+# second copy in the tree.
 multiple-versions = "deny"
 deny = [
     { name = "openssl-sys", reason = "Use rustls" },

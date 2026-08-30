@@ -1147,7 +1147,9 @@ impl<B: Backend + LossOps, C: CheckpointStrategy> LossOps for Autodiff<B, C> {
         _dl_dmap: FloatTensor<Self>,
         _cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
-        unimplemented!("the backward pass runs on the inner backend")
+        // Never dispatched: `image_loss` above hands Autodiff a hand-rolled
+        // backward, which runs on the inner backend.
+        unreachable!("image_loss_backward is not dispatched through Autodiff")
     }
 
     fn unpack_gt_rgb(gt_packed: IntTensor<Self>, composite_bg: Option<Vec3>) -> FloatTensor<Self> {

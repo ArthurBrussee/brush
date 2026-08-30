@@ -108,9 +108,9 @@ pub fn device_memory_usage(
     use burn::backend::DispatchDevice;
     use burn_cubecl::cubecl::Runtime;
     match device.as_dispatch() {
-        DispatchDevice::Wgpu(d) => burn_wgpu::WgpuRuntime::<burn_wgpu::AutoCompiler>::client(d)
-            .memory_usage()
-            .ok(),
+        DispatchDevice::Wgpu(d) => {
+            Some(burn_wgpu::WgpuRuntime::<burn_wgpu::AutoCompiler>::client(d).memory_usage())
+        }
         // Autodiff wraps a device rather than being one; nothing to report.
         DispatchDevice::Autodiff(_) => None,
     }
