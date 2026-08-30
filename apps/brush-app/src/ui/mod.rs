@@ -35,8 +35,6 @@ pub enum UiMode {
 }
 
 pub fn create_egui_options() -> WgpuConfiguration {
-    // The viewer's device is its own now - training runs on a separate one -
-    // so egui just needs a plain device with its own defaults.
     WgpuConfiguration {
         wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
             eframe::egui_wgpu::WgpuSetupCreateNew {
