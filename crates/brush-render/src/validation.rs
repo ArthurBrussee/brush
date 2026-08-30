@@ -51,6 +51,10 @@ fn is_bench_run() -> bool {
 }
 
 /// Say once, loudly, that timings taken now are not representative.
+///
+/// Same gate as the call sites: without validation compiled in, nothing calls
+/// this.
+#[cfg(any(test, feature = "debug-validation"))]
 pub(crate) fn warn_once() {
     #[cfg(not(target_family = "wasm"))]
     {
