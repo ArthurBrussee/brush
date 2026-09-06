@@ -32,9 +32,6 @@ pub mod get_tile_offset;
 pub mod render;
 pub mod validation;
 
-/// `DispatchTensorKind::Cube` shorthand, for the helpers that still deal with
-/// wgpu tensors specifically (viewer interop). Backend-agnostic code matches
-/// every variant instead.
 macro_rules! backend_kind {
     ($($t:tt)*) => { ::burn::backend::DispatchTensorKind::Cube($($t)*) };
 }

@@ -1,11 +1,4 @@
-//! Validation readbacks.
-//!
-//! Every validated tensor is copied from the GPU to the host, which syncs the
-//! device. That is fine for correctness tests and ruinous for any measurement:
-//! a validated render can cost several times what the render itself does, and
-//! it costs more on backends whose reads block (cubecl-metal) than on ones
-//! whose reads are async (wgpu). So this is switchable at runtime, and it says
-//! so out loud the first time it runs.
+//! Optional GPU-to-host validation readbacks.
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -15,18 +8,10 @@ const OFF: u8 = 2;
 
 static STATE: AtomicU8 = AtomicU8::new(UNSET);
 
-/// Turn validation readbacks on or off for this process.
-///
-/// Call this with `false` before timing anything. Benchmarks in this workspace
-/// do; so should any ad-hoc timing harness.
 pub fn set_enabled(on: bool) {
     STATE.store(if on { ON } else { OFF }, Ordering::Relaxed);
 }
 
-/// Whether validation readbacks currently run.
-///
-/// Defaults to on wherever validation is compiled in (`cfg(test)` or the
-/// `debug-validation` feature), except under `cargo bench`.
 pub fn enabled() -> bool {
     match STATE.load(Ordering::Relaxed) {
         ON => true,
@@ -50,14 +35,11 @@ fn is_bench_run() -> bool {
     }
 }
 
-/// Warn once when validation readbacks run.
 #[cfg(any(test, feature = "debug-validation"))]
 pub(crate) fn warn_once() {
     #[cfg(not(target_family = "wasm"))]
     {
         static ONCE: std::sync::Once = std::sync::Once::new();
-        // Deliberately not `log::warn!`: this has to be visible in a test or
-        // bench binary, which usually has no logger installed.
         #[allow(clippy::print_stderr)]
         ONCE.call_once(|| {
             eprintln!(

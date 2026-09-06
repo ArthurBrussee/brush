@@ -252,9 +252,6 @@ pub async fn render_splats_with_pass(
         "render_splats_with_pass requires a Backward variant"
     );
 
-    // Dispatch through the `#[backend_extension]` glue: the generated
-    // `impl SplatOps for Dispatch` routes these autodiff tensors to
-    // `impl SplatOps for Autodiff<..>` below and re-wraps the result.
     let output = <burn::backend::Dispatch as SplatOps>::render(
         camera,
         img_size,

@@ -427,11 +427,8 @@ impl SplatTrainer {
         // floor is attached at the end (below), once positions/count are known.
         let splats = splats.bake_min_scale();
         let device = splats.device();
-        // `memory_cleanup` lives on the cubecl client, not on `Device`. Take it
-        // from the device the splats are on rather than assuming a default one.
         let client = match device.as_dispatch() {
             burn::backend::DispatchDevice::Cube(d) => Some(d.client()),
-            // Autodiff wraps a device rather than being one.
             burn::backend::DispatchDevice::Autodiff(_) => None,
         };
 

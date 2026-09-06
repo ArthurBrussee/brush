@@ -33,14 +33,12 @@ fn burn_options() -> RuntimeOptions {
     }
 }
 
-/// Open the default compute device.
 pub async fn burn_init_setup() -> ProcessDevice {
     burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
         .await;
     default_device()
 }
 
-/// Initialize Burn with an existing wgpu device.
 pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> ProcessDevice {
     let setup = burn_wgpu::WgpuSetup {
         instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()), // unused... need to fix this in Burn.
@@ -73,11 +71,6 @@ pub struct RunningProcess {
 /// machine, so this is just the channel for `emit(msg).await`.
 pub(crate) type Emitter = TryStreamEmitter<ProcessMessage, Error>;
 
-/// Free cached GPU memory on whichever runtime the device belongs to.
-///
-/// `memory_cleanup` / `memory_usage` live on the cubecl client, which is
-/// runtime-specific, so this has to branch on the dispatch variant. One Cube
-/// arm covers every cubecl runtime: the device says which one it is.
 pub fn device_memory_cleanup(device: &ProcessDevice) {
     use burn::backend::DispatchDevice;
     if let DispatchDevice::Cube(d) = device.as_dispatch() {
@@ -85,12 +78,10 @@ pub fn device_memory_cleanup(device: &ProcessDevice) {
     }
 }
 
-/// Bytes currently reserved by the runtime's memory pool, if it reports them.
 pub fn device_memory_usage(device: &ProcessDevice) -> Option<burn::cubecl::MemoryUsage> {
     use burn::backend::DispatchDevice;
     match device.as_dispatch() {
         DispatchDevice::Cube(d) => Some(d.client().memory_usage()),
-        // Autodiff wraps a device rather than being one; nothing to report.
         DispatchDevice::Autodiff(_) => None,
     }
 }
@@ -108,22 +99,9 @@ pub fn create_process<
     source: DataSource,
     config_fn: Fun,
 ) -> RunningProcess {
-    let (splat_tx, splat_view) = crate::slot::channel();
-    let device = default_device();
-    let process_device = device.clone();
-
-    let stream = try_fn_stream(|emitter| async move {
-        run_process(source, config_fn, &emitter, splat_tx, &process_device).await
-    });
-
-    RunningProcess {
-        stream: Box::pin(stream),
-        splat_view,
-        device,
-    }
+    create_process_with_device(source, default_device(), config_fn)
 }
 
-/// Create a running process on an already initialized device.
 pub fn create_process_with_device<
     Fun: FnOnce(crate::config::TrainStreamConfig) -> Fut + SendNotWasm + 'static,
     Fut: Future<Output = Option<crate::config::TrainStreamConfig>> + SendNotWasm,

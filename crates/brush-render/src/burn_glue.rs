@@ -139,10 +139,7 @@ pub(crate) fn match_backend<const D: usize, const DR: usize>(
     }
 }
 
-/// Resolve a `Tensor<D>` down to the underlying `CubeTensor`, draining any
-/// pending fusion ops. Used for direct GPU resource access, e.g. binding the
-/// buffer into a wgpu pipeline, so it stays tied to the main backend rather
-/// than being generic over the runtime.
+/// Resolve pending fusion operations and return the underlying tensor.
 pub fn resolve_to_cube_float<const D: usize>(tensor: Tensor<D>) -> CubeTensor {
     let fusion = unwrap_wgpu_float(tensor);
     let client = fusion.client.clone();
@@ -178,7 +175,6 @@ impl SplatOps for Fusion<CubeBackend> {
             .clone()
             .resolve_tensor_float::<CubeBackend>(refine_weight);
 
-        // Run the full pipeline on the concrete cube backend.
         let out = <CubeBackend as SplatOps>::render(
             camera,
             img_size,

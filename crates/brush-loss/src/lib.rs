@@ -1067,7 +1067,6 @@ pub fn image_loss(pred: Tensor<3>, gt_packed: Tensor<2, Int>, cfg: ImageLossConf
     Tensor::<3>::from_dispatch(map).permute([1, 2, 0])
 }
 
-/// Autodiff arm: same forward, plus the hand-written backward.
 impl<B: Backend + LossOps, C: CheckpointStrategy> LossOps for Autodiff<B, C> {
     fn image_loss(
         pred: FloatTensor<Self>,
@@ -1096,14 +1095,17 @@ impl<B: Backend + LossOps, C: CheckpointStrategy> LossOps for Autodiff<B, C> {
     }
 
     fn image_loss_backward(
-        _pred: FloatTensor<Self>,
-        _gt_packed: IntTensor<Self>,
-        _dl_dmap: FloatTensor<Self>,
-        _cfg: ImageLossConfig,
+        pred: FloatTensor<Self>,
+        gt_packed: IntTensor<Self>,
+        dl_dmap: FloatTensor<Self>,
+        cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
-        // Never dispatched: `image_loss` above hands Autodiff a hand-rolled
-        // backward, which runs on the inner backend.
-        unreachable!("image_loss_backward is not dispatched through Autodiff")
+        <Self as AutodiffBackend>::from_inner(<B as LossOps>::image_loss_backward(
+            pred.primitive,
+            gt_packed,
+            dl_dmap.primitive,
+            cfg,
+        ))
     }
 
     fn unpack_gt_rgb(gt_packed: IntTensor<Self>, composite_bg: Option<Vec3>) -> FloatTensor<Self> {
