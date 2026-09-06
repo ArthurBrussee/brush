@@ -93,17 +93,14 @@ pub fn fold_min_scale(
     let f = crate::burn_glue::match_backend(f, &transforms);
     let n = transforms.dims()[0] as i32;
     let log_scales = transforms.clone().slice(s![.., 7..10]); // [N,3]
-    let s2 = log_scales.mul_scalar(2.0).exp(); // s² = exp(2·log) [N,3]
+    let s2 = log_scales.clone().mul_scalar(2.0).exp(); // s² = exp(2·log) [N,3]
     let f2 = f.clone().mul(f).reshape([n, 1]); // [N,1]
-    let s2f = s2.clone().add(f2); // s² + f² [N,3]
+    let s2f = s2.add(f2); // s² + f² [N,3]
 
-    let new_log = s2f.clone().log().mul_scalar(0.5); // log(sqrt(s²+f²)) [N,3]
-    let transforms = transforms.slice_assign(s![.., 7..10], new_log);
+    let new_log = s2f.log().mul_scalar(0.5); // log(sqrt(s²+f²)) [N,3]
+    let transforms = transforms.slice_assign(s![.., 7..10], new_log.clone());
 
-    let det = |t: Tensor<2>| {
-        t.clone().slice(s![.., 0..1]) * t.clone().slice(s![.., 1..2]) * t.slice(s![.., 2..3])
-    };
-    let coef = (det(s2).div(det(s2f))).sqrt().reshape([n]); // sqrt(det1/det2) [N]
+    let coef = log_scales.sub(new_log).sum_dim(1).exp().reshape([n]);
     let opac = sigmoid(raw_opac).mul(coef).clamp(1e-6, 1.0 - 1e-6);
     let raw_opac = opac.clone().div(opac.neg().add_scalar(1.0)).log(); // logit
 
@@ -443,4 +440,48 @@ pub async fn render_splats(
     };
 
     (Tensor::from_dispatch(output.out_img), aux)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn min_scale_fold_is_stable_for_tiny_scales() {
+        let device = Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+        let log_scale = -20.0_f32;
+        let mut data = vec![0.0; 10];
+        data[7..10].fill(log_scale);
+        let transforms = Tensor::from_data(TensorData::new(data, [1, 10]), &device).require_grad();
+        let source = transforms.clone();
+        let (_, raw_opacity) = fold_min_scale(
+            transforms,
+            Tensor::zeros([1], &device),
+            Tensor::from_floats([log_scale.exp()], &device),
+        );
+
+        let opacity = sigmoid(raw_opacity.clone())
+            .into_scalar_async::<f32>()
+            .await
+            .expect("opacity readback");
+        let grads = raw_opacity.sum().backward();
+        let gradient = source
+            .grad(&grads)
+            .expect("transform gradient")
+            .into_data_async()
+            .await
+            .expect("gradient readback")
+            .try_to_vec::<f32>()
+            .expect("f32 gradient");
+
+        let expected_opacity = 0.5 * 0.5_f32.sqrt().powi(3);
+        assert!((opacity - expected_opacity).abs() < 1e-6);
+        let expected_gradient = 0.5 / (1.0 - expected_opacity);
+        for actual in &gradient[7..10] {
+            assert!(
+                actual.is_finite() && (actual - expected_gradient).abs() < 2e-4,
+                "unexpected gradient {actual}"
+            );
+        }
+    }
 }
