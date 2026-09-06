@@ -16,7 +16,7 @@ pub struct PinholeParams {
 }
 
 impl PinholeParams {
-    pub fn to_launch_object<R: Runtime>(&self) -> PinholeParamsLaunch<R> {
+    pub fn to_launch_object(&self) -> PinholeParamsLaunch {
         PinholeParamsLaunch::new(self.fx, self.fy, self.cx, self.cy)
     }
 }

@@ -16,7 +16,7 @@
 //! tests run on `Autodiff<MainBackend>` (via fusion), exercising the
 //! gradient kernels.
 
-use brush_cube::{MainBackendBase, Runtime};
+use brush_cube::{CubeDevice, MainBackendBase};
 use brush_render::{
     RenderOutput, SplatOps,
     camera::Camera,
@@ -27,7 +27,6 @@ use brush_render::{
 use burn::backend::wgpu::WgpuDevice;
 use burn::tensor::DType;
 use burn_cubecl::tensor::CubeTensor;
-use burn_wgpu::WgpuRuntime;
 use std::num::Wrapping;
 
 struct Sm64(Wrapping<u64>);
@@ -147,16 +146,13 @@ fn finite_scene(seed: u64, n: usize) -> Scene {
     (means, rots, ls, dc, opac)
 }
 
-fn cube_tensor<const D: usize>(
-    device: &WgpuDevice,
-    shape: [usize; D],
-    data: &[f32],
-) -> CubeTensor<WgpuRuntime> {
-    let client = WgpuRuntime::client(device);
+fn cube_tensor<const D: usize>(device: &WgpuDevice, shape: [usize; D], data: &[f32]) -> CubeTensor {
+    let device = CubeDevice::Wgpu(device.clone());
+    let client = device.client();
     let handle = client.create_from_slice(bytemuck::cast_slice(data));
     CubeTensor::new_contiguous(
         client,
-        device.clone(),
+        device,
         burn::tensor::Shape::new(shape),
         handle,
         DType::F32,

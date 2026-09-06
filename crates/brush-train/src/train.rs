@@ -22,7 +22,6 @@ use burn::{
     },
 };
 
-use brush_cube::MainRuntime;
 use hashbrown::HashSet;
 use tracing::{Instrument, trace_span};
 
@@ -435,9 +434,13 @@ impl SplatTrainer {
         // floor is attached at the end (below), once positions/count are known.
         let splats = splats.bake_min_scale();
         let device = splats.device();
-        // `memory_cleanup` lives on the runtime's client, not on `Device`.
-        let client =
-            <MainRuntime as burn::cubecl::Runtime>::client(&brush_cube::MainDevice::default());
+        // `memory_cleanup` lives on the cubecl client, not on `Device`. Take it
+        // from the device the splats are on rather than assuming a default one.
+        let client = match device.as_dispatch() {
+            burn::backend::DispatchDevice::Cube(d) => Some(d.client()),
+            // Autodiff wraps a device rather than being one.
+            burn::backend::DispatchDevice::Autodiff(_) => None,
+        };
 
         let refiner = self
             .refine_record
@@ -632,7 +635,9 @@ impl SplatTrainer {
 
         // Update current bounds based on the splats.
         self.bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
-        client.memory_cleanup();
+        if let Some(client) = &client {
+            client.memory_cleanup();
+        }
 
         // Recompute the per-splat 3D-filter floor against the new positions/
         // count and attach it — the floor is part of the splat from here until

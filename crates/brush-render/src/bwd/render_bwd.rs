@@ -10,15 +10,15 @@ use burn::cubecl::CubeDim;
 use burn::cubecl::features::AtomicUsage;
 use burn::cubecl::ir::{ElemType, FloatKind, Type};
 use burn::tensor::FloatDType;
+use burn_cubecl::CubeBackend;
 use burn_cubecl::kernel::into_contiguous;
-use burn_cubecl::{CubeBackend, CubeRuntime};
 use glam::{Vec3, uvec2};
 
 use crate::bwd::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};
 use crate::bwd::kernels;
 use crate::shaders::helpers::ProjectUniforms;
 
-impl<R: CubeRuntime> SplatBwdOps for CubeBackend<R> {
+impl SplatBwdOps for CubeBackend {
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
         projected_splats: FloatTensor<Self>,
@@ -65,7 +65,7 @@ impl<R: CubeRuntime> SplatBwdOps for CubeBackend<R> {
                 CasAtomicAdd, HfAtomicAdd, rasterize_backwards_kernel,
             };
             if hard_floats {
-                rasterize_backwards_kernel::launch::<HfAtomicAdd, R>(
+                rasterize_backwards_kernel::launch::<HfAtomicAdd>(
                     &client,
                     cube_count,
                     cube_dim,
@@ -79,7 +79,7 @@ impl<R: CubeRuntime> SplatBwdOps for CubeBackend<R> {
                     smooth_cutoff,
                 );
             } else {
-                rasterize_backwards_kernel::launch::<CasAtomicAdd, R>(
+                rasterize_backwards_kernel::launch::<CasAtomicAdd>(
                     &client,
                     cube_count,
                     cube_dim,
@@ -142,7 +142,7 @@ impl<R: CubeRuntime> SplatBwdOps for CubeBackend<R> {
         let uniforms = project_uniforms.to_launch_object();
 
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
-            kernels::project_backwards::project_backwards_kernel::launch::<R>(
+            kernels::project_backwards::project_backwards_kernel::launch(
                 &client,
                 calc_cube_count_1d(num_visible, kernels::project_backwards::WG_SIZE),
                 CubeDim::new_1d(kernels::project_backwards::WG_SIZE),

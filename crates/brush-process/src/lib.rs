@@ -91,24 +91,20 @@ use tokio::sync::OnceCell;
 /// Free cached GPU memory on whichever runtime the device belongs to.
 ///
 /// `memory_cleanup` / `memory_usage` live on the cubecl client, which is
-/// runtime-specific, so this has to branch on the dispatch variant. Only wgpu
-/// is wired up today; another cubecl runtime would add an arm here.
+/// runtime-specific, so this has to branch on the dispatch variant. One Cube
+/// arm covers every cubecl runtime: the device says which one it is.
 pub fn device_memory_cleanup(device: &burn::tensor::Device) {
     use burn::backend::DispatchDevice;
-    use burn::cubecl::Runtime;
-    if let DispatchDevice::Wgpu(d) = device.as_dispatch() {
-        burn_wgpu::WgpuRuntime::<burn_wgpu::AutoCompiler>::client(d).memory_cleanup();
+    if let DispatchDevice::Cube(d) = device.as_dispatch() {
+        d.client().memory_cleanup();
     }
 }
 
 /// Bytes currently reserved by the runtime's memory pool, if it reports them.
 pub fn device_memory_usage(device: &burn::tensor::Device) -> Option<burn::cubecl::MemoryUsage> {
     use burn::backend::DispatchDevice;
-    use burn::cubecl::Runtime;
     match device.as_dispatch() {
-        DispatchDevice::Wgpu(d) => {
-            Some(burn_wgpu::WgpuRuntime::<burn_wgpu::AutoCompiler>::client(d).memory_usage())
-        }
+        DispatchDevice::Cube(d) => Some(d.client().memory_usage()),
         // Autodiff wraps a device rather than being one; nothing to report.
         DispatchDevice::Autodiff(_) => None,
     }

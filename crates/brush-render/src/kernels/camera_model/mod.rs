@@ -125,7 +125,7 @@ pub fn calculate_projection_vjp(
 }
 
 impl JacobianClampLimits {
-    pub fn to_launch_object<R: Runtime>(&self) -> JacobianClampLimitsLaunch<R> {
+    pub fn to_launch_object(&self) -> JacobianClampLimitsLaunch {
         JacobianClampLimitsLaunch::new(
             self.lim_pos_x,
             self.lim_pos_y,

@@ -12,11 +12,9 @@
 
 use std::sync::Arc;
 
+use brush_cube::CubeDevice;
 use brush_cube::CubeTensor;
-use brush_cube::MainRuntime;
 use brush_sort::radix_argsort;
-use burn::backend::wgpu::WgpuDevice;
-use burn::cubecl::Runtime;
 use burn::cubecl::future::block_on;
 use burn::tensor::{DType, Shape};
 
@@ -39,8 +37,8 @@ const SIZES: [usize; 4] = [1_000_000, 10_000_000, 30_000_000, 70_000_000];
 // 1024 matches the renderer's tile budget for a 512x512 image.
 const TILE_ID_RANGE: u32 = 1024;
 
-fn device() -> WgpuDevice {
-    block_on(brush_cube::test_helpers::test_device())
+fn device() -> CubeDevice {
+    CubeDevice::Wgpu(block_on(brush_cube::test_helpers::test_device()))
 }
 
 #[derive(Copy, Clone)]
@@ -77,8 +75,8 @@ fn make_inputs(size: usize, key_kind: KeyKind) -> Arc<(Vec<u32>, Vec<u32>)> {
 
 // Build a CubeTensor directly from a raw u32 slice. Bypasses Burn's i32-typed
 // `from_ints` which would panic on values >= 2^31.
-fn upload_u32(device: &WgpuDevice, data: &[u32]) -> CubeTensor<MainRuntime> {
-    let client = MainRuntime::client(device);
+fn upload_u32(device: &CubeDevice, data: &[u32]) -> CubeTensor {
+    let client = device.client();
     let handle = client.create_from_slice(bytemuck::cast_slice(data));
     CubeTensor::new_contiguous(
         client,
@@ -89,13 +87,13 @@ fn upload_u32(device: &WgpuDevice, data: &[u32]) -> CubeTensor<MainRuntime> {
     )
 }
 
-fn run_sort(device: &WgpuDevice, inputs: &(Vec<u32>, Vec<u32>), bits: u32) {
+fn run_sort(device: &CubeDevice, inputs: &(Vec<u32>, Vec<u32>), bits: u32) {
     let keys = upload_u32(device, &inputs.0);
     let values = upload_u32(device, &inputs.1);
     let (sorted_keys, sorted_values) = radix_argsort(keys, values, bits);
     // Force completion: read both buffers back so the GPU finishes before we
     // return from the bencher closure.
-    let client = <MainRuntime as burn::cubecl::Runtime>::client(device);
+    let client = device.client();
     let _ = block_on(client.read_async(vec![sorted_keys.handle, sorted_values.handle]));
 }
 

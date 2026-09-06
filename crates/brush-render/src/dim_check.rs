@@ -1,5 +1,4 @@
 use burn::backend::TensorMetadata;
-use burn_cubecl::CubeRuntime;
 use burn_wgpu::CubeTensor;
 use std::collections::HashMap;
 
@@ -10,12 +9,12 @@ pub(crate) enum DimBound {
     Matching(&'static str),
 }
 
-pub(crate) struct DimCheck<'a, R: CubeRuntime> {
+pub(crate) struct DimCheck<'a> {
     bound: HashMap<&'a str, usize>,
-    device: Option<R::Device>,
+    device: Option<burn_cubecl::CubeDevice>,
 }
 
-impl<R: CubeRuntime> DimCheck<'_, R> {
+impl DimCheck<'_> {
     pub fn new() -> Self {
         DimCheck {
             bound: HashMap::new(),
@@ -23,7 +22,7 @@ impl<R: CubeRuntime> DimCheck<'_, R> {
         }
     }
 
-    pub fn check_dims(mut self, name: &str, tensor: &CubeTensor<R>, bounds: &[DimBound]) -> Self {
+    pub fn check_dims(mut self, name: &str, tensor: &CubeTensor, bounds: &[DimBound]) -> Self {
         let shape = &tensor.shape();
 
         match self.device.as_ref() {
