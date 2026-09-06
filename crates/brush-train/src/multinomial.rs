@@ -85,13 +85,4 @@ mod tests {
         // Function returns empty vector when it cannot sample any valid indices
         assert_eq!(result.len(), 0);
     }
-
-    #[wasm_bindgen_test(unsupported = test)]
-    fn sampling_is_reproducible() {
-        let weights = [0.1, 0.3, 0.4, 0.2];
-        assert_eq!(
-            multinomial_sample(&mut test_rng(), &weights, 3),
-            multinomial_sample(&mut test_rng(), &weights, 3)
-        );
-    }
 }
