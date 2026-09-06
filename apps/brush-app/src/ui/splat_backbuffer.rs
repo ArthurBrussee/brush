@@ -37,12 +37,7 @@ pub struct SplatBackbuffer {
 
 impl SplatBackbuffer {
     pub fn new(state: &eframe::egui_wgpu::RenderState) -> Self {
-        // The viewer gets its own thread, deliberately. Reading a frame back
-        // from cubecl-metal blocks the calling thread until the GPU drains
-        // (cubecl-metal's `read` flushes and waits synchronously, then
-        // memcpys), and cubecl assigns one stream per thread by default. On
-        // the process actor that would mean every displayed frame blocks the
-        // thread driving training, on training's own stream.
+        // Keep blocking Metal readbacks off the training actor.
         let actor = Actor::new("splat-view");
         // Register splat backbuffer resources
         state
@@ -148,8 +143,6 @@ pub struct SplatBackbufferResources {
     bind_group_layout: wgpu::BindGroupLayout,
     // Per-frame bind group - created in prepare() with the current tensor buffer
     bind_group: Option<wgpu::BindGroup>,
-    // Destination for copied frames. Kept around between frames and only
-    // reallocated when the window resizes.
     upload_buffer: Option<wgpu::Buffer>,
 }
 
@@ -240,8 +233,6 @@ impl SplatBackbufferResources {
         }
     }
 
-    /// Make sure the upload buffer holds at least `size` bytes, allocating a
-    /// new one if the current one is too small.
     fn reserve_upload_buffer(&mut self, device: &wgpu::Device, size: u64) {
         let fits = self
             .upload_buffer
@@ -289,7 +280,6 @@ impl CallbackTrait for SplatBackbufferPainter {
         let img_buffer = res.upload_buffer.as_ref().expect("just reserved");
         queue.write_buffer(img_buffer, 0, &self.frame.pixels);
 
-        // Create a new bind group with the current image buffer
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Splat Backbuffer Bind Group"),
             layout: &res.bind_group_layout,

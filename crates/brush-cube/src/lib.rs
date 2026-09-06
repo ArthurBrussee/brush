@@ -22,15 +22,8 @@ pub mod test_helpers;
 use burn_wgpu::CubeBackend;
 pub use host::*;
 
-/// The default device, which is a wgpu one. Which runtime a tensor actually
-/// runs on is what its device says, not what its type is, so this is only for
-/// the paths that genuinely need wgpu, such as handing a buffer to the viewer.
 pub type MainDevice = burn_wgpu::WgpuDevice;
-
-/// The cubecl backend, covering every runtime.
 pub type MainBackendBase = CubeBackend;
-
-/// Fusion-wrapped wgpu backend, matching what burn's dispatch layer expects.
 pub type MainBackend = burn_wgpu::Wgpu;
 
 use burn::cubecl;

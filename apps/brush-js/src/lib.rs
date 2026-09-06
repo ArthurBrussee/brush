@@ -435,8 +435,6 @@ async fn bridge_config_callback(
 /// supports anyway).
 fn tensor_buffer_js<const D: usize>(tensor: burn::tensor::Tensor<D>) -> Option<JsValue> {
     let cube_tensor = brush_render::burn_glue::resolve_to_cube_float::<D>(tensor);
-    // The client is runtime-erased now, so name the server whose storage the
-    // resource comes from. brush-js is WebGPU only.
     let resource = cube_tensor
         .client
         .get_resource::<burn::cubecl::wgpu::WgpuServer<burn::cubecl::wgpu::AutoCompiler>>(

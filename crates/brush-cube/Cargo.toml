@@ -6,9 +6,7 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
-# `wgpu` also wires up burn-backend's DeviceOps impl for WgpuDevice — without
-# it, building this crate outside the full workspace (e.g. `cargo test -p
-# lpips`) fails inside burn-wgpu.
+# Provides `DeviceOps` for `WgpuDevice` in standalone builds.
 burn = { workspace = true, features = ["wgpu"] }
 burn-cubecl.workspace = true
 burn-wgpu.workspace = true
