@@ -4,7 +4,8 @@ use burn::cubecl::frontend::CompilationArg;
 use burn::cubecl::frontend::IndexMutExpand;
 use burn::cubecl::prelude::*;
 
-pub const THREADS_PER_GROUP: usize = 512;
+// WebGPU guarantees at least 256 invocations per workgroup.
+pub const THREADS_PER_GROUP: usize = 256;
 
 #[cube]
 fn linear_workgroup_id() -> usize {
