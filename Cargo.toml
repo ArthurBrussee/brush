@@ -327,19 +327,10 @@ needless_range_loop = "allow"
 # This doesn't quite work with Burn:
 single_range_in_vec_init = "allow"
 
-# wgpu fork (v30.0.0 + 2 commits): WebGPU subgroups feature mapping + the JS
-# interop constructors (WebAdapter/WebDevice/WebQueue::from_handle and
-# `webgpu_backend` re-exports) — needed for our backward kernel's
-# subgroupAdd/subgroupAny on web, and for brush-js to share a GPUDevice with
-# the host page. v30 upstreamed the rest of the old js-interop branch (the
-# `as_webgpu` accessors, and #9287's relaxed Metal buffer limits), so the fork
-# is much smaller than it used to be.
-#
-# egui 0.36 ships the wgpu-30 upgrade (emilk/egui#8289) upstream, so the
-# egui fork is no longer needed.
+# WebGPU subgroup support, JS handle interop, and error-scope fixes on wgpu 30.0.1.
 [patch.crates-io]
-wgpu                 = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
-wgpu-core            = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
-wgpu-hal             = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
-wgpu-types           = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
-naga                 = { git = "https://github.com/ArthurBrussee/wgpu", branch = "js-interop-30" }
+wgpu                 = { git = "https://github.com/ArthurBrussee/wgpu", branch = "fix/webgpu-errors-v30.0.1" }
+wgpu-core            = { git = "https://github.com/ArthurBrussee/wgpu", branch = "fix/webgpu-errors-v30.0.1" }
+wgpu-hal             = { git = "https://github.com/ArthurBrussee/wgpu", branch = "fix/webgpu-errors-v30.0.1" }
+wgpu-types           = { git = "https://github.com/ArthurBrussee/wgpu", branch = "fix/webgpu-errors-v30.0.1" }
+naga                 = { git = "https://github.com/ArthurBrussee/wgpu", branch = "fix/webgpu-errors-v30.0.1" }

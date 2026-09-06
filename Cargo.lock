@@ -5836,8 +5836,8 @@ checksum = "bc0287524726960e07b119cebd01678f852f147742ae0d925e6a520dca956126"
 
 [[package]]
 name = "naga"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -5861,8 +5861,8 @@ dependencies = [
 
 [[package]]
 name = "naga-types"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "hashbrown 0.17.1",
  "indexmap",
@@ -10662,8 +10662,8 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "wgpu"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "arrayvec",
  "bitflags 2.13.1",
@@ -10691,8 +10691,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -10725,40 +10725,40 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core-deps-apple"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-emscripten"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-wasm"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-hal"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -10812,8 +10812,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-naga-bridge"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -10821,8 +10821,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-types"
-version = "30.0.0"
-source = "git+https://github.com/ArthurBrussee/wgpu?branch=js-interop-30#28d01c4ff4963a8ec3071afea4b0b6d3734de539"
+version = "30.0.1"
+source = "git+https://github.com/ArthurBrussee/wgpu?branch=fix%2Fwebgpu-errors-v30.0.1#de4d137a5303486913156e094ccf68491fe745af"
 dependencies = [
  "bitflags 2.13.1",
  "bytemuck",
