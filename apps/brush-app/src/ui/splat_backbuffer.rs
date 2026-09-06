@@ -23,13 +23,7 @@ struct LastRenderState {
     img_size: UVec2,
 }
 
-/// A rendered frame on its way to the screen.
-///
-/// Training runs on its own device, so there is no way to bind its buffer into
-/// the viewer's bind group. The pixels come back through the host instead:
-/// packed RGBA8, four bytes per pixel, so there is nothing to convert on the
-/// way. The readback is awaited off the render thread, so no frame is dropped
-/// for it.
+/// A rendered RGBA8 frame read back from the training device.
 #[derive(Clone)]
 struct Frame {
     width: u32,

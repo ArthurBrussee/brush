@@ -5,6 +5,11 @@ pub mod slot;
 pub mod train_stream;
 
 pub use brush_vfs::DataSource;
+pub type ProcessDevice = burn::tensor::Device;
+
+pub fn default_device() -> ProcessDevice {
+    WgpuDevice::DefaultDevice.into()
+}
 
 use burn_wgpu::{
     RuntimeOptions, WgpuDevice,
@@ -28,31 +33,15 @@ fn burn_options() -> RuntimeOptions {
     }
 }
 
-/// Open the compute device.
-///
-/// Its own device, separate from anything the viewer owns, so training never
-/// contends with GUI work on the same queue. wgpu needs an explicit setup so
-/// the adapter and limits are chosen before any kernel runs.
-async fn open_device() -> burn::tensor::Device {
+/// Open the default compute device.
+pub async fn burn_init_setup() -> ProcessDevice {
     burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
         .await;
-    WgpuDevice::DefaultDevice.into()
+    default_device()
 }
 
-/// Open the compute device now, rather than waiting for the first thing that
-/// needs it. Only worth calling to front-load the cost.
-pub async fn burn_init_setup() -> burn::tensor::Device {
-    device().await.clone()
-}
-
-/// Hand Brush a wgpu setup the host already owns, instead of letting it open
-/// its own device. Useful when integrating with an existing wgpu/WebGPU
-/// application: tensor buffers then bind directly into the host's render
-/// pipelines without copies.
-///
-/// Must be called before anything touches the device, and does nothing if the
-/// device is already open. Only meaningful for the wgpu backend.
-pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuDevice {
+/// Initialize Burn with an existing wgpu device.
+pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> ProcessDevice {
     let setup = burn_wgpu::WgpuSetup {
         instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()), // unused... need to fix this in Burn.
         adapter,
@@ -61,10 +50,7 @@ pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> WgpuD
         backend: AutoGraphicsApi::backend(),
     };
     let burn = burn_wgpu::init_device(setup, burn_options());
-    // A JS host can call `init()` and `initExisting()`, or a dev-mode double
-    // mount can re-run setup. Whoever gets there first wins.
-    let _ = DEVICE.set(burn.clone().into());
-    burn
+    burn.into()
 }
 
 use crate::{
@@ -79,6 +65,7 @@ impl<T> ProcessStream for T where T: Stream<Item = Result<ProcessMessage, Error>
 pub struct RunningProcess {
     pub stream: Pin<Box<dyn ProcessStream>>,
     pub splat_view: Slot<Splats>,
+    pub device: ProcessDevice,
 }
 
 /// Convenience alias for the emitter `try_fn_stream` hands us inside
@@ -86,14 +73,12 @@ pub struct RunningProcess {
 /// machine, so this is just the channel for `emit(msg).await`.
 pub(crate) type Emitter = TryStreamEmitter<ProcessMessage, Error>;
 
-use tokio::sync::OnceCell;
-
 /// Free cached GPU memory on whichever runtime the device belongs to.
 ///
 /// `memory_cleanup` / `memory_usage` live on the cubecl client, which is
 /// runtime-specific, so this has to branch on the dispatch variant. One Cube
 /// arm covers every cubecl runtime: the device says which one it is.
-pub fn device_memory_cleanup(device: &burn::tensor::Device) {
+pub fn device_memory_cleanup(device: &ProcessDevice) {
     use burn::backend::DispatchDevice;
     if let DispatchDevice::Cube(d) = device.as_dispatch() {
         d.client().memory_cleanup();
@@ -101,26 +86,13 @@ pub fn device_memory_cleanup(device: &burn::tensor::Device) {
 }
 
 /// Bytes currently reserved by the runtime's memory pool, if it reports them.
-pub fn device_memory_usage(device: &burn::tensor::Device) -> Option<burn::cubecl::MemoryUsage> {
+pub fn device_memory_usage(device: &ProcessDevice) -> Option<burn::cubecl::MemoryUsage> {
     use burn::backend::DispatchDevice;
     match device.as_dispatch() {
         DispatchDevice::Cube(d) => Some(d.client().memory_usage()),
         // Autodiff wraps a device rather than being one; nothing to report.
         DispatchDevice::Autodiff(_) => None,
     }
-}
-
-static DEVICE: OnceCell<burn::tensor::Device> = OnceCell::const_new();
-
-/// The compute device, opening it if this is the first call.
-pub async fn device() -> &'static burn::tensor::Device {
-    DEVICE.get_or_init(open_device).await
-}
-
-/// The compute device, but only if it is already open. For UI that wants to
-/// report on the device without causing it to be created.
-pub fn try_device() -> Option<&'static burn::tensor::Device> {
-    DEVICE.get()
 }
 
 /// Create a running process from a datasource and args.
@@ -137,15 +109,39 @@ pub fn create_process<
     config_fn: Fun,
 ) -> RunningProcess {
     let (splat_tx, splat_view) = crate::slot::channel();
+    let device = default_device();
+    let process_device = device.clone();
 
-    let stream =
-        try_fn_stream(
-            |emitter| async move { run_process(source, config_fn, &emitter, splat_tx).await },
-        );
+    let stream = try_fn_stream(|emitter| async move {
+        run_process(source, config_fn, &emitter, splat_tx, &process_device).await
+    });
 
     RunningProcess {
         stream: Box::pin(stream),
         splat_view,
+        device,
+    }
+}
+
+/// Create a running process on an already initialized device.
+pub fn create_process_with_device<
+    Fun: FnOnce(crate::config::TrainStreamConfig) -> Fut + SendNotWasm + 'static,
+    Fut: Future<Output = Option<crate::config::TrainStreamConfig>> + SendNotWasm,
+>(
+    source: DataSource,
+    device: ProcessDevice,
+    config_fn: Fun,
+) -> RunningProcess {
+    let (splat_tx, splat_view) = crate::slot::channel();
+    let process_device = device.clone();
+    let stream = try_fn_stream(|emitter| async move {
+        run_process(source, config_fn, &emitter, splat_tx, &process_device).await
+    });
+
+    RunningProcess {
+        stream: Box::pin(stream),
+        splat_view,
+        device,
     }
 }
 
@@ -157,6 +153,7 @@ async fn run_process<
     config_fn: Fun,
     emitter: &Emitter,
     splat_view: SlotSender<Splats>,
+    device: &ProcessDevice,
 ) -> Result<(), Error> {
     log::info!("Starting process with source {source:?}");
     emitter.emit(ProcessMessage::NewProcess).await;
@@ -211,7 +208,6 @@ async fn run_process<
         .await;
 
     if !is_training {
-        let device = device().await;
         let mut paths: Vec<_> = vfs.file_paths().collect();
         alphanumeric_sort::sort_path_slice(&mut paths);
         let total_frames = paths.len() as u32;
@@ -267,7 +263,7 @@ async fn run_process<
             log::info!("config_fn returned None — aborting before training");
             return Ok(());
         };
-        train_stream(vfs, config, emitter, splat_view).await?;
+        train_stream(vfs, config, emitter, splat_view, device).await?;
     };
 
     Ok(())

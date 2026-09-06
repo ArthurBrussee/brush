@@ -1,7 +1,7 @@
 use crate::{
     Emitter,
     config::TrainStreamConfig,
-    device,
+    device_memory_cleanup, device_memory_usage,
     message::{ProcessMessage, TrainMessage},
     slot::SlotSender,
 };
@@ -18,7 +18,7 @@ use brush_train::{
     train::{BOUND_PERCENTILE, SplatTrainer, get_splat_bounds},
 };
 use brush_vfs::BrushVfs;
-use burn::module::AutodiffModule;
+use burn::module::{AutodiffModule, Module};
 use rand::SeedableRng;
 use std::{path::PathBuf, sync::Arc};
 
@@ -34,6 +34,7 @@ pub(crate) async fn train_stream(
     train_stream_config: TrainStreamConfig,
     emitter: &Emitter,
     slot: SlotSender<Splats>,
+    device: &crate::ProcessDevice,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
 
@@ -48,11 +49,6 @@ pub(crate) async fn train_stream(
     let process_config = &train_stream_config.process_config;
     log::info!("Using seed {}", process_config.seed);
 
-    let device = device().await;
-    // Splats live on the inner (non-autodiff) device between steps; each
-    // training step lifts them via [`lift_splats_to_autodiff`] then strips
-    // back via `.valid()`. Going through `Module::train()` would hit
-    // burn-dispatch's `from_inner` checkpointing bug.
     device.seed(process_config.seed);
     let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
 
@@ -162,7 +158,7 @@ pub(crate) async fn train_stream(
     emitter.emit(ProcessMessage::DoneLoading).await;
 
     // Start with memory cleared out.
-    crate::device_memory_cleanup(device);
+    device_memory_cleanup(device);
 
     let mut eval_scene = dataset.eval;
 
@@ -264,7 +260,7 @@ pub(crate) async fn train_stream(
             let after = splats.num_splats();
             log::info!("LOD {current_lod}/{lod_levels}: {before} -> {after} splats");
 
-            crate::device_memory_cleanup(device);
+            device_memory_cleanup(device);
 
             let cumulative_scale = (lod_img_pct as f32 / 100.0).powi(current_lod as i32);
             // Only rebuild the loader when the images actually changed size.
@@ -296,7 +292,7 @@ pub(crate) async fn train_stream(
         // then strip back to inner so the viewer slot sees plain splats.
         // `step` immediately replaces `splats` with the returned value, so we
         // can move it here instead of cloning every iteration.
-        let diff_splats = brush_render::bwd::burn_glue::lift_splats_to_autodiff(splats);
+        let diff_splats = splats.train();
         let (new_diff_splats, stats) = trainer.step(batch, diff_splats).await;
         splats = new_diff_splats.valid();
 
@@ -430,10 +426,7 @@ pub(crate) async fn train_stream(
             if rerun_config.rerun_enabled
                 && (iter.is_multiple_of(rerun_config.rerun_log_train_stats_every) || is_last_step)
             {
-                visualize.log_memory(
-                    iter,
-                    &crate::device_memory_usage(device).unwrap_or_default(),
-                )?;
+                visualize.log_memory(iter, &device_memory_usage(device).unwrap_or_default())?;
             }
 
             if refine.num_added > 0 {

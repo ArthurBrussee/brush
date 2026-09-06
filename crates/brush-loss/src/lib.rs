@@ -713,15 +713,7 @@ pub struct ImageLossConfig {
 /// alpha-match kernel into the same launch.
 #[burn::backend::backend_extension(Cube, Autodiff)]
 pub trait LossOps: Backend {
-    /// Whole differentiable op: forward on the concrete backends, forward
-    /// plus a hand-written backward on `Autodiff`.
     fn image_loss(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        cfg: ImageLossConfig,
-    ) -> FloatTensor<Self>;
-
-    fn image_loss_forward(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
@@ -746,9 +738,9 @@ fn alloc_zeros(template: &CubeTensor) -> CubeTensor {
     )
 }
 
-/// Wraps a closure as a fusion `Operation`. Lets each fusion-side method on
-/// `LossOps` skip its own `struct CustomOp` + `impl Operation` boilerplate;
-/// the closure captures whatever extra config it needs.
+type FusionHandles = HandleContainer<FusionHandle<FusionCubeRuntime>>;
+type FusionTensor = burn_fusion::FusionTensor<FusionCubeRuntime>;
+
 struct ClosureOp<F> {
     desc: CustomOpIr,
     op: F,
@@ -762,36 +754,23 @@ impl<F> std::fmt::Debug for ClosureOp<F> {
 
 impl<F> Operation<FusionCubeRuntime> for ClosureOp<F>
 where
-    F: Fn(&CustomOpIr, &mut HandleContainer<FusionHandle<FusionCubeRuntime>>)
-        + Send
-        + Sync
-        + 'static,
+    F: Fn(&CustomOpIr, &mut FusionHandles) + Send + Sync + 'static,
 {
-    fn execute(
-        &self,
-        h: &mut HandleContainer<FusionHandle<FusionCubeRuntime>>,
-    ) -> Result<(), ExecutionError> {
+    fn execute(&self, h: &mut FusionHandles) -> Result<(), ExecutionError> {
         (self.op)(&self.desc, h);
         Ok(())
     }
 }
 
-/// Register a custom op on the Fusion stream. Each input/output is a fusion
-/// `FusionTensor` (Float and Int both lower to the same primitive on this
-/// backend), and `op` is the closure that runs against the inner backend
-/// when fusion eventually executes the queued op.
-fn dispatch_custom<const N: usize, F>(
+fn register_custom<const N: usize, F>(
     name: &'static str,
-    inputs: [burn_fusion::FusionTensor<FusionCubeRuntime>; N],
+    inputs: [FusionTensor; N],
     out_shape: Shape,
     out_dtype: DType,
     op: F,
-) -> burn_fusion::FusionTensor<FusionCubeRuntime>
+) -> FusionTensor
 where
-    F: Fn(&CustomOpIr, &mut HandleContainer<FusionHandle<FusionCubeRuntime>>)
-        + Send
-        + Sync
-        + 'static,
+    F: Fn(&CustomOpIr, &mut FusionHandles) + Send + Sync + 'static,
 {
     let client = inputs[0].client.clone();
     let out = TensorIr::uninit(client.create_empty_handle(), out_shape, out_dtype);
@@ -958,14 +937,6 @@ impl LossOps for CubeBackend {
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
-        Self::image_loss_forward(pred, gt_packed, cfg)
-    }
-
-    fn image_loss_forward(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        cfg: ImageLossConfig,
-    ) -> FloatTensor<Self> {
         launch_image_forward(pred, gt_packed, cfg)
     }
 
@@ -989,23 +960,15 @@ impl LossOps for Fusion<CubeBackend> {
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
-        Self::image_loss_forward(pred, gt_packed, cfg)
-    }
-
-    fn image_loss_forward(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        cfg: ImageLossConfig,
-    ) -> FloatTensor<Self> {
         let shape = pred.shape();
-        dispatch_custom(
-            "image_loss_forward",
+        register_custom(
+            "image_loss",
             [pred, gt_packed],
             shape,
             DType::F32,
             move |desc, h| {
                 let ([pred, gt_packed], [map]) = desc.as_fixed();
-                let out = <CubeBackend as LossOps>::image_loss_forward(
+                let out = <CubeBackend as LossOps>::image_loss(
                     h.get_float_tensor::<CubeBackend>(pred),
                     h.get_int_tensor::<CubeBackend>(gt_packed),
                     cfg,
@@ -1022,7 +985,7 @@ impl LossOps for Fusion<CubeBackend> {
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
         let shape = pred.shape();
-        dispatch_custom(
+        register_custom(
             "image_loss_backward",
             [pred, gt_packed, dl_dmap],
             shape,
@@ -1042,7 +1005,7 @@ impl LossOps for Fusion<CubeBackend> {
 
     fn unpack_gt_rgb(gt_packed: IntTensor<Self>, composite_bg: Option<Vec3>) -> FloatTensor<Self> {
         let [gh, gw] = gt_packed.shape().dims();
-        dispatch_custom(
+        register_custom(
             "unpack_gt_rgb",
             [gt_packed],
             Shape::new([gh, gw, 3]),
@@ -1117,7 +1080,7 @@ impl<B: Backend + LossOps, C: CheckpointStrategy> LossOps for Autodiff<B, C> {
             .stateful();
 
         let pred_p = pred.primitive;
-        let map = <B as LossOps>::image_loss_forward(pred_p.clone(), gt_packed.clone(), cfg);
+        let map = <B as LossOps>::image_loss(pred_p.clone(), gt_packed.clone(), cfg);
 
         match prep {
             OpsKind::Tracked(prep) => prep.finish(
@@ -1130,14 +1093,6 @@ impl<B: Backend + LossOps, C: CheckpointStrategy> LossOps for Autodiff<B, C> {
             ),
             OpsKind::UnTracked(prep) => prep.finish(map),
         }
-    }
-
-    fn image_loss_forward(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        cfg: ImageLossConfig,
-    ) -> FloatTensor<Self> {
-        Self::image_loss(pred, gt_packed, cfg)
     }
 
     fn image_loss_backward(
@@ -1168,7 +1123,7 @@ pub fn image_loss_eval(
     cfg: ImageLossConfig,
 ) -> Tensor<3> {
     let pred_chw = pred.permute([2, 0, 1]);
-    let map = <burn::backend::Dispatch as LossOps>::image_loss_forward(
+    let map = <burn::backend::Dispatch as LossOps>::image_loss(
         pred_chw.into_dispatch(),
         gt_packed.into_dispatch(),
         cfg,

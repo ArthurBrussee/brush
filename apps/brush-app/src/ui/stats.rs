@@ -205,7 +205,7 @@ impl AppPane for StatsPanel {
                 });
             }
 
-            let memory = brush_process::try_device().and_then(brush_process::device_memory_usage);
+            let memory = process.device_memory_usage();
 
             ui.add_space(10.0);
             ui.heading("GPU");

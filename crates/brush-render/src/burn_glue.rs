@@ -2,8 +2,8 @@
 
 use brush_cube::{MainBackend, MainBackendBase};
 use burn::backend::{
-    Autodiff, AutodiffBackend, BackendTensor, DispatchAutodiffContext, DispatchTensor,
-    DispatchTensorKind, GradientCheckpointingStrategy, TensorMetadata,
+    Autodiff, BackendTensor, DispatchAutodiffContext, DispatchTensor, DispatchTensorKind,
+    GradientCheckpointingStrategy, TensorMetadata,
     tensor::{FloatTensor, IntTensor},
 };
 use burn::tensor::{DType, Int, Tensor};
@@ -117,90 +117,6 @@ pub fn wrap_ad_wgpu_float<const D: usize>(t: FloatTensor<AutodiffMain>) -> Tenso
     })
 }
 
-/// Strip the autodiff wrapping from a `Tensor<D>` and clear the residual
-/// `autodiff` field.
-///
-/// Operates directly on the `DispatchTensor` kind so it works both for an
-/// autodiff input (unwrap one level) and an already-inner input (passthrough),
-/// always landing with `autodiff: Disabled`. The high-level `.inner()` can't
-/// stand in here: it panics on a non-autodiff input, and (via the Bridge path)
-/// doesn't reliably normalise `autodiff`, which downstream ops read as a
-/// "came from autodiff" signal and use to re-lift — tripping cross-backend
-/// asserts when mixed with a genuinely-inner tensor.
-pub fn detach_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
-    let dispatch: DispatchTensor = t.into_dispatch();
-    let kind = match dispatch.kind {
-        DispatchTensorKind::Autodiff(inner) => *inner,
-        other => other,
-    };
-    Tensor::from_dispatch(DispatchTensor {
-        kind,
-        autodiff: DispatchAutodiffContext::Disabled,
-    })
-}
-
-/// Lift a non-autodiff `Tensor<D>` into the autodiff graph as a constant.
-/// A no-op if `t` is already autodiff.
-///
-/// Lifts at the concrete-Wgpu autodiff level and re-wraps with an explicit
-/// `autodiff`. The high-level `Tensor::from_inner` goes through the
-/// Bridge/Dispatch path, which doesn't set `autodiff` the way the mixed
-/// inner/autodiff folds (e.g. `fold_min_scale`) need — a lifted constant then
-/// degrades to the inner backend on the next op and trips a cross-backend
-/// assert. Keep the hand-rolled lift.
-pub(crate) fn lift_to_autodiff<const D: usize>(t: Tensor<D>) -> Tensor<D> {
-    /// Lift within one backend, keeping the variant it came in on.
-    macro_rules! lift_in {
-        ($variant:ident, $backend:ty, $inner:expr) => {
-            Tensor::from_dispatch(DispatchTensor {
-                kind: DispatchTensorKind::Autodiff(Box::new(DispatchTensorKind::$variant(
-                    BackendTensor::Autodiff(<Autodiff<$backend> as AutodiffBackend>::from_inner(
-                        $inner,
-                    )),
-                ))),
-                autodiff: DispatchAutodiffContext::Enabled(GradientCheckpointingStrategy::Disabled),
-            })
-        };
-    }
-
-    let dispatch: DispatchTensor = t.into_dispatch();
-    match dispatch.kind {
-        DispatchTensorKind::Cube(BackendTensor::Float(inner)) => {
-            lift_in!(Cube, burn::backend::Cube, inner)
-        }
-        DispatchTensorKind::Autodiff(_) => Tensor::from_dispatch(dispatch),
-        _ => panic!("unsupported backend for autodiff lift"),
-    }
-}
-
-/// Fully strip autodiff from a dispatch tensor: both the outer
-/// `DispatchTensorKind::Autodiff` wrapper and the inner
-/// `BackendTensor::Autodiff`, landing on the plain inner-backend float.
-///
-/// `detach_autodiff` only removes the outer level, which leaves a tensor that
-/// still reports as autodiff to ops that inspect the `BackendTensor`.
-pub fn strip_autodiff_float<const D: usize>(t: Tensor<D>) -> Tensor<D> {
-    macro_rules! strip_in {
-        ($variant:ident, $inner:expr) => {
-            DispatchTensorKind::$variant(BackendTensor::Float($inner.primitive))
-        };
-    }
-
-    let dispatch: DispatchTensor = t.into_dispatch();
-    let kind = match dispatch.kind {
-        DispatchTensorKind::Autodiff(inner) => *inner,
-        other => other,
-    };
-    let kind = match kind {
-        DispatchTensorKind::Cube(BackendTensor::Autodiff(ad)) => strip_in!(Cube, ad),
-        other => other,
-    };
-    Tensor::from_dispatch(DispatchTensor {
-        kind,
-        autodiff: DispatchAutodiffContext::Disabled,
-    })
-}
-
 fn is_autodiff<const D: usize>(t: &Tensor<D>) -> bool {
     matches!(
         t.clone().into_dispatch().kind,
@@ -217,23 +133,10 @@ pub(crate) fn match_backend<const D: usize, const DR: usize>(
     reference: &Tensor<DR>,
 ) -> Tensor<D> {
     if is_autodiff(reference) {
-        lift_to_autodiff(t)
+        t.autodiff()
     } else {
-        detach_autodiff(t)
+        t.without_autodiff()
     }
-}
-
-/// Like [`detach_autodiff`] for `Tensor<D, Int>`.
-pub fn detach_autodiff_int<const D: usize>(t: Tensor<D, Int>) -> Tensor<D, Int> {
-    let dispatch: DispatchTensor = t.into_dispatch();
-    let kind = match dispatch.kind {
-        DispatchTensorKind::Autodiff(inner) => *inner,
-        other => other,
-    };
-    Tensor::from_dispatch(DispatchTensor {
-        kind,
-        autodiff: DispatchAutodiffContext::Disabled,
-    })
 }
 
 /// Resolve a `Tensor<D>` down to the underlying `CubeTensor`, draining any

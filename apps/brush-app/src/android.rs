@@ -13,8 +13,6 @@ pub extern "system" fn JNI_OnLoad(vm: jni::JavaVM, _: *mut c_void) -> jni::sys::
 
 #[unsafe(no_mangle)]
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
-    let wgpu_options = crate::ui::create_egui_options();
-
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -23,6 +21,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
             android_logger::init_once(
                 android_logger::Config::default().with_max_level(log::LevelFilter::Info),
             );
+            brush_process::burn_init_setup().await;
 
             eframe::run_native(
                 "Brush",
@@ -30,7 +29,6 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
                     // Build app display.
                     viewport: egui::ViewportBuilder::default(),
                     android_app: Some(app),
-                    wgpu_options,
                     ..Default::default()
                 },
                 Box::new(|cc| Ok(Box::new(App::new(cc, None)))),

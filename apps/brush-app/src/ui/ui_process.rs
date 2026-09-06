@@ -19,6 +19,7 @@ struct ProcessHandle {
     messages: mpsc::UnboundedReceiver<anyhow::Result<ProcessMessage>>,
     control: mpsc::UnboundedSender<ControlMessage>,
     splat_view: Slot<Splats>,
+    device: brush_process::ProcessDevice,
 }
 
 /// A thread-safe wrapper around the UI process.
@@ -71,6 +72,13 @@ impl UiProcess {
             .process_handle
             .as_ref()
             .map_or(Slot::default(), |s| s.splat_view.clone())
+    }
+
+    pub(crate) fn device_memory_usage(&self) -> Option<burn::cubecl::MemoryUsage> {
+        self.read()
+            .process_handle
+            .as_ref()
+            .and_then(|process| brush_process::device_memory_usage(&process.device))
     }
 
     pub fn is_loading(&self) -> bool {
@@ -245,6 +253,7 @@ impl UiProcess {
             messages: receiver,
             control: train_sender,
             splat_view: process.splat_view,
+            device: process.device,
         });
     }
 

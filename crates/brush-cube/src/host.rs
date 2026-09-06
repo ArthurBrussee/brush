@@ -46,11 +46,7 @@ pub fn create_tensor<const D: usize>(
             buffer,
             DType::F32,
         );
-        let noised =
-            <burn_cubecl::CubeBackend as FloatTensorOps<burn_cubecl::CubeBackend>>::float_add_scalar(
-                f,
-                Scalar::Float(-12345.0),
-            );
+        let noised = burn_cubecl::CubeBackend::float_add_scalar(f, Scalar::Float(-12345.0));
         buffer = noised.handle;
     }
     CubeTensor::new_contiguous(client, device.clone(), shape, buffer, dtype)

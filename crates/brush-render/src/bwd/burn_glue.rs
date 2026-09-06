@@ -1,6 +1,5 @@
 #![allow(clippy::match_wildcard_for_single_variants)]
 
-use crate::burn_glue::{lift_to_autodiff, strip_autodiff_float};
 use crate::{
     SplatOps,
     camera::Camera,
@@ -20,7 +19,6 @@ use burn::{
         },
         tensor::{FloatTensor, IntTensor},
     },
-    module::Param,
     tensor::{DType, Shape, Tensor},
 };
 use burn_cubecl::CubeBackend;
@@ -191,31 +189,6 @@ pub struct SplatOutputDiff {
     pub refine_weight_holder: Tensor<1>,
 }
 
-/// Equivalent to `Module::train()` for [`Splats`], routing through
-/// `lift_to_autodiff` so the autodiff `autodiff` field is set. Use this
-/// instead of `splats.train()` until upstream burn-dispatch fixes `from_inner`.
-pub fn lift_splats_to_autodiff(splats: Splats) -> Splats {
-    let mip = splats.render_mip;
-    let min_scale = splats.min_scale.clone();
-    let (transforms_id, transforms, _) = splats.transforms.consume();
-    let (sh_coeffs_id, sh_coeffs, _) = splats.sh_coeffs.consume();
-    let (raw_opacity_id, raw_opacity, _) = splats.raw_opacities.consume();
-    Splats {
-        transforms: Param::initialized(transforms_id, lift_to_autodiff(transforms).require_grad()),
-        sh_coeffs: Param::initialized(sh_coeffs_id, lift_to_autodiff(sh_coeffs).require_grad()),
-        raw_opacities: Param::initialized(
-            raw_opacity_id,
-            lift_to_autodiff(raw_opacity).require_grad(),
-        ),
-        render_mip: mip,
-        // Keep the frozen floor on the inner backend. `#[module(skip)]` fields
-        // aren't converted by `.valid()`, so lifting it here would leave an
-        // autodiff `f` on an inner module after eval-strip and mix backends in
-        // `scales()`/`opacities()`. The bwd render lifts a temporary copy.
-        min_scale,
-    }
-}
-
 /// Render splats on a differentiable device.
 ///
 /// Panics if the device is not autodiff-enabled.
@@ -298,13 +271,8 @@ pub async fn render_splats_with_pass(
     SplatOutputDiff {
         img: Tensor::from_dispatch(output.out_img),
         num_visible: output.aux.num_visible,
-        // Hand the aux back on the inner backend. The extension trait's
-        // output is uniformly `RenderOutput<Self>`, so these come back lifted,
-        // but they carry no gradient and the trainer mixes them with
-        // inner-backend tensors — leaving them autodiff-wrapped trips
-        // burn-dispatch's same-backend check.
-        visible: strip_autodiff_float(Tensor::from_dispatch(output.aux.visible)),
-        max_radius: strip_autodiff_float(Tensor::from_dispatch(output.aux.max_radius)),
+        visible: Tensor::from_dispatch(output.aux.visible).without_autodiff(),
+        max_radius: Tensor::from_dispatch(output.aux.max_radius).without_autodiff(),
         refine_weight_holder,
     }
 }

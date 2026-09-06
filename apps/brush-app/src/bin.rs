@@ -50,6 +50,8 @@ fn main() -> Result<(), anyhow::Error> {
             if args.with_viewer {
                 use crate::ui::app::App;
 
+                brush_process::burn_init_setup().await;
+
                 let logger = env_logger::Builder::from_default_env()
                     .target(env_logger::Target::Stdout)
                     .build();
@@ -66,7 +68,6 @@ fn main() -> Result<(), anyhow::Error> {
                         .with_inner_size(egui::Vec2::new(1450.0, 1200.0))
                         .with_active(true)
                         .with_icon(std::sync::Arc::new(icon)),
-                    wgpu_options: ui::create_egui_options(),
                     persist_window: true,
                     ..Default::default()
                 };

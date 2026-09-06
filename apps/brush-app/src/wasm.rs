@@ -94,14 +94,11 @@ impl EmbeddedApp {
         &self,
         canvas: web_sys::HtmlCanvasElement,
     ) -> Result<(), wasm_bindgen::JsValue> {
-        let wgpu_options = crate::ui::create_egui_options();
+        brush_process::burn_init_setup().await;
         self.runner
             .start(
                 canvas,
-                eframe::WebOptions {
-                    wgpu_options,
-                    ..Default::default()
-                },
+                eframe::WebOptions::default(),
                 Box::new(|cc| Ok(Box::new(App::new(cc, None)))),
             )
             .await

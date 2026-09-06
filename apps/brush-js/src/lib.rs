@@ -4,7 +4,10 @@
 
 use brush_process::message::{ProcessMessage, TrainMessage};
 use brush_process::slot::Slot;
-use brush_process::{DataSource, ProcessStream, burn_init_device, burn_init_setup, create_process};
+use brush_process::{
+    DataSource, ProcessDevice, ProcessStream, burn_init_device, burn_init_setup,
+    create_process_with_device, default_device,
+};
 use brush_render::gaussian_splats::Splats;
 use serde::Serialize;
 use std::pin::Pin;
@@ -219,7 +222,9 @@ impl BrushSplats {
 /// per-training-run — each [`Self::start_training_from_directory`] call
 /// returns a fresh [`Training`] you drive yourself.
 #[wasm_bindgen]
-pub struct BrushApp;
+pub struct BrushApp {
+    device_override: Option<ProcessDevice>,
+}
 
 #[wasm_bindgen]
 impl BrushApp {
@@ -240,7 +245,9 @@ impl BrushApp {
         LOGGER_INIT.call_once(|| {
             wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
         });
-        Self
+        Self {
+            device_override: None,
+        }
     }
 
     /// Initialize Brush with its own internal `GPUDevice`.
@@ -256,7 +263,7 @@ impl BrushApp {
     /// pipelines without copies.
     #[wasm_bindgen(js_name = initExisting)]
     pub fn init_existing(
-        &self,
+        &mut self,
         adapter: JsValue,
         device: JsValue,
         queue: JsValue,
@@ -264,11 +271,12 @@ impl BrushApp {
         let adapter = wgpu::webgpu_backend::WebAdapter::from_handle(adapter);
         let device = wgpu::webgpu_backend::WebDevice::from_handle(device);
         let queue = wgpu::webgpu_backend::WebQueue::from_handle(queue);
-        burn_init_device(
+        let device = burn_init_device(
             wgpu::Adapter::from_webgpu(adapter),
             wgpu::Device::from_webgpu(device),
             wgpu::Queue::from_webgpu(queue),
         );
+        self.device_override = Some(device);
         Ok(())
     }
 
@@ -296,7 +304,8 @@ impl BrushApp {
         let dir = rrfd::wasm::DirectoryHandle::from_handle(handle);
         let source = DataSource::PickedDirectory(dir, display_name);
 
-        let process = create_process(source, async move |init| {
+        let device = self.device_override.clone().unwrap_or_else(default_device);
+        let process = create_process_with_device(source, device, async move |init| {
             bridge_config_callback(config_fn, init).await
         });
 
