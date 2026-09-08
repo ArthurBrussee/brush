@@ -23,6 +23,7 @@ use burn::{
 };
 
 use hashbrown::HashSet;
+use rand::SeedableRng;
 use tracing::{Instrument, trace_span};
 
 pub const BOUND_PERCENTILE: f32 = 0.8;
@@ -81,6 +82,7 @@ pub struct SplatTrainer {
     bounds: BoundingBox,
     step_count: u32,
     max_sh_degree: u32,
+    rng: rand::rngs::StdRng,
     /// Per-train-view (world center, focal in px at native res) for the
     /// Mip-Splatting 3D filter. Empty disables it. The floor itself lives on
     /// the splats (recomputed at each refine), not here.
@@ -136,6 +138,16 @@ pub async fn get_splat_bounds(splats: Splats, percentile: f32) -> BoundingBox {
 impl SplatTrainer {
     #[allow(unused_variables)]
     pub fn new(config: &TrainConfig, device: &Device, bounds: BoundingBox) -> Self {
+        Self::new_seeded(config, device, bounds, 42)
+    }
+
+    #[allow(unused_variables)]
+    pub fn new_seeded(
+        config: &TrainConfig,
+        device: &Device,
+        bounds: BoundingBox,
+        seed: u64,
+    ) -> Self {
         let decay =
             (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_train_iters as f64);
 
@@ -159,6 +171,7 @@ impl SplatTrainer {
             bounds,
             step_count: 0,
             max_sh_degree: 0,
+            rng: rand::rngs::StdRng::seed_from_u64(seed),
             view_cams: Vec::new(),
             #[cfg(not(target_family = "wasm"))]
             lpips,
@@ -197,7 +210,11 @@ impl SplatTrainer {
         let img_size = glam::uvec2(img_w as u32, img_h as u32);
         let base = &self.config.background_color;
         let base_bg = glam::Vec3::new(base[0], base[1], base[2]);
-        let background = sample_background_color(base_bg, self.config.background_noise_strength);
+        let background = sample_background_color(
+            base_bg,
+            self.config.background_noise_strength,
+            &mut self.rng,
+        );
 
         let median_scale = self.bounds.median_size();
 
@@ -542,7 +559,8 @@ impl SplatTrainer {
                 .expect("Failed to get weights")
                 .try_into_vec::<f32>()
                 .expect("Failed to read weights");
-            let resampled_inds = multinomial_sample(&resampled_weights, pruned_count);
+            let resampled_inds =
+                multinomial_sample(&mut self.rng, &resampled_weights, pruned_count);
             split_inds.extend(resampled_inds);
         }
 
@@ -611,7 +629,7 @@ impl SplatTrainer {
                     .expect("Failed to get weights")
                     .try_into_vec::<f32>()
                     .expect("Failed to read weights");
-                let growth_inds = multinomial_sample(&weights, grow_count);
+                let growth_inds = multinomial_sample(&mut self.rng, &weights, grow_count);
                 split_inds.extend(growth_inds);
             }
         }
@@ -863,12 +881,15 @@ async fn prune_points(
 }
 
 /// Sample a background color: base + uniform noise in [-strength, +strength], clamped to [0, 1].
-fn sample_background_color(base: glam::Vec3, strength: f32) -> glam::Vec3 {
+fn sample_background_color<R: rand::Rng + ?Sized>(
+    base: glam::Vec3,
+    strength: f32,
+    rng: &mut R,
+) -> glam::Vec3 {
     if strength <= 0.0 {
         return base.clamp(glam::Vec3::ZERO, glam::Vec3::ONE);
     }
     use rand::RngExt as _;
-    let mut rng = rand::rng();
     let noise = glam::Vec3::new(
         rng.random_range(-strength..strength),
         rng.random_range(-strength..strength),
