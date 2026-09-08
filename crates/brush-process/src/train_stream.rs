@@ -50,7 +50,7 @@ pub(crate) async fn train_stream(
     log::info!("Using seed {}", process_config.seed);
 
     device.seed(process_config.seed);
-    let mut rng = rand::rngs::StdRng::from_seed([process_config.seed as u8; 32]);
+    let mut rng = rand::rngs::StdRng::seed_from_u64(process_config.seed);
 
     log::info!("Loading dataset");
     let load_result = load_dataset(vfs.clone(), &train_stream_config.load_config)
@@ -163,7 +163,11 @@ pub(crate) async fn train_stream(
     let mut eval_scene = dataset.eval;
 
     let mut train_duration = Duration::from_secs(0);
-    let mut dataloader = SceneLoader::new(&dataset.train, 42, &train_stream_config.load_config);
+    let mut dataloader = SceneLoader::new(
+        &dataset.train,
+        process_config.seed,
+        &train_stream_config.load_config,
+    );
     let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
 
     // Per-train-view (world center, focal-px at native res) for the
@@ -175,7 +179,12 @@ pub(crate) async fn train_stream(
         view_cams.push((view.camera.position, focal));
     }
 
-    let mut trainer = SplatTrainer::new(&train_stream_config.train_config, device, bounds);
+    let mut trainer = SplatTrainer::new_seeded(
+        &train_stream_config.train_config,
+        device,
+        bounds,
+        process_config.seed,
+    );
     trainer.set_view_cams(view_cams.clone());
 
     // Get the dataset name from the base path (if available) for interpolation.
@@ -268,11 +277,20 @@ pub(crate) async fn train_stream(
             // whole dataset, which at 100% scale buys nothing.
             if lod_img_pct < 100 {
                 let lod_scene = dataset.train.clone().with_image_scale(cumulative_scale);
-                dataloader = SceneLoader::new(&lod_scene, 42, &train_stream_config.load_config);
+                dataloader = SceneLoader::new(
+                    &lod_scene,
+                    process_config.seed,
+                    &train_stream_config.load_config,
+                );
             }
 
             let bounds = get_splat_bounds(splats.clone(), BOUND_PERCENTILE).await;
-            trainer = SplatTrainer::new(&train_stream_config.train_config, device, bounds);
+            trainer = SplatTrainer::new_seeded(
+                &train_stream_config.train_config,
+                device,
+                bounds,
+                process_config.seed,
+            );
             trainer.set_view_cams(view_cams.clone());
 
             log::info!(
