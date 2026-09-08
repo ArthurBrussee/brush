@@ -17,7 +17,7 @@ use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degre
 use burn::{
     module::{AutodiffModule, Param},
     tensor::{
-        Bool, Device, Distribution, Gradients, IndexingUpdateOp, Int, Tensor, TensorData,
+        Bool, Device, Distribution, Gradients, IndexingUpdateOp::Assign, Int, Tensor, TensorData,
         activation::sigmoid, s,
     },
 };
@@ -681,14 +681,14 @@ impl SplatTrainer {
                 Tensor::sum_dim(cur_rots_raw.clone().powi_scalar(2), 1).sqrt(),
                 1e-32,
             );
-            let cur_rots = cur_rots_raw / magnitudes;
+            let cur_rots = cur_rots_raw.clone() / magnitudes;
             let cur_log_scale = cur_transforms.slice(s![.., 7..10]);
             let cur_sh_coeffs = splats.sh_coeffs.val().select(0, refine_inds.clone());
             let cur_raw_opac = splats.raw_opacities.val().select(0, refine_inds.clone());
 
             let cur_scales = cur_log_scale.clone().exp();
 
-            let cur_opac = sigmoid(cur_raw_opac.clone());
+            let cur_opac = sigmoid(cur_raw_opac);
             let inv_opac: Tensor<1> = 1.0 - cur_opac;
             // Post-split child opacity as a power law in transmittance,
             // p = 0.5 would keep the transmittance for cloning splats but as we offset them
@@ -725,27 +725,23 @@ impl SplatTrainer {
                 .sqrt();
             let offset_local = offset_factor * cur_scales;
             let samples = quaternion_vec_multiply(cur_rots.clone(), offset_local);
-            let new_log_scales = cur_log_scale.clone() + k_per_axis.log();
+            let new_log_scales = cur_log_scale + k_per_axis.log();
             let child_rots = cur_rots;
 
-            // Scatter into transforms: build a [refine_count, 10] update tensor
-            // with means offset in cols 0..3 and log_scales difference in cols 7..10
-            let refine_inds_10 = refine_inds.clone().unsqueeze_dim(1).repeat_dim(1, 10);
-            let scale_difference = new_log_scales.clone() - cur_log_scale;
-
-            splats.transforms = splats.transforms.map(|t| {
-                let dev = t.device();
-                let mut update = Tensor::zeros([refine_count, 10], &dev);
-                // Place -samples in means columns (0..3)
-                update = update.slice_assign(s![.., 0..3], -samples.clone());
-                // Place scale difference in log_scales columns (7..10)
-                update = update.slice_assign(s![.., 7..10], scale_difference.clone());
-                t.scatter(0, refine_inds_10.clone(), update, IndexingUpdateOp::Add)
-            });
-            splats.raw_opacities = splats.raw_opacities.map(|m| {
-                let difference = new_raw_opac.clone() - cur_raw_opac.clone();
-                m.scatter(0, refine_inds.clone(), difference, IndexingUpdateOp::Add)
-            });
+            let parent_transforms = Tensor::cat(
+                vec![
+                    cur_means.clone() - samples.clone(),
+                    cur_rots_raw,
+                    new_log_scales.clone(),
+                ],
+                1,
+            );
+            splats.transforms = splats
+                .transforms
+                .map(|t| t.select_assign(0, refine_inds.clone(), parent_transforms, Assign));
+            splats.raw_opacities = splats
+                .raw_opacities
+                .map(|m| m.select_assign(0, refine_inds.clone(), new_raw_opac.clone(), Assign));
 
             // Child sits at parent_mean + samples (parent moves to
             // parent_mean - samples) — anti-correlated, centroid-preserving.
@@ -755,13 +751,8 @@ impl SplatTrainer {
 
             // Optimizer state lives on the inner (non-autodiff) device.
             let opt_device = device.clone().inner();
-            let refine_inds_opt = refine_inds.to_device(&opt_device);
+            let opt_inds = refine_inds.to_device(&opt_device);
 
-            // Both halves of a split start with zero Adam moments.
-            //
-            // Burn's scatter bridge
-            // only implements Add, so we add the negated parent value to zero
-            // it out instead of using Assign.
             splats = map_splats_and_opt(
                 splats,
                 &mut optim,
@@ -770,33 +761,20 @@ impl SplatTrainer {
                 |x| Tensor::cat(vec![x, new_raw_opac], 0),
                 |x: Tensor<2>| {
                     let d1 = x.dims()[1];
-                    let neg_parent = -x.clone().select(0, refine_inds_opt.clone());
-                    let inds: Tensor<2, Int> =
-                        refine_inds_opt.clone().unsqueeze_dim(1).repeat_dim(1, d1);
-                    let x = x.scatter(0, inds, neg_parent, IndexingUpdateOp::Add);
-                    Tensor::cat(vec![x, Tensor::zeros([refine_count, d1], &opt_device)], 0)
+                    let zeros = Tensor::zeros([refine_count, d1], &opt_device);
+                    let x = x.select_assign(0, opt_inds.clone(), zeros.clone(), Assign);
+                    Tensor::cat(vec![x, zeros], 0)
                 },
                 |x: Tensor<3>| {
                     let [_, d1, d2] = x.dims();
-                    let neg_parent = -x.clone().select(0, refine_inds_opt.clone());
-                    let inds_2: Tensor<2, Int> =
-                        refine_inds_opt.clone().unsqueeze_dim(1).repeat_dim(1, d1);
-                    let inds: Tensor<3, Int> = inds_2.unsqueeze_dim(2).repeat_dim(2, d2);
-                    let x = x.scatter(0, inds, neg_parent, IndexingUpdateOp::Add);
-                    Tensor::cat(
-                        vec![x, Tensor::zeros([refine_count, d1, d2], &opt_device)],
-                        0,
-                    )
+                    let zeros = Tensor::zeros([refine_count, d1, d2], &opt_device);
+                    let x = x.select_assign(0, opt_inds.clone(), zeros.clone(), Assign);
+                    Tensor::cat(vec![x, zeros], 0)
                 },
                 |x: Tensor<1>| {
-                    let neg_parent = -x.clone().select(0, refine_inds_opt.clone());
-                    let x = x.scatter(
-                        0,
-                        refine_inds_opt.clone(),
-                        neg_parent,
-                        IndexingUpdateOp::Add,
-                    );
-                    Tensor::cat(vec![x, Tensor::zeros([refine_count], &opt_device)], 0)
+                    let zeros = Tensor::zeros([refine_count], &opt_device);
+                    let x = x.select_assign(0, opt_inds.clone(), zeros.clone(), Assign);
+                    Tensor::cat(vec![x, zeros], 0)
                 },
             );
         }
