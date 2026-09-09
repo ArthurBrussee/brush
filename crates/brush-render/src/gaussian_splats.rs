@@ -54,6 +54,17 @@ pub enum TextureMode {
     Float,
 }
 
+/// Wrap a tensor as a trainable parameter.
+///
+/// Splats usually live on the plain (non-autodiff) device and are lifted with
+/// `train()` for each step. On that device `require_grad()` is a no-op, so
+/// `Param::initialized` would record the parameter as inactive and `train()`
+/// would then lift it *without* gradient tracking. `set_require_grad` records
+/// the intent on the param itself, which `train()` honours on any device.
+fn trainable_param<const D: usize>(id: ParamId, tensor: Tensor<D>) -> Param<Tensor<D>> {
+    Param::initialized(id, tensor.detach()).set_require_grad(true)
+}
+
 /// Gaussian splat parameters.
 ///
 /// `transforms` stores means(3) + rotations(4) + log scales(3) = 10 floats per splat
@@ -174,9 +185,9 @@ impl Splats {
         let transforms = Tensor::cat(vec![means, rotation, log_scales], 1);
 
         Self {
-            transforms: Param::initialized(ParamId::new(), transforms.detach().require_grad()),
-            sh_coeffs: Param::initialized(ParamId::new(), sh_coeffs.detach().require_grad()),
-            raw_opacities: Param::initialized(ParamId::new(), raw_opacity.detach().require_grad()),
+            transforms: trainable_param(ParamId::new(), transforms),
+            sh_coeffs: trainable_param(ParamId::new(), sh_coeffs),
+            raw_opacities: trainable_param(ParamId::new(), raw_opacity),
             render_mip: mode == SplatRenderMode::Mip,
             min_scale: None,
         }
@@ -243,10 +254,8 @@ impl Splats {
         if let Some(f) = self.min_scale.take() {
             let (transforms, raw_opac) =
                 fold_min_scale(self.transforms.val(), self.raw_opacities.val(), f);
-            self.transforms =
-                Param::initialized(self.transforms.id, transforms.detach().require_grad());
-            self.raw_opacities =
-                Param::initialized(self.raw_opacities.id, raw_opac.detach().require_grad());
+            self.transforms = trainable_param(self.transforms.id, transforms);
+            self.raw_opacities = trainable_param(self.raw_opacities.id, raw_opac);
         }
         self
     }
@@ -445,6 +454,52 @@ pub async fn render_splats(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use burn::module::AutodiffModule;
+
+    /// Splats are built on the plain device and lifted with `train()` for each
+    /// step. That lift must arm gradient tracking on every parameter, and keep
+    /// it armed across `valid()`/`train()` round trips and min-scale baking.
+    #[tokio::test]
+    async fn splats_built_on_plain_device_train_with_gradients() {
+        let device = Device::from(brush_cube::test_helpers::test_device().await);
+        let n = 4;
+        let splats = Splats::from_tensor_data(
+            Tensor::zeros([n, 3], &device),
+            Tensor::ones([n, 4], &device),
+            Tensor::zeros([n, 3], &device),
+            Tensor::zeros([n, 1, 3], &device),
+            Tensor::zeros([n], &device),
+            SplatRenderMode::Default,
+        );
+
+        let assert_tracked = |splats: &Splats, what: &str| {
+            assert!(splats.device().is_autodiff(), "{what}: not lifted");
+            assert!(
+                splats.transforms.val().is_require_grad(),
+                "{what}: transforms not tracked"
+            );
+            assert!(
+                splats.sh_coeffs.val().is_require_grad(),
+                "{what}: sh_coeffs not tracked"
+            );
+            assert!(
+                splats.raw_opacities.val().is_require_grad(),
+                "{what}: raw_opacities not tracked"
+            );
+        };
+
+        let diff = splats.clone().train();
+        assert_tracked(&diff, "first lift");
+
+        let round_trip = diff.valid().train();
+        assert_tracked(&round_trip, "valid/train round trip");
+
+        let baked = splats
+            .with_min_scale(Tensor::ones([n], &device))
+            .bake_min_scale()
+            .train();
+        assert_tracked(&baked, "after bake_min_scale");
+    }
 
     #[tokio::test]
     async fn min_scale_fold_is_stable_for_tiny_scales() {
