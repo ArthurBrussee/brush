@@ -72,6 +72,25 @@ impl Camera {
         }
     }
 
+    /// Widen the FOV on whichever axis `img_size` is relatively longer, so an
+    /// image rendered at that size shows at least what the camera's own aspect
+    /// ratio covers (rather than cropping it).
+    pub fn fit_fov_to_size(&mut self, img_size: glam::UVec2) {
+        // fov_to_focal(fov, 2, model) = 1 / projection(half_fov), so the ratio
+        // gives projected_x / projected_y.
+        let camera_aspect = fov_to_focal(self.fov_y, 2, &self.camera_model)
+            / fov_to_focal(self.fov_x, 2, &self.camera_model);
+        let viewport_aspect = img_size.x as f64 / img_size.y as f64;
+
+        if viewport_aspect > camera_aspect {
+            let focal_y = fov_to_focal(self.fov_y, img_size.y, &self.camera_model);
+            self.fov_x = focal_to_fov(focal_y, img_size.x, &self.camera_model);
+        } else {
+            let focal_x = fov_to_focal(self.fov_x, img_size.x, &self.camera_model);
+            self.fov_y = focal_to_fov(focal_x, img_size.y, &self.camera_model);
+        }
+    }
+
     pub fn local_to_world(&self) -> Affine3A {
         Affine3A::from_rotation_translation(self.rotation, self.position)
     }

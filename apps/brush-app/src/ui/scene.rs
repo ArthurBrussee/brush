@@ -1,6 +1,6 @@
 use brush_process::DataSource;
 use brush_process::{create_process, message::ProcessMessage};
-use brush_render::camera::{focal_to_fov, fov_to_focal};
+use brush_render::camera::fov_to_focal;
 use core::f32;
 use eframe::egui_wgpu::RenderState;
 use egui::{Align2, Button, Frame, RichText, containers::Popup};
@@ -1026,18 +1026,7 @@ impl AppPane for ScenePanel {
             let settings = process.get_cam_settings();
 
             // Adjust FOV so that the scene view shows at least what's visible in the dataset view.
-            // fov_to_focal(fov, 2, model) = 1 / projection(half_fov), so the ratio gives projected_x / projected_y.
-            let camera_aspect = fov_to_focal(camera.fov_y, 2, &camera.camera_model)
-                / fov_to_focal(camera.fov_x, 2, &camera.camera_model);
-            let viewport_aspect = size.x as f64 / size.y as f64;
-
-            if viewport_aspect > camera_aspect {
-                let focal_y = fov_to_focal(camera.fov_y, size.y, &camera.camera_model);
-                camera.fov_x = focal_to_fov(focal_y, size.x, &camera.camera_model);
-            } else {
-                let focal_x = fov_to_focal(camera.fov_x, size.x, &camera.camera_model);
-                camera.fov_y = focal_to_fov(focal_x, size.y, &camera.camera_model);
-            }
+            camera.fit_fov_to_size(size);
 
             // Render the splats and grid
             ui.scope(|ui| {

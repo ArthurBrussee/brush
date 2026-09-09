@@ -618,6 +618,62 @@ async fn render_panics_loudly_on_nan_positions() {
     let _ = render_splats(splats, &cam, img_size, Vec3::ZERO, None, TextureMode::Float).await;
 }
 
+// A `Packed` render reads back as one RGBA8 pixel per u32, in memory order.
+// The video export streams these bytes straight into ffmpeg as `rgba`, so the
+// layout is load-bearing, not an implementation detail.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn packed_readback_is_rgba8() {
+    // Splats at the camera origin are near-plane culled, so every pixel is
+    // pure background — a known value to check the byte layout against.
+    let cam = Camera::new(
+        glam::vec3(0.0, 0.0, 0.0),
+        glam::Quat::IDENTITY,
+        0.5,
+        0.5,
+        glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
+    );
+    let img_size = glam::uvec2(16, 8);
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
+    let num_points = 4;
+
+    let splats = Splats::from_tensor_data(
+        Tensor::<2>::zeros([num_points, 3], &device),
+        Tensor::<1>::from_floats(glam::Quat::IDENTITY.to_array(), &device)
+            .unsqueeze_dim(0)
+            .repeat_dim(0, num_points),
+        Tensor::<2>::ones([num_points, 3], &device) * 2.0,
+        Tensor::<3>::ones([num_points, 1, 3], &device),
+        Tensor::<1>::zeros([num_points], &device),
+        SplatRenderMode::Default,
+    );
+
+    let bg = glam::vec3(0.7, 0.3, 0.1);
+    let (output, _aux) = render_splats(splats, &cam, img_size, bg, None, TextureMode::Packed).await;
+
+    // One u32 per pixel, not the four floats `Float` mode hands back.
+    assert_eq!(
+        output.shape().dims(),
+        [img_size.y as usize, img_size.x as usize, 1]
+    );
+
+    let data = output.to_data_async().await.expect("readback");
+    let bytes = data.as_bytes();
+    let n_pixels = (img_size.x * img_size.y) as usize;
+    assert_eq!(bytes.len(), n_pixels * 4);
+
+    // The kernel truncates rather than rounds, so allow the odd 1-LSB slip.
+    let expect = [bg.x, bg.y, bg.z, 0.0].map(|c| (c * 255.0) as u8);
+    for (i, px) in bytes.chunks_exact(4).enumerate() {
+        assert!(
+            px.iter()
+                .zip(expect)
+                .all(|(&got, want)| got.abs_diff(want) <= 1),
+            "pixel {i} = {px:?}, expected background {expect:?}"
+        );
+    }
+}
+
 // Zero-splat Splats must not crash and must render every pixel as the
 // background color. Reading pixels back forces fusion to flush, which is
 // what catches bugs in the empty-tensor code paths.

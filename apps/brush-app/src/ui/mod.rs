@@ -14,6 +14,9 @@ mod datasets;
 
 mod training_panel;
 
+#[cfg(not(target_family = "wasm"))]
+mod animation_export;
+mod animation_panel;
 mod settings_panel;
 mod settings_popup;
 
