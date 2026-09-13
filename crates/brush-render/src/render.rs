@@ -10,7 +10,6 @@ use crate::{
     sh::sh_degree_from_coeffs,
     shaders,
 };
-use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
 use brush_prefix_sum::prefix_sum;
 use brush_sort::radix_argsort;
@@ -19,6 +18,7 @@ use burn::backend::ops::TransactionPrimitive;
 use burn::backend::ops::{FloatTensorOps, IntTensorOps, TransactionOps};
 use burn::backend::tensor::FloatTensor;
 use burn::cubecl::CubeDim;
+use burn::cubecl::calculate_cube_count_elemwise;
 use burn::tensor::{DType, FloatDType, IntDType};
 use burn_cubecl::CubeBackend;
 use burn_cubecl::kernel::into_contiguous;
@@ -120,9 +120,10 @@ impl SplatOps for CubeBackend {
 
             kernels::project_forward::project_forward_kernel::launch(
                 &client,
-                calc_cube_count_1d(
-                    project_uniforms.total_splats,
-                    kernels::project_forward::WG_SIZE,
+                calculate_cube_count_elemwise(
+                    &client,
+                    (project_uniforms.total_splats) as usize,
+                    CubeDim::new_1d(kernels::project_forward::WG_SIZE),
                 ),
                 CubeDim::new_1d(kernels::project_forward::WG_SIZE),
                 transforms.clone().into_tensor_arg(),
@@ -198,7 +199,11 @@ impl SplatOps for CubeBackend {
             let uniforms = project_uniforms.to_launch_object();
             kernels::project_visible::project_visible_kernel::launch(
                 &client,
-                calc_cube_count_1d(num_visible, kernels::project_visible::WG_SIZE),
+                calculate_cube_count_elemwise(
+                    &client,
+                    num_visible as usize,
+                    CubeDim::new_1d(kernels::project_visible::WG_SIZE),
+                ),
                 CubeDim::new_1d(kernels::project_visible::WG_SIZE),
                 transforms.into_tensor_arg(),
                 sh_coeffs.into_tensor_arg(),
@@ -218,7 +223,11 @@ impl SplatOps for CubeBackend {
         tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
             kernels::map_gaussians::map_gaussians_to_intersect_kernel::launch(
                 &client,
-                calc_cube_count_1d(num_visible, kernels::map_gaussians::WG_SIZE),
+                calculate_cube_count_elemwise(
+                    &client,
+                    num_visible as usize,
+                    CubeDim::new_1d(kernels::map_gaussians::WG_SIZE),
+                ),
                 CubeDim::new_1d(kernels::map_gaussians::WG_SIZE),
                 projected_splats.clone().into_tensor_arg(),
                 cum_tiles_hit.clone().into_tensor_arg(),
@@ -241,7 +250,11 @@ impl SplatOps for CubeBackend {
         tracing::trace_span!("GetTileOffsets").in_scope(|| {
             get_tile_offsets::launch(
                 &client,
-                calc_cube_count_1d(num_intersections, cube_dim.x * CHECKS_PER_ITER),
+                calculate_cube_count_elemwise(
+                    &client,
+                    num_intersections as usize,
+                    CubeDim::new_1d(cube_dim.x * CHECKS_PER_ITER),
+                ),
                 cube_dim,
                 num_intersections,
                 num_tiles,
@@ -280,9 +293,11 @@ impl SplatOps for CubeBackend {
             );
             kernels::rasterize::rasterize_kernel::launch(
                 &client,
-                calc_cube_count_1d(
-                    num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
-                    shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
+                calculate_cube_count_elemwise(
+                    &client,
+                    (num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH))
+                        as usize,
+                    CubeDim::new_1d(shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
                 ),
                 CubeDim::new_1d(shaders::helpers::TILE_SIZE),
                 compact_gid_from_isect.clone().into_tensor_arg(),

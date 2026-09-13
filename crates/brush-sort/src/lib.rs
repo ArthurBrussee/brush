@@ -1,11 +1,11 @@
 mod kernels;
 
 use brush_cube::CubeCount;
-use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
 use brush_cube::create_tensor_from_slice;
 use burn::backend::TensorMetadata;
 use burn::cubecl::CubeDim;
+use burn::cubecl::calculate_cube_count_elemwise;
 use burn::tensor::DType;
 use burn_wgpu::CubeTensor;
 
@@ -47,8 +47,13 @@ pub fn radix_argsort(
     let cube_dim = CubeDim::new_1d(WG);
 
     let num_keys_buf = create_tensor_from_slice(&[max_n as i32], &device, DType::I32);
-    let num_wgs = calc_cube_count_1d(max_n, BLOCK_SIZE);
-    let num_reduce_wgs = calc_cube_count_1d(num_reduce_wgs_count, 1);
+    let num_wgs =
+        calculate_cube_count_elemwise(&client, max_n as usize, CubeDim::new_1d(BLOCK_SIZE));
+    let num_reduce_wgs = calculate_cube_count_elemwise(
+        &client,
+        num_reduce_wgs_count as usize,
+        CubeDim::new_single(),
+    );
 
     let mut cur_keys = input_keys;
     let mut cur_vals = input_values;

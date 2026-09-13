@@ -1,12 +1,12 @@
 use crate::gaussian_splats::SplatRenderMode;
 use crate::kernels::types::RasterizeUniformsLaunch;
 use crate::sh::sh_coeffs_for_degree;
-use brush_cube::calc_cube_count_1d;
 use burn::backend::TensorMetadata;
 use burn::backend::ops::FloatTensorOps;
 use burn::backend::tensor::{FloatTensor, IntTensor};
 use burn::cubecl::CubeCount;
 use burn::cubecl::CubeDim;
+use burn::cubecl::calculate_cube_count_elemwise;
 use burn::cubecl::features::AtomicUsage;
 use burn::cubecl::ir::{ElemType, FloatKind, Type};
 use burn::tensor::FloatDType;
@@ -144,7 +144,11 @@ impl SplatBwdOps for CubeBackend {
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             kernels::project_backwards::project_backwards_kernel::launch(
                 &client,
-                calc_cube_count_1d(num_visible, kernels::project_backwards::WG_SIZE),
+                calculate_cube_count_elemwise(
+                    &client,
+                    num_visible as usize,
+                    CubeDim::new_1d(kernels::project_backwards::WG_SIZE),
+                ),
                 CubeDim::new_1d(kernels::project_backwards::WG_SIZE),
                 transforms.into_tensor_arg(),
                 sh_coeffs.into_tensor_arg(),

@@ -1,9 +1,9 @@
 mod kernels;
 
-use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
 use burn::backend::TensorMetadata;
 use burn::cubecl::CubeDim;
+use burn::cubecl::calculate_cube_count_elemwise;
 use burn_wgpu::CubeTensor;
 use kernels::THREADS_PER_GROUP;
 
@@ -22,7 +22,7 @@ pub fn prefix_sum(input: CubeTensor) -> CubeTensor {
 
     kernels::prefix_sum_scan_kernel::launch(
         &client,
-        calc_cube_count_1d(num as u32, THREADS_PER_GROUP as u32),
+        calculate_cube_count_elemwise(&client, num, CubeDim::new_1d(THREADS_PER_GROUP as u32)),
         cube_dim,
         input.into_tensor_arg(),
         outputs.clone().into_tensor_arg(),
@@ -43,7 +43,11 @@ pub fn prefix_sum(input: CubeTensor) -> CubeTensor {
 
     kernels::prefix_sum_scan_sums_kernel::launch(
         &client,
-        calc_cube_count_1d(work_size[0] as u32, THREADS_PER_GROUP as u32),
+        calculate_cube_count_elemwise(
+            &client,
+            work_size[0],
+            CubeDim::new_1d(THREADS_PER_GROUP as u32),
+        ),
         cube_dim,
         outputs.clone().into_tensor_arg(),
         group_buffer[0].clone().into_tensor_arg(),
@@ -52,7 +56,11 @@ pub fn prefix_sum(input: CubeTensor) -> CubeTensor {
     for l in 0..(group_buffer.len() - 1) {
         kernels::prefix_sum_scan_sums_kernel::launch(
             &client,
-            calc_cube_count_1d(work_size[l + 1] as u32, THREADS_PER_GROUP as u32),
+            calculate_cube_count_elemwise(
+                &client,
+                work_size[l + 1],
+                CubeDim::new_1d(THREADS_PER_GROUP as u32),
+            ),
             cube_dim,
             group_buffer[l].clone().into_tensor_arg(),
             group_buffer[l + 1].clone().into_tensor_arg(),
@@ -64,7 +72,11 @@ pub fn prefix_sum(input: CubeTensor) -> CubeTensor {
 
         kernels::prefix_sum_add_scanned_sums_kernel::launch(
             &client,
-            calc_cube_count_1d(work_sz as u32, THREADS_PER_GROUP as u32),
+            calculate_cube_count_elemwise(
+                &client,
+                work_sz,
+                CubeDim::new_1d(THREADS_PER_GROUP as u32),
+            ),
             cube_dim,
             group_buffer[l].clone().into_tensor_arg(),
             group_buffer[l - 1].clone().into_tensor_arg(),
@@ -73,9 +85,10 @@ pub fn prefix_sum(input: CubeTensor) -> CubeTensor {
 
     kernels::prefix_sum_add_scanned_sums_kernel::launch(
         &client,
-        calc_cube_count_1d(
-            (work_size[0] * THREADS_PER_GROUP) as u32,
-            THREADS_PER_GROUP as u32,
+        calculate_cube_count_elemwise(
+            &client,
+            work_size[0] * THREADS_PER_GROUP,
+            CubeDim::new_1d(THREADS_PER_GROUP as u32),
         ),
         cube_dim,
         group_buffer[0].clone().into_tensor_arg(),

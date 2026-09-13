@@ -460,44 +460,6 @@ impl SplatTrainer {
             .take()
             .expect("Can only refine if refine stats are initialized");
 
-        // Track how many splats are visually large (the "big-low-α" failure
-        // mode). `max_screen_size` is the larger 2D ellipse extent as a
-        // fraction of the image dim; area is approximated by its square.
-        let ss_data = refiner
-            .max_screen_size
-            .clone()
-            .into_data_async()
-            .await
-            .expect("Failed to read screen size")
-            .try_into_vec::<f32>()
-            .expect("Failed to read screen size vec");
-        if !ss_data.is_empty() {
-            let mut sorted: Vec<f32> = ss_data.iter().copied().filter(|v| v.is_finite()).collect();
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let n = sorted.len();
-            let pct = |p: f32| sorted[((p * (n - 1) as f32) as usize).min(n - 1)];
-            let n_total = n as f64;
-            let n_gt_025 = ss_data.iter().filter(|v| **v > 0.25).count();
-            let n_gt_010 = ss_data.iter().filter(|v| **v > 0.10).count();
-            let n_gt_005 = ss_data.iter().filter(|v| **v > 0.05).count();
-            let n_area_gt_005 = ss_data.iter().filter(|v| (*v * *v) > 0.05).count();
-            let n_area_gt_010 = ss_data.iter().filter(|v| (*v * *v) > 0.10).count();
-            log::info!(
-                "screen_size iter={} n={} max_dim p50={:.4} p95={:.4} p99={:.4} max={:.4} frac>0.05={:.4} frac>0.10={:.4} frac>0.25={:.4} frac_area>0.05={:.4} frac_area>0.10={:.4}",
-                iter,
-                n,
-                pct(0.5),
-                pct(0.95),
-                pct(0.99),
-                pct(1.0),
-                n_gt_005 as f64 / n_total,
-                n_gt_010 as f64 / n_total,
-                n_gt_025 as f64 / n_total,
-                n_area_gt_005 as f64 / n_total,
-                n_area_gt_010 as f64 / n_total,
-            );
-        }
-
         let max_allowed_bounds = self.bounds.extent.max_element() * 100.0;
 
         // If not refining, update splat to step with gradients applied.
