@@ -1,4 +1,4 @@
-use crate::camera::calculate_jacobian_clamp_limits;
+use crate::camera::{calculate_jacobian_clamp_limits, max_render_theta};
 use crate::{
     RenderAuxInner, SplatOps,
     camera::Camera,
@@ -67,8 +67,12 @@ impl SplatOps for CubeBackend {
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
+        // Cull splats beyond the lens' diagonal fov with some margin, but never
+        // past the angle where the distortion polynomial folds back on itself:
+        // those would project mirrored into the image with huge radii.
         let half_max_render_fov =
-            ((camera.fov_x as f32).hypot(camera.fov_y as f32) * 1.05).min(2.0 * PI - 1e-6) * 0.5;
+            (((camera.fov_x as f32).hypot(camera.fov_y as f32) * 1.05).min(2.0 * PI - 1e-6) * 0.5)
+                .min(max_render_theta(&camera.camera_model) as f32);
         let pinhole_params = camera.build_pinhole_params(img_size);
 
         let mut project_uniforms = shaders::helpers::ProjectUniforms {
