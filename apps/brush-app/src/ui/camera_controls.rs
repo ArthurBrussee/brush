@@ -20,6 +20,9 @@ pub struct CameraController {
     pub rotation: Quat,
     pub focus_distance: f32,
     pub settings: CameraSettings,
+    /// World-unit size of the loaded scene; fly speed scales with it so a
+    /// room and a city block both take about as long to cross.
+    pub scene_scale: f32,
     model_transform_velocity: f32,
     model_transform_vertical_velocity: f32,
     fly_velocity: Vec3,
@@ -110,6 +113,7 @@ impl CameraController {
             rotation,
             focus_distance: 2.5,
             settings,
+            scene_scale: 1.0,
             model_transform_velocity: 0.0,
             model_transform_vertical_velocity: 0.0,
             fly_velocity: Vec3::ZERO,
@@ -222,10 +226,13 @@ impl CameraController {
 
         let fly_moment_lambda = 0.8;
 
-        let move_speed = 25.0
+        // Base speed is in scene sizes per second, so a keypress covers a
+        // similar fraction of the scene whatever its world scale.
+        let move_speed = 3.0
+            * self.scene_scale
             * self.settings.speed_scale.unwrap_or(1.0)
             * if ui.input(|r| r.modifiers.shift) {
-                4.0
+                6.0
             } else {
                 1.0
             };
