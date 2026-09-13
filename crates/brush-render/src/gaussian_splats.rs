@@ -193,6 +193,47 @@ impl Splats {
         }
     }
 
+    /// Uniformly rescale the splats about the origin: means are multiplied by
+    /// `factor`, log scales shift by `ln(factor)`, and any attached min-scale
+    /// floor scales along. Rotations, colors and opacities are unchanged. Used
+    /// to move between dataset units and the metres training runs in.
+    pub fn scaled(mut self, factor: f32) -> Self {
+        let transforms = self.transforms.val();
+        let means = transforms.clone().slice(s![.., 0..3]).mul_scalar(factor);
+        let log_scales = transforms
+            .clone()
+            .slice(s![.., 7..10])
+            .add_scalar(factor.ln());
+        let transforms = transforms
+            .slice_assign(s![.., 0..3], means)
+            .slice_assign(s![.., 7..10], log_scales);
+        self.transforms = trainable_param(self.transforms.id, transforms);
+        self.min_scale = self.min_scale.map(|f| f.mul_scalar(factor));
+        self
+    }
+
+    /// Concatenate two splat sets of the same SH degree into fresh trainable
+    /// params. Any min-scale floor is dropped: it is camera-derived per splat
+    /// and the next refine recomputes it for the combined set.
+    pub fn concat(self, other: &Self) -> Self {
+        assert_eq!(
+            self.sh_degree(),
+            other.sh_degree(),
+            "Can only concatenate splats with the same SH degree"
+        );
+        let transforms = Tensor::cat(vec![self.transforms.val(), other.transforms.val()], 0);
+        let sh_coeffs = Tensor::cat(vec![self.sh_coeffs.val(), other.sh_coeffs.val()], 0);
+        let raw_opacities =
+            Tensor::cat(vec![self.raw_opacities.val(), other.raw_opacities.val()], 0);
+        Self {
+            transforms: trainable_param(ParamId::new(), transforms),
+            sh_coeffs: trainable_param(ParamId::new(), sh_coeffs),
+            raw_opacities: trainable_param(ParamId::new(), raw_opacities),
+            render_mip: self.render_mip,
+            min_scale: None,
+        }
+    }
+
     /// Attach a per-splat world-space scale floor (see [`Splats::min_scale`]).
     /// `f` must be `[num_splats]`. Training-only; cleared by refine and never
     /// serialized.
@@ -538,5 +579,100 @@ mod tests {
                 "unexpected gradient {actual}"
             );
         }
+    }
+
+    async fn read_vec(t: Tensor<2>) -> Vec<f32> {
+        t.into_data_async()
+            .await
+            .unwrap()
+            .try_to_vec::<f32>()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn scaled_moves_means_scales_and_floor() {
+        let device = Device::from(brush_cube::test_helpers::test_device().await);
+        let n = 2;
+        let splats = Splats::from_tensor_data(
+            Tensor::from_floats([[1.0, -2.0, 3.0], [0.5, 0.0, -1.0]], &device),
+            Tensor::ones([n, 4], &device),
+            Tensor::from_floats([[0.0, 1.0, -1.0], [2.0, 2.0, 2.0]], &device),
+            Tensor::zeros([n, 1, 3], &device),
+            Tensor::zeros([n], &device),
+            SplatRenderMode::Default,
+        )
+        .with_min_scale(Tensor::from_floats([0.1, 0.2], &device));
+
+        let scaled = splats.clone().scaled(4.0);
+        let means = read_vec(splats.means()).await;
+        let scaled_means = read_vec(scaled.means()).await;
+        let scales = read_vec(splats.log_scales().exp()).await;
+        let scaled_scales = read_vec(scaled.log_scales().exp()).await;
+        for i in 0..n * 3 {
+            assert!((scaled_means[i] - means[i] * 4.0).abs() < 1e-6);
+            assert!((scaled_scales[i] - scales[i] * 4.0).abs() < 1e-5 * scales[i]);
+        }
+        let floor = scaled
+            .min_scale
+            .clone()
+            .expect("floor kept")
+            .into_data_async()
+            .await
+            .unwrap()
+            .try_to_vec::<f32>()
+            .unwrap();
+        assert!((floor[0] - 0.4).abs() < 1e-6 && (floor[1] - 0.8).abs() < 1e-6);
+        // Rotations and opacities are untouched.
+        assert_eq!(
+            read_vec(scaled.rotations()).await,
+            read_vec(splats.rotations()).await
+        );
+
+        // Scaling back is the identity (up to rounding).
+        let back = read_vec(scaled.scaled(0.25).means()).await;
+        for i in 0..n * 3 {
+            assert!((back[i] - means[i]).abs() < 1e-6);
+        }
+    }
+
+    #[tokio::test]
+    async fn concat_joins_params_and_drops_floor() {
+        let device = Device::from(brush_cube::test_helpers::test_device().await);
+        let make = |n: usize, mean: f32| {
+            Splats::from_tensor_data(
+                Tensor::full([n, 3], mean, &device),
+                Tensor::ones([n, 4], &device),
+                Tensor::zeros([n, 3], &device),
+                Tensor::zeros([n, 4, 3], &device),
+                Tensor::zeros([n], &device),
+                SplatRenderMode::Default,
+            )
+        };
+        let a = make(3, 1.0).with_min_scale(Tensor::ones([3], &device));
+        let b = make(2, 2.0);
+        let joined = a.concat(&b);
+        assert_eq!(joined.num_splats(), 5);
+        assert_eq!(joined.sh_degree(), 1);
+        assert!(joined.min_scale.is_none());
+        let means = read_vec(joined.means()).await;
+        assert_eq!(&means[..9], &[1.0; 9]);
+        assert_eq!(&means[9..], &[2.0; 6]);
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "same SH degree")]
+    async fn concat_rejects_mismatched_sh_degree() {
+        let device = Device::from(brush_cube::test_helpers::test_device().await);
+        let make = |coeffs: usize| {
+            Splats::from_tensor_data(
+                Tensor::zeros([1, 3], &device),
+                Tensor::ones([1, 4], &device),
+                Tensor::zeros([1, 3], &device),
+                Tensor::zeros([1, coeffs, 3], &device),
+                Tensor::zeros([1], &device),
+                SplatRenderMode::Default,
+            )
+        };
+        let _ = make(1).concat(&make(4));
     }
 }

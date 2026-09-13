@@ -445,6 +445,7 @@ mod tests {
             subsample_points: None,
             alpha_mode: None,
             invert_masks: false,
+            units_per_meter: 1.0,
             max_scene_batch_cache_size: 0,
         };
         let result = read_dataset(vfs, &config)
