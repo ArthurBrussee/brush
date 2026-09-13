@@ -5,7 +5,7 @@
 //! output range, backward produces finite gradients). Bit-exact reference
 //! matching is covered by the integration training tests in `brush-bench-test`.
 
-use brush_loss::{ImageLossConfig, image_loss};
+use brush_loss::{ImageLossConfig, image_loss, psnr, psnr_from_mse};
 use burn::tensor::{Device, Int, Tensor, TensorData};
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -165,4 +165,28 @@ async fn alpha_match_via_4ch_pred() {
         },
     );
     let _grads = map.mean().backward();
+}
+
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn psnr_matches_known_values() {
+    let device = Device::from(brush_cube::test_helpers::test_device().await);
+    let scalar = async |t: Tensor<1>| t.into_scalar_async::<f32>().await.expect("readback");
+
+    // Plain formula: MSE 0.01 -> 20 dB, MSE 1 -> 0 dB.
+    let db = scalar(psnr_from_mse(Tensor::from_floats([0.01], &device))).await;
+    assert!((db - 20.0).abs() < 1e-3, "got {db}");
+    let db = scalar(psnr_from_mse(Tensor::from_floats([1.0], &device))).await;
+    assert!(db.abs() < 1e-3, "got {db}");
+
+    // Identical images floor at 100 dB instead of going infinite.
+    let db = scalar(psnr_from_mse(Tensor::from_floats([0.0], &device))).await;
+    assert!((db - 100.0).abs() < 1e-3, "got {db}");
+
+    // Image wrapper: a constant 0.1 offset on every channel is MSE 0.01.
+    let a = Tensor::<3>::zeros([4, 6, 3], &device);
+    let b = Tensor::<3>::full([4, 6, 3], 0.1, &device);
+    let db = scalar(psnr(a.clone(), b)).await;
+    assert!((db - 20.0).abs() < 1e-3, "got {db}");
+    let db = scalar(psnr(a.clone(), a)).await;
+    assert!((db - 100.0).abs() < 1e-3, "got {db}");
 }
