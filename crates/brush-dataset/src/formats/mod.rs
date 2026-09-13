@@ -1,4 +1,8 @@
-use crate::{Dataset, config::LoadDatasetConfig, scene::SceneView};
+use crate::{
+    Dataset,
+    config::LoadDatasetConfig,
+    scene::{Scene, SceneView},
+};
 use brush_serde::{DeserializeError, SplatMessage, load_splat_from_ply};
 
 use brush_vfs::BrushVfs;
@@ -104,11 +108,62 @@ pub async fn load_dataset(
         result.init_splat
     };
 
-    Ok(DatasetLoadResult {
+    let result = DatasetLoadResult {
         init_splat,
         dataset: result.dataset,
         warnings: result.warnings,
-    })
+    };
+    scale_to_meters(result, load_args.units_per_meter)
+}
+
+/// Convert a dataset from its own units to metres by dividing every position
+/// by `units_per_meter`. Training then runs in metres, so metric thresholds
+/// mean the same thing on a millimetre scan as on a COLMAP scene; exports
+/// multiply back (see `Splats::scaled`).
+fn scale_to_meters(
+    mut result: DatasetLoadResult,
+    units_per_meter: f32,
+) -> Result<DatasetLoadResult, DatasetError> {
+    if !(units_per_meter.is_finite() && units_per_meter > 0.0) {
+        return Err(FormatError::InvalidFormat(format!(
+            "units_per_meter must be a positive number, got {units_per_meter}"
+        ))
+        .into());
+    }
+    if units_per_meter == 1.0 {
+        return Ok(result);
+    }
+    let to_meters = 1.0 / units_per_meter;
+
+    let scale_scene = |scene: &mut Scene| {
+        let views = scene
+            .views
+            .iter()
+            .cloned()
+            .map(|mut view| {
+                view.camera.position *= to_meters;
+                view
+            })
+            .collect();
+        scene.views = Arc::new(views);
+    };
+    scale_scene(&mut result.dataset.train);
+    if let Some(eval) = result.dataset.eval.as_mut() {
+        scale_scene(eval);
+    }
+
+    if let Some(init) = result.init_splat.as_mut() {
+        for m in &mut init.data.means {
+            *m *= to_meters;
+        }
+        if let Some(log_scales) = init.data.log_scales.as_mut() {
+            let shift = to_meters.ln();
+            for s in log_scales {
+                *s += shift;
+            }
+        }
+    }
+    Ok(result)
 }
 
 /// Resolve a bare image name (as stored by colmap / `RealityCapture`, which only

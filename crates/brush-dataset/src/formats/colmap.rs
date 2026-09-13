@@ -472,6 +472,7 @@ mod tests {
             subsample_points: None,
             alpha_mode: None,
             invert_masks: false,
+            units_per_meter: 1.0,
             max_scene_batch_cache_size: 0,
         }
     }
@@ -548,6 +549,52 @@ mod tests {
         assert_eq!(sh_coeffs.len(), 4 * 3);
         let expected_sh = rgb_to_sh(glam::vec3(1.0, 0.0, 0.0));
         assert_eq!(&sh_coeffs[0..3], expected_sh.to_array().as_slice());
+    }
+
+    #[tokio::test]
+    async fn units_per_meter_scales_cameras_and_init_points() {
+        let dir = tempfile::tempdir().unwrap();
+        write_test_dataset(dir.path()).await;
+        let vfs = Arc::new(BrushVfs::from_path(dir.path()).await.unwrap());
+        let base = load_test_dataset(dir.path(), Some(2)).await;
+        let config = LoadDatasetConfig {
+            units_per_meter: 100.0,
+            ..test_config(Some(2))
+        };
+        let scaled = load_dataset(vfs, &config).await.unwrap();
+
+        // Train and eval camera positions shrink; orientation and intrinsics don't.
+        let scenes = |r: &DatasetLoadResult| {
+            let mut v = r.dataset.train.views.as_ref().clone();
+            v.extend(r.dataset.eval.as_ref().unwrap().views.iter().cloned());
+            v
+        };
+        for (a, b) in scenes(&base).into_iter().zip(scenes(&scaled)) {
+            assert_vec3_close(b.camera.position, a.camera.position / 100.0);
+            assert_eq!(b.camera.rotation, a.camera.rotation);
+            assert_eq!(b.camera.fov_x, a.camera.fov_x);
+        }
+
+        // Initial point cloud shrinks along with it.
+        let init = scaled.init_splat.expect("expected an initial point cloud");
+        assert_vec3_close(
+            glam::Vec3::from_slice(&init.data.means[0..3]),
+            glam::vec3(0.015, 0.025, 0.035),
+        );
+        if let Some(log_scales) = init.data.log_scales {
+            let base_scales = base.init_splat.unwrap().data.log_scales.unwrap();
+            for (a, b) in base_scales.iter().zip(&log_scales) {
+                assert!((b - (a - 100f32.ln())).abs() < 1e-5);
+            }
+        }
+
+        // A non-positive factor is rejected instead of producing NaNs.
+        let vfs = Arc::new(BrushVfs::from_path(dir.path()).await.unwrap());
+        let bad = LoadDatasetConfig {
+            units_per_meter: 0.0,
+            ..test_config(None)
+        };
+        assert!(load_dataset(vfs, &bad).await.is_err());
     }
 
     #[tokio::test]

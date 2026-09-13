@@ -193,6 +193,25 @@ impl Splats {
         }
     }
 
+    /// Uniformly rescale the splats about the origin: means are multiplied by
+    /// `factor`, log scales shift by `ln(factor)`, and any attached min-scale
+    /// floor scales along. Rotations, colors and opacities are unchanged. Used
+    /// to move between dataset units and the metres training runs in.
+    pub fn scaled(mut self, factor: f32) -> Self {
+        let transforms = self.transforms.val();
+        let means = transforms.clone().slice(s![.., 0..3]).mul_scalar(factor);
+        let log_scales = transforms
+            .clone()
+            .slice(s![.., 7..10])
+            .add_scalar(factor.ln());
+        let transforms = transforms
+            .slice_assign(s![.., 0..3], means)
+            .slice_assign(s![.., 7..10], log_scales);
+        self.transforms = trainable_param(self.transforms.id, transforms);
+        self.min_scale = self.min_scale.map(|f| f.mul_scalar(factor));
+        self
+    }
+
     /// Attach a per-splat world-space scale floor (see [`Splats::min_scale`]).
     /// `f` must be `[num_splats]`. Training-only; cleared by refine and never
     /// serialized.
@@ -537,6 +556,60 @@ mod tests {
                 actual.is_finite() && (actual - expected_gradient).abs() < 2e-4,
                 "unexpected gradient {actual}"
             );
+        }
+    }
+
+    async fn read_vec(t: Tensor<2>) -> Vec<f32> {
+        t.into_data_async()
+            .await
+            .unwrap()
+            .try_to_vec::<f32>()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn scaled_moves_means_scales_and_floor() {
+        let device = Device::from(brush_cube::test_helpers::test_device().await);
+        let n = 2;
+        let splats = Splats::from_tensor_data(
+            Tensor::from_floats([[1.0, -2.0, 3.0], [0.5, 0.0, -1.0]], &device),
+            Tensor::ones([n, 4], &device),
+            Tensor::from_floats([[0.0, 1.0, -1.0], [2.0, 2.0, 2.0]], &device),
+            Tensor::zeros([n, 1, 3], &device),
+            Tensor::zeros([n], &device),
+            SplatRenderMode::Default,
+        )
+        .with_min_scale(Tensor::from_floats([0.1, 0.2], &device));
+
+        let scaled = splats.clone().scaled(4.0);
+        let means = read_vec(splats.means()).await;
+        let scaled_means = read_vec(scaled.means()).await;
+        let scales = read_vec(splats.log_scales().exp()).await;
+        let scaled_scales = read_vec(scaled.log_scales().exp()).await;
+        for i in 0..n * 3 {
+            assert!((scaled_means[i] - means[i] * 4.0).abs() < 1e-6);
+            assert!((scaled_scales[i] - scales[i] * 4.0).abs() < 1e-5 * scales[i]);
+        }
+        let floor = scaled
+            .min_scale
+            .clone()
+            .expect("floor kept")
+            .into_data_async()
+            .await
+            .unwrap()
+            .try_to_vec::<f32>()
+            .unwrap();
+        assert!((floor[0] - 0.4).abs() < 1e-6 && (floor[1] - 0.8).abs() < 1e-6);
+        // Rotations and opacities are untouched.
+        assert_eq!(
+            read_vec(scaled.rotations()).await,
+            read_vec(splats.rotations()).await
+        );
+
+        // Scaling back is the identity (up to rounding).
+        let back = read_vec(scaled.scaled(0.25).means()).await;
+        for i in 0..n * 3 {
+            assert!((back[i] - means[i]).abs() < 1e-6);
         }
     }
 }
