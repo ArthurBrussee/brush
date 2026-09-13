@@ -9,11 +9,11 @@ use burn::backend::{
 use burn::tensor::{DType, Int, Tensor};
 use burn_cubecl::fusion::FusionCubeRuntime;
 use burn_cubecl::tensor::CubeTensor;
+use burn_fusion::custom::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use burn_fusion::{
     ExecutionError, Fusion, FusionHandle,
     stream::{Operation, StreamId},
 };
-use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use glam::Vec3;
 
 use crate::{

@@ -19,7 +19,6 @@ burn = { workspace = true, features = ["wgpu", "autodiff"] }
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
-burn-ir.workspace = true
 
 glam.workspace = true
 clap.workspace = true

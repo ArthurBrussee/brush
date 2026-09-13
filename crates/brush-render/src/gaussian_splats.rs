@@ -138,8 +138,7 @@ impl Splats {
             TensorData::new(coeffs_data, [n_splats, n_coeffs / 3, 3]),
             device,
         );
-        let raw_opacities =
-            Tensor::from_data(TensorData::new(opac_data, [n_splats]), device).require_grad();
+        let raw_opacities = Tensor::from_data(TensorData::new(opac_data, [n_splats]), device);
         Self::from_tensor_data(
             means_tensor,
             rotations,
@@ -164,8 +163,9 @@ impl Splats {
             } else {
                 coeffs.slice(s![.., 0..n_coeffs])
             }
+            // `Param::map` keeps the configured training state; a raw
+            // `require_grad` would panic on a plain (non-autodiff) device.
             .detach()
-            .require_grad()
         });
         self
     }

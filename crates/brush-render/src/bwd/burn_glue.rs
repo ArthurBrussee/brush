@@ -23,11 +23,11 @@ use burn::{
 };
 use burn_cubecl::CubeBackend;
 use burn_cubecl::fusion::FusionCubeRuntime;
+use burn_fusion::custom::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use burn_fusion::{
     ExecutionError, Fusion, FusionHandle,
     stream::{Operation, StreamId},
 };
-use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use glam::Vec3;
 
 /// Intermediate gradients from the rasterize backward pass.
@@ -289,17 +289,17 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
     ) -> crate::RenderOutput<Self> {
         let prep_nodes = RenderBackwards
             .prepare::<NoCheckpointing>([
-                transforms.node.clone(),
-                refine_weight.node.clone(),
-                sh_coeffs.node.clone(),
-                raw_opacities.node.clone(),
+                transforms.node(),
+                refine_weight.node(),
+                sh_coeffs.node(),
+                raw_opacities.node(),
             ])
             .compute_bound()
             .stateful();
 
-        let transforms_inner: FloatTensor<B> = transforms.primitive.clone();
-        let sh_inner: FloatTensor<B> = sh_coeffs.primitive;
-        let raw_opac_inner: FloatTensor<B> = raw_opacities.primitive.clone();
+        let transforms_inner: FloatTensor<B> = transforms.primitive().clone();
+        let sh_inner: FloatTensor<B> = sh_coeffs.into_primitive();
+        let raw_opac_inner: FloatTensor<B> = raw_opacities.primitive().clone();
 
         let output = <B as SplatOps>::render(
             camera,
@@ -307,7 +307,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
             transforms_inner.clone(),
             sh_inner.clone(),
             raw_opac_inner.clone(),
-            refine_weight.primitive,
+            refine_weight.into_primitive(),
             render_mode,
             background,
             pass,

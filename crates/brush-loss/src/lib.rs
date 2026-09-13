@@ -31,11 +31,11 @@ use burn::{
 use burn_cubecl::{
     CubeBackend, fusion::FusionCubeRuntime, kernel::into_contiguous, tensor::CubeTensor,
 };
+use burn_fusion::custom::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use burn_fusion::{
     ExecutionError, Fusion, FusionHandle,
     stream::{Operation, StreamId},
 };
-use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
 use glam::Vec3;
 
 mod kernels {
@@ -1074,11 +1074,11 @@ impl<B: Backend + LossOps, C: CheckpointStrategy> LossOps for Autodiff<B, C> {
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
         let prep = ImageLossBackward
-            .prepare::<NoCheckpointing>([pred.node.clone()])
+            .prepare::<NoCheckpointing>([pred.node()])
             .compute_bound()
             .stateful();
 
-        let pred_p = pred.primitive;
+        let pred_p = pred.into_primitive();
         let map = <B as LossOps>::image_loss(pred_p.clone(), gt_packed.clone(), cfg);
 
         match prep {
@@ -1101,9 +1101,9 @@ impl<B: Backend + LossOps, C: CheckpointStrategy> LossOps for Autodiff<B, C> {
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
         <Self as AutodiffBackend>::from_inner(<B as LossOps>::image_loss_backward(
-            pred.primitive,
+            pred.into_primitive(),
             gt_packed,
-            dl_dmap.primitive,
+            dl_dmap.into_primitive(),
             cfg,
         ))
     }
