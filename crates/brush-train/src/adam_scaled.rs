@@ -152,14 +152,11 @@ impl AdamScaled {
 fn mean_trailing_dims<const D: usize>(t: Tensor<D>) -> Tensor<D> {
     debug_assert!(D > 1, "mean_trailing_dims requires D > 1");
     let shape = t.dims();
-    let n = shape[0];
     let trailing_count: usize = shape[1..].iter().product();
 
-    // Single flatten + sum avoids one kernel launch per trailing dim.
-    let flat: Tensor<2> = t.flatten(1, D - 1);
-    let reduced: Tensor<2> = flat.sum_dim(1) / trailing_count as f32;
-
-    let mut target = [1usize; D];
-    target[0] = n;
-    reduced.reshape(target)
+    // One multi-dim reduce keeps the trailing dims at size 1 with no
+    // reshape: burn's fusion explorer stops at a reshape, which used to
+    // leave this as three separate launches per step.
+    let dims: Vec<usize> = (1..D).collect();
+    t.sum_dims(&dims) / trailing_count as f32
 }
