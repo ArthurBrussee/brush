@@ -251,6 +251,42 @@ fn rt8_undistort_radius(r_d: f64, p: &RadialTangential8Params) -> f64 {
     r
 }
 
+// Undistorted radius r with r · radial(r) = r_d, found by bracketing the first
+// crossing on a coarse scan and bisecting it. Unlike the fixed-point inverse
+// this doesn't diverge where the polynomial is steep. None if the distortion
+// never reaches r_d below r = 16 (the polynomial folds first).
+fn rt8_undistort_corner_radius(r_d: f64, p: &RadialTangential8Params) -> Option<f64> {
+    const R_MAX: f64 = 16.0;
+    const STEPS: usize = 4096;
+    let distort = |r: f64| r * rt8_radial(r, p);
+    let step = R_MAX / STEPS as f64;
+
+    let mut lo = 0.0;
+    let mut hi = None;
+    for i in 1..=STEPS {
+        let r = i as f64 * step;
+        if distort(r) >= r_d {
+            hi = Some(r);
+            break;
+        }
+        lo = r;
+    }
+    let mut hi = hi?;
+
+    for _ in 0..64 {
+        let mid = 0.5 * (lo + hi);
+        if distort(mid) < r_d {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+        if hi - lo < 1e-12 {
+            break;
+        }
+    }
+    Some(0.5 * (lo + hi))
+}
+
 pub fn calculate_jacobian_clamp_limits(
     img_size: glam::UVec2,
     pinhole_params: PinholeParams,
@@ -262,6 +298,7 @@ pub fn calculate_jacobian_clamp_limits(
     let mut lim_neg_x = 0.;
     let mut lim_pos_y = 0.;
     let mut lim_neg_y = 0.;
+    let mut lim_r = f32::MAX;
 
     let img_w = img_size.x as f32;
     let img_h = img_size.y as f32;
@@ -288,10 +325,23 @@ pub fn calculate_jacobian_clamp_limits(
             // widening it for real barrel distortion.
             let undistort =
                 |edge: f32| (rt8_undistort_radius((edge as f64).abs(), &p) as f32) * edge.signum();
-            lim_pos_x = undistort((1.15 * img_w - cx) / fx);
-            lim_pos_y = undistort((1.15 * img_h - cy) / fy);
-            lim_neg_x = undistort((-0.15 * img_w - cx) / fx);
-            lim_neg_y = undistort((-0.15 * img_h - cy) / fy);
+            let edge_pos_x = (1.15 * img_w - cx) / fx;
+            let edge_pos_y = (1.15 * img_h - cy) / fy;
+            lim_pos_x = undistort(edge_pos_x);
+            lim_pos_y = undistort(edge_pos_y);
+            let edge_neg_x = (-0.15 * img_w - cx) / fx;
+            let edge_neg_y = (-0.15 * img_h - cy) / fy;
+            lim_neg_x = undistort(edge_neg_x);
+            lim_neg_y = undistort(edge_neg_y);
+
+            // The per-axis box still admits its corner at hypot(lim_x, lim_y),
+            // where the polynomial has left its calibrated range and the
+            // fixed-point inverse diverges; splats there got Jacobians orders
+            // of magnitude too large. Cap the radius at the undistorted radius
+            // of the same-margin image corner instead.
+            let corner_d = (edge_pos_x.abs().max(edge_neg_x.abs()) as f64)
+                .hypot(edge_pos_y.abs().max(edge_neg_y.abs()) as f64);
+            lim_r = rt8_undistort_corner_radius(corner_d, &p).map_or(f32::MAX, |r| r as f32);
         }
         // Fisheye models project the full hemisphere without the perspective
         // singularity, so their Jacobians aren't clamped (their kernels ignore
@@ -304,6 +354,7 @@ pub fn calculate_jacobian_clamp_limits(
         lim_pos_y,
         lim_neg_x,
         lim_neg_y,
+        lim_r,
     }
 }
 
@@ -428,6 +479,72 @@ mod tests {
         });
         assert_eq!(max_render_theta(&tpf), cap);
         assert_eq!(max_render_theta(&Pinhole), PI);
+    }
+
+    #[test]
+    fn rt8_radial_cap_matches_image_corner() {
+        // Pincushion-ish rational fit: the box corner reaches further out
+        // than the image corner's true undistorted radius.
+        let p = RadialTangential8Params {
+            k1: 0.15,
+            k2: 0.08,
+            k3: 0.02,
+            k4: 0.03,
+            k5: 0.0,
+            k6: 0.0,
+            p1: 0.001,
+            p2: -0.002,
+        };
+        let img = glam::uvec2(1920, 1080);
+        let pinhole = PinholeParams {
+            fx: 800.0,
+            fy: 800.0,
+            cx: 960.0,
+            cy: 540.0,
+        };
+        let limits = calculate_jacobian_clamp_limits(img, pinhole, RadialTangential8(p));
+
+        // lim_r is the undistorted radius of the same-margin image corner.
+        let corner_d = ((1.15 * 1920.0 - 960.0) / 800.0f64).hypot((1.15 * 1080.0 - 540.0) / 800.0);
+        let lim_r = limits.lim_r as f64;
+        assert!((lim_r * rt8_radial(lim_r, &p) - corner_d).abs() < 1e-5);
+        // ... and tighter than the box corner it is meant to cut off.
+        let box_corner = limits.lim_pos_x.hypot(limits.lim_pos_y);
+        assert!(
+            limits.lim_r < box_corner,
+            "{} vs {box_corner}",
+            limits.lim_r
+        );
+        // Per-axis limits stay inside the cap.
+        assert!(limits.lim_pos_x < limits.lim_r && limits.lim_pos_y < limits.lim_r);
+    }
+
+    #[test]
+    fn rt8_radial_cap_is_unbounded_when_the_polynomial_folds() {
+        // Strong barrel: r·radial(r) peaks below the corner radius, so there
+        // is no crossing and the cap must not engage.
+        let p = RadialTangential8Params {
+            k1: -0.5,
+            ..Default::default()
+        };
+        let img = glam::uvec2(1920, 1080);
+        let pinhole = PinholeParams {
+            fx: 500.0,
+            fy: 500.0,
+            cx: 960.0,
+            cy: 540.0,
+        };
+        let limits = calculate_jacobian_clamp_limits(img, pinhole, RadialTangential8(p));
+        assert_eq!(limits.lim_r, f32::MAX);
+        assert_eq!(rt8_undistort_corner_radius(10.0, &p), None);
+
+        // Other models leave the field unused.
+        for model in [Pinhole, KannalaBrandt4(ULTRAWIDE)] {
+            assert_eq!(
+                calculate_jacobian_clamp_limits(img, pinhole, model).lim_r,
+                f32::MAX
+            );
+        }
     }
 
     #[test]

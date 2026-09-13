@@ -43,6 +43,10 @@ pub struct JacobianClampLimits {
     pub lim_pos_y: f32,
     pub lim_neg_x: f32,
     pub lim_neg_y: f32,
+    /// Radial cap on the clamped normalized coordinate (RT8 only). The
+    /// per-axis box still admits its corner, where the RT8 polynomial leaves
+    /// its calibrated range; this caps the radius at the image corner's.
+    pub lim_r: f32,
 }
 
 #[cube]
@@ -131,6 +135,7 @@ impl JacobianClampLimits {
             self.lim_pos_y,
             self.lim_neg_x,
             self.lim_neg_y,
+            self.lim_r,
         )
     }
 }
