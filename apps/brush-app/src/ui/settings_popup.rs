@@ -41,8 +41,25 @@ fn slider<T>(
 /// Draw all settings controls for a `TrainStreamConfig`.
 /// When `enabled` is false, individual widgets are greyed out and non-interactive,
 /// but collapsing sections and layout remain fully functional.
+/// One top-level settings section. Collapsible so the popup stays scannable;
+/// the everyday sections start open, the rest closed.
+fn section(ui: &mut Ui, title: &str, default_open: bool, add_contents: impl FnOnce(&mut Ui)) {
+    egui::CollapsingHeader::new(egui::RichText::new(title).heading())
+        .default_open(default_open)
+        .show(ui, add_contents);
+    ui.add_space(8.0);
+}
+
 pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: bool) {
-    ui.heading("Training");
+    section(ui, "Training", true, |ui| draw_training(ui, args, enabled));
+    section(ui, "Model", true, |ui| draw_model(ui, args, enabled));
+    section(ui, "Dataset", false, |ui| draw_dataset(ui, args, enabled));
+    section(ui, "Process", false, |ui| draw_process(ui, args, enabled));
+    #[cfg(all(not(target_family = "wasm"), not(target_os = "android")))]
+    section(ui, "Rerun", false, |ui| draw_rerun(ui, args, enabled));
+}
+
+fn draw_training(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: bool) {
     slider(
         ui,
         &mut args.train_config.total_train_iters,
@@ -228,6 +245,35 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             enabled,
         );
     });
+}
+
+fn draw_model(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: bool) {
+    ui.label("Spherical Harmonics Degree:");
+    ui.add_enabled(
+        enabled,
+        Slider::new(&mut args.model_config.sh_degree, 0..=4),
+    );
+
+    let mut render_mode_enabled = args.train_config.render_mode.is_some();
+    ui.add_enabled(
+        enabled,
+        egui::Checkbox::new(&mut render_mode_enabled, "Render mode"),
+    );
+    if enabled && render_mode_enabled != args.train_config.render_mode.is_some() {
+        args.train_config.render_mode = if render_mode_enabled {
+            Some(SplatRenderMode::Mip)
+        } else {
+            None
+        };
+    }
+    if let Some(ref mut render_mode) = args.train_config.render_mode {
+        ui.add_enabled_ui(enabled, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(render_mode, SplatRenderMode::Default, "Default");
+                ui.selectable_value(render_mode, SplatRenderMode::Mip, "Mip");
+            });
+        });
+    }
 
     {
         let tc = &mut args.train_config;
@@ -260,40 +306,9 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             );
         }
     }
+}
 
-    ui.add_space(16.0);
-
-    ui.heading("Model");
-    ui.label("Spherical Harmonics Degree:");
-    ui.add_enabled(
-        enabled,
-        Slider::new(&mut args.model_config.sh_degree, 0..=4),
-    );
-
-    let mut render_mode_enabled = args.train_config.render_mode.is_some();
-    ui.add_enabled(
-        enabled,
-        egui::Checkbox::new(&mut render_mode_enabled, "Render mode"),
-    );
-    if enabled && render_mode_enabled != args.train_config.render_mode.is_some() {
-        args.train_config.render_mode = if render_mode_enabled {
-            Some(SplatRenderMode::Mip)
-        } else {
-            None
-        };
-    }
-    if let Some(ref mut render_mode) = args.train_config.render_mode {
-        ui.add_enabled_ui(enabled, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(render_mode, SplatRenderMode::Default, "Default");
-                ui.selectable_value(render_mode, SplatRenderMode::Mip, "Mip");
-            });
-        });
-    }
-
-    ui.add_space(16.0);
-
-    ui.heading("Dataset");
+fn draw_dataset(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: bool) {
     ui.label("Max image resolution");
     slider(
         ui,
@@ -404,17 +419,9 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             args.load_config.alpha_mode = Some(alpha_mode);
         }
     }
+}
 
-    ui.add_space(16.0);
-
-    ui.heading("Process");
-    ui.label("Random seed:");
-    let mut seed_str = args.process_config.seed.to_string();
-    ui.add_enabled(enabled, egui::TextEdit::singleline(&mut seed_str));
-    if enabled && let Ok(seed) = seed_str.parse::<u64>() {
-        args.process_config.seed = seed;
-    }
-
+fn draw_process(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: bool) {
     ui.label("Start at iteration:");
     slider(
         ui,
@@ -459,63 +466,56 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
             egui::Checkbox::new(&mut pc.eval_save_to_disk, "Save Eval images to disk"),
         );
     });
+}
 
-    ui.add_space(15.0);
+#[cfg(all(not(target_family = "wasm"), not(target_os = "android")))]
+fn draw_rerun(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: bool) {
+    ui.hyperlink_to("rerun.io", "https://rerun.io");
 
-    #[cfg(all(not(target_family = "wasm"), not(target_os = "android")))]
-    {
-        ui.add(egui::Hyperlink::from_label_and_url(
-            egui::RichText::new("Rerun.io").heading(),
-            "https://rerun.io",
-        ));
+    let rc = &mut args.rerun_config;
+    ui.add_enabled(
+        enabled,
+        egui::Checkbox::new(&mut rc.rerun_enabled, "Enable rerun"),
+    );
 
-        let rc = &mut args.rerun_config;
+    if rc.rerun_enabled {
+        ui.label("Open the brush_blueprint.rbl in the rerun viewer for a good default layout.");
+
+        ui.label("Log train stats");
         ui.add_enabled(
             enabled,
-            egui::Checkbox::new(&mut rc.rerun_enabled, "Enable rerun"),
+            Slider::new(&mut rc.rerun_log_train_stats_every, 1..=1000)
+                .clamping(egui::SliderClamping::Never)
+                .prefix("every ")
+                .suffix(" steps"),
         );
 
-        if rc.rerun_enabled {
-            ui.label("Open the brush_blueprint.rbl in the rerun viewer for a good default layout.");
-
-            ui.label("Log train stats");
-            ui.add_enabled(
+        let mut visualize_splats = rc.rerun_log_splats_every.is_some();
+        ui.add_enabled(
+            enabled,
+            egui::Checkbox::new(&mut visualize_splats, "Visualize splats"),
+        );
+        if enabled && visualize_splats != rc.rerun_log_splats_every.is_some() {
+            rc.rerun_log_splats_every = if visualize_splats { Some(500) } else { None };
+        }
+        if let Some(every) = rc.rerun_log_splats_every.as_mut() {
+            slider(
+                ui,
+                every,
+                1..=5000,
+                "Visualize splats every",
+                false,
                 enabled,
-                Slider::new(&mut rc.rerun_log_train_stats_every, 1..=1000)
-                    .clamping(egui::SliderClamping::Never)
-                    .prefix("every ")
-                    .suffix(" steps"),
-            );
-
-            let mut visualize_splats = rc.rerun_log_splats_every.is_some();
-            ui.add_enabled(
-                enabled,
-                egui::Checkbox::new(&mut visualize_splats, "Visualize splats"),
-            );
-            if enabled && visualize_splats != rc.rerun_log_splats_every.is_some() {
-                rc.rerun_log_splats_every = if visualize_splats { Some(500) } else { None };
-            }
-            if let Some(every) = rc.rerun_log_splats_every.as_mut() {
-                slider(
-                    ui,
-                    every,
-                    1..=5000,
-                    "Visualize splats every",
-                    false,
-                    enabled,
-                );
-            }
-
-            ui.label("Max image log size");
-            ui.add_enabled(
-                enabled,
-                Slider::new(&mut rc.rerun_max_img_size, 128..=2048)
-                    .clamping(egui::SliderClamping::Never)
-                    .suffix(" px"),
             );
         }
 
-        ui.add_space(16.0);
+        ui.label("Max image log size");
+        ui.add_enabled(
+            enabled,
+            Slider::new(&mut rc.rerun_max_img_size, 128..=2048)
+                .clamping(egui::SliderClamping::Never)
+                .suffix(" px"),
+        );
     }
 }
 
