@@ -178,6 +178,11 @@ impl SplatTrainer {
         }
     }
 
+    /// Percentile bounding box of the splats, refreshed on each refine.
+    pub fn bounds(&self) -> BoundingBox {
+        self.bounds
+    }
+
     /// Supply per-train-view (world center, focal-px at native res) to enable
     /// the Mip-Splatting 3D filter (gated on `config.min_scale_factor > 0`).
     pub fn set_view_cams(&mut self, view_cams: Vec<(glam::Vec3, f32)>) {
