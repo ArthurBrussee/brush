@@ -109,7 +109,11 @@ pub fn fold_min_scale(
     let s2f = s2.add(f2); // s² + f² [N,3]
 
     let new_log = s2f.log().mul_scalar(0.5); // log(sqrt(s²+f²)) [N,3]
-    let transforms = transforms.slice_assign(s![.., 7..10], new_log.clone());
+    // Rebuild the packed tensor with `cat` rather than `slice_assign`: burn's
+    // fusion runs a block containing a slice_assign eagerly, one kernel per
+    // op, which turned this whole fold into ~19 launches. With `cat` it fuses
+    // down to 7.
+    let transforms = Tensor::cat(vec![transforms.slice(s![.., 0..7]), new_log.clone()], 1);
 
     let coef = log_scales.sub(new_log).sum_dim(1).exp().reshape([n]);
     let opac = sigmoid(raw_opac).mul(coef).clamp(1e-6, 1.0 - 1e-6);
