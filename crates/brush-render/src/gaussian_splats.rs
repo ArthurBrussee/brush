@@ -212,28 +212,6 @@ impl Splats {
         self
     }
 
-    /// Concatenate two splat sets of the same SH degree into fresh trainable
-    /// params. Any min-scale floor is dropped: it is camera-derived per splat
-    /// and the next refine recomputes it for the combined set.
-    pub fn concat(self, other: &Self) -> Self {
-        assert_eq!(
-            self.sh_degree(),
-            other.sh_degree(),
-            "Can only concatenate splats with the same SH degree"
-        );
-        let transforms = Tensor::cat(vec![self.transforms.val(), other.transforms.val()], 0);
-        let sh_coeffs = Tensor::cat(vec![self.sh_coeffs.val(), other.sh_coeffs.val()], 0);
-        let raw_opacities =
-            Tensor::cat(vec![self.raw_opacities.val(), other.raw_opacities.val()], 0);
-        Self {
-            transforms: trainable_param(ParamId::new(), transforms),
-            sh_coeffs: trainable_param(ParamId::new(), sh_coeffs),
-            raw_opacities: trainable_param(ParamId::new(), raw_opacities),
-            render_mip: self.render_mip,
-            min_scale: None,
-        }
-    }
-
     /// Attach a per-splat world-space scale floor (see [`Splats::min_scale`]).
     /// `f` must be `[num_splats]`. Training-only; cleared by refine and never
     /// serialized.
@@ -633,46 +611,5 @@ mod tests {
         for i in 0..n * 3 {
             assert!((back[i] - means[i]).abs() < 1e-6);
         }
-    }
-
-    #[tokio::test]
-    async fn concat_joins_params_and_drops_floor() {
-        let device = Device::from(brush_cube::test_helpers::test_device().await);
-        let make = |n: usize, mean: f32| {
-            Splats::from_tensor_data(
-                Tensor::full([n, 3], mean, &device),
-                Tensor::ones([n, 4], &device),
-                Tensor::zeros([n, 3], &device),
-                Tensor::zeros([n, 4, 3], &device),
-                Tensor::zeros([n], &device),
-                SplatRenderMode::Default,
-            )
-        };
-        let a = make(3, 1.0).with_min_scale(Tensor::ones([3], &device));
-        let b = make(2, 2.0);
-        let joined = a.concat(&b);
-        assert_eq!(joined.num_splats(), 5);
-        assert_eq!(joined.sh_degree(), 1);
-        assert!(joined.min_scale.is_none());
-        let means = read_vec(joined.means()).await;
-        assert_eq!(&means[..9], &[1.0; 9]);
-        assert_eq!(&means[9..], &[2.0; 6]);
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "same SH degree")]
-    async fn concat_rejects_mismatched_sh_degree() {
-        let device = Device::from(brush_cube::test_helpers::test_device().await);
-        let make = |coeffs: usize| {
-            Splats::from_tensor_data(
-                Tensor::zeros([1, 3], &device),
-                Tensor::ones([1, 4], &device),
-                Tensor::zeros([1, 3], &device),
-                Tensor::zeros([1, coeffs, 3], &device),
-                Tensor::zeros([1], &device),
-                SplatRenderMode::Default,
-            )
-        };
-        let _ = make(1).concat(&make(4));
     }
 }
