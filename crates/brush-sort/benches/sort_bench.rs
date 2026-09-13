@@ -15,6 +15,7 @@ use std::sync::Arc;
 use brush_cube::CubeDevice;
 use brush_cube::CubeTensor;
 use brush_sort::radix_argsort;
+use burn::backend::TensorMetadata;
 use burn::cubecl::future::block_on;
 use burn::tensor::{DType, Shape};
 
@@ -87,14 +88,13 @@ fn upload_u32(device: &CubeDevice, data: &[u32]) -> CubeTensor {
     )
 }
 
-fn run_sort(device: &CubeDevice, inputs: &(Vec<u32>, Vec<u32>), bits: u32) {
-    let keys = upload_u32(device, &inputs.0);
-    let values = upload_u32(device, &inputs.1);
-    let (sorted_keys, sorted_values) = radix_argsort(keys, values, bits);
-    // Force completion: read both buffers back so the GPU finishes before we
-    // return from the bencher closure.
+fn run_sort(device: &CubeDevice, keys: &CubeTensor, values: &CubeTensor, bits: u32) {
+    let (sorted_keys, _sorted_values) = radix_argsort(keys.clone(), values.clone(), bits);
+    // Force completion with a minimal readback: the last key only.
     let client = device.client();
-    let _ = block_on(client.read_async(vec![sorted_keys.handle, sorted_values.handle]));
+    let len = sorted_keys.shape()[0] as u64;
+    let last = sorted_keys.handle.offset_start((len - 1) * 4);
+    let _ = block_on(client.read_async(vec![last]));
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -106,13 +106,17 @@ mod sort_bench {
     fn radix_argsort_10bit(bencher: divan::Bencher, size: usize) {
         let dev = device();
         let inputs = make_inputs(size, KeyKind::TileIds);
-        bencher.bench_local(move || run_sort(&dev, &inputs, 10));
+        let keys = crate::upload_u32(&dev, &inputs.0);
+        let values = crate::upload_u32(&dev, &inputs.1);
+        bencher.bench_local(move || run_sort(&dev, &keys, &values, 10));
     }
 
     #[divan::bench(args = SIZES)]
     fn radix_argsort_32bit(bencher: divan::Bencher, size: usize) {
         let dev = device();
         let inputs = make_inputs(size, KeyKind::Random32);
-        bencher.bench_local(move || run_sort(&dev, &inputs, 32));
+        let keys = crate::upload_u32(&dev, &inputs.0);
+        let values = crate::upload_u32(&dev, &inputs.1);
+        bencher.bench_local(move || run_sort(&dev, &keys, &values, 32));
     }
 }
