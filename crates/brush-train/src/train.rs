@@ -35,13 +35,6 @@ const MIN_OPACITY: f32 = 1.0 / 255.0;
 /// against a fixed target instead of chasing a moving floor.
 const MIN_SCALE_FREEZE_FRAC: f32 = 0.9;
 
-/// Mip-Splatting 3D-filter strength (the paper's `s`): each splat gets a frozen
-/// per-splat world-space scale floor `f = sqrt(MIN_SCALE_FACTOR) · pixel size at
-/// the nearest observing camera`, i.e. a ~0.32px std-dev floor. Folded into
-/// scales/opacity at render (and baked at export), never optimized. Fundamental
-/// to well-behaved splats, so not a tunable.
-const MIN_SCALE_FACTOR: f32 = 0.1;
-
 /// The three per-parameter Adam states of a [`Splats`] module, owned directly
 /// so the trainer can update LR scaling every step and surgically edit the
 /// momentum tensors during refine — all GPU-side, no record round-trips.
@@ -148,16 +141,24 @@ impl SplatTrainer {
         bounds: BoundingBox,
         seed: u64,
     ) -> Self {
-        let decay =
-            (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_train_iters as f64);
+        // The per-step decay reaching lr_mean_end at the last iteration. With
+        // one iteration or fewer there is nothing to decay over (and the
+        // exponent 1/iters would be undefined), so hold the LR.
+        let decay = if config.total_train_iters > 1 {
+            (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_train_iters as f64)
+        } else {
+            1.0
+        };
 
         let ssim_enabled = config.ssim_weight > 0.0;
 
         // Growth is gated on the global iter. LOD phases run past
         // total_train_iters but their refines should never grow — clamp
-        // here so growth_stop is never effectively past end-of-training.
+        // here so growth_stop is never effectively past end-of-training,
+        // and growth_start never past growth_stop.
         let mut config = config.clone();
         config.growth_stop_iter = config.growth_stop_iter.min(config.total_train_iters);
+        config.growth_start_iter = config.growth_start_iter.min(config.growth_stop_iter);
 
         #[cfg(not(target_family = "wasm"))]
         let lpips = (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device));
@@ -597,7 +598,7 @@ impl SplatTrainer {
         let num_split_oversized = (split_inds.len() - pre_oversized) as u32;
 
         let pre_high_grad = split_inds.len();
-        if iter < self.config.growth_stop_iter {
+        if iter >= self.config.growth_start_iter && iter < self.config.growth_stop_iter {
             let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
 
             let threshold_count = above_threshold
@@ -655,7 +656,9 @@ impl SplatTrainer {
             // `splats` is already on the inner backend here, so `means()` is too.
             // No-op when there are no view cameras (e.g. unit tests).
             let means = splats.means();
-            if let Some(f) = compute_min_scale(&means, &self.view_cams, MIN_SCALE_FACTOR) {
+            if let Some(f) =
+                compute_min_scale(&means, &self.view_cams, self.config.min_scale_factor)
+            {
                 splats = splats.with_min_scale(f);
             }
         }
@@ -797,7 +800,7 @@ impl SplatTrainer {
             );
         }
 
-        let train_t = (iter as f32 / self.config.total_train_iters as f32).clamp(0.0, 1.0);
+        let train_t = (iter as f32 / self.config.total_train_iters.max(1) as f32).clamp(0.0, 1.0);
         let t_shrink_strength = 1.0 - train_t;
         let minus_opac = self.config.opac_decay * t_shrink_strength;
 

@@ -387,3 +387,98 @@ async fn stress_concurrent_train_and_view() {
     }
     drop(viewer_actors);
 }
+
+async fn all_finite(splats: &Splats) -> bool {
+    for t in [
+        splats.means().into_data_async().await.unwrap(),
+        splats.log_scales().into_data_async().await.unwrap(),
+    ] {
+        if !t.iter::<f32>().all(f32::is_finite) {
+            return false;
+        }
+    }
+    splats
+        .opacities()
+        .into_data_async()
+        .await
+        .unwrap()
+        .iter::<f32>()
+        .all(f32::is_finite)
+}
+
+// A run of one iteration (or a degenerate zero) must not poison the LR decay
+// (exponent 1 / iters) or the refine schedule (iter / iters) with inf or NaN.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn tiny_training_runs_stay_finite() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let batch = generate_test_batch((64, 64));
+    for total_train_iters in [0, 1] {
+        let config = TrainConfig {
+            total_train_iters,
+            ..TrainConfig::default()
+        };
+        let mut trainer = SplatTrainer::new(
+            &config,
+            &device,
+            BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+        );
+        let mut splats = generate_test_splats(&device, 100);
+        for iter in 0..3 {
+            let (new_splats, _) = trainer.step(batch.clone(), splats).await;
+            let (new_splats, _) = trainer.refine(iter, new_splats).await;
+            splats = new_splats;
+        }
+        assert!(
+            all_finite(&splats).await,
+            "non-finite params with total_train_iters = {total_train_iters}"
+        );
+    }
+}
+
+// Gradient-driven growth only runs inside [growth_start_iter, growth_stop_iter).
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn growth_waits_for_start_iter() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let batch = generate_test_batch((64, 64));
+    // Every visible splat with any gradient qualifies, so growth is only
+    // absent when the gate says so.
+    let config = TrainConfig {
+        growth_grad_threshold: 0.0,
+        growth_select_fraction: 1.0,
+        growth_start_iter: 1000,
+        growth_stop_iter: 2000,
+        split_at_screen_size: 0.0,
+        ..TrainConfig::default()
+    };
+    let mut trainer = SplatTrainer::new(
+        &config,
+        &device,
+        BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
+    );
+
+    let mut splats = generate_test_splats(&device, 100);
+    for _ in 0..5 {
+        let (new_splats, _) = trainer.step(batch.clone(), splats).await;
+        splats = new_splats;
+    }
+    let (splats, before) = trainer.refine(500, splats).await;
+    assert_eq!(before.num_split_high_grad, 0);
+
+    let mut splats = splats;
+    for _ in 0..5 {
+        let (new_splats, _) = trainer.step(batch.clone(), splats).await;
+        splats = new_splats;
+    }
+    let (splats, inside) = trainer.refine(1500, splats).await;
+    assert!(inside.num_split_high_grad > 0);
+
+    let mut splats = splats;
+    for _ in 0..5 {
+        let (new_splats, _) = trainer.step(batch.clone(), splats).await;
+        splats = new_splats;
+    }
+    let (_, after) = trainer.refine(2500, splats).await;
+    assert_eq!(after.num_split_high_grad, 0);
+}
