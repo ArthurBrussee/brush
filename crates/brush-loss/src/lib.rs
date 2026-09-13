@@ -6,10 +6,11 @@
 //! materialised on the autograd tape.
 //!
 //! Public surface:
-//! - [`image_loss`]: per-pixel `l1_w * |pred - gt_eff| + ssim_w * ssim(pred, gt_eff)`,
-//!   with optional background-compositing of GT (`gt_eff = gt + (1 - gt.a) * bg`)
-//!   and optional mask multiplication (`out = out * gt.a`) folded into the kernel.
-//! - [`image_loss_eval`]: forward-only loss map for non-differentiable backends.
+//! - [`image_loss_partials`]: per-tile sums of `l1_w * |pred - gt_eff| +
+//!   ssim_w * ssim(pred, gt_eff)`, with optional background-compositing of GT
+//!   (`gt_eff = gt + (1 - gt.a) * bg`) and optional mask multiplication
+//!   (`out = out * gt.a`) folded into the kernel. The differentiable entry.
+//! - [`image_loss_eval`]: forward-only per-pixel loss map, for eval.
 //! - [`psnr_from_mse`] / [`psnr`]: PSNR in dB, with MSE floored so identical
 //!   images report 100 dB rather than infinity.
 //!

@@ -346,7 +346,7 @@ pub fn floor_scale(scale: Vec3A, f: f32) -> Vec3A {
     )
 }
 
-/// Energy compensation that goes with [`floor_scale`]: the volume ratio
+/// Energy compensation that goes with `floor_scale`: the volume ratio
 /// `Π s / s'`, which scales the opacity down so the inflated splat keeps the
 /// same total mass.
 #[cube]
