@@ -76,7 +76,7 @@ pub async fn run_headless(
 /// drive the indicatif UI on the main task.
 pub async fn run_cli_ui(
     mut process: RunningProcess,
-    #[allow(unused)] train_stream_config: TrainStreamConfig,
+    train_stream_config: TrainStreamConfig,
 ) -> Result<(), anyhow::Error> {
     // Pump the trainer stream from a dedicated Actor thread; the
     // indicatif UI loop below consumes its output on the main task.
@@ -149,9 +149,10 @@ pub async fn run_cli_ui(
             .tick_strings(&["ℹ️", "ℹ️"]),
     );
 
+    // Sized once the process emits its final config: the CLI args alone are
+    // wrong when a dataset's args.txt is merged in.
     let train_progress = {
-        let tc = &train_stream_config.train_config;
-        let bar = ProgressBar::new(tc.total_iters() as u64)
+        let bar = ProgressBar::new(0)
         .with_style(
             ProgressStyle::with_template(
                 "[{elapsed}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} ({per_sec}, {eta} remaining)",
@@ -186,6 +187,7 @@ pub async fn run_cli_ui(
 
     #[allow(unused_mut)]
     let mut duration = Duration::from_secs(0);
+    let mut eval_every = train_stream_config.process_config.eval_every;
 
     while let Some(msg) = messages.recv().await {
         let _span = trace_span!("CLI UI").entered();
@@ -213,7 +215,10 @@ pub async fn run_cli_ui(
             }
             ProcessMessage::SplatsUpdated { .. } => {}
             ProcessMessage::TrainMessage(train) => match train {
-                TrainMessage::TrainConfig { .. } => {}
+                TrainMessage::TrainConfig { config } => {
+                    train_progress.set_length(config.train_config.total_iters() as u64);
+                    eval_every = config.process_config.eval_every;
+                }
                 TrainMessage::Dataset { dataset } => {
                     let train_views = dataset.train.views.len();
                     let eval_views = dataset.eval.as_ref().map_or(0, |v| v.views.len());
@@ -225,8 +230,7 @@ pub async fn run_cli_ui(
                     ));
                     if eval_views > 0 {
                         eval_spinner.set_message(format!(
-                            "evaluating {} views every {} steps",
-                            eval_views, train_stream_config.process_config.eval_every,
+                            "evaluating {eval_views} views every {eval_every} steps",
                         ));
                     } else {
                         eval_spinner.finish_and_clear();
@@ -273,8 +277,9 @@ pub async fn run_cli_ui(
                 stats_spinner.set_message("Completed loading");
             }
             ProcessMessage::Warning { error } => {
-                log::warn!("{error}");
-                sp.println(format!("⚠️: {error}"))?;
+                // Alternate form prints the whole anyhow context chain.
+                log::warn!("{error:#}");
+                sp.println(format!("⚠️: {error:#}"))?;
             }
             #[allow(unreachable_patterns)]
             _ => {}
