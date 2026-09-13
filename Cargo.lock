@@ -1136,20 +1136,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "brush-prefix-sum"
-version = "1.0.0"
-dependencies = [
- "brush-cube",
- "burn",
- "burn-cubecl",
- "burn-wgpu",
- "bytemuck",
- "getrandom 0.4.3",
- "tokio",
- "wasm-bindgen-test",
-]
-
-[[package]]
 name = "brush-process"
 version = "1.0.0"
 dependencies = [
@@ -1186,7 +1172,7 @@ version = "1.0.0"
 dependencies = [
  "assert_approx_eq",
  "brush-cube",
- "brush-prefix-sum",
+ "brush-scan",
  "brush-sort",
  "burn",
  "burn-cubecl",
@@ -1219,6 +1205,20 @@ dependencies = [
  "rerun",
  "serde",
  "tokio",
+]
+
+[[package]]
+name = "brush-scan"
+version = "1.0.0"
+dependencies = [
+ "brush-cube",
+ "burn",
+ "burn-cubecl",
+ "burn-wgpu",
+ "bytemuck",
+ "getrandom 0.4.3",
+ "tokio",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
@@ -1256,6 +1256,7 @@ name = "brush-sort"
 version = "1.0.0"
 dependencies = [
  "brush-cube",
+ "brush-scan",
  "burn",
  "burn-cubecl",
  "burn-wgpu",

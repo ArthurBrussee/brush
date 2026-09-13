@@ -1,5 +1,5 @@
 [package]
-name = "brush-prefix-sum"
+name = "brush-scan"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true

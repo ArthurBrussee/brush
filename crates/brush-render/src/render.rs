@@ -11,7 +11,7 @@ use crate::{
     shaders,
 };
 use brush_cube::create_tensor;
-use brush_prefix_sum::prefix_sum;
+use brush_scan::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::backend::TensorMetadata;
 use burn::backend::ops::TransactionPrimitive;
