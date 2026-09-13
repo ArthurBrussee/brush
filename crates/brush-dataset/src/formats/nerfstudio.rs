@@ -170,6 +170,12 @@ async fn read_transforms_file(
             .expect("Transforms path must be a filename")
             .join(&frame.file_path);
 
+        // Blender / NeRF-synthetic transforms reference frames without an
+        // extension (`./train/r_0`); assume png before looking the file up.
+        if path.extension().is_none() {
+            path = path.with_extension("png");
+        }
+
         // Check if path exists.
         if vfs.reader_at_path(&path).await.is_err() {
             warnings.push(format!(
@@ -177,11 +183,6 @@ async fn read_transforms_file(
                 frame.file_path
             ));
             continue;
-        }
-
-        // Assume png's by default if no extension is specified.
-        if path.extension().is_none() {
-            path = path.with_extension("png");
         }
         let mask_path = find_mask_path(&vfs, &path).map(|p| p.to_path_buf());
         let image = LoadImage::new(
@@ -385,4 +386,76 @@ async fn read_dataset_inner(
         dataset,
         warnings,
     })
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::*;
+    use crate::config::LoadDatasetConfig;
+    use std::path::Path;
+
+    // Blender / NeRF-synthetic style transforms: no `w`/`h`, and frames
+    // referenced without an extension.
+    const TRANSFORMS: &str = r#"{
+        "camera_angle_x": 0.6911112070083618,
+        "frames": [
+            {
+                "file_path": "./train/r_0",
+                "rotation": 0.012566370614359171,
+                "transform_matrix": [
+                    [-0.9999021887779236, 0.004192245192825794, -0.013345719315111637, -0.05379832163453102],
+                    [-0.013988681137561798, -0.2996590733528137, 0.95394366979599, 3.845470428466797],
+                    [-4.656612873077393e-10, 0.9540371894836426, 0.29968830943107605, 1.2080823183059692],
+                    [0.0, 0.0, 0.0, 1.0]
+                ]
+            },
+            {
+                "file_path": "./train/r_1",
+                "rotation": 0.012566370614359171,
+                "transform_matrix": [
+                    [-0.9999021887779236, 0.004192245192825794, -0.013345719315111637, -0.05379832163453102],
+                    [-0.013988681137561798, -0.2996590733528137, 0.95394366979599, 3.845470428466797],
+                    [-4.656612873077393e-10, 0.9540371894836426, 0.29968830943107605, 1.2080823183059692],
+                    [0.0, 0.0, 0.0, 1.0]
+                ]
+            }
+        ]
+    }"#;
+
+    #[tokio::test]
+    async fn loads_extensionless_frames_as_png() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        tokio::fs::write(dir.join("transforms.json"), TRANSFORMS)
+            .await
+            .unwrap();
+        let train = dir.join("train");
+        tokio::fs::create_dir_all(&train).await.unwrap();
+        // Only r_0 exists on disk; r_1 must still be reported as missing.
+        image::RgbImage::from_pixel(4, 3, image::Rgb([10, 20, 30]))
+            .save(train.join("r_0.png"))
+            .unwrap();
+
+        let vfs = Arc::new(BrushVfs::from_path(dir).await.unwrap());
+        let config = LoadDatasetConfig {
+            max_frames: None,
+            max_resolution: 1920,
+            eval_split_every: None,
+            subsample_frames: None,
+            subsample_points: None,
+            alpha_mode: None,
+            invert_masks: false,
+            max_scene_batch_cache_size: 0,
+        };
+        let result = read_dataset(vfs, &config)
+            .await
+            .expect("transforms.json should be detected")
+            .expect("dataset should load");
+
+        let views = &result.dataset.train.views;
+        assert_eq!(views.len(), 1, "warnings: {:?}", result.warnings);
+        assert!(views[0].image.path().ends_with(Path::new("train/r_0.png")));
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("r_1"));
+    }
 }
