@@ -846,10 +846,12 @@ impl AppPane for ScenePanel {
                 up_axis,
                 frame,
                 total_frames,
+                scene_scale,
                 ..
             } => {
                 self.has_splats = true;
                 self.frame_count = *total_frames;
+                process.set_scene_scale(*scene_scale);
 
                 // For non-training updates (e.g., loading), always redraw
                 if !process.is_training() {

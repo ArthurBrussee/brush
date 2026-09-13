@@ -35,13 +35,6 @@ const MIN_OPACITY: f32 = 1.0 / 255.0;
 /// against a fixed target instead of chasing a moving floor.
 const MIN_SCALE_FREEZE_FRAC: f32 = 0.9;
 
-/// Mip-Splatting 3D-filter strength (the paper's `s`): each splat gets a frozen
-/// per-splat world-space scale floor `f = sqrt(MIN_SCALE_FACTOR) · pixel size at
-/// the nearest observing camera`, i.e. a ~0.32px std-dev floor. Folded into
-/// scales/opacity at render (and baked at export), never optimized. Fundamental
-/// to well-behaved splats, so not a tunable.
-const MIN_SCALE_FACTOR: f32 = 0.1;
-
 /// The three per-parameter Adam states of a [`Splats`] module, owned directly
 /// so the trainer can update LR scaling every step and surgically edit the
 /// momentum tensors during refine — all GPU-side, no record round-trips.
@@ -148,16 +141,24 @@ impl SplatTrainer {
         bounds: BoundingBox,
         seed: u64,
     ) -> Self {
-        let decay =
-            (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_train_iters as f64);
+        // The per-step decay reaching lr_mean_end at the last iteration. With
+        // one iteration or fewer there is nothing to decay over (and the
+        // exponent 1/iters would be undefined), so hold the LR.
+        let decay = if config.total_train_iters > 1 {
+            (config.lr_mean_end / config.lr_mean).powf(1.0 / config.total_train_iters as f64)
+        } else {
+            1.0
+        };
 
         let ssim_enabled = config.ssim_weight > 0.0;
 
         // Growth is gated on the global iter. LOD phases run past
         // total_train_iters but their refines should never grow — clamp
-        // here so growth_stop is never effectively past end-of-training.
+        // here so growth_stop is never effectively past end-of-training,
+        // and growth_start never past growth_stop.
         let mut config = config.clone();
         config.growth_stop_iter = config.growth_stop_iter.min(config.total_train_iters);
+        config.growth_start_iter = config.growth_start_iter.min(config.growth_stop_iter);
 
         #[cfg(not(target_family = "wasm"))]
         let lpips = (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device));
@@ -176,6 +177,11 @@ impl SplatTrainer {
             #[cfg(not(target_family = "wasm"))]
             lpips,
         }
+    }
+
+    /// Percentile bounding box of the splats, refreshed on each refine.
+    pub fn bounds(&self) -> BoundingBox {
+        self.bounds
     }
 
     /// Supply per-train-view (world center, focal-px at native res) to enable
@@ -454,44 +460,6 @@ impl SplatTrainer {
             .take()
             .expect("Can only refine if refine stats are initialized");
 
-        // Track how many splats are visually large (the "big-low-α" failure
-        // mode). `max_screen_size` is the larger 2D ellipse extent as a
-        // fraction of the image dim; area is approximated by its square.
-        let ss_data = refiner
-            .max_screen_size
-            .clone()
-            .into_data_async()
-            .await
-            .expect("Failed to read screen size")
-            .try_into_vec::<f32>()
-            .expect("Failed to read screen size vec");
-        if !ss_data.is_empty() {
-            let mut sorted: Vec<f32> = ss_data.iter().copied().filter(|v| v.is_finite()).collect();
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let n = sorted.len();
-            let pct = |p: f32| sorted[((p * (n - 1) as f32) as usize).min(n - 1)];
-            let n_total = n as f64;
-            let n_gt_025 = ss_data.iter().filter(|v| **v > 0.25).count();
-            let n_gt_010 = ss_data.iter().filter(|v| **v > 0.10).count();
-            let n_gt_005 = ss_data.iter().filter(|v| **v > 0.05).count();
-            let n_area_gt_005 = ss_data.iter().filter(|v| (*v * *v) > 0.05).count();
-            let n_area_gt_010 = ss_data.iter().filter(|v| (*v * *v) > 0.10).count();
-            log::info!(
-                "screen_size iter={} n={} max_dim p50={:.4} p95={:.4} p99={:.4} max={:.4} frac>0.05={:.4} frac>0.10={:.4} frac>0.25={:.4} frac_area>0.05={:.4} frac_area>0.10={:.4}",
-                iter,
-                n,
-                pct(0.5),
-                pct(0.95),
-                pct(0.99),
-                pct(1.0),
-                n_gt_005 as f64 / n_total,
-                n_gt_010 as f64 / n_total,
-                n_gt_025 as f64 / n_total,
-                n_area_gt_005 as f64 / n_total,
-                n_area_gt_010 as f64 / n_total,
-            );
-        }
-
         let max_allowed_bounds = self.bounds.extent.max_element() * 100.0;
 
         // If not refining, update splat to step with gradients applied.
@@ -597,7 +565,7 @@ impl SplatTrainer {
         let num_split_oversized = (split_inds.len() - pre_oversized) as u32;
 
         let pre_high_grad = split_inds.len();
-        if iter < self.config.growth_stop_iter {
+        if iter >= self.config.growth_start_iter && iter < self.config.growth_stop_iter {
             let above_threshold = refiner.above_threshold(self.config.growth_grad_threshold);
 
             let threshold_count = above_threshold
@@ -655,7 +623,9 @@ impl SplatTrainer {
             // `splats` is already on the inner backend here, so `means()` is too.
             // No-op when there are no view cameras (e.g. unit tests).
             let means = splats.means();
-            if let Some(f) = compute_min_scale(&means, &self.view_cams, MIN_SCALE_FACTOR) {
+            if let Some(f) =
+                compute_min_scale(&means, &self.view_cams, self.config.min_scale_factor)
+            {
                 splats = splats.with_min_scale(f);
             }
         }
@@ -797,7 +767,7 @@ impl SplatTrainer {
             );
         }
 
-        let train_t = (iter as f32 / self.config.total_train_iters as f32).clamp(0.0, 1.0);
+        let train_t = (iter as f32 / self.config.total_train_iters.max(1) as f32).clamp(0.0, 1.0);
         let t_shrink_strength = 1.0 - train_t;
         let minus_opac = self.config.opac_decay * t_shrink_strength;
 
