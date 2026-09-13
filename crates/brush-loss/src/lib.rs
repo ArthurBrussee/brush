@@ -16,6 +16,7 @@
 //! Backward recomputes SSIM partials inline so no per-pixel state survives
 //! across the autograd tape.
 
+use brush_render::burn_glue::register_custom;
 use burn::backend::autodiff::checkpoint::strategy::CheckpointStrategy;
 use burn::backend::{Autodiff, AutodiffBackend};
 use burn::{
@@ -30,14 +31,8 @@ use burn::{
     },
     tensor::{DType, Int, Shape, Tensor},
 };
-use burn_cubecl::{
-    CubeBackend, fusion::FusionCubeRuntime, kernel::into_contiguous, tensor::CubeTensor,
-};
-use burn_fusion::{
-    ExecutionError, Fusion, FusionHandle,
-    stream::{Operation, StreamId},
-};
-use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
+use burn_cubecl::{CubeBackend, kernel::into_contiguous, tensor::CubeTensor};
+use burn_fusion::Fusion;
 use glam::Vec3;
 
 mod kernels {
@@ -740,54 +735,6 @@ fn alloc_zeros(template: &CubeTensor) -> CubeTensor {
     )
 }
 
-type FusionHandles = HandleContainer<FusionHandle<FusionCubeRuntime>>;
-type FusionTensor = burn_fusion::FusionTensor<FusionCubeRuntime>;
-
-struct ClosureOp<F> {
-    desc: CustomOpIr,
-    op: F,
-}
-
-impl<F> std::fmt::Debug for ClosureOp<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ClosureOp({:?})", self.desc)
-    }
-}
-
-impl<F> Operation<FusionCubeRuntime> for ClosureOp<F>
-where
-    F: Fn(&CustomOpIr, &mut FusionHandles) + Send + Sync + 'static,
-{
-    fn execute(&self, h: &mut FusionHandles) -> Result<(), ExecutionError> {
-        (self.op)(&self.desc, h);
-        Ok(())
-    }
-}
-
-fn register_custom<const N: usize, F>(
-    name: &'static str,
-    inputs: [FusionTensor; N],
-    out_shape: Shape,
-    out_dtype: DType,
-    op: F,
-) -> FusionTensor
-where
-    F: Fn(&CustomOpIr, &mut FusionHandles) + Send + Sync + 'static,
-{
-    let client = inputs[0].client.clone();
-    let out = TensorIr::uninit(client.create_empty_handle(), out_shape, out_dtype);
-    let stream = StreamId::current();
-    let desc = CustomOpIr::new(name, &inputs.map(|t| t.into_ir()), &[out]);
-    let wrapped = ClosureOp {
-        desc: desc.clone(),
-        op,
-    };
-    let [out] = client
-        .register(stream, OperationIr::Custom(desc), wrapped)
-        .outputs();
-    out
-}
-
 fn cube_count_3d(c: u32, h: u32, w: u32) -> burn::cubecl::prelude::CubeCount {
     use burn::cubecl::prelude::CubeCount;
     CubeCount::Static(
@@ -963,11 +910,12 @@ impl LossOps for Fusion<CubeBackend> {
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
         let shape = pred.shape();
-        register_custom(
+        let client = pred.client.clone();
+        let [map] = register_custom(
+            &client,
             "image_loss",
             [pred, gt_packed],
-            shape,
-            DType::F32,
+            [(shape, DType::F32)],
             move |desc, h| {
                 let ([pred, gt_packed], [map]) = desc.as_fixed();
                 let out = <CubeBackend as LossOps>::image_loss(
@@ -977,7 +925,8 @@ impl LossOps for Fusion<CubeBackend> {
                 );
                 h.register_float_tensor::<CubeBackend>(&map.id, out);
             },
-        )
+        );
+        map
     }
 
     fn image_loss_backward(
@@ -987,11 +936,12 @@ impl LossOps for Fusion<CubeBackend> {
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
         let shape = pred.shape();
-        register_custom(
+        let client = pred.client.clone();
+        let [dl_dpred] = register_custom(
+            &client,
             "image_loss_backward",
             [pred, gt_packed, dl_dmap],
-            shape,
-            DType::F32,
+            [(shape, DType::F32)],
             move |desc, h| {
                 let ([pred, gt_packed, dl_dmap], [dl_dpred]) = desc.as_fixed();
                 let out = <CubeBackend as LossOps>::image_loss_backward(
@@ -1002,16 +952,18 @@ impl LossOps for Fusion<CubeBackend> {
                 );
                 h.register_float_tensor::<CubeBackend>(&dl_dpred.id, out);
             },
-        )
+        );
+        dl_dpred
     }
 
     fn unpack_gt_rgb(gt_packed: IntTensor<Self>, composite_bg: Option<Vec3>) -> FloatTensor<Self> {
         let [gh, gw] = gt_packed.shape().dims();
-        register_custom(
+        let client = gt_packed.client.clone();
+        let [rgb] = register_custom(
+            &client,
             "unpack_gt_rgb",
             [gt_packed],
-            Shape::new([gh, gw, 3]),
-            DType::F32,
+            [(Shape::new([gh, gw, 3]), DType::F32)],
             move |desc, h| {
                 let ([gt_packed], [out]) = desc.as_fixed();
                 let res = <CubeBackend as LossOps>::unpack_gt_rgb(
@@ -1020,7 +972,8 @@ impl LossOps for Fusion<CubeBackend> {
                 );
                 h.register_float_tensor::<CubeBackend>(&out.id, res);
             },
-        )
+        );
+        rgb
     }
 }
 

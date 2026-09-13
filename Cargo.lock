@@ -1129,7 +1129,6 @@ dependencies = [
  "burn",
  "burn-cubecl",
  "burn-fusion",
- "burn-ir",
  "getrandom 0.4.3",
  "glam",
  "tokio",
