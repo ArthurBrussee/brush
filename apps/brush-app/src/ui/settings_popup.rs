@@ -319,6 +319,16 @@ fn draw_dataset(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: bool) {
         enabled,
     );
 
+    ui.label("Dataset units per metre");
+    slider(
+        ui,
+        &mut args.load_config.units_per_meter,
+        0.001..=1000.0,
+        "",
+        true,
+        enabled,
+    );
+
     let mut limit_frames = args.load_config.max_frames.is_some();
     ui.add_enabled(
         enabled,

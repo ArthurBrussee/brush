@@ -91,8 +91,13 @@ impl TrainingPanel {
     }
 }
 
-async fn export(splat: Splats, up_axis: Option<glam::Vec3>) -> Result<(), Error> {
-    let data = brush_serde::splat_to_ply(splat, up_axis).await?;
+async fn export(
+    splat: Splats,
+    up_axis: Option<glam::Vec3>,
+    units_per_meter: f32,
+) -> Result<(), Error> {
+    // Training runs in metres; write the file back in the dataset's units.
+    let data = brush_serde::splat_to_ply(splat.scaled(units_per_meter), up_axis).await?;
     rrfd::save_file("export.ply", data).await?;
     Ok(())
 }
@@ -294,10 +299,14 @@ impl AppPane for TrainingPanel {
                             return;
                         };
                         let up_axis = process.up_axis();
+                        let units_per_meter = self
+                            .train_config
+                            .as_ref()
+                            .map_or(1.0, |c| c.load_config.units_per_meter);
 
                         self.export_actor
                             .run(move || async move {
-                                if let Err(e) = export(splats, up_axis).await {
+                                if let Err(e) = export(splats, up_axis, units_per_meter).await {
                                     let _ = sender.send(e);
                                     ctx.request_repaint();
                                 }

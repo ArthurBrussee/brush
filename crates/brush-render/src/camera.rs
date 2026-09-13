@@ -72,6 +72,15 @@ impl Camera {
         }
     }
 
+    /// The same pose and field of view with the lens model swapped for an
+    /// ideal pinhole, e.g. to render a preview without distortion.
+    pub fn with_pinhole(&self) -> Self {
+        Self {
+            camera_model: Pinhole,
+            ..*self
+        }
+    }
+
     pub fn local_to_world(&self) -> Affine3A {
         Affine3A::from_rotation_translation(self.rotation, self.position)
     }
@@ -545,6 +554,27 @@ mod tests {
                 f32::MAX
             );
         }
+    }
+
+    #[test]
+    fn with_pinhole_only_swaps_the_model() {
+        let cam = Camera::new(
+            glam::vec3(1.0, 2.0, 3.0),
+            glam::Quat::from_rotation_y(0.3),
+            1.2,
+            0.9,
+            glam::vec2(0.4, 0.6),
+            KannalaBrandt4(ULTRAWIDE),
+        );
+        let pin = cam.with_pinhole();
+        assert!(matches!(pin.camera_model, Pinhole));
+        assert_eq!(
+            pin,
+            Camera {
+                camera_model: Pinhole,
+                ..cam
+            }
+        );
     }
 
     #[test]
