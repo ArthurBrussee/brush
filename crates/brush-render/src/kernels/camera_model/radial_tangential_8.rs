@@ -89,8 +89,14 @@ pub fn calculate_project_jacobian_rt8(
     let inv_z = 1.0f32 / z;
     let inv_z2 = inv_z * inv_z;
 
-    let x_n = clamp(x * inv_z, limits.lim_neg_x, limits.lim_pos_x);
-    let y_n = clamp(y * inv_z, limits.lim_neg_y, limits.lim_pos_y);
+    let x_b = clamp(x * inv_z, limits.lim_neg_x, limits.lim_pos_x);
+    let y_b = clamp(y * inv_z, limits.lim_neg_y, limits.lim_pos_y);
+    // The box corner sits past the image corner's radius, where the rational
+    // polynomial is uncalibrated and blows up; cap the radius too.
+    let r_b = f32::sqrt(x_b * x_b + y_b * y_b);
+    let r_scale = select(r_b > limits.lim_r, limits.lim_r / r_b, 1.0f32);
+    let x_n = x_b * r_scale;
+    let y_n = y_b * r_scale;
     let xc = x_n * z;
     let yc = y_n * z;
 
@@ -167,6 +173,7 @@ pub fn calculate_projection_vjp_rt8(
         lim_pos_y,
         lim_neg_x,
         lim_neg_y,
+        lim_r,
     } = u.jacobian_clamp_limits;
 
     let mx = mean_c.x();
@@ -176,11 +183,20 @@ pub fn calculate_projection_vjp_rt8(
 
     let mx_rz_raw = mx * inv_z;
     let my_rz_raw = my * inv_z;
-    let mx_rz = clamp(mx_rz_raw, lim_neg_x, lim_pos_x);
-    let my_rz = clamp(my_rz_raw, lim_neg_y, lim_pos_y);
+    let mx_rz_box = clamp(mx_rz_raw, lim_neg_x, lim_pos_x);
+    let my_rz_box = clamp(my_rz_raw, lim_neg_y, lim_pos_y);
 
-    let in_x = mx_rz_raw <= lim_pos_x && mx_rz_raw >= lim_neg_x;
-    let in_y = my_rz_raw <= lim_pos_y && my_rz_raw >= lim_neg_y;
+    // Mirror the forward radial cap. A capped splat is treated like a clamped
+    // one: the surrogate coordinate is a constant, with no gradient flowing
+    // through the raw coordinate.
+    let r_box = f32::sqrt(mx_rz_box * mx_rz_box + my_rz_box * my_rz_box);
+    let capped = r_box > lim_r;
+    let r_scale = select(capped, lim_r / r_box, 1.0f32);
+    let mx_rz = mx_rz_box * r_scale;
+    let my_rz = my_rz_box * r_scale;
+
+    let in_x = mx_rz_raw <= lim_pos_x && mx_rz_raw >= lim_neg_x && !capped;
+    let in_y = my_rz_raw <= lim_pos_y && my_rz_raw >= lim_neg_y && !capped;
 
     let xc = mx_rz * mz;
     let yc = my_rz * mz;
