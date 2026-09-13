@@ -15,7 +15,7 @@ use brush_render::bwd::render_splats;
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
 use burn::{
-    module::{AutodiffModule, Param},
+    module::Param,
     tensor::{
         Bool, Device, Distribution, Gradients, IndexingUpdateOp::Assign, Int, Tensor, TensorData,
         activation::sigmoid, s,
@@ -224,7 +224,7 @@ impl SplatTrainer {
 
         let median_scale = self.bounds.median_size();
 
-        let (mut grads, visible, num_visible, loss_inner) = {
+        let (mut grads, visible, opacities, num_visible, loss_inner) = {
             // The splats already carry their 3D-filter floor (set at refine);
             // the render path folds it in. Optimizer/refine work on raw params.
             let render_input = splats.clone();
@@ -236,6 +236,7 @@ impl SplatTrainer {
             let refine_weight_holder = diff_out.refine_weight_holder;
             let visible = diff_out.visible;
             let max_radius = diff_out.max_radius;
+            let opacities = diff_out.opacities;
 
             // RGB loss is `(1 - w) * L1 + (-w) * SSIM` per pixel. Bg
             // compositing always runs in the kernel; for synthesised opaque
@@ -311,7 +312,7 @@ impl SplatTrainer {
                 record.gather_stats(refine_weight, visible.clone(), max_radius);
             });
 
-            (grads, visible, diff_out.num_visible, loss_inner)
+            (grads, visible, opacities, diff_out.num_visible, loss_inner)
         };
 
         // The optimizer strips autodiff before stepping, so optimizer state
@@ -396,11 +397,10 @@ impl SplatTrainer {
 
         // Add random noise. Only do this in the growth phase, otherwise
         // let the splats settle in without noise, not much point in exploring regions anymore.
-        // The noise gate is non-differentiable bookkeeping. Read opacity from
-        // the valid (inner) splats so the sigmoid never lands on the autodiff
-        // graph, and `visible` is already inner — so nothing here builds a
-        // node that won't get a backward pass.
-        let inv_opac: Tensor<1> = 1.0 - splats.valid().opacities();
+        // The noise gate is non-differentiable bookkeeping. The forward
+        // already computed every splat's floored opacity, on the inner device,
+        // so nothing here builds a node that won't get a backward pass.
+        let inv_opac: Tensor<1> = 1.0 - opacities;
         let noise_weight = inv_opac.powi_scalar(150.0).clamp(0.0, 1.0) * visible;
         let noise_weight = noise_weight.unsqueeze_dim(1);
         // `samples` is pure data — keep it on the inner device so it can

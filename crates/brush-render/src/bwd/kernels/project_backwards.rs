@@ -149,7 +149,20 @@ pub fn project_backwards_kernel(
         || v_color_b != 0.0f32
         || v_alpha_in != 0.0f32
         || v_refine_in != 0.0f32;
+
+    // Outputs are compact, one row per visible splat, and uninitialised, so a
+    // non-contributing splat writes its zero row instead of skipping.
+    let vbase = (compact_gid * 10u32) as usize;
+    let coeff_out_base = compact_gid * comptime![num_sh_coeffs(sh_degree) * 3u32];
     if !any_grad {
+        for k in 0u32..10u32 {
+            v_transforms[vbase + k as usize] = 0.0f32;
+        }
+        for k in 0u32..comptime![num_sh_coeffs(sh_degree) * 3u32] {
+            v_coeffs[(coeff_out_base + k) as usize] = 0.0f32;
+        }
+        v_raw_opac[compact_gid as usize] = 0.0f32;
+        v_refine_weight[compact_gid as usize] = 0.0f32;
         terminate!();
     }
 
@@ -192,7 +205,7 @@ pub fn project_backwards_kernel(
     let v = u_world.scale(1.0f32 / u_len);
     let coeff_base = global_gid * comptime![num_sh_coeffs(sh_degree) * 3u32];
     let v_color = Vec3A::new(v_color_r, v_color_g, v_color_b);
-    sh_coeffs_to_color_vjp(v_coeffs, coeff_base, sh_degree, v, v_color);
+    sh_coeffs_to_color_vjp(v_coeffs, coeff_out_base, sh_degree, v, v_color);
     let v_v_sh = sh_color_viewdir_vjp(sh_coeffs, coeff_base, sh_degree, v, v_color);
     let v_dot_vv = v.dot(v_v_sh);
     let v_mean_from_sh = v_v_sh.sub(v.scale(v_dot_vv)).scale(1.0f32 / u_len);
@@ -206,12 +219,12 @@ pub fn project_backwards_kernel(
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     // Gradient w.r.t. the (compensated, clamped) opacity, zero if clamped.
     let v_opac_base = select(opac_open, filter_comp * v_alpha_in, 0.0f32);
-    v_raw_opac[global_gid as usize] = v_opac_base * coef * opac_sig * (1.0f32 - opac_sig);
+    v_raw_opac[compact_gid as usize] = v_opac_base * coef * opac_sig * (1.0f32 - opac_sig);
 
     // Make sure to keep refine weight >= 0 and finite. Helps with super large degenerate splats
     // that sum up their refine weight to some massive value.
     let refine_clean = select(is_finite_f32(v_refine_in), v_refine_in, 0.0f32);
-    v_refine_weight[global_gid as usize] = clamp(refine_clean, 0.0f32, 1.0e32f32);
+    v_refine_weight[compact_gid as usize] = clamp(refine_clean, 0.0f32, 1.0e32f32);
 
     let conic_inv = cov.inverse();
     let v_inv = Sym2 {
@@ -273,8 +286,7 @@ pub fn project_backwards_kernel(
     let q_grad = quat_to_mat_vjp(quat, v_m.mul_diag(scale));
     let v_q = apply_normalize_vjp(quat_unorm, q_grad);
 
-    // Write gradients to dense v_transforms.
-    let vbase = (global_gid * 10u32) as usize;
+    // Write gradients to the compact row.
     v_transforms[vbase] = v_mean.x();
     v_transforms[vbase + 1] = v_mean.y();
     v_transforms[vbase + 2] = v_mean.z();

@@ -102,6 +102,8 @@ impl SplatOps for CubeBackend {
 
         let (
             global_from_presort_gid,
+            compact_from_global,
+            opacities,
             depths,
             intersect_counts,
             max_radius,
@@ -118,6 +120,9 @@ impl SplatOps for CubeBackend {
             let max_radius = Self::float_zeros([total_splats].into(), &device, FloatDType::F32);
 
             let global_from_presort_gid = create_tensor([total_splats], &device, DType::U32);
+            // Written for every splat by the kernel, so no zero-fill.
+            let compact_from_global = create_tensor([total_splats], &device, DType::U32);
+            let opacities = create_tensor([total_splats], &device, DType::F32);
             let depths = create_tensor([total_splats], &device, DType::F32);
 
             let uniforms = project_uniforms.to_launch_object();
@@ -134,6 +139,8 @@ impl SplatOps for CubeBackend {
                 raw_opacities.clone().into_tensor_arg(),
                 min_scale.clone().into_tensor_arg(),
                 global_from_presort_gid.clone().into_tensor_arg(),
+                compact_from_global.clone().into_tensor_arg(),
+                opacities.clone().into_tensor_arg(),
                 depths.clone().into_tensor_arg(),
                 num_visible_buf.clone().into_tensor_arg(),
                 intersect_counts.clone().into_tensor_arg(),
@@ -146,6 +153,8 @@ impl SplatOps for CubeBackend {
             );
             (
                 global_from_presort_gid,
+                compact_from_global,
+                opacities,
                 depths,
                 intersect_counts,
                 max_radius,
@@ -216,6 +225,7 @@ impl SplatOps for CubeBackend {
                 raw_opacities.into_tensor_arg(),
                 min_scale.into_tensor_arg(),
                 global_from_compact_gid.clone().into_tensor_arg(),
+                compact_from_global.clone().into_tensor_arg(),
                 projected_splats.clone().into_tensor_arg(),
                 uniforms,
                 mip_splat,
@@ -330,6 +340,7 @@ impl SplatOps for CubeBackend {
                 num_intersections,
                 visible,
                 max_radius,
+                opacities,
                 tile_offsets,
                 img_size,
             },
@@ -337,6 +348,7 @@ impl SplatOps for CubeBackend {
             compact_gid_from_isect,
             project_uniforms,
             global_from_compact_gid,
+            compact_from_global,
         }
     }
 }

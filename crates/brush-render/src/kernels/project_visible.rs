@@ -26,6 +26,7 @@ pub fn project_visible_kernel(
     raw_opacities: &Tensor<f32>,
     min_scale: &Tensor<f32>,
     global_from_compact_gid: &Tensor<u32>,
+    compact_from_global: &mut Tensor<u32>,
     projected: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
@@ -39,6 +40,9 @@ pub fn project_visible_kernel(
     }
 
     let global_gid = global_from_compact_gid[compact_gid as usize];
+    // Inverse map so the backward's compact gradients can be gathered per
+    // global splat.
+    compact_from_global[global_gid as usize] = compact_gid;
 
     // means(3) + quats(4) + log_scales(3)
     let base = (global_gid * 10u32) as usize;

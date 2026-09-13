@@ -68,7 +68,9 @@ pub(crate) trait SplatBwdOps: Backend {
     ) -> RasterizeGrads<Self>;
 
     /// Backward pass for projection.
-    /// Reads sparse `v_combined` [`num_visible`, 9], writes dense outputs (scatter in kernel).
+    /// Reads sparse `v_combined` [`num_visible`, 10] and writes compact
+    /// outputs, one row per visible splat in `compact_gid` order; the caller
+    /// gathers them per global splat through `compact_from_global`.
     /// `sh_coeffs` is the original (input) SH coefficient tensor — needed
     /// so the kernel can backprop `v_color` through the SH basis to the
     /// view direction and then to the mean.
@@ -96,6 +98,8 @@ struct GaussianBackwardState<B: Backend> {
     projected_splats: FloatTensor<B>,
     project_uniforms: ProjectUniforms,
     global_from_compact_gid: IntTensor<B>,
+    compact_from_global: IntTensor<B>,
+    visible: FloatTensor<B>,
 
     out_img: FloatTensor<B>,
     compact_gid_from_isect: IntTensor<B>,
@@ -158,21 +162,40 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
             rasterize_grads.v_combined,
         );
 
+        // The kernels write compact gradients (one row per visible splat).
+        // Expand them to the dense param shape lazily: a gather through the
+        // inverse index, masked to zero for splats that didn't contribute.
+        // These are unexecuted stream ops, so burn's fusion folds the gather
+        // and mask into the optimizer's own kernel; nothing dense is
+        // materialised here.
+        let num_points = state.visible.shape().num_elements();
+        let visible = state.visible;
+        let inv = state.compact_from_global;
+        let dense = |compact: FloatTensor<B>, trailing: &[usize]| {
+            let gathered = B::float_select(compact, 0, inv.clone());
+            let mut mask_shape = vec![num_points];
+            mask_shape.extend(trailing.iter().map(|_| 1));
+            // Broadcasting multiply: an explicit `expand` is one more op the
+            // fuser won't absorb, a broadcast it will.
+            let mask = B::float_reshape(visible.clone(), Shape::from(mask_shape));
+            B::float_mul(gathered, mask)
+        };
+
         if let Some(node) = transforms_parent {
-            grads.register::<B>(node.id, splat_grads.v_transforms);
+            grads.register::<B>(node.id, dense(splat_grads.v_transforms, &[10]));
         }
 
-        // v_refine_weight is already dense [num_points], written by the kernel.
         if let Some(node) = refine_weight {
-            grads.register::<B>(node.id, splat_grads.v_refine_weight);
+            grads.register::<B>(node.id, dense(splat_grads.v_refine_weight, &[]));
         }
 
         if let Some(node) = coeffs_parent {
-            grads.register::<B>(node.id, splat_grads.v_coeffs);
+            let coeffs = sh_coeffs_for_degree(state.project_uniforms.sh_degree) as usize;
+            grads.register::<B>(node.id, dense(splat_grads.v_coeffs, &[coeffs, 3]));
         }
 
         if let Some(node) = raw_opacity_parent {
-            grads.register::<B>(node.id, splat_grads.v_raw_opac);
+            grads.register::<B>(node.id, dense(splat_grads.v_raw_opac, &[]));
         }
     }
 }
@@ -185,6 +208,9 @@ pub struct SplatOutputDiff {
     pub visible: Tensor<1>,
     /// Per-splat max screen radius aux — on the **inner** backend (no gradients).
     pub max_radius: Tensor<1>,
+    /// Per-splat opacity with the scale floor folded in — on the **inner**
+    /// backend (no gradients). Zero for culled splats.
+    pub opacities: Tensor<1>,
     pub refine_weight_holder: Tensor<1>,
 }
 
@@ -266,6 +292,7 @@ pub async fn render_splats_with_pass(
         num_visible: output.aux.num_visible,
         visible: Tensor::from_dispatch(output.aux.visible).without_autodiff(),
         max_radius: Tensor::from_dispatch(output.aux.max_radius).without_autodiff(),
+        opacities: Tensor::from_dispatch(output.aux.opacities).without_autodiff(),
         refine_weight_holder,
     }
 }
@@ -330,6 +357,8 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
                     render_mode,
                     pass,
                     global_from_compact_gid: output.global_from_compact_gid.clone(),
+                    compact_from_global: output.compact_from_global.clone(),
+                    visible: output.aux.visible.clone(),
                     background,
                     img_size,
                 };
@@ -352,6 +381,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
                 num_intersections: output.aux.num_intersections,
                 visible: lift(output.aux.visible),
                 max_radius: lift(output.aux.max_radius),
+                opacities: lift(output.aux.opacities),
                 tile_offsets: output.aux.tile_offsets,
                 img_size: output.aux.img_size,
             },
@@ -359,6 +389,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
             compact_gid_from_isect: output.compact_gid_from_isect,
             project_uniforms: output.project_uniforms,
             global_from_compact_gid: output.global_from_compact_gid,
+            compact_from_global: output.compact_from_global,
         }
     }
 }
@@ -428,7 +459,7 @@ impl SplatBwdOps for Fusion<CubeBackend> {
         v_combined: FloatTensor<Self>,
     ) -> SplatGrads<Self> {
         let client = transforms.client.clone();
-        let num_points = transforms.shape[0];
+        let num_visible = (project_uniforms.num_visible as usize).max(1);
         let coeffs = sh_coeffs_for_degree(project_uniforms.sh_degree) as usize;
         let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = register_custom(
             &client,
@@ -442,10 +473,10 @@ impl SplatBwdOps for Fusion<CubeBackend> {
                 v_combined,
             ],
             [
-                (Shape::new([num_points, 10]), DType::F32),
-                (Shape::new([num_points, coeffs, 3]), DType::F32),
-                (Shape::new([num_points]), DType::F32),
-                (Shape::new([num_points]), DType::F32),
+                (Shape::new([num_visible, 10]), DType::F32),
+                (Shape::new([num_visible, coeffs, 3]), DType::F32),
+                (Shape::new([num_visible]), DType::F32),
+                (Shape::new([num_visible]), DType::F32),
             ],
             move |desc, h| {
                 let (

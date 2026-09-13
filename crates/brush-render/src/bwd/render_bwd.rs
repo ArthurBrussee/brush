@@ -1,6 +1,7 @@
 use crate::gaussian_splats::SplatRenderMode;
 use crate::kernels::types::RasterizeUniformsLaunch;
 use crate::sh::sh_coeffs_for_degree;
+use brush_cube::create_tensor;
 use burn::backend::TensorMetadata;
 use burn::backend::ops::FloatTensorOps;
 use burn::backend::tensor::{FloatTensor, IntTensor};
@@ -9,7 +10,7 @@ use burn::cubecl::CubeDim;
 use burn::cubecl::calculate_cube_count_elemwise;
 use burn::cubecl::features::AtomicUsage;
 use burn::cubecl::ir::{ElemType, FloatKind, Type};
-use burn::tensor::FloatDType;
+use burn::tensor::{DType, FloatDType};
 use burn_cubecl::CubeBackend;
 use burn_cubecl::kernel::into_contiguous;
 use glam::{Vec3, uvec2};
@@ -123,24 +124,18 @@ impl SplatBwdOps for CubeBackend {
         let min_scale = into_contiguous(min_scale);
         let has_min_scale = min_scale.shape()[0] == num_points;
 
-        // Dense outputs, the kernel scatters compact→global internally.
-        let v_transforms = Self::float_zeros([num_points, 10].into(), &device, FloatDType::F32);
-        let v_coeffs = Self::float_zeros(
-            [
-                num_points,
-                sh_coeffs_for_degree(project_uniforms.sh_degree) as usize,
-                3,
-            ]
-            .into(),
-            &device,
-            FloatDType::F32,
-        );
-        let v_raw_opac = Self::float_zeros([num_points].into(), &device, FloatDType::F32);
-        let v_refine_weight = Self::float_zeros([num_points].into(), &device, FloatDType::F32);
-
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
         let num_visible = project_uniforms.num_visible;
+
+        // Compact outputs, one row per visible splat. The kernel writes every
+        // row (zeros for splats that didn't contribute), so no zero-fill.
+        let nv = (num_visible as usize).max(1);
+        let coeffs = sh_coeffs_for_degree(project_uniforms.sh_degree) as usize;
+        let v_transforms = create_tensor([nv, 10], &device, DType::F32);
+        let v_coeffs = create_tensor([nv, coeffs, 3], &device, DType::F32);
+        let v_raw_opac = create_tensor([nv], &device, DType::F32);
+        let v_refine_weight = create_tensor([nv], &device, DType::F32);
 
         let uniforms = project_uniforms.to_launch_object();
 

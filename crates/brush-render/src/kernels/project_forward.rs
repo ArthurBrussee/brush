@@ -25,6 +25,8 @@ pub fn project_forward_kernel(
     raw_opacities: &Tensor<f32>,
     min_scale: &Tensor<f32>,
     global_from_compact_gid: &mut Tensor<u32>,
+    compact_from_global: &mut Tensor<u32>,
+    opacities: &mut Tensor<f32>,
     depths: &mut Tensor<f32>,
     num_visible: &mut Tensor<Atomic<u32>>,
     intersect_counts: &mut Tensor<u32>,
@@ -39,6 +41,11 @@ pub fn project_forward_kernel(
     if global_gid >= u.total_splats {
         terminate!();
     }
+
+    // Defaults for culled splats: an in-range (masked) compact index and a
+    // zero opacity. Visible splats overwrite both further down.
+    compact_from_global[global_gid as usize] = 0u32;
+    opacities[global_gid as usize] = 0.0f32;
 
     // means(3) + quats(4) + log_scales(3)
     let base = (global_gid * 10u32) as usize;
@@ -95,6 +102,8 @@ pub fn project_forward_kernel(
         );
         scale = floored;
     }
+    // Per-splat opacity with the floor folded in, for the trainer's noise gate.
+    opacities[global_gid as usize] = opac_base;
 
     let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);

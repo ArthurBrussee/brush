@@ -467,6 +467,7 @@ pub async fn render_splats(
         num_intersections,
         visible: Tensor::from_dispatch(output.aux.visible),
         max_radius: Tensor::from_dispatch(output.aux.max_radius),
+        opacities: Tensor::from_dispatch(output.aux.opacities),
         tile_offsets: Tensor::from_dispatch(output.aux.tile_offsets),
         img_size,
     };

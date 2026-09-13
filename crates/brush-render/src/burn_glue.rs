@@ -261,12 +261,14 @@ impl SplatOps for Fusion<CubeBackend> {
             compact_gid_from_isect,
             project_uniforms,
             global_from_compact_gid,
+            compact_from_global,
         } = out;
         let RenderAuxInner {
             num_visible,
             num_intersections,
             visible,
             max_radius,
+            opacities,
             tile_offsets,
             img_size,
         } = aux;
@@ -275,10 +277,12 @@ impl SplatOps for Fusion<CubeBackend> {
             out_img,
             visible,
             max_radius,
+            opacities,
             projected_splats,
             tile_offsets,
             compact_gid_from_isect,
             global_from_compact_gid,
+            compact_from_global,
         ] = register_custom(
             &client,
             "render_bind",
@@ -287,21 +291,37 @@ impl SplatOps for Fusion<CubeBackend> {
                 (out_img.shape(), DType::F32),
                 (visible.shape(), DType::F32),
                 (max_radius.shape(), DType::F32),
+                (opacities.shape(), DType::F32),
                 (projected_splats.shape(), DType::F32),
                 (tile_offsets.shape(), DType::U32),
                 (compact_gid_from_isect.shape(), DType::U32),
                 (global_from_compact_gid.shape(), DType::U32),
+                (compact_from_global.shape(), DType::U32),
             ],
             move |desc, h| {
-                let (_, [o_img, o_vis, o_rad, o_proj, o_tiles, o_compact, o_global]) =
-                    desc.as_fixed::<0, 7>();
+                let (
+                    _,
+                    [
+                        o_img,
+                        o_vis,
+                        o_rad,
+                        o_opac,
+                        o_proj,
+                        o_tiles,
+                        o_compact,
+                        o_global,
+                        o_inv,
+                    ],
+                ) = desc.as_fixed::<0, 9>();
                 h.register_float_tensor::<CubeBackend>(&o_img.id, out_img.clone());
                 h.register_float_tensor::<CubeBackend>(&o_vis.id, visible.clone());
                 h.register_float_tensor::<CubeBackend>(&o_rad.id, max_radius.clone());
+                h.register_float_tensor::<CubeBackend>(&o_opac.id, opacities.clone());
                 h.register_float_tensor::<CubeBackend>(&o_proj.id, projected_splats.clone());
                 h.register_int_tensor::<CubeBackend>(&o_tiles.id, tile_offsets.clone());
                 h.register_int_tensor::<CubeBackend>(&o_compact.id, compact_gid_from_isect.clone());
                 h.register_int_tensor::<CubeBackend>(&o_global.id, global_from_compact_gid.clone());
+                h.register_int_tensor::<CubeBackend>(&o_inv.id, compact_from_global.clone());
             },
         );
 
@@ -312,6 +332,7 @@ impl SplatOps for Fusion<CubeBackend> {
                 num_intersections,
                 visible,
                 max_radius,
+                opacities,
                 tile_offsets,
                 img_size,
             },
@@ -319,6 +340,7 @@ impl SplatOps for Fusion<CubeBackend> {
             compact_gid_from_isect,
             project_uniforms,
             global_from_compact_gid,
+            compact_from_global,
         }
     }
 }
