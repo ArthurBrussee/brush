@@ -2,8 +2,8 @@
 //! culled non-finite-cov2d splats so this kernel trusts `calc_cov2d`.
 
 use super::helpers::{
-    calc_cov2d, compensate_cov2d, is_finite_f32, read_quat_unorm, read_scale, sigmoid,
-    world_to_cam, write_projected_splat,
+    FLOOR_OPACITY_EPS, calc_cov2d, compensate_cov2d, floor_opacity_coef, floor_scale,
+    is_finite_f32, read_quat_unorm, read_scale, sigmoid, world_to_cam, write_projected_splat,
 };
 use super::sh::{num_sh_coeffs, sh_coeffs_to_color};
 use super::types::{ProjectUniforms, Splat, Vec3A};
@@ -24,10 +24,12 @@ pub fn project_visible_kernel(
     transforms: &Tensor<f32>,
     coeffs: &Tensor<f32>,
     raw_opacities: &Tensor<f32>,
+    min_scale: &Tensor<f32>,
     global_from_compact_gid: &Tensor<u32>,
     projected: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
+    #[comptime] has_min_scale: bool,
     #[comptime] sh_degree: u32,
     #[comptime] camera_model: CameraModel,
 ) {
@@ -45,10 +47,22 @@ pub fn project_visible_kernel(
     let quat_unorm = read_quat_unorm(transforms, base);
     let quat = quat_unorm.normalize();
 
+    let mut scale = scale;
+    let mut opac_base = sigmoid(raw_opacities[global_gid as usize]);
+    if has_min_scale {
+        let floored = floor_scale(scale, min_scale[global_gid as usize]);
+        opac_base = clamp(
+            opac_base * floor_opacity_coef(scale, floored),
+            FLOOR_OPACITY_EPS,
+            1.0f32 - FLOOR_OPACITY_EPS,
+        );
+        scale = floored;
+    }
+
     let mean_c = world_to_cam(mean, u);
     let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
-    let opac = sigmoid(raw_opacities[global_gid as usize]) * filter_comp;
+    let opac = opac_base * filter_comp;
     let conic = cov.inverse();
 
     let (mean2d_x, mean2d_y) = project(mean_c, u.pinhole_params, camera_model);

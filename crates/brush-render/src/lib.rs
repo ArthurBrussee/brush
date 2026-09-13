@@ -56,6 +56,9 @@ pub trait SplatOps: Backend {
     /// `refine_weight` is a zero-filled accumulator that catches the per-splat
     /// refinement weight gradient. Only the `Autodiff` impl reads it; the
     /// concrete backends ignore it.
+    /// `min_scale` is the per-splat Mip-Splatting scale floor `[N]`, folded
+    /// into scales and opacity inside the projection kernels (and their
+    /// backward). Pass a `[1]` tensor to render without a floor.
     /// `pass` picks forward-only vs. forward+backward-bookkeeping, and (only
     /// for tests) toggles the C^1 smoothstep around the alpha cutoff.
     #[allow(clippy::too_many_arguments)]
@@ -65,6 +68,7 @@ pub trait SplatOps: Backend {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
         refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,

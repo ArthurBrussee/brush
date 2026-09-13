@@ -6,8 +6,9 @@
 //! internally.
 
 use super::helpers::{
-    calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, get_tile_bbox,
-    is_finite_f32, read_mean_viewspace, read_quat_unorm, read_scale, sigmoid,
+    FLOOR_OPACITY_EPS, calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles,
+    floor_opacity_coef, floor_scale, get_tile_bbox, is_finite_f32, read_mean_viewspace,
+    read_quat_unorm, read_scale, sigmoid,
 };
 use super::types::ProjectUniforms;
 use crate::kernels::camera_model::{CameraModel, project};
@@ -22,6 +23,7 @@ pub const WG_SIZE: u32 = 256;
 pub fn project_forward_kernel(
     transforms: &Tensor<f32>,
     raw_opacities: &Tensor<f32>,
+    min_scale: &Tensor<f32>,
     global_from_compact_gid: &mut Tensor<u32>,
     depths: &mut Tensor<f32>,
     num_visible: &mut Tensor<Atomic<u32>>,
@@ -30,6 +32,7 @@ pub fn project_forward_kernel(
     max_radius: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
+    #[comptime] has_min_scale: bool,
     #[comptime] camera_model: CameraModel,
 ) {
     let global_gid = ABSOLUTE_POS as u32;
@@ -79,9 +82,23 @@ pub fn project_forward_kernel(
 
     let quat = quat_unorm.normalize();
 
+    // Mip-Splatting 3D filter, folded in here rather than on the host so
+    // the raw params stay the kernel inputs.
+    let mut scale = scale;
+    let mut opac_base = sigmoid(raw_opac);
+    if has_min_scale {
+        let floored = floor_scale(scale, min_scale[global_gid as usize]);
+        opac_base = clamp(
+            opac_base * floor_opacity_coef(scale, floored),
+            FLOOR_OPACITY_EPS,
+            1.0f32 - FLOOR_OPACITY_EPS,
+        );
+        scale = floored;
+    }
+
     let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
-    let opac = sigmoid(raw_opac) * filter_comp;
+    let opac = opac_base * filter_comp;
 
     if !cov.is_finite() {
         terminate!();

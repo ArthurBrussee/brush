@@ -180,6 +180,8 @@ async fn render_raw(
         cube_tensor(device, [n, 10], &transforms),
         cube_tensor(device, [n, 1, 3], dc),
         cube_tensor(device, [n], opac),
+        // No scale floor.
+        cube_tensor(device, [1], &[0.0]),
         // Unused on the non-autodiff path.
         cube_tensor(device, [1], &[0.0]),
         mode,

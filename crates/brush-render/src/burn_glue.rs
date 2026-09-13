@@ -211,6 +211,7 @@ impl SplatOps for Fusion<CubeBackend> {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
         refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
@@ -229,6 +230,9 @@ impl SplatOps for Fusion<CubeBackend> {
         let base_raw_opac = client
             .clone()
             .resolve_tensor_float::<CubeBackend>(raw_opacities);
+        let base_min_scale = client
+            .clone()
+            .resolve_tensor_float::<CubeBackend>(min_scale);
         let base_refine_weight = client
             .clone()
             .resolve_tensor_float::<CubeBackend>(refine_weight);
@@ -239,6 +243,7 @@ impl SplatOps for Fusion<CubeBackend> {
             base_transforms,
             base_sh_coeffs,
             base_raw_opac,
+            base_min_scale,
             base_refine_weight,
             render_mode,
             background,

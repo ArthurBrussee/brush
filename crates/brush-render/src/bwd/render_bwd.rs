@@ -103,6 +103,7 @@ impl SplatBwdOps for CubeBackend {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         render_mode: SplatRenderMode,
@@ -119,6 +120,8 @@ impl SplatBwdOps for CubeBackend {
         let device = transforms.device.clone();
         let num_points = transforms.shape()[0];
         let client = transforms.client.clone();
+        let min_scale = into_contiguous(min_scale);
+        let has_min_scale = min_scale.shape()[0] == num_points;
 
         // Dense outputs, the kernel scatters compact→global internally.
         let v_transforms = Self::float_zeros([num_points, 10].into(), &device, FloatDType::F32);
@@ -153,6 +156,7 @@ impl SplatBwdOps for CubeBackend {
                 transforms.into_tensor_arg(),
                 sh_coeffs.into_tensor_arg(),
                 raw_opac.into_tensor_arg(),
+                min_scale.into_tensor_arg(),
                 global_from_compact_gid.into_tensor_arg(),
                 v_combined.into_tensor_arg(),
                 v_transforms.clone().into_tensor_arg(),
@@ -161,6 +165,7 @@ impl SplatBwdOps for CubeBackend {
                 v_refine_weight.clone().into_tensor_arg(),
                 uniforms,
                 mip_splat,
+                has_min_scale,
                 project_uniforms.sh_degree,
                 project_uniforms.camera_model,
             );

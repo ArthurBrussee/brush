@@ -3,7 +3,8 @@
 use crate::kernels::camera_model::CameraModel;
 use crate::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
 use crate::kernels::helpers::{
-    calc_cov2d, compensate_cov2d, read_quat_unorm, read_scale, world_to_cam,
+    FLOOR_OPACITY_EPS, calc_cov2d, compensate_cov2d, floor_opacity_coef, floor_scale,
+    read_quat_unorm, read_scale, world_to_cam,
 };
 use crate::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp, sh_color_viewdir_vjp};
 use crate::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
@@ -102,6 +103,7 @@ pub fn project_backwards_kernel(
     transforms: &Tensor<f32>,
     sh_coeffs: &Tensor<f32>,
     raw_opac: &Tensor<f32>,
+    min_scale: &Tensor<f32>,
     global_from_compact_gid: &Tensor<u32>,
     v_rasterize_grads: &Tensor<f32>,
     v_transforms: &mut Tensor<f32>,
@@ -110,6 +112,7 @@ pub fn project_backwards_kernel(
     v_refine_weight: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
+    #[comptime] has_min_scale: bool,
     #[comptime] sh_degree: u32,
     #[comptime] camera_model: CameraModel,
 ) {
@@ -156,9 +159,31 @@ pub fn project_backwards_kernel(
         transforms[tbase + 1],
         transforms[tbase + 2],
     );
-    let scale = read_scale(transforms, tbase);
+    let scale_raw = read_scale(transforms, tbase);
     let quat_unorm = read_quat_unorm(transforms, tbase);
     let quat = quat_unorm.normalize();
+
+    // Mip-Splatting floor, matching the forward. `ratio_sq` is
+    // d(log s')/d(log s) = s² / (s² + f²) per axis, `coef` the opacity
+    // compensation, and `opac_open` whether the clamp let gradient through.
+    let opac_sig = sigmoid(raw_opac[global_gid as usize]);
+    let mut scale = scale_raw;
+    let mut coef = 1.0f32;
+    let mut ratio_sq = Vec3A::new(1.0f32, 1.0f32, 1.0f32);
+    let mut opac_base = opac_sig;
+    let mut opac_open = true;
+    if has_min_scale {
+        let floored = floor_scale(scale_raw, min_scale[global_gid as usize]);
+        coef = floor_opacity_coef(scale_raw, floored);
+        let rx = scale_raw.x() / floored.x();
+        let ry = scale_raw.y() / floored.y();
+        let rz = scale_raw.z() / floored.z();
+        ratio_sq = Vec3A::new(rx * rx, ry * ry, rz * rz);
+        let o = opac_sig * coef;
+        opac_open = o > FLOOR_OPACITY_EPS && o < 1.0f32 - FLOOR_OPACITY_EPS;
+        opac_base = clamp(o, FLOOR_OPACITY_EPS, 1.0f32 - FLOOR_OPACITY_EPS);
+        scale = floored;
+    }
 
     // viewdir + SH VJP. d(normalize(u))/du = (I - vv^T)/|u|, so
     // v_u = (v_v - v * (v · v_v)) / |u|.
@@ -179,8 +204,9 @@ pub fn project_backwards_kernel(
 
     let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
-    let opac_sig = sigmoid(raw_opac[global_gid as usize]);
-    v_raw_opac[global_gid as usize] = filter_comp * v_alpha_in * opac_sig * (1.0f32 - opac_sig);
+    // Gradient w.r.t. the (compensated, clamped) opacity, zero if clamped.
+    let v_opac_base = select(opac_open, filter_comp * v_alpha_in, 0.0f32);
+    v_raw_opac[global_gid as usize] = v_opac_base * coef * opac_sig * (1.0f32 - opac_sig);
 
     // Make sure to keep refine weight >= 0 and finite. Helps with super large degenerate splats
     // that sum up their refine weight to some massive value.
@@ -227,11 +253,19 @@ pub fn project_backwards_kernel(
     // v_M = (v_covar + v_covar^T) * M = 2 * v_covar * M.
     let v_m = vcc.transpose_congruence(view_rot).scale(2.0f32).mul_mat3(m);
 
-    // v_scale = (R[i] dot v_M[i]) * exp(log_scale).
-    let v_scale_exp = Vec3A::new(
+    // v_scale = (R[i] dot v_M[i]) * exp(log_scale), i.e. the gradient w.r.t.
+    // the log of the (floored) scale. Chain through the floor with
+    // `ratio_sq`, and add the opacity compensation's dependence on the raw
+    // scales: d(opac_base)/d(log s_i) = opac_base * (1 - ratio_sq_i).
+    let v_log_floored = Vec3A::new(
         r.col0().dot(v_m.col0()) * scale.x(),
         r.col1().dot(v_m.col1()) * scale.y(),
         r.col2().dot(v_m.col2()) * scale.z(),
+    );
+    let v_scale_exp = Vec3A::new(
+        v_log_floored.x() * ratio_sq.x() + v_opac_base * opac_base * (1.0f32 - ratio_sq.x()),
+        v_log_floored.y() * ratio_sq.y() + v_opac_base * opac_base * (1.0f32 - ratio_sq.y()),
+        v_log_floored.z() * ratio_sq.z() + v_opac_base * opac_base * (1.0f32 - ratio_sq.z()),
     );
 
     // grad for quat from covar: v_quat = normalize_vjp(quat) *

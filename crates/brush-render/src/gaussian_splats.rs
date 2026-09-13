@@ -403,15 +403,14 @@ pub async fn render_splats(
 
     let sh_coeffs = splats.sh_coeffs.into_value();
 
-    // Fold the 3D-filter floor into scales/opacity first (the floor is part of
-    // the splat's definition, so eval/viewer render with it just like training).
-    let (transforms, raw_opacities) = match &splats.min_scale {
-        Some(f) => fold_min_scale(
-            splats.transforms.val(),
-            splats.raw_opacities.val(),
-            f.clone(),
-        ),
-        None => (splats.transforms.val(), splats.raw_opacities.val()),
+    // The 3D-filter floor is part of the splat's definition, so eval/viewer
+    // render with it just like training; the projection kernels fold it in.
+    // A `[1]` tensor stands for "no floor".
+    let transforms = splats.transforms.val();
+    let raw_opacities = splats.raw_opacities.val();
+    let min_scale = match &splats.min_scale {
+        Some(f) => f.clone(),
+        None => Tensor::<1>::zeros([1], &transforms.device()),
     };
 
     let transforms = if let Some(scale) = splat_scale {
@@ -447,6 +446,7 @@ pub async fn render_splats(
         transforms.into_dispatch(),
         sh_coeffs.into_dispatch(),
         raw_opacities.into_dispatch(),
+        min_scale.into_dispatch(),
         // Inference path: no gradients, so the refine-weight accumulator is a
         // throwaway scalar the concrete backends ignore.
         Tensor::<1>::zeros([1], &render_device).into_dispatch(),

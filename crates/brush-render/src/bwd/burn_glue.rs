@@ -4,7 +4,7 @@ use crate::burn_glue::register_custom;
 use crate::{
     SplatOps,
     camera::Camera,
-    gaussian_splats::{SplatRenderMode, Splats, fold_min_scale},
+    gaussian_splats::{SplatRenderMode, Splats},
     sh::sh_coeffs_for_degree,
     shaders::helpers::ProjectUniforms,
 };
@@ -77,6 +77,7 @@ pub(crate) trait SplatBwdOps: Backend {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         render_mode: SplatRenderMode,
@@ -90,6 +91,7 @@ struct GaussianBackwardState<B: Backend> {
     transforms: FloatTensor<B>,
     sh_coeffs: FloatTensor<B>,
     raw_opacity: FloatTensor<B>,
+    min_scale: FloatTensor<B>,
 
     projected_splats: FloatTensor<B>,
     project_uniforms: ProjectUniforms,
@@ -149,6 +151,7 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
             state.transforms,
             state.sh_coeffs,
             state.raw_opacity,
+            state.min_scale,
             state.global_from_compact_gid,
             state.project_uniforms,
             state.render_mode,
@@ -225,16 +228,12 @@ pub async fn render_splats_with_pass(
 
     let refine_weight_holder = Tensor::<1>::zeros([1], &device).require_grad();
 
-    // Fold the 3D-filter floor into scales/opacity for the render. `min_scale`
-    // lives on the inner backend; `fold_min_scale` lifts it onto the autodiff
-    // graph to match the param values.
-    let (transforms_val, raw_opac_val) = match &splats.min_scale {
-        Some(f) => fold_min_scale(
-            splats.transforms.val(),
-            splats.raw_opacities.val(),
-            f.clone(),
-        ),
-        None => (splats.transforms.val(), splats.raw_opacities.val()),
+    // The 3D-filter floor is applied inside the projection kernels; a `[1]`
+    // tensor stands for "no floor". It lives on the inner backend and carries
+    // no gradient, so lifting it onto the autodiff device is just a wrap.
+    let min_scale = match &splats.min_scale {
+        Some(f) => f.clone().autodiff(),
+        None => Tensor::<1>::zeros([1], &device),
     };
 
     let render_mode = if splats.render_mip {
@@ -251,9 +250,10 @@ pub async fn render_splats_with_pass(
     let output = <burn::backend::Dispatch as SplatOps>::render(
         camera,
         img_size,
-        transforms_val.into_dispatch(),
+        splats.transforms.val().into_dispatch(),
         splats.sh_coeffs.val().into_dispatch(),
-        raw_opac_val.into_dispatch(),
+        splats.raw_opacities.val().into_dispatch(),
+        min_scale.into_dispatch(),
         refine_weight_holder.clone().into_dispatch(),
         render_mode,
         background,
@@ -278,6 +278,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
         refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
@@ -296,6 +297,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
         let transforms_inner: FloatTensor<B> = transforms.primitive().clone();
         let sh_inner: FloatTensor<B> = sh_coeffs.into_primitive();
         let raw_opac_inner: FloatTensor<B> = raw_opacities.primitive().clone();
+        let min_scale_inner: FloatTensor<B> = min_scale.into_primitive();
 
         let output = <B as SplatOps>::render(
             camera,
@@ -303,6 +305,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
             transforms_inner.clone(),
             sh_inner.clone(),
             raw_opac_inner.clone(),
+            min_scale_inner.clone(),
             refine_weight.into_primitive(),
             render_mode,
             background,
@@ -318,6 +321,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
                     transforms: transforms_inner,
                     sh_coeffs: sh_inner,
                     raw_opacity: raw_opac_inner,
+                    min_scale: min_scale_inner,
                     out_img: output.out_img.clone(),
                     projected_splats: output.projected_splats.clone(),
                     project_uniforms: output.project_uniforms,
@@ -417,6 +421,7 @@ impl SplatBwdOps for Fusion<CubeBackend> {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         render_mode: SplatRenderMode,
@@ -432,6 +437,7 @@ impl SplatBwdOps for Fusion<CubeBackend> {
                 transforms,
                 sh_coeffs,
                 raw_opac,
+                min_scale,
                 global_from_compact_gid,
                 v_combined,
             ],
@@ -447,6 +453,7 @@ impl SplatBwdOps for Fusion<CubeBackend> {
                         transforms,
                         sh_coeffs,
                         raw_opac,
+                        min_scale,
                         global_from_compact_gid,
                         v_combined,
                     ],
@@ -456,6 +463,7 @@ impl SplatBwdOps for Fusion<CubeBackend> {
                     h.get_float_tensor::<CubeBackend>(transforms),
                     h.get_float_tensor::<CubeBackend>(sh_coeffs),
                     h.get_float_tensor::<CubeBackend>(raw_opac),
+                    h.get_float_tensor::<CubeBackend>(min_scale),
                     h.get_int_tensor::<CubeBackend>(global_from_compact_gid),
                     project_uniforms,
                     render_mode,

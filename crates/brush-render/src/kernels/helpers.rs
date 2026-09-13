@@ -334,6 +334,30 @@ pub fn read_scale(transforms: &Tensor<f32>, base: usize) -> Vec3A {
     )
 }
 
+/// Mip-Splatting 3D filter: floor each world-space scale at `f`,
+/// `s' = sqrt(s² + f²)`.
+#[cube]
+pub fn floor_scale(scale: Vec3A, f: f32) -> Vec3A {
+    let f2 = f * f;
+    Vec3A::new(
+        f32::sqrt(scale.x() * scale.x() + f2),
+        f32::sqrt(scale.y() * scale.y() + f2),
+        f32::sqrt(scale.z() * scale.z() + f2),
+    )
+}
+
+/// Energy compensation that goes with [`floor_scale`]: the volume ratio
+/// `Π s / s'`, which scales the opacity down so the inflated splat keeps the
+/// same total mass.
+#[cube]
+pub fn floor_opacity_coef(scale: Vec3A, floored: Vec3A) -> f32 {
+    (scale.x() / floored.x()) * (scale.y() / floored.y()) * (scale.z() / floored.z())
+}
+
+/// Opacity clamp applied after the floor compensation, matching
+/// `fold_min_scale` on the host.
+pub const FLOOR_OPACITY_EPS: f32 = 1e-6;
+
 #[cube]
 pub fn read_quat_unorm(transforms: &Tensor<f32>, base: usize) -> Quat {
     Quat::new(

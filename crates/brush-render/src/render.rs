@@ -42,6 +42,7 @@ impl SplatOps for CubeBackend {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
         _refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
@@ -57,6 +58,7 @@ impl SplatOps for CubeBackend {
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
         let raw_opacities = into_contiguous(raw_opacities);
+        let min_scale = into_contiguous(min_scale);
 
         DimCheck::new()
             .check_dims("transforms", &transforms, &["D".into(), 10.into()])
@@ -66,6 +68,8 @@ impl SplatOps for CubeBackend {
         let total_splats = transforms.shape()[0] as u32;
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
+        // A `[1]` tensor means "no floor"; a real floor is one value per splat.
+        let has_min_scale = min_scale.shape()[0] == total_splats as usize;
 
         // Cull splats beyond the lens' diagonal fov with some margin, but never
         // past the angle where the distortion polynomial folds back on itself:
@@ -128,6 +132,7 @@ impl SplatOps for CubeBackend {
                 CubeDim::new_1d(kernels::project_forward::WG_SIZE),
                 transforms.clone().into_tensor_arg(),
                 raw_opacities.clone().into_tensor_arg(),
+                min_scale.clone().into_tensor_arg(),
                 global_from_presort_gid.clone().into_tensor_arg(),
                 depths.clone().into_tensor_arg(),
                 num_visible_buf.clone().into_tensor_arg(),
@@ -136,6 +141,7 @@ impl SplatOps for CubeBackend {
                 max_radius.clone().into_tensor_arg(),
                 uniforms,
                 mip_splat,
+                has_min_scale,
                 camera.camera_model,
             );
             (
@@ -208,10 +214,12 @@ impl SplatOps for CubeBackend {
                 transforms.into_tensor_arg(),
                 sh_coeffs.into_tensor_arg(),
                 raw_opacities.into_tensor_arg(),
+                min_scale.into_tensor_arg(),
                 global_from_compact_gid.clone().into_tensor_arg(),
                 projected_splats.clone().into_tensor_arg(),
                 uniforms,
                 mip_splat,
+                has_min_scale,
                 sh_degree,
                 camera.camera_model,
             );

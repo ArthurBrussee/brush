@@ -449,6 +449,120 @@ async fn finite_diff_broad_mip_mode() {
     );
 }
 
+/// The Mip-Splatting scale floor is folded into the projection kernels, with
+/// the chain rule through `sqrt(s² + f²)` and the opacity compensation in the
+/// backward. Check that against finite differences on the raw params.
+#[tokio::test]
+async fn finite_diff_min_scale_floor() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let cam = std_cam();
+    let img_size = glam::uvec2(32, 32);
+    let scene = base_scene();
+    let eps = 3e-4_f32;
+    let rel_tol = 0.02_f32;
+    let abs_tol = 1e-4_f32;
+    let n = scene.means.len() / 3;
+    // A floor comparable to the scales themselves (exp(-1.5) ≈ 0.22), so the
+    // inflation and the opacity compensation both bite hard.
+    let floor_vals: Vec<f32> = (0..n).map(|i| 0.15 + 0.05 * (i % 3) as f32).collect();
+
+    fn floored(scene: &Scene, floor: &[f32], device: &burn::tensor::Device) -> Splats {
+        let inner = device.clone().inner();
+        build_splats(scene, device).with_min_scale(Tensor::<1>::from_floats(floor, &inner))
+    }
+
+    async fn value(
+        scene: &Scene,
+        floor: &[f32],
+        cam: &Camera,
+        img_size: glam::UVec2,
+        device: &burn::tensor::Device,
+    ) -> f32 {
+        let splats = floored(scene, floor, device);
+        let diff = render_splats_with_pass(splats, cam, img_size, Vec3::ZERO, PASS).await;
+        diff.img
+            .mean()
+            .into_scalar_async::<f32>()
+            .await
+            .expect("rb")
+    }
+
+    let splats = floored(&scene, &floor_vals, &device);
+    let diff = render_splats_with_pass(splats.clone(), &cam, img_size, Vec3::ZERO, PASS).await;
+    let grads = diff.img.mean().backward();
+
+    let cases: &[(Lane, usize, usize)] = &[
+        (Lane::Mean, 0, 0),
+        (Lane::Mean, 1, 2),
+        (Lane::Rot, 0, 1),
+        (Lane::LogScale, 0, 0),
+        (Lane::LogScale, 0, 1),
+        (Lane::LogScale, 1, 2),
+        (Lane::ShDc, 1, 0),
+        (Lane::RawOpac, 0, 0),
+        (Lane::RawOpac, 1, 0),
+    ];
+    let mut failed: Vec<String> = Vec::new();
+    for (lane, splat, comp) in cases {
+        let mut s_plus = scene.clone();
+        perturb(&mut s_plus, *lane, *splat, *comp, eps);
+        let l_plus = value(&s_plus, &floor_vals, &cam, img_size, &device).await;
+        let mut s_minus = scene.clone();
+        perturb(&mut s_minus, *lane, *splat, *comp, -eps);
+        let l_minus = value(&s_minus, &floor_vals, &cam, img_size, &device).await;
+        let numerical = (l_plus - l_minus) / (2.0 * eps);
+        let an = analytical_at(&splats, &grads, *lane, *splat, *comp).await;
+        let abs_err = (numerical - an).abs();
+        let scale = numerical.abs().max(an.abs()).max(1e-8);
+        let tol = abs_tol + rel_tol * scale;
+        if abs_err > tol {
+            failed.push(format!(
+                "{}[{},{}]: num {numerical:.6} an {an:.6} (|Δ|={abs_err:.3e} > {tol:.3e})",
+                lane_name(*lane),
+                splat,
+                comp,
+            ));
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "min-scale floor mismatches:\n  {}",
+        failed.join("\n  ")
+    );
+}
+
+/// Folding the floor inside the kernels must render the same image as baking
+/// it into the params on the host and rendering without a floor.
+#[tokio::test]
+async fn min_scale_floor_in_kernel_matches_host_bake() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let cam = std_cam();
+    let img_size = glam::uvec2(48, 40);
+    let scene = base_scene();
+    let n = scene.means.len() / 3;
+    let floor_vals: Vec<f32> = (0..n).map(|i| 0.15 + 0.05 * (i % 3) as f32).collect();
+    let inner = device.clone().inner();
+    let floor = Tensor::<1>::from_floats(floor_vals.as_slice(), &inner);
+
+    let in_kernel = build_splats(&scene, &device).with_min_scale(floor.clone());
+    let baked = build_splats(&scene, &device)
+        .with_min_scale(floor)
+        .bake_min_scale();
+    assert!(baked.min_scale.is_none());
+
+    let a = render_splats_with_pass(in_kernel, &cam, img_size, Vec3::ZERO, PASS).await;
+    let b = render_splats_with_pass(baked, &cam, img_size, Vec3::ZERO, PASS).await;
+    let diff = (a.img - b.img)
+        .abs()
+        .max()
+        .into_scalar_async::<f32>()
+        .await
+        .expect("rb");
+    assert!(diff < 1e-5, "kernel floor vs host bake differ by {diff}");
+}
+
 /// Per-pixel weighted-sum loss. `mean()` averages all pixel grads
 /// uniformly, so any per-pixel asymmetry in the backward is invisible.
 /// Multiplying by a fixed random weight map and summing exposes pixels
