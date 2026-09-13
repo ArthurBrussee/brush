@@ -224,6 +224,45 @@ impl SplatTrainer {
 
         let median_scale = self.bounds.median_size();
 
+        let lr_mean = self.config.lr_mean
+            * self.lr_mean_decay.powi(self.step_count as i32 - 1)
+            * median_scale as f64;
+        let masked_alpha = batch.alpha_mode == AlphaMode::Masked;
+        let do_alpha_match = has_alpha && !masked_alpha && self.config.match_alpha_weight > 0.0;
+
+        // Per-step constants, uploaded before the render. A host upload
+        // (`from_data`) makes burn execute its pending fusion stream, so
+        // creating these later would cut the segment between the backward's
+        // gradient gathers and the optimizer step that should absorb them.
+        // transforms layout: means(3) + rotations(4) + log_scales(3); the
+        // optimizer runs with base LR 1 and these per-column scales.
+        let lr_scaling: Tensor<2> = {
+            let (rot, scale) = (self.config.lr_rotation as f32, self.config.lr_scale as f32);
+            let m = lr_mean as f32;
+            Tensor::from_data(
+                TensorData::new(
+                    vec![m, m, m, rot, rot, rot, rot, scale, scale, scale],
+                    [1, 10],
+                ),
+                &device.clone().inner(),
+            )
+        };
+        // Loss weights finish the per-tile partial sums into means: rgb over
+        // 3·H·W, alpha over H·W times its weight.
+        let loss_weights: Tensor<2> = {
+            let pixels = (img_h * img_w) as f32;
+            let rgb_w = 1.0 / (3.0 * pixels);
+            let alpha_w = if do_alpha_match {
+                self.config.match_alpha_weight / pixels
+            } else {
+                0.0
+            };
+            Tensor::from_data(
+                TensorData::new(vec![rgb_w, rgb_w, rgb_w, alpha_w], [4, 1]),
+                &device,
+            )
+        };
+
         let (mut grads, visible, opacities, num_visible, loss_inner) = {
             // The splats already carry their 3D-filter floor (set at refine);
             // the render path folds it in. Optimizer/refine work on raw params.
@@ -246,13 +285,11 @@ impl SplatTrainer {
             // a = 1 would pull predicted alpha to fully opaque); we feed
             // `pred` with 4 channels and the kernel's `c == 3` workgroup
             // emits `|pred.a - gt.a|` into the alpha channel.
-            let masked_alpha = batch.alpha_mode == AlphaMode::Masked;
             let (l1_w, ssim_w) = if self.ssim_enabled {
                 (1.0 - self.config.ssim_weight, -self.config.ssim_weight)
             } else {
                 (1.0, 0.0)
             };
-            let do_alpha_match = has_alpha && !masked_alpha && self.config.match_alpha_weight > 0.0;
             // Only composite when there's a real alpha channel and a non-zero
             // bg to mix in; the kernel skips the per-pixel `(1-a)*bg` math
             // entirely when this is None.
@@ -266,26 +303,13 @@ impl SplatTrainer {
             };
             // The kernel takes the RGBA image as rendered and returns per-tile
             // partial sums [4, tiles]; one tiny weighted reduce finishes the
-            // means (rgb over 3·H·W, alpha over H·W times its weight).
+            // means.
             let partials = image_loss_partials(pred_image.clone(), gt_packed.clone(), cfg);
-            let pixels = (img_h * img_w) as f32;
-            let rgb_w = 1.0 / (3.0 * pixels);
-            let alpha_w = if do_alpha_match {
-                self.config.match_alpha_weight / pixels
-            } else {
-                0.0
-            };
-            // Built at its final shape: a `reshape` here would end burn's fusion
-            // block right before the reduce.
-            let weights: Tensor<2> = Tensor::from_data(
-                TensorData::new(vec![rgb_w, rgb_w, rgb_w, alpha_w], [4, 1]),
-                &device,
-            );
 
             // `loss` is only reassigned by the LPIPS path below, which is
             // compiled out on wasm — so `mut` is unused there.
             #[cfg_attr(target_family = "wasm", allow(unused_mut))]
-            let mut loss = (partials * weights).sum();
+            let mut loss = (partials * loss_weights).sum();
 
             // LPIPS still needs an f32 RGB tensor for VGG. Materialising it
             // here costs ~99 MB at 4K, only when LPIPS is enabled.
@@ -346,33 +370,7 @@ impl SplatTrainer {
                 }
             });
 
-        let lr_mean = self.config.lr_mean
-            * self.lr_mean_decay.powi(self.step_count as i32 - 1)
-            * median_scale as f64;
-
-        // Update per-component LR scaling for the transforms param.
-        // transforms layout: means(3) + rotations(4) + log_scales(3)
-        // We use base_lr=1.0 and encode actual LRs in the scaling tensor.
-        {
-            let lr_values: [f32; 10] = [
-                lr_mean as f32,
-                lr_mean as f32,
-                lr_mean as f32,
-                self.config.lr_rotation as f32,
-                self.config.lr_rotation as f32,
-                self.config.lr_rotation as f32,
-                self.config.lr_rotation as f32,
-                self.config.lr_scale as f32,
-                self.config.lr_scale as f32,
-                self.config.lr_scale as f32,
-            ];
-            // Built at its final shape: a `reshape` here would end burn's fusion
-            // block right before the optimizer step.
-            optimizer.transforms.scaling = Some(Tensor::<2>::from_data(
-                TensorData::new(lr_values.to_vec(), [1, 10]),
-                &opt_device,
-            ));
-        }
+        optimizer.transforms.scaling = Some(lr_scaling);
 
         splats = trace_span!("Optimizer step").in_scope(|| {
             splats.transforms = trace_span!("Transforms step").in_scope(|| {
