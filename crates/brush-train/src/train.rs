@@ -10,7 +10,7 @@ use crate::{
     stats::RefineRecord,
 };
 use brush_dataset::scene::SceneBatch;
-use brush_loss::{ImageLossConfig, image_loss};
+use brush_loss::{ImageLossConfig, image_loss_partials};
 use brush_render::bwd::render_splats;
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
@@ -262,24 +262,26 @@ impl SplatTrainer {
                 ssim_weight: ssim_w,
                 composite_bg,
                 mask: masked_alpha,
+                alpha_match: do_alpha_match,
             };
-            let pred_for_loss = if do_alpha_match {
-                pred_image.clone()
+            // The kernel takes the RGBA image as rendered and returns per-tile
+            // partial sums [4, tiles]; one tiny weighted reduce finishes the
+            // means (rgb over 3·H·W, alpha over H·W times its weight).
+            let partials = image_loss_partials(pred_image.clone(), gt_packed.clone(), cfg);
+            let pixels = (img_h * img_w) as f32;
+            let rgb_w = 1.0 / (3.0 * pixels);
+            let alpha_w = if do_alpha_match {
+                self.config.match_alpha_weight / pixels
             } else {
-                pred_image.clone().slice(s![.., .., 0..3])
+                0.0
             };
-            let loss_map = image_loss(pred_for_loss, gt_packed.clone(), cfg);
+            let weights =
+                Tensor::<1>::from_floats([rgb_w, rgb_w, rgb_w, alpha_w], &device).reshape([4, 1]);
 
             // `loss` is only reassigned by the LPIPS path below, which is
             // compiled out on wasm — so `mut` is unused there.
             #[cfg_attr(target_family = "wasm", allow(unused_mut))]
-            let mut loss = if do_alpha_match {
-                let rgb = loss_map.clone().slice(s![.., .., 0..3]).mean();
-                let alpha = loss_map.slice(s![.., .., 3..4]).mean();
-                rgb + alpha * self.config.match_alpha_weight
-            } else {
-                loss_map.mean()
-            };
+            let mut loss = (partials * weights).sum();
 
             // LPIPS still needs an f32 RGB tensor for VGG. Materialising it
             // here costs ~99 MB at 4K, only when LPIPS is enabled.

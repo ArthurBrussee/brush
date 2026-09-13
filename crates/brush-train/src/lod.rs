@@ -1,5 +1,5 @@
 use brush_dataset::scene::view_to_packed_data;
-use brush_loss::{ImageLossConfig, image_loss};
+use brush_loss::{ImageLossConfig, image_loss_partials};
 use brush_render::bwd::render_splats;
 use brush_render::gaussian_splats::Splats;
 use burn::{
@@ -98,16 +98,18 @@ pub async fn compute_pup_scores(
         splats.transforms = splats.transforms.map(|t: Tensor<2>| t.require_grad());
 
         let diff_out = render_splats(splats.clone(), &view.camera, img_size, Vec3::ZERO).await;
-        let pred_rgb = diff_out.img.slice(s![.., .., 0..3]);
-
         let gt_packed: Tensor<2, Int> = Tensor::from_data(gt_data, device);
         let l1_cfg = ImageLossConfig {
             l1_weight: 1.0,
             ssim_weight: 0.0,
             composite_bg: None,
             mask: false,
+            alpha_match: false,
         };
-        let loss = image_loss(pred_rgb, gt_packed, l1_cfg).mean();
+        // Mean L1 over the RGB channels; the kernel takes the RGBA image and
+        // returns per-tile sums (alpha row zero without alpha matching).
+        let pixels = (img_size.x * img_size.y) as f32;
+        let loss = image_loss_partials(diff_out.img, gt_packed, l1_cfg).sum() / (3.0 * pixels);
         let mut grads = loss.backward();
 
         let transforms_grad = splats

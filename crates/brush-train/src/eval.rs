@@ -44,6 +44,7 @@ pub async fn eval_stats(
         ssim_weight: ssim,
         composite_bg: None,
         mask: false,
+        alpha_match: false,
     };
     // MSE = mean(L1^2) since |a - b|^2 == (a - b)^2.
     let mse = image_loss_eval(render_rgb.clone(), gt_packed.clone(), cfg(1.0, 0.0))

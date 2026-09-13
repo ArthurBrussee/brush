@@ -5,7 +5,7 @@
 //! output range, backward produces finite gradients). Bit-exact reference
 //! matching is covered by the integration training tests in `brush-bench-test`.
 
-use brush_loss::{ImageLossConfig, image_loss, psnr, psnr_from_mse};
+use brush_loss::{ImageLossConfig, image_loss_eval, image_loss_partials, psnr, psnr_from_mse};
 use burn::tensor::{Device, Int, Tensor, TensorData};
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -50,6 +50,7 @@ fn ssim_only_cfg() -> ImageLossConfig {
         ssim_weight: 1.0,
         composite_bg: None,
         mask: false,
+        alpha_match: false,
     }
 }
 
@@ -62,7 +63,7 @@ async fn ssim_identical_inputs_is_one() {
     let pred = pred_from_bytes(&bytes, h, w, &device);
     let gt = gt_packed_from_bytes(&bytes, h, w, &device);
 
-    let map = image_loss(pred, gt, ssim_only_cfg());
+    let map = image_loss_eval(pred, gt, ssim_only_cfg());
     let mean: f32 = map
         .into_data_async()
         .await
@@ -87,7 +88,7 @@ async fn ssim_in_clamp_range() {
     let pred = pred_from_bytes(&bytes_a, h, w, &device);
     let gt = gt_packed_from_bytes(&bytes_b, h, w, &device);
 
-    let data: Vec<f32> = image_loss(pred, gt, ssim_only_cfg())
+    let data: Vec<f32> = image_loss_eval(pred, gt, ssim_only_cfg())
         .into_data_async()
         .await
         .expect("readback")
@@ -111,7 +112,7 @@ async fn image_loss_backward_runs() {
     let pred = pred_from_bytes(&bytes_a, h, w, &device).require_grad();
     let gt = gt_packed_from_bytes(&bytes_b, h, w, &device);
 
-    let map = image_loss(
+    let partials = image_loss_partials(
         pred.clone(),
         gt,
         ImageLossConfig {
@@ -119,9 +120,10 @@ async fn image_loss_backward_runs() {
             ssim_weight: -0.2,
             composite_bg: None,
             mask: false,
+            alpha_match: false,
         },
     );
-    let grads = map.mean().backward();
+    let grads = partials.sum().backward();
     let grad = pred.grad(&grads).expect("pred should have a gradient");
     let data: Vec<f32> = grad
         .into_data_async()
@@ -154,17 +156,18 @@ async fn alpha_match_via_4ch_pred() {
         .require_grad();
     let gt = gt_packed_from_bytes(&bytes, h, w, &device);
 
-    let map = image_loss(
-        pred,
-        gt,
-        ImageLossConfig {
-            l1_weight: 1.0,
-            ssim_weight: 0.0,
-            composite_bg: None,
-            mask: false,
-        },
-    );
-    let _grads = map.mean().backward();
+    let cfg = ImageLossConfig {
+        l1_weight: 1.0,
+        ssim_weight: 0.0,
+        composite_bg: None,
+        mask: false,
+        alpha_match: true,
+    };
+    let map = image_loss_eval(pred.clone(), gt.clone(), cfg);
+    assert_eq!(map.dims(), [h, w, 4]);
+    let partials = image_loss_partials(pred, gt, cfg);
+    assert_eq!(partials.dims()[0], 4);
+    let _grads = partials.sum().backward();
 }
 
 #[wasm_bindgen_test(unsupported = tokio::test)]
@@ -189,4 +192,137 @@ async fn psnr_matches_known_values() {
     assert!((db - 20.0).abs() < 1e-3, "got {db}");
     let db = scalar(psnr(a.clone(), a)).await;
     assert!((db - 100.0).abs() < 1e-3, "got {db}");
+}
+
+/// The per-tile partial sums must agree with the per-pixel map, per channel.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn partials_match_map_sums() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let (h, w) = (37, 53); // not a multiple of the 16x16 tile
+    let bytes = make_pattern(h, w, 17, 5);
+    let bytes_b = make_pattern(h, w, 3, 9);
+    let rgba: Vec<f32> = bytes.iter().map(|b| *b as f32 / 255.0).collect();
+    let pred = Tensor::<1>::from_floats(rgba.as_slice(), &device).reshape([h, w, 4]);
+    let gt = gt_packed_from_bytes(&bytes_b, h, w, &device);
+    let cfg = ImageLossConfig {
+        l1_weight: 0.7,
+        ssim_weight: 0.3,
+        composite_bg: None,
+        mask: false,
+        alpha_match: true,
+    };
+    let map = image_loss_eval(pred.clone(), gt.clone(), cfg);
+    let map_sums: Vec<f32> = map
+        .sum_dims(&[0, 1])
+        .reshape([4])
+        .into_data_async()
+        .await
+        .expect("readback")
+        .try_to_vec()
+        .expect("vec");
+    let partial_sums: Vec<f32> = image_loss_partials(pred, gt, cfg)
+        .sum_dim(1)
+        .reshape([4])
+        .into_data_async()
+        .await
+        .expect("readback")
+        .try_to_vec()
+        .expect("vec");
+    for c in 0..4 {
+        let (a, b) = (map_sums[c], partial_sums[c]);
+        assert!(
+            (a - b).abs() <= 1e-3 * a.abs().max(1.0),
+            "channel {c}: map sum {a} vs partial sum {b}"
+        );
+    }
+}
+
+/// Finite-difference check of the loss gradient through the tile partials.
+/// Each probe weights only its own channel over the 3x3 tiles around it, so
+/// the summed loss is small enough for f32 finite differences to resolve
+/// (the full-image sum quantises them to ~0.03), and the per-tile upstream
+/// gradient path in the backward gets a non-uniform weighting to chew on.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn partials_gradient_matches_finite_difference() {
+    let device =
+        burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
+    let (h, w) = (24, 40);
+    let bytes = make_pattern(h, w, 5, 1);
+    let bytes_b = make_pattern(h, w, 7, 11);
+    let mut rgba: Vec<f32> = bytes.iter().map(|b| *b as f32 / 255.0).collect();
+    // Keep pred away from exact equality with gt so the L1 sign is defined.
+    for (i, v) in rgba.iter_mut().enumerate() {
+        *v = (*v + 0.013 * ((i % 7) as f32 + 1.0)).min(0.97);
+    }
+    let gt = gt_packed_from_bytes(&bytes_b, h, w, &device);
+    let cfg = ImageLossConfig {
+        l1_weight: 0.6,
+        ssim_weight: 0.4,
+        composite_bg: None,
+        mask: false,
+        alpha_match: true,
+    };
+    let tiles_x = w.div_ceil(16);
+    let tiles_y = h.div_ceil(16);
+    let tiles = tiles_x * tiles_y;
+
+    // A few pixels: interior, tile edges, and the alpha channel.
+    let probes = [(5, 7, 0), (15, 16, 1), (16, 33, 2), (23, 39, 0), (9, 20, 3)];
+    let eps = 2e-3_f32;
+    let mut failed = Vec::new();
+    for (y, x, c) in probes {
+        let (ty, tx) = (y / 16, x / 16);
+        let mut wts = vec![0.0f32; 4 * tiles];
+        for oy in 0..tiles_y {
+            for ox in 0..tiles_x {
+                if oy.abs_diff(ty) <= 1 && ox.abs_diff(tx) <= 1 {
+                    wts[c * tiles + oy * tiles_x + ox] = 1.0;
+                }
+            }
+        }
+        let weights = Tensor::<1>::from_floats(wts.as_slice(), &device).reshape([4, tiles]);
+        let loss_of = |data: &[f32]| {
+            let pred = Tensor::<1>::from_floats(data, &device).reshape([h, w, 4]);
+            (image_loss_partials(pred, gt.clone(), cfg) * weights.clone()).sum()
+        };
+
+        let pred = Tensor::<1>::from_floats(rgba.as_slice(), &device)
+            .reshape([h, w, 4])
+            .require_grad();
+        let loss = (image_loss_partials(pred.clone(), gt.clone(), cfg) * weights.clone()).sum();
+        let grads = loss.backward();
+        let grad: Vec<f32> = pred
+            .grad(&grads)
+            .expect("grad")
+            .into_data_async()
+            .await
+            .expect("readback")
+            .try_to_vec()
+            .expect("vec");
+
+        let i = (y * w + x) * 4 + c;
+        let mut plus = rgba.clone();
+        plus[i] += eps;
+        let mut minus = rgba.clone();
+        minus[i] -= eps;
+        let lp = loss_of(&plus).into_scalar_async::<f32>().await.expect("rb");
+        let lm = loss_of(&minus)
+            .into_scalar_async::<f32>()
+            .await
+            .expect("rb");
+        let numerical = (lp - lm) / (2.0 * eps);
+        let analytical = grad[i];
+        let tol = 5e-3 + 0.02 * numerical.abs().max(analytical.abs());
+        if (numerical - analytical).abs() > tol {
+            failed.push(format!(
+                "pixel ({y},{x}) channel {c}: numerical {numerical:.4} vs analytical {analytical:.4}"
+            ));
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "loss gradient mismatches:\n  {}",
+        failed.join("\n  ")
+    );
 }
