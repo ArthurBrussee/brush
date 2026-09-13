@@ -275,8 +275,12 @@ impl SplatTrainer {
             } else {
                 0.0
             };
-            let weights =
-                Tensor::<1>::from_floats([rgb_w, rgb_w, rgb_w, alpha_w], &device).reshape([4, 1]);
+            // Built at its final shape: a `reshape` here would end burn's fusion
+            // block right before the reduce.
+            let weights: Tensor<2> = Tensor::from_data(
+                TensorData::new(vec![rgb_w, rgb_w, rgb_w, alpha_w], [4, 1]),
+                &device,
+            );
 
             // `loss` is only reassigned by the LPIPS path below, which is
             // compiled out on wasm — so `mut` is unused there.
@@ -362,8 +366,12 @@ impl SplatTrainer {
                 self.config.lr_scale as f32,
                 self.config.lr_scale as f32,
             ];
-            optimizer.transforms.scaling =
-                Some(Tensor::<1>::from_floats(lr_values.as_slice(), &opt_device).reshape([1, 10]));
+            // Built at its final shape: a `reshape` here would end burn's fusion
+            // block right before the optimizer step.
+            optimizer.transforms.scaling = Some(Tensor::<2>::from_data(
+                TensorData::new(lr_values.to_vec(), [1, 10]),
+                &opt_device,
+            ));
         }
 
         splats = trace_span!("Optimizer step").in_scope(|| {

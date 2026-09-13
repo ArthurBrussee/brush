@@ -99,7 +99,13 @@ struct GaussianBackwardState<B: Backend> {
     project_uniforms: ProjectUniforms,
     global_from_compact_gid: IntTensor<B>,
     compact_from_global: IntTensor<B>,
+    /// Visibility mask pre-shaped to broadcast against each gradient:
+    /// `[N]`, `[N, 1]`, `[N, 1, 1]`. Shaped at render time because a
+    /// `reshape` in the backward would end burn's fusion block right between
+    /// the gather and the mask multiply, materialising the dense gradient.
     visible: FloatTensor<B>,
+    visible_col: FloatTensor<B>,
+    visible_coeff: FloatTensor<B>,
 
     out_img: FloatTensor<B>,
     compact_gid_from_isect: IntTensor<B>,
@@ -168,34 +174,33 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
         // These are unexecuted stream ops, so burn's fusion folds the gather
         // and mask into the optimizer's own kernel; nothing dense is
         // materialised here.
-        let num_points = state.visible.shape().num_elements();
-        let visible = state.visible;
         let inv = state.compact_from_global;
-        let dense = |compact: FloatTensor<B>, trailing: &[usize]| {
-            let gathered = B::float_select(compact, 0, inv.clone());
-            let mut mask_shape = vec![num_points];
-            mask_shape.extend(trailing.iter().map(|_| 1));
-            // Broadcasting multiply: an explicit `expand` is one more op the
-            // fuser won't absorb, a broadcast it will.
-            let mask = B::float_reshape(visible.clone(), Shape::from(mask_shape));
-            B::float_mul(gathered, mask)
+        // Gather + broadcasting mask multiply only: both fuse, and with no
+        // reshape in between they stay in one block with the consumer.
+        let dense = |compact: FloatTensor<B>, mask: FloatTensor<B>| {
+            B::float_mul(B::float_select(compact, 0, inv.clone()), mask)
         };
 
         if let Some(node) = transforms_parent {
-            grads.register::<B>(node.id, dense(splat_grads.v_transforms, &[10]));
+            grads.register::<B>(
+                node.id,
+                dense(splat_grads.v_transforms, state.visible_col.clone()),
+            );
         }
 
         if let Some(node) = refine_weight {
-            grads.register::<B>(node.id, dense(splat_grads.v_refine_weight, &[]));
+            grads.register::<B>(
+                node.id,
+                dense(splat_grads.v_refine_weight, state.visible.clone()),
+            );
         }
 
         if let Some(node) = coeffs_parent {
-            let coeffs = sh_coeffs_for_degree(state.project_uniforms.sh_degree) as usize;
-            grads.register::<B>(node.id, dense(splat_grads.v_coeffs, &[coeffs, 3]));
+            grads.register::<B>(node.id, dense(splat_grads.v_coeffs, state.visible_coeff));
         }
 
         if let Some(node) = raw_opacity_parent {
-            grads.register::<B>(node.id, dense(splat_grads.v_raw_opac, &[]));
+            grads.register::<B>(node.id, dense(splat_grads.v_raw_opac, state.visible));
         }
     }
 }
@@ -342,6 +347,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
 
         output.clone().validate().await;
 
+        let num_points = output.aux.visible.shape().num_elements();
         let img_ad: FloatTensor<Self> = match prep_nodes {
             OpsKind::Tracked(prep) => {
                 let state = GaussianBackwardState {
@@ -359,6 +365,14 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
                     global_from_compact_gid: output.global_from_compact_gid.clone(),
                     compact_from_global: output.compact_from_global.clone(),
                     visible: output.aux.visible.clone(),
+                    visible_col: B::float_reshape(
+                        output.aux.visible.clone(),
+                        Shape::from(vec![num_points, 1]),
+                    ),
+                    visible_coeff: B::float_reshape(
+                        output.aux.visible.clone(),
+                        Shape::from(vec![num_points, 1, 1]),
+                    ),
                     background,
                     img_size,
                 };
