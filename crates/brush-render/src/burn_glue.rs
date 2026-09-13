@@ -6,7 +6,7 @@ use burn::backend::{
     GradientCheckpointingStrategy, TensorMetadata,
     tensor::{FloatTensor, IntTensor},
 };
-use burn::tensor::{DType, Int, Tensor};
+use burn::tensor::{DType, Int, Shape, Tensor};
 use burn_cubecl::fusion::FusionCubeRuntime;
 use burn_cubecl::tensor::CubeTensor;
 use burn_fusion::custom::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
@@ -146,6 +146,64 @@ pub fn resolve_to_cube_float<const D: usize>(tensor: Tensor<D>) -> CubeTensor {
     client.resolve_tensor_float::<MainBackendBase>(fusion)
 }
 
+/// Handle container a fusion custom op executes against.
+pub type FusionHandles = HandleContainer<FusionHandle<FusionCubeRuntime>>;
+/// A tensor living in the fusion stream.
+pub type FusionTensor = burn_fusion::FusionTensor<FusionCubeRuntime>;
+/// The fusion client that owns the stream.
+pub type FusionClient = burn_fusion::Client<FusionCubeRuntime>;
+
+struct ClosureOp<F> {
+    desc: CustomOpIr,
+    op: F,
+}
+
+impl<F> std::fmt::Debug for ClosureOp<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ClosureOp({:?})", self.desc)
+    }
+}
+
+impl<F> Operation<FusionCubeRuntime> for ClosureOp<F>
+where
+    F: Fn(&CustomOpIr, &mut FusionHandles) + Send + Sync + 'static,
+{
+    fn execute(&self, h: &mut FusionHandles) -> Result<(), ExecutionError> {
+        (self.op)(&self.desc, h);
+        Ok(())
+    }
+}
+
+/// Register a concrete-backend function as a custom op on the fusion stream.
+///
+/// `inputs` are handed to the op once the stream reaches it, and each
+/// `(shape, dtype)` in `outputs` becomes a fresh handle the op must fill in
+/// through the handle container. The op gets the description so it can look
+/// both up by id with `desc.as_fixed()`. This is the whole of what burn needs
+/// to run brush's kernels under `Fusion`; the surrounding elementwise ops
+/// still fuse among themselves on either side.
+pub fn register_custom<const N: usize, const M: usize, F>(
+    client: &FusionClient,
+    name: &'static str,
+    inputs: [FusionTensor; N],
+    outputs: [(Shape, DType); M],
+    op: F,
+) -> [FusionTensor; M]
+where
+    F: Fn(&CustomOpIr, &mut FusionHandles) + Send + Sync + 'static,
+{
+    let outputs =
+        outputs.map(|(shape, dtype)| TensorIr::uninit(client.create_empty_handle(), shape, dtype));
+    let desc = CustomOpIr::new(name, &inputs.map(|t| t.into_ir()), &outputs);
+    let op = ClosureOp {
+        desc: desc.clone(),
+        op,
+    };
+    client
+        .register(StreamId::current(), OperationIr::Custom(desc), op)
+        .outputs()
+}
+
 impl SplatOps for Fusion<CubeBackend> {
     async fn render(
         camera: &Camera,
@@ -188,94 +246,25 @@ impl SplatOps for Fusion<CubeBackend> {
         )
         .await;
 
-        // Bind precomputed outputs back into the fusion stream.
-        #[derive(Debug)]
-        struct BindOp {
-            desc: CustomOpIr,
-            out_img: FloatTensor<CubeBackend>,
-            visible: FloatTensor<CubeBackend>,
-            max_radius: FloatTensor<CubeBackend>,
-            projected_splats: FloatTensor<CubeBackend>,
-            tile_offsets: IntTensor<CubeBackend>,
-            compact_gid_from_isect: IntTensor<CubeBackend>,
-            global_from_compact_gid: IntTensor<CubeBackend>,
-        }
-
-        impl Operation<FusionCubeRuntime> for BindOp {
-            fn execute(
-                &self,
-                h: &mut HandleContainer<FusionHandle<FusionCubeRuntime>>,
-            ) -> Result<(), ExecutionError> {
-                let (_, outputs) = self.desc.as_fixed::<0, 7>();
-                let [
-                    out_img,
-                    visible,
-                    max_radius,
-                    projected_splats,
-                    tile_offsets,
-                    compact_gid_from_isect,
-                    global_from_compact_gid,
-                ] = outputs;
-
-                h.register_float_tensor::<CubeBackend>(&out_img.id, self.out_img.clone());
-                h.register_float_tensor::<CubeBackend>(&visible.id, self.visible.clone());
-                h.register_float_tensor::<CubeBackend>(&max_radius.id, self.max_radius.clone());
-                h.register_float_tensor::<CubeBackend>(
-                    &projected_splats.id,
-                    self.projected_splats.clone(),
-                );
-                h.register_int_tensor::<CubeBackend>(&tile_offsets.id, self.tile_offsets.clone());
-                h.register_int_tensor::<CubeBackend>(
-                    &compact_gid_from_isect.id,
-                    self.compact_gid_from_isect.clone(),
-                );
-                h.register_int_tensor::<CubeBackend>(
-                    &global_from_compact_gid.id,
-                    self.global_from_compact_gid.clone(),
-                );
-                Ok(())
-            }
-        }
-
-        // Every output is a fresh handle the bind op fills in; only shape and
-        // dtype differ.
-        let new_out = |shape, dtype| TensorIr::uninit(client.create_empty_handle(), shape, dtype);
-        let out_img_ir = new_out(out.out_img.shape(), DType::F32);
-        let visible_ir = new_out(out.aux.visible.shape(), DType::F32);
-        let max_radius_ir = new_out(out.aux.max_radius.shape(), DType::F32);
-        let projected_splats_ir = new_out(out.projected_splats.shape(), DType::F32);
-        let tile_offsets_ir = new_out(out.aux.tile_offsets.shape(), DType::U32);
-        let compact_gid_from_isect_ir = new_out(out.compact_gid_from_isect.shape(), DType::U32);
-        let global_from_compact_gid_ir = new_out(out.global_from_compact_gid.shape(), DType::U32);
-
-        let stream = StreamId::current();
-        let desc = CustomOpIr::new(
-            "render_bind",
-            &[],
-            &[
-                out_img_ir,
-                visible_ir,
-                max_radius_ir,
-                projected_splats_ir,
-                tile_offsets_ir,
-                compact_gid_from_isect_ir,
-                global_from_compact_gid_ir,
-            ],
-        );
-        let op = BindOp {
-            desc: desc.clone(),
-            out_img: out.out_img,
-            visible: out.aux.visible,
-            max_radius: out.aux.max_radius,
-            projected_splats: out.projected_splats,
-            tile_offsets: out.aux.tile_offsets,
-            compact_gid_from_isect: out.compact_gid_from_isect,
-            global_from_compact_gid: out.global_from_compact_gid,
-        };
-
-        let outputs = client
-            .register(stream, OperationIr::Custom(desc), op)
-            .outputs();
+        // The render is sized by a mid-pipeline readback, so it can't run as a
+        // stream op itself; hand its finished outputs back to the stream as a
+        // zero-input custom op that just binds them.
+        let RenderOutput {
+            out_img,
+            aux,
+            projected_splats,
+            compact_gid_from_isect,
+            project_uniforms,
+            global_from_compact_gid,
+        } = out;
+        let RenderAuxInner {
+            num_visible,
+            num_intersections,
+            visible,
+            max_radius,
+            tile_offsets,
+            img_size,
+        } = aux;
 
         let [
             out_img,
@@ -285,21 +274,45 @@ impl SplatOps for Fusion<CubeBackend> {
             tile_offsets,
             compact_gid_from_isect,
             global_from_compact_gid,
-        ] = outputs;
+        ] = register_custom(
+            &client,
+            "render_bind",
+            [],
+            [
+                (out_img.shape(), DType::F32),
+                (visible.shape(), DType::F32),
+                (max_radius.shape(), DType::F32),
+                (projected_splats.shape(), DType::F32),
+                (tile_offsets.shape(), DType::U32),
+                (compact_gid_from_isect.shape(), DType::U32),
+                (global_from_compact_gid.shape(), DType::U32),
+            ],
+            move |desc, h| {
+                let (_, [o_img, o_vis, o_rad, o_proj, o_tiles, o_compact, o_global]) =
+                    desc.as_fixed::<0, 7>();
+                h.register_float_tensor::<CubeBackend>(&o_img.id, out_img.clone());
+                h.register_float_tensor::<CubeBackend>(&o_vis.id, visible.clone());
+                h.register_float_tensor::<CubeBackend>(&o_rad.id, max_radius.clone());
+                h.register_float_tensor::<CubeBackend>(&o_proj.id, projected_splats.clone());
+                h.register_int_tensor::<CubeBackend>(&o_tiles.id, tile_offsets.clone());
+                h.register_int_tensor::<CubeBackend>(&o_compact.id, compact_gid_from_isect.clone());
+                h.register_int_tensor::<CubeBackend>(&o_global.id, global_from_compact_gid.clone());
+            },
+        );
 
         RenderOutput {
             out_img,
             aux: RenderAuxInner {
-                num_visible: out.aux.num_visible,
-                num_intersections: out.aux.num_intersections,
+                num_visible,
+                num_intersections,
                 visible,
                 max_radius,
                 tile_offsets,
-                img_size: out.aux.img_size,
+                img_size,
             },
             projected_splats,
             compact_gid_from_isect,
-            project_uniforms: out.project_uniforms,
+            project_uniforms,
             global_from_compact_gid,
         }
     }
