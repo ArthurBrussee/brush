@@ -144,6 +144,7 @@ pub(crate) async fn train_stream(
     // clone to the `Slot` after every modification (train
     // step, refine, LOD decimation).
     let mut splats: Splats = init_splats.clone();
+    let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
     slot.set(0, splats.clone());
     emitter
         .emit(ProcessMessage::SplatsUpdated {
@@ -152,6 +153,7 @@ pub(crate) async fn train_stream(
             total_frames: 1,
             num_splats: init_splats.num_splats(),
             sh_degree: init_splats.sh_degree(),
+            scene_scale: bounds.median_size(),
         })
         .await;
 
@@ -168,8 +170,6 @@ pub(crate) async fn train_stream(
         process_config.seed,
         &train_stream_config.load_config,
     );
-    let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
-
     // Per-train-view (world center, focal-px at native res) for the
     // Mip-Splatting 3D filter (always on).
     let mut view_cams: Vec<(glam::Vec3, f32)> = Vec::with_capacity(dataset.train.views.len());
@@ -481,6 +481,7 @@ pub(crate) async fn train_stream(
                     total_frames: 1,
                     num_splats: refine.total_splats,
                     sh_degree,
+                    scene_scale: trainer.bounds().median_size(),
                 })
                 .await;
 

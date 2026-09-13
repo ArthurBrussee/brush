@@ -197,6 +197,14 @@ impl UiProcess {
         self.read().up_axis
     }
 
+    /// Scale fly speed to the scene size. Ignores degenerate (empty or
+    /// non-finite) extents so the controls never freeze.
+    pub fn set_scene_scale(&self, scene_scale: f32) {
+        if scene_scale.is_finite() && scene_scale > 0.0 {
+            self.write().controls.scene_scale = scene_scale;
+        }
+    }
+
     /// Connect to an existing running process.
     pub fn connect_to_process(&self, process: RunningProcess) {
         {

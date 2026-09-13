@@ -23,6 +23,7 @@ use std::pin::{Pin, pin};
 use anyhow::Error;
 use async_fn_stream::{TryStreamEmitter, try_fn_stream};
 use brush_render::gaussian_splats::{SplatRenderMode, Splats};
+use brush_train::train::{BOUND_PERCENTILE, get_splat_bounds};
 use brush_vfs::SendNotWasm;
 use tokio_stream::{Stream, StreamExt};
 
@@ -217,6 +218,9 @@ async fn run_process<
                 // Capture stats before moving splats
                 let num_splats = splats.num_splats();
                 let sh_degree = splats.sh_degree();
+                let scene_scale = get_splat_bounds(splats.clone(), BOUND_PERCENTILE)
+                    .await
+                    .median_size();
                 splat_view.set(frame, splats);
 
                 emitter
@@ -226,6 +230,7 @@ async fn run_process<
                         total_frames,
                         num_splats,
                         sh_degree,
+                        scene_scale,
                     })
                     .await;
             }

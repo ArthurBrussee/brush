@@ -56,6 +56,9 @@ pub enum ProcessMessage {
         total_frames: u32,
         num_splats: u32,
         sh_degree: u32,
+        /// Rough size of the scene in world units: the median extent of the
+        /// percentile bounding box around the splats. Scales viewer movement.
+        scene_scale: f32,
     },
     TrainMessage(TrainMessage),
     /// Some warning occurred during the process, but the process can continue.
