@@ -228,7 +228,7 @@ impl CameraController {
 
         // Base speed is in scene sizes per second, so a keypress covers a
         // similar fraction of the scene whatever its world scale.
-        let move_speed = 6.0
+        let move_speed = 3.0
             * self.scene_scale
             * self.settings.speed_scale.unwrap_or(1.0)
             * if ui.input(|r| r.modifiers.shift) {
