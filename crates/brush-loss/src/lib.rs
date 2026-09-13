@@ -10,6 +10,8 @@
 //!   with optional background-compositing of GT (`gt_eff = gt + (1 - gt.a) * bg`)
 //!   and optional mask multiplication (`out = out * gt.a`) folded into the kernel.
 //! - [`image_loss_eval`]: forward-only loss map for non-differentiable backends.
+//! - [`psnr_from_mse`] / [`psnr`]: PSNR in dB, with MSE floored so identical
+//!   images report 100 dB rather than infinity.
 //!
 //! Backward recomputes SSIM partials inline so no per-pixel state survives
 //! across the autograd tape.
@@ -1131,6 +1133,20 @@ pub fn image_loss_eval(
         cfg,
     );
     Tensor::<3>::from_dispatch(map).permute([1, 2, 0])
+}
+
+/// Smallest MSE PSNR distinguishes: identical images report 100 dB instead
+/// of infinity, which would poison any average or plot it feeds.
+const PSNR_MIN_MSE: f32 = 1e-10;
+
+/// PSNR in dB from a mean squared error between images in `[0, 1]`.
+pub fn psnr_from_mse(mse: Tensor<1>) -> Tensor<1> {
+    mse.clamp_min(PSNR_MIN_MSE).recip().log() * (10.0 / std::f32::consts::LN_10)
+}
+
+/// PSNR in dB between two `[H, W, 3]` images in `[0, 1]`.
+pub fn psnr(a: Tensor<3>, b: Tensor<3>) -> Tensor<1> {
+    psnr_from_mse((a - b).powi_scalar(2).mean())
 }
 
 /// Decode `gt_packed` back to a `[H, W, 3]` f32 RGB tensor. `composite_bg =
