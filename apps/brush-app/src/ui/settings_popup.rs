@@ -148,6 +148,14 @@ pub(crate) fn draw_settings(ui: &mut Ui, args: &mut TrainStreamConfig, enabled: 
         );
         slider(
             ui,
+            &mut tc.growth_start_iter,
+            0..=20000,
+            "Growth start iteration",
+            false,
+            enabled,
+        );
+        slider(
+            ui,
             &mut tc.growth_stop_iter,
             5000..=20000,
             "Growth stop iteration",
