@@ -1216,6 +1216,7 @@ dependencies = [
  "burn-cubecl",
  "burn-wgpu",
  "bytemuck",
+ "divan",
  "getrandom 0.4.3",
  "tokio",
  "wasm-bindgen-test",
