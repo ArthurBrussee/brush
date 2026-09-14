@@ -154,9 +154,8 @@ fn mean_trailing_dims<const D: usize>(t: Tensor<D>) -> Tensor<D> {
     let shape = t.dims();
     let trailing_count: usize = shape[1..].iter().product();
 
-    // One multi-dim reduce keeps the trailing dims at size 1 with no
-    // reshape: burn's fusion explorer stops at a reshape, which used to
-    // leave this as three separate launches per step.
+    // Reduce over the trailing dims directly; a flatten + reshape would end
+    // burn's fusion block.
     let dims: Vec<usize> = (1..D).collect();
     t.sum_dims(&dims) / trailing_count as f32
 }

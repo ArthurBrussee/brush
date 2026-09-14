@@ -6,7 +6,6 @@ readme.workspace = true
 license.workspace = true
 
 [dependencies]
-brush-render.path = "../brush-render"
 brush-cube.path = "../brush-cube"
 
 burn = { workspace = true, features = ["autodiff"] }

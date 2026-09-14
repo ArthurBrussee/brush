@@ -5,7 +5,10 @@
 //! output range, backward produces finite gradients). Bit-exact reference
 //! matching is covered by the integration training tests in `brush-bench-test`.
 
-use brush_loss::{ImageLossConfig, image_loss_eval, image_loss_partials, psnr, psnr_from_mse};
+use brush_loss::{
+    ImageLossConfig, TILE_SIZE, image_loss, image_loss_eval, image_loss_partials, psnr,
+    psnr_from_mse,
+};
 use burn::tensor::{Device, Int, Tensor, TensorData};
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -50,7 +53,7 @@ fn ssim_only_cfg() -> ImageLossConfig {
         ssim_weight: 1.0,
         composite_bg: None,
         mask: false,
-        alpha_match: false,
+        alpha_weight: 0.0,
     }
 }
 
@@ -112,7 +115,7 @@ async fn image_loss_backward_runs() {
     let pred = pred_from_bytes(&bytes_a, h, w, &device).require_grad();
     let gt = gt_packed_from_bytes(&bytes_b, h, w, &device);
 
-    let partials = image_loss_partials(
+    let loss = image_loss(
         pred.clone(),
         gt,
         ImageLossConfig {
@@ -120,10 +123,10 @@ async fn image_loss_backward_runs() {
             ssim_weight: -0.2,
             composite_bg: None,
             mask: false,
-            alpha_match: false,
+            alpha_weight: 0.0,
         },
     );
-    let grads = partials.sum().backward();
+    let grads = loss.backward();
     let grad = pred.grad(&grads).expect("pred should have a gradient");
     let data: Vec<f32> = grad
         .into_data_async()
@@ -161,7 +164,7 @@ async fn alpha_match_via_4ch_pred() {
         ssim_weight: 0.0,
         composite_bg: None,
         mask: false,
-        alpha_match: true,
+        alpha_weight: 1.0,
     };
     let map = image_loss_eval(pred.clone(), gt.clone(), cfg);
     assert_eq!(map.dims(), [h, w, 4]);
@@ -194,7 +197,8 @@ async fn psnr_matches_known_values() {
     assert!((db - 100.0).abs() < 1e-3, "got {db}");
 }
 
-/// The per-tile partial sums must agree with the per-pixel map, per channel.
+/// The weighted per-tile partial sums must agree with the per-pixel map's
+/// channel means.
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn partials_match_map_sums() {
     let device =
@@ -210,7 +214,7 @@ async fn partials_match_map_sums() {
         ssim_weight: 0.3,
         composite_bg: None,
         mask: false,
-        alpha_match: true,
+        alpha_weight: 1.0,
     };
     let map = image_loss_eval(pred.clone(), gt.clone(), cfg);
     let map_sums: Vec<f32> = map
@@ -229,11 +233,17 @@ async fn partials_match_map_sums() {
         .expect("readback")
         .try_to_vec()
         .expect("vec");
+    let pixels = (h * w) as f32;
     for c in 0..4 {
-        let (a, b) = (map_sums[c], partial_sums[c]);
+        let weight = if c < 3 {
+            1.0 / (3.0 * pixels)
+        } else {
+            cfg.alpha_weight / pixels
+        };
+        let (a, b) = (map_sums[c] * weight, partial_sums[c]);
         assert!(
-            (a - b).abs() <= 1e-3 * a.abs().max(1.0),
-            "channel {c}: map sum {a} vs partial sum {b}"
+            (a - b).abs() <= 1e-3 * a.abs().max(1e-3),
+            "channel {c}: weighted map sum {a} vs partial sum {b}"
         );
     }
 }
@@ -261,10 +271,10 @@ async fn partials_gradient_matches_finite_difference() {
         ssim_weight: 0.4,
         composite_bg: None,
         mask: false,
-        alpha_match: true,
+        alpha_weight: 1.0,
     };
-    let tiles_x = w.div_ceil(16);
-    let tiles_y = h.div_ceil(16);
+    let tiles_x = w.div_ceil(TILE_SIZE);
+    let tiles_y = h.div_ceil(TILE_SIZE);
     let tiles = tiles_x * tiles_y;
 
     // A few pixels: interior, tile edges, and the alpha channel.
@@ -272,7 +282,7 @@ async fn partials_gradient_matches_finite_difference() {
     let eps = 2e-3_f32;
     let mut failed = Vec::new();
     for (y, x, c) in probes {
-        let (ty, tx) = (y / 16, x / 16);
+        let (ty, tx) = (y / TILE_SIZE, x / TILE_SIZE);
         let mut wts = vec![0.0f32; 4 * tiles];
         for oy in 0..tiles_y {
             for ox in 0..tiles_x {

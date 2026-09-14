@@ -334,29 +334,68 @@ pub fn read_scale(transforms: &Tensor<f32>, base: usize) -> Vec3A {
     )
 }
 
-/// Mip-Splatting 3D filter: floor each world-space scale at `f`,
-/// `s' = sqrt(s² + f²)`.
-#[cube]
-pub fn floor_scale(scale: Vec3A, f: f32) -> Vec3A {
-    let f2 = f * f;
-    Vec3A::new(
-        f32::sqrt(scale.x() * scale.x() + f2),
-        f32::sqrt(scale.y() * scale.y() + f2),
-        f32::sqrt(scale.z() * scale.z() + f2),
-    )
-}
-
-/// Energy compensation that goes with `floor_scale`: the volume ratio
-/// `Π s / s'`, which scales the opacity down so the inflated splat keeps the
-/// same total mass.
-#[cube]
-pub fn floor_opacity_coef(scale: Vec3A, floored: Vec3A) -> f32 {
-    (scale.x() / floored.x()) * (scale.y() / floored.y()) * (scale.z() / floored.z())
-}
-
 /// Opacity clamp applied after the floor compensation, matching
 /// `fold_min_scale` on the host.
 pub const FLOOR_OPACITY_EPS: f32 = 1e-6;
+
+/// One splat's scale and opacity after the Mip-Splatting 3D filter, plus
+/// what the backward needs to differentiate through it.
+#[derive(CubeType, Copy, Clone)]
+#[expand(derive(Clone, Copy))]
+pub struct ScaleFloor {
+    /// `s' = sqrt(s² + f²)` per axis.
+    pub scale: Vec3A,
+    /// Base opacity `sigmoid(raw) · coef`, clamped.
+    pub opac: f32,
+    /// Energy compensation `Π s / s'`: the inflated splat keeps its mass.
+    pub coef: f32,
+    /// `d(log s') / d(log s) = s² / (s² + f²)` per axis.
+    pub ratio_sq: Vec3A,
+    /// Whether the opacity clamp lets gradient through.
+    pub opac_open: bool,
+}
+
+/// Apply the floor `min_scale[gid]` to a splat's scale and sigmoid opacity,
+/// matching `fold_min_scale` on the host. With `has_min_scale` false this is
+/// the identity and `min_scale` is never read.
+#[cube]
+pub fn apply_scale_floor(
+    scale: Vec3A,
+    opac_sig: f32,
+    min_scale: &Tensor<f32>,
+    gid: u32,
+    #[comptime] has_min_scale: bool,
+) -> ScaleFloor {
+    let mut floored = scale;
+    let mut opac = opac_sig;
+    let mut coef = 1.0f32;
+    let mut ratio_sq = Vec3A::new(1.0f32, 1.0f32, 1.0f32);
+    let mut opac_open = true;
+    if has_min_scale {
+        let f = min_scale[gid as usize];
+        let f2 = f * f;
+        floored = Vec3A::new(
+            f32::sqrt(scale.x() * scale.x() + f2),
+            f32::sqrt(scale.y() * scale.y() + f2),
+            f32::sqrt(scale.z() * scale.z() + f2),
+        );
+        let rx = scale.x() / floored.x();
+        let ry = scale.y() / floored.y();
+        let rz = scale.z() / floored.z();
+        coef = rx * ry * rz;
+        ratio_sq = Vec3A::new(rx * rx, ry * ry, rz * rz);
+        let o = opac_sig * coef;
+        opac_open = o > FLOOR_OPACITY_EPS && o < 1.0f32 - FLOOR_OPACITY_EPS;
+        opac = clamp(o, FLOOR_OPACITY_EPS, 1.0f32 - FLOOR_OPACITY_EPS);
+    }
+    ScaleFloor {
+        scale: floored,
+        opac,
+        coef,
+        ratio_sq,
+        opac_open,
+    }
+}
 
 #[cube]
 pub fn read_quat_unorm(transforms: &Tensor<f32>, base: usize) -> Quat {

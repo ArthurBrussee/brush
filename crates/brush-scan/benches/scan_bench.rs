@@ -6,12 +6,10 @@
 
 use std::sync::Arc;
 
-use brush_cube::CubeDevice;
-use brush_cube::CubeTensor;
+use brush_cube::{CubeDevice, CubeTensor};
 use brush_scan::prefix_sum;
 use burn::backend::TensorMetadata;
 use burn::cubecl::future::block_on;
-use burn::tensor::{DType, Shape};
 
 #[cfg(not(target_family = "wasm"))]
 fn main() {
@@ -31,18 +29,6 @@ fn make_input(size: usize) -> Arc<Vec<u32>> {
     Arc::new((0..size as u32).map(|i| i % 7).collect())
 }
 
-fn upload_u32(device: &CubeDevice, data: &[u32]) -> CubeTensor {
-    let client = device.client();
-    let handle = client.create_from_slice(bytemuck::cast_slice(data));
-    CubeTensor::new_contiguous(
-        client,
-        device.clone(),
-        Shape::new([data.len()]),
-        handle,
-        DType::U32,
-    )
-}
-
 fn run_scan(device: &CubeDevice, input: &CubeTensor) {
     let out = prefix_sum(input.clone());
     // Force completion with a minimal readback: the last element only.
@@ -56,11 +42,13 @@ fn run_scan(device: &CubeDevice, input: &CubeTensor) {
 #[divan::bench_group(max_time = 4)]
 mod scan_bench {
     use crate::{SIZES, device, make_input, run_scan};
+    use brush_cube::create_tensor_from_slice;
+    use burn::tensor::DType;
 
     #[divan::bench(args = SIZES)]
     fn prefix_sum(bencher: divan::Bencher, size: usize) {
         let dev = device();
-        let input = crate::upload_u32(&dev, &make_input(size));
+        let input = create_tensor_from_slice(&make_input(size), &dev, DType::U32);
         bencher.bench_local(move || run_scan(&dev, &input));
     }
 }

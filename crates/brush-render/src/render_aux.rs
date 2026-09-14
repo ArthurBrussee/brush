@@ -23,8 +23,10 @@ pub struct RenderOutput<B: Backend> {
     pub compact_gid_from_isect: IntTensor<B>,
     pub project_uniforms: ProjectUniforms,
     pub global_from_compact_gid: IntTensor<B>,
-    /// Inverse of `global_from_compact_gid` over all splats; culled splats
-    /// hold 0 and must be masked by `aux.visible`.
+    /// Inverse of `global_from_compact_gid` over all splats, offset by one:
+    /// visible splat `compact_gid` holds `compact_gid + 1`, culled splats 0.
+    /// Row 0 of the backward's compact gradient buffers is a zero row, so a
+    /// plain gather through this expands them to the dense param shape.
     pub compact_from_global: IntTensor<B>,
 }
 

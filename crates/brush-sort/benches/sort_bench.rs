@@ -12,12 +12,11 @@
 
 use std::sync::Arc;
 
-use brush_cube::CubeDevice;
-use brush_cube::CubeTensor;
+use brush_cube::{CubeDevice, CubeTensor, create_tensor_from_slice};
 use brush_sort::radix_argsort;
 use burn::backend::TensorMetadata;
 use burn::cubecl::future::block_on;
-use burn::tensor::{DType, Shape};
+use burn::tensor::DType;
 
 #[cfg(not(target_family = "wasm"))]
 fn main() {
@@ -74,18 +73,9 @@ fn make_inputs(size: usize, key_kind: KeyKind) -> Arc<(Vec<u32>, Vec<u32>)> {
     Arc::new((keys, values))
 }
 
-// Build a CubeTensor directly from a raw u32 slice. Bypasses Burn's i32-typed
-// `from_ints` which would panic on values >= 2^31.
+// Raw u32 upload: burn's i32-typed `from_ints` would reject keys >= 2^31.
 fn upload_u32(device: &CubeDevice, data: &[u32]) -> CubeTensor {
-    let client = device.client();
-    let handle = client.create_from_slice(bytemuck::cast_slice(data));
-    CubeTensor::new_contiguous(
-        client,
-        device.clone(),
-        Shape::new([data.len()]),
-        handle,
-        DType::U32,
-    )
+    create_tensor_from_slice(data, device, DType::U32)
 }
 
 fn run_sort(device: &CubeDevice, keys: &CubeTensor, values: &CubeTensor, bits: u32) {

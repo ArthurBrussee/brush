@@ -6,9 +6,8 @@
 //! internally.
 
 use super::helpers::{
-    FLOOR_OPACITY_EPS, calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles,
-    floor_opacity_coef, floor_scale, get_tile_bbox, is_finite_f32, read_mean_viewspace,
-    read_quat_unorm, read_scale, sigmoid,
+    apply_scale_floor, calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles,
+    get_tile_bbox, is_finite_f32, read_mean_viewspace, read_quat_unorm, read_scale, sigmoid,
 };
 use super::types::ProjectUniforms;
 use crate::kernels::camera_model::{CameraModel, project};
@@ -42,7 +41,7 @@ pub fn project_forward_kernel(
         terminate!();
     }
 
-    // Defaults for culled splats: an in-range (masked) compact index and a
+    // Defaults for culled splats: the backward's zero gradient row and a
     // zero opacity. Visible splats overwrite both further down.
     compact_from_global[global_gid as usize] = 0u32;
     opacities[global_gid as usize] = 0.0f32;
@@ -91,23 +90,19 @@ pub fn project_forward_kernel(
 
     // Mip-Splatting 3D filter, folded in here rather than on the host so
     // the raw params stay the kernel inputs.
-    let mut scale = scale;
-    let mut opac_base = sigmoid(raw_opac);
-    if has_min_scale {
-        let floored = floor_scale(scale, min_scale[global_gid as usize]);
-        opac_base = clamp(
-            opac_base * floor_opacity_coef(scale, floored),
-            FLOOR_OPACITY_EPS,
-            1.0f32 - FLOOR_OPACITY_EPS,
-        );
-        scale = floored;
-    }
+    let floor = apply_scale_floor(
+        scale,
+        sigmoid(raw_opac),
+        min_scale,
+        global_gid,
+        has_min_scale,
+    );
     // Per-splat opacity with the floor folded in, for the trainer's noise gate.
-    opacities[global_gid as usize] = opac_base;
+    opacities[global_gid as usize] = floor.opac;
 
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
+    let raw_cov = calc_cov2d(floor.scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
-    let opac = opac_base * filter_comp;
+    let opac = floor.opac * filter_comp;
 
     if !cov.is_finite() {
         terminate!();

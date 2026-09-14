@@ -1,5 +1,5 @@
 use brush_dataset::scene::view_to_packed_data;
-use brush_loss::{ImageLossConfig, image_loss_partials};
+use brush_loss::{ImageLossConfig, image_loss};
 use brush_render::bwd::render_splats;
 use brush_render::gaussian_splats::Splats;
 use burn::{
@@ -104,12 +104,10 @@ pub async fn compute_pup_scores(
             ssim_weight: 0.0,
             composite_bg: None,
             mask: false,
-            alpha_match: false,
+            alpha_weight: 0.0,
         };
-        // Mean L1 over the RGB channels; the kernel takes the RGBA image and
-        // returns per-tile sums (alpha row zero without alpha matching).
-        let pixels = (img_size.x * img_size.y) as f32;
-        let loss = image_loss_partials(diff_out.img, gt_packed, l1_cfg).sum() / (3.0 * pixels);
+        // Mean L1 over the RGB channels of the RGBA render.
+        let loss = image_loss(diff_out.img, gt_packed, l1_cfg);
         let mut grads = loss.backward();
 
         let transforms_grad = splats

@@ -34,7 +34,7 @@ impl SplatBwdOps for CubeBackend {
 
         let v_output = into_contiguous(v_output);
         let device = out_img.device.clone();
-        let num_visible = projected_splats.shape()[0].max(1);
+        let num_visible = projected_splats.shape()[0];
         let client = projected_splats.client.clone();
 
         // Sparse [num_visible, 10] indexed by compact_gid.
@@ -105,6 +105,7 @@ impl SplatBwdOps for CubeBackend {
         sh_coeffs: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
         min_scale: FloatTensor<Self>,
+        has_min_scale: bool,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         render_mode: SplatRenderMode,
@@ -117,37 +118,30 @@ impl SplatBwdOps for CubeBackend {
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
         let raw_opac = into_contiguous(raw_opac);
+        let min_scale = into_contiguous(min_scale);
 
         let device = transforms.device.clone();
-        let num_points = transforms.shape()[0];
         let client = transforms.client.clone();
-        let min_scale = into_contiguous(min_scale);
-        let has_min_scale = min_scale.shape()[0] == num_points;
 
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
-        let num_visible = project_uniforms.num_visible;
-
-        // Compact outputs, one row per visible splat. The kernel writes every
-        // row (zeros for splats that didn't contribute), so no zero-fill.
-        let nv = (num_visible as usize).max(1);
+        // Compact outputs with the zero row in front (see the kernel); the
+        // kernel writes every row, so no fill.
+        let rows = project_uniforms.num_visible as usize + 1;
         let coeffs = sh_coeffs_for_degree(project_uniforms.sh_degree) as usize;
-        let v_transforms = create_tensor([nv, 10], &device, DType::F32);
-        let v_coeffs = create_tensor([nv, coeffs, 3], &device, DType::F32);
-        let v_raw_opac = create_tensor([nv], &device, DType::F32);
-        let v_refine_weight = create_tensor([nv], &device, DType::F32);
+        let v_transforms = create_tensor([rows, 10], &device, DType::F32);
+        let v_coeffs = create_tensor([rows, coeffs, 3], &device, DType::F32);
+        let v_raw_opac = create_tensor([rows], &device, DType::F32);
+        let v_refine_weight = create_tensor([rows], &device, DType::F32);
 
         let uniforms = project_uniforms.to_launch_object();
+        let cube_dim = CubeDim::new_1d(kernels::project_backwards::WG_SIZE);
 
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             kernels::project_backwards::project_backwards_kernel::launch(
                 &client,
-                calculate_cube_count_elemwise(
-                    &client,
-                    num_visible as usize,
-                    CubeDim::new_1d(kernels::project_backwards::WG_SIZE),
-                ),
-                CubeDim::new_1d(kernels::project_backwards::WG_SIZE),
+                calculate_cube_count_elemwise(&client, rows, cube_dim),
+                cube_dim,
                 transforms.into_tensor_arg(),
                 sh_coeffs.into_tensor_arg(),
                 raw_opac.into_tensor_arg(),

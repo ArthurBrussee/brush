@@ -460,8 +460,6 @@ async fn growth_waits_for_start_iter() {
         BoundingBox::from_min_max(Vec3::ZERO, Vec3::ONE),
     );
 
-    // Like the training loop: splats live on the inner device and are lifted
-    // to autodiff for each step, so refine sees plain leaves.
     let mut splats = generate_test_splats(&device, 100).valid();
     for _ in 0..5 {
         let (new_splats, _) = trainer.step(batch.clone(), splats.train()).await;

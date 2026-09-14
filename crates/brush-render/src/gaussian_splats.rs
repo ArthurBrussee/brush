@@ -88,12 +88,12 @@ pub fn inverse_sigmoid(x: f32) -> f32 {
     (x / (1.0 - x)).ln()
 }
 
-/// Mip-Splatting 3D smoothing filter: fold a per-splat world-space scale floor
-/// `f` `[N]` into the packed `transforms` `[N,10]` and `raw_opac` `[N]`. Scales
-/// become `sqrt(s² + f²)` and opacity is energy-compensated by `sqrt(det1/det2)`
-/// over the three world axes. Differentiable w.r.t. the learned scale/opacity;
-/// `f` is treated as a constant. This is the single source of truth for the
-/// floor — used by both render paths and by [`Splats::bake_min_scale`].
+/// Mip-Splatting 3D smoothing filter on the host: fold a per-splat world-space
+/// scale floor `f` `[N]` into the packed `transforms` `[N,10]` and `raw_opac`
+/// `[N]`. Scales become `sqrt(s² + f²)` and opacity is energy-compensated by
+/// `Π s / s'` over the three world axes. The render kernels apply the same
+/// floor themselves (`kernels::helpers::apply_scale_floor`); this copy serves
+/// [`Splats::bake_min_scale`] and the `opacities()` / `scales()` readouts.
 pub fn fold_min_scale(
     transforms: Tensor<2>,
     raw_opac: Tensor<1>,
@@ -109,10 +109,7 @@ pub fn fold_min_scale(
     let s2f = s2.add(f2); // s² + f² [N,3]
 
     let new_log = s2f.log().mul_scalar(0.5); // log(sqrt(s²+f²)) [N,3]
-    // Rebuild the packed tensor with `cat` rather than `slice_assign`: burn's
-    // fusion runs a block containing a slice_assign eagerly, one kernel per
-    // op, which turned this whole fold into ~19 launches. With `cat` it fuses
-    // down to 7.
+    // `cat` fuses; a `slice_assign` would make burn run the block eagerly.
     let transforms = Tensor::cat(vec![transforms.slice(s![.., 0..7]), new_log.clone()], 1);
 
     let coef = log_scales.sub(new_log).sum_dim(1).exp().reshape([n]);
@@ -222,6 +219,16 @@ impl Splats {
     pub fn with_min_scale(mut self, f: Tensor<1>) -> Self {
         self.min_scale = Some(f);
         self
+    }
+
+    /// The floor as the render trait takes it: the `[N]` tensor and whether
+    /// it's real. Without a floor the tensor is a `[1]` placeholder the
+    /// kernels never read. Lives on the inner backend either way.
+    pub fn min_scale_arg(&self) -> (Tensor<1>, bool) {
+        match &self.min_scale {
+            Some(f) => (f.clone(), true),
+            None => (Tensor::zeros([1], &self.device().inner()), false),
+        }
     }
 
     /// Get means (positions) — slice of transforms columns 0..3.
@@ -401,17 +408,12 @@ pub async fn render_splats(
 ) -> (Tensor<3>, RenderAux) {
     splats.clone().validate_values().await;
 
-    let sh_coeffs = splats.sh_coeffs.into_value();
-
     // The 3D-filter floor is part of the splat's definition, so eval/viewer
     // render with it just like training; the projection kernels fold it in.
-    // A `[1]` tensor stands for "no floor".
+    let (min_scale, has_min_scale) = splats.min_scale_arg();
+    let sh_coeffs = splats.sh_coeffs.into_value();
     let transforms = splats.transforms.val();
     let raw_opacities = splats.raw_opacities.val();
-    let min_scale = match &splats.min_scale {
-        Some(f) => f.clone(),
-        None => Tensor::<1>::zeros([1], &transforms.device()),
-    };
 
     let transforms = if let Some(scale) = splat_scale {
         let adjusted = transforms.clone().slice(s![.., 7..10]) + scale.ln();
@@ -447,6 +449,7 @@ pub async fn render_splats(
         sh_coeffs.into_dispatch(),
         raw_opacities.into_dispatch(),
         min_scale.into_dispatch(),
+        has_min_scale,
         // Inference path: no gradients, so the refine-weight accumulator is a
         // throwaway scalar the concrete backends ignore.
         Tensor::<1>::zeros([1], &render_device).into_dispatch(),

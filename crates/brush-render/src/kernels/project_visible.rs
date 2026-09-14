@@ -2,8 +2,8 @@
 //! culled non-finite-cov2d splats so this kernel trusts `calc_cov2d`.
 
 use super::helpers::{
-    FLOOR_OPACITY_EPS, calc_cov2d, compensate_cov2d, floor_opacity_coef, floor_scale,
-    is_finite_f32, read_quat_unorm, read_scale, sigmoid, world_to_cam, write_projected_splat,
+    apply_scale_floor, calc_cov2d, compensate_cov2d, is_finite_f32, read_quat_unorm, read_scale,
+    sigmoid, world_to_cam, write_projected_splat,
 };
 use super::sh::{num_sh_coeffs, sh_coeffs_to_color};
 use super::types::{ProjectUniforms, Splat, Vec3A};
@@ -41,8 +41,9 @@ pub fn project_visible_kernel(
 
     let global_gid = global_from_compact_gid[compact_gid as usize];
     // Inverse map so the backward's compact gradients can be gathered per
-    // global splat.
-    compact_from_global[global_gid as usize] = compact_gid;
+    // global splat. Offset by one: row 0 of those buffers is the zero row
+    // that culled splats point at.
+    compact_from_global[global_gid as usize] = compact_gid + 1u32;
 
     // means(3) + quats(4) + log_scales(3)
     let base = (global_gid * 10u32) as usize;
@@ -51,22 +52,13 @@ pub fn project_visible_kernel(
     let quat_unorm = read_quat_unorm(transforms, base);
     let quat = quat_unorm.normalize();
 
-    let mut scale = scale;
-    let mut opac_base = sigmoid(raw_opacities[global_gid as usize]);
-    if has_min_scale {
-        let floored = floor_scale(scale, min_scale[global_gid as usize]);
-        opac_base = clamp(
-            opac_base * floor_opacity_coef(scale, floored),
-            FLOOR_OPACITY_EPS,
-            1.0f32 - FLOOR_OPACITY_EPS,
-        );
-        scale = floored;
-    }
+    let opac_sig = sigmoid(raw_opacities[global_gid as usize]);
+    let floor = apply_scale_floor(scale, opac_sig, min_scale, global_gid, has_min_scale);
 
     let mean_c = world_to_cam(mean, u);
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
+    let raw_cov = calc_cov2d(floor.scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
-    let opac = opac_base * filter_comp;
+    let opac = floor.opac * filter_comp;
     let conic = cov.inverse();
 
     let (mean2d_x, mean2d_y) = project(mean_c, u.pinhole_params, camera_model);

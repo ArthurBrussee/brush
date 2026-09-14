@@ -58,7 +58,8 @@ pub trait SplatOps: Backend {
     /// concrete backends ignore it.
     /// `min_scale` is the per-splat Mip-Splatting scale floor `[N]`, folded
     /// into scales and opacity inside the projection kernels (and their
-    /// backward). Pass a `[1]` tensor to render without a floor.
+    /// backward). With `has_min_scale` false it is a placeholder the kernels
+    /// never read; [`Splats::min_scale_arg`] builds the pair.
     /// `pass` picks forward-only vs. forward+backward-bookkeeping, and (only
     /// for tests) toggles the C^1 smoothstep around the alpha cutoff.
     #[allow(clippy::too_many_arguments)]
@@ -69,6 +70,7 @@ pub trait SplatOps: Backend {
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         min_scale: FloatTensor<Self>,
+        has_min_scale: bool,
         refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,

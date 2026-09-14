@@ -4,15 +4,13 @@ use burn::cubecl::frontend::CompilationArg;
 use burn::cubecl::frontend::IndexMutExpand;
 use burn::cubecl::prelude::*;
 
+pub use brush_scan::{BLOCK_SIZE, ELEMENTS_PER_THREAD, WG};
 use brush_scan::{cube_exclusive_sum, cube_sum};
 
-pub const WG: u32 = 256;
 pub const WG_USIZE: usize = WG as usize;
 pub const BITS_PER_PASS: u32 = 4;
 pub const BIN_COUNT: u32 = 1 << BITS_PER_PASS;
 pub const BIN_COUNT_USIZE: usize = BIN_COUNT as usize;
-pub const ELEMENTS_PER_THREAD: u32 = 4;
-pub const BLOCK_SIZE: u32 = WG * ELEMENTS_PER_THREAD;
 
 #[cube]
 #[allow(clippy::manual_div_ceil)]

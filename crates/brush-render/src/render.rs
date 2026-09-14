@@ -43,6 +43,7 @@ impl SplatOps for CubeBackend {
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         min_scale: FloatTensor<Self>,
+        has_min_scale: bool,
         _refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
@@ -68,8 +69,6 @@ impl SplatOps for CubeBackend {
         let total_splats = transforms.shape()[0] as u32;
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
-        // A `[1]` tensor means "no floor"; a real floor is one value per splat.
-        let has_min_scale = min_scale.shape()[0] == total_splats as usize;
 
         // Cull splats beyond the lens' diagonal fov with some margin, but never
         // past the angle where the distortion polynomial folds back on itself:
@@ -126,15 +125,12 @@ impl SplatOps for CubeBackend {
             let depths = create_tensor([total_splats], &device, DType::F32);
 
             let uniforms = project_uniforms.to_launch_object();
+            let cube_dim = CubeDim::new_1d(kernels::project_forward::WG_SIZE);
 
             kernels::project_forward::project_forward_kernel::launch(
                 &client,
-                calculate_cube_count_elemwise(
-                    &client,
-                    (project_uniforms.total_splats) as usize,
-                    CubeDim::new_1d(kernels::project_forward::WG_SIZE),
-                ),
-                CubeDim::new_1d(kernels::project_forward::WG_SIZE),
+                calculate_cube_count_elemwise(&client, total_splats, cube_dim),
+                cube_dim,
                 transforms.clone().into_tensor_arg(),
                 raw_opacities.clone().into_tensor_arg(),
                 min_scale.clone().into_tensor_arg(),

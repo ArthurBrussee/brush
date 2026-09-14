@@ -3,8 +3,7 @@
 use crate::kernels::camera_model::CameraModel;
 use crate::kernels::camera_model::{calculate_project_jacobian, calculate_projection_vjp};
 use crate::kernels::helpers::{
-    FLOOR_OPACITY_EPS, calc_cov2d, compensate_cov2d, floor_opacity_coef, floor_scale,
-    read_quat_unorm, read_scale, world_to_cam,
+    apply_scale_floor, calc_cov2d, compensate_cov2d, read_quat_unorm, read_scale, world_to_cam,
 };
 use crate::kernels::sh::{num_sh_coeffs, sh_coeffs_to_color_vjp, sh_color_viewdir_vjp};
 use crate::kernels::types::{Mat3, ProjectUniforms, Quat, Sym2, Vec3A};
@@ -97,6 +96,31 @@ fn inverse2x2_vjp(minv: Sym2, v_minv: Sym2) -> Sym2 {
     }
 }
 
+/// Zero one row of the compact gradient outputs.
+#[cube]
+fn write_zero_row(
+    v_transforms: &mut Tensor<f32>,
+    v_coeffs: &mut Tensor<f32>,
+    v_raw_opac: &mut Tensor<f32>,
+    v_refine_weight: &mut Tensor<f32>,
+    row: u32,
+    #[comptime] sh_degree: u32,
+) {
+    let vbase = (row * 10u32) as usize;
+    let coeff_base = row * comptime![num_sh_coeffs(sh_degree) * 3u32];
+    for k in 0u32..10u32 {
+        v_transforms[vbase + k as usize] = 0.0f32;
+    }
+    for k in 0u32..comptime![num_sh_coeffs(sh_degree) * 3u32] {
+        v_coeffs[(coeff_base + k) as usize] = 0.0f32;
+    }
+    v_raw_opac[row as usize] = 0.0f32;
+    v_refine_weight[row as usize] = 0.0f32;
+}
+
+/// Outputs are compact with a zero row in front: row 0 is what culled splats
+/// gather through `compact_from_global`, visible splat `compact_gid` owns row
+/// `compact_gid + 1`. Every row is written, so the buffers need no fill.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 pub fn project_backwards_kernel(
@@ -116,17 +140,26 @@ pub fn project_backwards_kernel(
     #[comptime] sh_degree: u32,
     #[comptime] camera_model: CameraModel,
 ) {
-    let compact_gid = ABSOLUTE_POS as u32;
-    if compact_gid >= u.num_visible {
+    let row = ABSOLUTE_POS as u32;
+    if row > u.num_visible {
         terminate!();
     }
-
+    if row == 0u32 {
+        write_zero_row(
+            v_transforms,
+            v_coeffs,
+            v_raw_opac,
+            v_refine_weight,
+            row,
+            sh_degree,
+        );
+        terminate!();
+    }
+    let compact_gid = row - 1u32;
     let global_gid = global_from_compact_gid[compact_gid as usize];
 
     // Read upstream rasterize grads first. rasterize_bwd only writes for
-    // splats that contributed to a pixel; non-contributing splats leave
-    // v_rasterize_grads at zero and (since the dense outputs are zero-
-    // init) we can return without writing anything at all.
+    // splats that contributed to a pixel; the rest write their zero row.
     let rg_base = (compact_gid * 10u32) as usize;
     let v_mean2d_x = v_rasterize_grads[rg_base];
     let v_mean2d_y = v_rasterize_grads[rg_base + 1];
@@ -150,21 +183,19 @@ pub fn project_backwards_kernel(
         || v_alpha_in != 0.0f32
         || v_refine_in != 0.0f32;
 
-    // Outputs are compact, one row per visible splat, and uninitialised, so a
-    // non-contributing splat writes its zero row instead of skipping.
-    let vbase = (compact_gid * 10u32) as usize;
-    let coeff_out_base = compact_gid * comptime![num_sh_coeffs(sh_degree) * 3u32];
     if !any_grad {
-        for k in 0u32..10u32 {
-            v_transforms[vbase + k as usize] = 0.0f32;
-        }
-        for k in 0u32..comptime![num_sh_coeffs(sh_degree) * 3u32] {
-            v_coeffs[(coeff_out_base + k) as usize] = 0.0f32;
-        }
-        v_raw_opac[compact_gid as usize] = 0.0f32;
-        v_refine_weight[compact_gid as usize] = 0.0f32;
+        write_zero_row(
+            v_transforms,
+            v_coeffs,
+            v_raw_opac,
+            v_refine_weight,
+            row,
+            sh_degree,
+        );
         terminate!();
     }
+    let vbase = (row * 10u32) as usize;
+    let coeff_out_base = row * comptime![num_sh_coeffs(sh_degree) * 3u32];
 
     let tbase = (global_gid * 10u32) as usize;
     let mean = Vec3A::new(
@@ -176,27 +207,11 @@ pub fn project_backwards_kernel(
     let quat_unorm = read_quat_unorm(transforms, tbase);
     let quat = quat_unorm.normalize();
 
-    // Mip-Splatting floor, matching the forward. `ratio_sq` is
-    // d(log s')/d(log s) = s² / (s² + f²) per axis, `coef` the opacity
-    // compensation, and `opac_open` whether the clamp let gradient through.
+    // Mip-Splatting floor, matching the forward.
     let opac_sig = sigmoid(raw_opac[global_gid as usize]);
-    let mut scale = scale_raw;
-    let mut coef = 1.0f32;
-    let mut ratio_sq = Vec3A::new(1.0f32, 1.0f32, 1.0f32);
-    let mut opac_base = opac_sig;
-    let mut opac_open = true;
-    if has_min_scale {
-        let floored = floor_scale(scale_raw, min_scale[global_gid as usize]);
-        coef = floor_opacity_coef(scale_raw, floored);
-        let rx = scale_raw.x() / floored.x();
-        let ry = scale_raw.y() / floored.y();
-        let rz = scale_raw.z() / floored.z();
-        ratio_sq = Vec3A::new(rx * rx, ry * ry, rz * rz);
-        let o = opac_sig * coef;
-        opac_open = o > FLOOR_OPACITY_EPS && o < 1.0f32 - FLOOR_OPACITY_EPS;
-        opac_base = clamp(o, FLOOR_OPACITY_EPS, 1.0f32 - FLOOR_OPACITY_EPS);
-        scale = floored;
-    }
+    let floor = apply_scale_floor(scale_raw, opac_sig, min_scale, global_gid, has_min_scale);
+    let scale = floor.scale;
+    let ratio_sq = floor.ratio_sq;
 
     // viewdir + SH VJP. d(normalize(u))/du = (I - vv^T)/|u|, so
     // v_u = (v_v - v * (v · v_v)) / |u|.
@@ -218,13 +233,13 @@ pub fn project_backwards_kernel(
     let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
     // Gradient w.r.t. the (compensated, clamped) opacity, zero if clamped.
-    let v_opac_base = select(opac_open, filter_comp * v_alpha_in, 0.0f32);
-    v_raw_opac[compact_gid as usize] = v_opac_base * coef * opac_sig * (1.0f32 - opac_sig);
+    let v_opac_base = select(floor.opac_open, filter_comp * v_alpha_in, 0.0f32);
+    v_raw_opac[row as usize] = v_opac_base * floor.coef * opac_sig * (1.0f32 - opac_sig);
 
     // Make sure to keep refine weight >= 0 and finite. Helps with super large degenerate splats
     // that sum up their refine weight to some massive value.
     let refine_clean = select(is_finite_f32(v_refine_in), v_refine_in, 0.0f32);
-    v_refine_weight[compact_gid as usize] = clamp(refine_clean, 0.0f32, 1.0e32f32);
+    v_refine_weight[row as usize] = clamp(refine_clean, 0.0f32, 1.0e32f32);
 
     let conic_inv = cov.inverse();
     let v_inv = Sym2 {
@@ -276,9 +291,9 @@ pub fn project_backwards_kernel(
         r.col2().dot(v_m.col2()) * scale.z(),
     );
     let v_scale_exp = Vec3A::new(
-        v_log_floored.x() * ratio_sq.x() + v_opac_base * opac_base * (1.0f32 - ratio_sq.x()),
-        v_log_floored.y() * ratio_sq.y() + v_opac_base * opac_base * (1.0f32 - ratio_sq.y()),
-        v_log_floored.z() * ratio_sq.z() + v_opac_base * opac_base * (1.0f32 - ratio_sq.z()),
+        v_log_floored.x() * ratio_sq.x() + v_opac_base * floor.opac * (1.0f32 - ratio_sq.x()),
+        v_log_floored.y() * ratio_sq.y() + v_opac_base * floor.opac * (1.0f32 - ratio_sq.y()),
+        v_log_floored.z() * ratio_sq.z() + v_opac_base * floor.opac * (1.0f32 - ratio_sq.z()),
     );
 
     // grad for quat from covar: v_quat = normalize_vjp(quat) *

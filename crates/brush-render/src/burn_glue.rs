@@ -1,19 +1,15 @@
 #![allow(clippy::match_wildcard_for_single_variants)]
 
+use brush_cube::fusion::register_custom;
 use brush_cube::{MainBackend, MainBackendBase};
 use burn::backend::{
     Autodiff, BackendTensor, DispatchAutodiffContext, DispatchTensor, DispatchTensorKind,
     GradientCheckpointingStrategy, TensorMetadata,
     tensor::{FloatTensor, IntTensor},
 };
-use burn::tensor::{DType, Int, Shape, Tensor};
-use burn_cubecl::fusion::FusionCubeRuntime;
+use burn::tensor::{DType, Int, Tensor};
 use burn_cubecl::tensor::CubeTensor;
-use burn_fusion::custom::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
-use burn_fusion::{
-    ExecutionError, Fusion, FusionHandle,
-    stream::{Operation, StreamId},
-};
+use burn_fusion::Fusion;
 use glam::Vec3;
 
 use crate::{
@@ -146,64 +142,6 @@ pub fn resolve_to_cube_float<const D: usize>(tensor: Tensor<D>) -> CubeTensor {
     client.resolve_tensor_float::<MainBackendBase>(fusion)
 }
 
-/// Handle container a fusion custom op executes against.
-pub type FusionHandles = HandleContainer<FusionHandle<FusionCubeRuntime>>;
-/// A tensor living in the fusion stream.
-pub type FusionTensor = burn_fusion::FusionTensor<FusionCubeRuntime>;
-/// The fusion client that owns the stream.
-pub type FusionClient = burn_fusion::Client<FusionCubeRuntime>;
-
-struct ClosureOp<F> {
-    desc: CustomOpIr,
-    op: F,
-}
-
-impl<F> std::fmt::Debug for ClosureOp<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ClosureOp({:?})", self.desc)
-    }
-}
-
-impl<F> Operation<FusionCubeRuntime> for ClosureOp<F>
-where
-    F: Fn(&CustomOpIr, &mut FusionHandles) + Send + Sync + 'static,
-{
-    fn execute(&self, h: &mut FusionHandles) -> Result<(), ExecutionError> {
-        (self.op)(&self.desc, h);
-        Ok(())
-    }
-}
-
-/// Register a concrete-backend function as a custom op on the fusion stream.
-///
-/// `inputs` are handed to the op once the stream reaches it, and each
-/// `(shape, dtype)` in `outputs` becomes a fresh handle the op must fill in
-/// through the handle container. The op gets the description so it can look
-/// both up by id with `desc.as_fixed()`. This is the whole of what burn needs
-/// to run brush's kernels under `Fusion`; the surrounding elementwise ops
-/// still fuse among themselves on either side.
-pub fn register_custom<const N: usize, const M: usize, F>(
-    client: &FusionClient,
-    name: &'static str,
-    inputs: [FusionTensor; N],
-    outputs: [(Shape, DType); M],
-    op: F,
-) -> [FusionTensor; M]
-where
-    F: Fn(&CustomOpIr, &mut FusionHandles) + Send + Sync + 'static,
-{
-    let outputs =
-        outputs.map(|(shape, dtype)| TensorIr::uninit(client.create_empty_handle(), shape, dtype));
-    let desc = CustomOpIr::new(name, &inputs.map(|t| t.into_ir()), &outputs);
-    let op = ClosureOp {
-        desc: desc.clone(),
-        op,
-    };
-    client
-        .register(StreamId::current(), OperationIr::Custom(desc), op)
-        .outputs()
-}
-
 impl SplatOps for Fusion<CubeBackend> {
     async fn render(
         camera: &Camera,
@@ -212,6 +150,7 @@ impl SplatOps for Fusion<CubeBackend> {
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
         min_scale: FloatTensor<Self>,
+        has_min_scale: bool,
         refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
@@ -244,6 +183,7 @@ impl SplatOps for Fusion<CubeBackend> {
             base_sh_coeffs,
             base_raw_opac,
             base_min_scale,
+            has_min_scale,
             base_refine_weight,
             render_mode,
             background,

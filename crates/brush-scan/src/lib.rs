@@ -4,20 +4,21 @@
 
 mod kernels;
 
-pub use kernels::{cube_exclusive_sum, cube_sum};
+pub use kernels::{BLOCK_SIZE, ELEMENTS_PER_THREAD, WG, cube_exclusive_sum, cube_sum};
 
 use brush_cube::create_tensor;
 use burn::backend::TensorMetadata;
 use burn::cubecl::CubeDim;
 use burn::cubecl::calculate_cube_count_elemwise;
 use burn_wgpu::CubeTensor;
-use kernels::{BLOCK_SIZE_USIZE, WG};
+use kernels::BLOCK_SIZE_USIZE;
 
 /// Inclusive prefix sum over a contiguous 1D `u32` tensor.
 ///
 /// Each cube scans a block of 1024 elements and emits its total; the totals
 /// are scanned recursively the same way, then each level's offsets are added
-/// back down. Three kernels per level, `log_1024(n)` levels.
+/// back down. One scan kernel per level plus one add per unwound level,
+/// `log_1024(n)` levels.
 pub fn prefix_sum(input: CubeTensor) -> CubeTensor {
     assert!(input.is_contiguous(), "Please ensure input is contiguous");
 

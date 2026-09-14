@@ -6,10 +6,12 @@
 //! materialised on the autograd tape.
 //!
 //! Public surface:
-//! - [`image_loss_partials`]: per-tile sums of `l1_w * |pred - gt_eff| +
-//!   ssim_w * ssim(pred, gt_eff)`, with optional background-compositing of GT
-//!   (`gt_eff = gt + (1 - gt.a) * bg`) and optional mask multiplication
-//!   (`out = out * gt.a`) folded into the kernel. The differentiable entry.
+//! - [`image_loss`]: mean of `l1_w * |pred - gt_eff| + ssim_w * ssim(pred,
+//!   gt_eff)` over the RGB pixels, plus an optional weighted alpha-match
+//!   term, with optional background-compositing of GT (`gt_eff = gt + (1 -
+//!   gt.a) * bg`) and optional mask multiplication (`out = out * gt.a`)
+//!   folded into the kernel. The differentiable entry; the kernel reduces
+//!   its own 16×16 tiles so the per-pixel map never touches memory.
 //! - [`image_loss_eval`]: forward-only per-pixel loss map, for eval.
 //! - [`psnr_from_mse`] / [`psnr`]: PSNR in dB, with MSE floored so identical
 //!   images report 100 dB rather than infinity.
@@ -18,7 +20,7 @@
 //! across the autograd tape.
 
 use brush_cube::create_tensor;
-use brush_render::burn_glue::register_custom;
+use brush_cube::fusion::{FusionTensor, register_custom};
 use burn::backend::autodiff::checkpoint::strategy::CheckpointStrategy;
 use burn::backend::{Autodiff, AutodiffBackend};
 use burn::{
@@ -149,11 +151,21 @@ mod kernels {
     }
 
     /// Upstream gradient for channel `c` at pixel `(y, x)`: the gradient of
-    /// the loss w.r.t. that pixel's forward-tile partial sum.
+    /// the loss w.r.t. that pixel's forward-tile partial sum, times the
+    /// channel weight the forward folded into that sum.
     #[cube]
-    fn chain_at<F: Float>(dl_dpartials: &Tensor<F>, c: u32, y: u32, x: u32, h: u32, w: u32) -> F {
+    #[allow(clippy::too_many_arguments)]
+    fn chain_at<F: Float>(
+        dl_dpartials: &Tensor<F>,
+        c: u32,
+        y: u32,
+        x: u32,
+        h: u32,
+        w: u32,
+        weight: F,
+    ) -> F {
         let tile = (y / BLOCK_Y) * tiles_x(w) + x / BLOCK_X;
-        dl_dpartials[(c * num_tiles(h, w) + tile) as usize]
+        dl_dpartials[(c * num_tiles(h, w) + tile) as usize] * weight
     }
 
     /// Read one `[r8 g8 b8 a8]`-packed pixel from `gt_packed`. Returns the
@@ -215,9 +227,8 @@ mod kernels {
     ///   the source has real alpha and `bg != 0`; opaque/synthesised alpha or
     ///   zero bg make the math a no-op so callers gate it off to skip the work.
     /// - `mask`: multiply the loss-map output by `gt.a` per pixel.
-    #[allow(clippy::assign_op_pattern)]
+    #[allow(clippy::assign_op_pattern, clippy::fn_params_excessive_bools)]
     #[cube(launch)]
-    #[allow(clippy::fn_params_excessive_bools)]
     pub fn image_loss_forward_kernel<F: Float>(
         pred: &Tensor<F>,
         gt_packed: &Tensor<u32>,
@@ -228,13 +239,14 @@ mod kernels {
         cn: u32,
         l1_weight: f32,
         ssim_weight: f32,
+        rgb_weight: f32,
+        alpha_weight: f32,
         bg_r: f32,
         bg_g: f32,
         bg_b: f32,
         #[comptime] composite: bool,
         #[comptime] mask: bool,
         #[comptime] reduce: bool,
-        #[comptime] alpha_match: bool,
     ) {
         let c = CUBE_POS_Z;
         let tile_y0 = CUBE_POS_Y * BLOCK_Y;
@@ -244,10 +256,11 @@ mod kernels {
         let in_bounds = pix_x < w && pix_y < h;
         let tile_id = CUBE_POS_Y * CUBE_COUNT_X + CUBE_POS_X;
 
-        // Alpha-match channel: simple per-pixel `|pred - gt.a|`, no blur.
+        // Alpha-match channel, only launched when matching: per-pixel
+        // `|pred - gt.a|`, no blur.
         if c == 3u32 {
             let mut v = F::cast_from(0.0_f32);
-            if alpha_match && in_bounds {
+            if in_bounds {
                 let idx = ((pix_y * w + pix_x) * cn + 3u32) as usize;
                 let (_, gt_a) = read_gt::<F>(gt_packed, 0u32, pix_y, pix_x, false, w);
                 v = F::abs(pred[idx] - gt_a);
@@ -258,9 +271,10 @@ mod kernels {
             if reduce {
                 let total = tile_sum::<F>(v);
                 if UNIT_POS == 0u32 {
-                    partials[(3u32 * num_tiles(h, w) + tile_id) as usize] = total;
+                    partials[(3u32 * num_tiles(h, w) + tile_id) as usize] =
+                        total * F::cast_from(alpha_weight);
                 }
-            } else if alpha_match && in_bounds {
+            } else if in_bounds {
                 loss_map[((pix_y * w + pix_x) * cn + 3u32) as usize] = v;
             }
             terminate!();
@@ -412,11 +426,12 @@ mod kernels {
             loss_out = loss_v;
         }
         if reduce {
-            // Per-tile sum; the host reduces the tiles. Keeps the per-pixel
-            // map off memory entirely.
+            // Weighted per-tile sum; the host adds up the tiles. Keeps the
+            // per-pixel map off memory entirely.
             let total = tile_sum::<F>(loss_out);
             if UNIT_POS == 0u32 {
-                partials[(c * num_tiles(h, w) + tile_id) as usize] = total;
+                partials[(c * num_tiles(h, w) + tile_id) as usize] =
+                    total * F::cast_from(rgb_weight);
             }
         } else if in_bounds {
             loss_map[((pix_y * w + pix_x) * cn + c) as usize] = loss_out;
@@ -431,9 +446,8 @@ mod kernels {
     /// reports double the bytes actually declared in WGSL, and the 16x16
     /// layout's ~28 KiB would trip Apple's 32 KiB threadgroup limit under
     /// that doubled accounting.
-    #[allow(clippy::assign_op_pattern)]
+    #[allow(clippy::assign_op_pattern, clippy::fn_params_excessive_bools)]
     #[cube(launch)]
-    #[allow(clippy::fn_params_excessive_bools)]
     pub fn image_loss_backward_kernel<F: Float>(
         pred: &Tensor<F>,
         gt_packed: &Tensor<u32>,
@@ -444,6 +458,8 @@ mod kernels {
         cn: u32,
         l1_weight: f32,
         ssim_weight: f32,
+        rgb_weight: f32,
+        alpha_weight: f32,
         bg_r: f32,
         bg_g: f32,
         bg_b: f32,
@@ -474,7 +490,15 @@ mod kernels {
                     } else {
                         zero
                     };
-                    let mut chain = chain_at::<F>(dl_dpartials, 3u32, pix_y, pix_x, h, w);
+                    let mut chain = chain_at::<F>(
+                        dl_dpartials,
+                        3u32,
+                        pix_y,
+                        pix_x,
+                        h,
+                        w,
+                        F::cast_from(alpha_weight),
+                    );
                     if mask {
                         chain = chain * gt_a;
                     }
@@ -641,7 +665,7 @@ mod kernels {
                 let mut chain = select(
                     oob,
                     F::cast_from(0.0_f32),
-                    chain_at::<F>(dl_dpartials, c, gy, gx, h, w),
+                    chain_at::<F>(dl_dpartials, c, gy, gx, h, w, F::cast_from(rgb_weight)),
                 );
                 if mask {
                     let (_unused, gt_a) = read_gt::<F>(gt_packed, c, gy, gx, oob, w);
@@ -728,7 +752,15 @@ mod kernels {
             } else {
                 zero
             };
-            let mut chain_centre = chain_at::<F>(dl_dpartials, c, pix_y, pix_x, h, w);
+            let mut chain_centre = chain_at::<F>(
+                dl_dpartials,
+                c,
+                pix_y,
+                pix_x,
+                h,
+                w,
+                F::cast_from(rgb_weight),
+            );
             if mask {
                 chain_centre = chain_centre * gt_a;
             }
@@ -786,34 +818,55 @@ pub struct ImageLossConfig {
     pub composite_bg: Option<Vec3>,
     /// If true, multiply each loss-map pixel by `gt.a`.
     pub mask: bool,
-    /// If true (and `pred` has 4 channels), also emit `|pred.a - gt.a|` as
-    /// the alpha channel of the loss. Off, a 4-channel `pred`'s alpha is
-    /// ignored and gets a zero gradient.
-    pub alpha_match: bool,
+    /// Weight of the alpha-match term, `mean |pred.a - gt.a|`, added to the
+    /// RGB mean when `pred` has 4 channels. Zero disables it: the alpha
+    /// channel is then ignored and gets a zero gradient. The eval map's alpha
+    /// channel holds the unweighted per-pixel term.
+    pub alpha_weight: f32,
 }
 
-/// Number of forward tiles the loss kernel splits an `h × w` image into;
-/// partial sums come back as `[4, tiles]`.
-pub fn loss_tiles(h: usize, w: usize) -> usize {
-    w.div_ceil(kernels::BLOCK_X as usize) * h.div_ceil(kernels::BLOCK_Y as usize)
+/// Side of the square tiles the loss kernel reduces; partial sums come back
+/// one per tile.
+pub const TILE_SIZE: usize = kernels::BLOCK_X as usize;
+
+/// Number of tiles the loss kernel splits an `h × w` image into.
+fn loss_tiles(h: usize, w: usize) -> usize {
+    w.div_ceil(TILE_SIZE) * h.div_ceil(TILE_SIZE)
+}
+
+/// Whether the alpha-match term runs: it needs a weight and a 4-channel pred.
+fn alpha_match(cfg: &ImageLossConfig, cn: u32) -> bool {
+    cfg.alpha_weight > 0.0 && cn == 4
+}
+
+/// Channel planes the kernels launch: rgb, plus alpha when matching.
+fn planes(cfg: &ImageLossConfig, cn: u32) -> u32 {
+    if alpha_match(cfg, cn) { 4 } else { 3 }
+}
+
+/// Weights that turn the per-tile channel sums into the loss: rgb averaged
+/// over `3·H·W`, alpha over `H·W` times its weight.
+fn channel_weights(cfg: &ImageLossConfig, h: u32, w: u32) -> (f32, f32) {
+    let pixels = (h * w) as f32;
+    (1.0 / (3.0 * pixels), cfg.alpha_weight / pixels)
 }
 
 /// Backend hooks for the loss kernels. `pred` is `[H, W, C]` with 3 or 4
-/// channels, the rasterizer's native layout. With `cfg.alpha_match` the
+/// channels, the rasterizer's native layout. When alpha matching, the
 /// `c == 3` workgroup runs the alpha-match path (`|pred.a - gt.a|`) instead
 /// of SSIM + L1, folded into the same launch.
 #[burn::backend::backend_extension(Cube, Autodiff)]
 pub trait LossOps: Backend {
     /// Per-pixel loss map `[H, W, C]`. Forward only; used for eval.
-    fn image_loss(
+    fn image_loss_map(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self>;
 
-    /// Per-tile partial sums of the loss, `[4, tiles]` (rows r, g, b, alpha;
-    /// the alpha row is zero unless `cfg.alpha_match`). The differentiable
-    /// entry point: the per-pixel map never touches memory.
+    /// Weighted per-tile partial sums of the loss, `[planes, tiles]` (rows
+    /// r, g, b, and alpha when matching), which sum to the loss. The
+    /// differentiable entry point: the per-pixel map never touches memory.
     fn image_loss_partials(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
@@ -821,7 +874,7 @@ pub trait LossOps: Backend {
     ) -> FloatTensor<Self>;
 
     /// Gradient of the loss w.r.t. `pred` given the gradient w.r.t. the
-    /// partial sums `[4, tiles]`.
+    /// partial sums `[planes, tiles]`.
     fn image_loss_backward(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
@@ -867,8 +920,9 @@ fn cube_count_3d_bwd(c: u32, h: u32, w: u32) -> burn::cubecl::prelude::CubeCount
 }
 
 /// Runs the forward kernel. `reduce = false` writes the `[H, W, C]` loss map
-/// (alpha channel only with `cfg.alpha_match`); `reduce = true` writes per-tile
-/// partial sums `[4, tiles]` instead and leaves the map untouched.
+/// (alpha channel only when matching); `reduce = true` writes weighted
+/// per-tile partial sums `[planes, tiles]` instead and leaves the map
+/// untouched.
 fn launch_image_forward(
     pred: CubeTensor,
     gt_packed: CubeTensor,
@@ -876,25 +930,24 @@ fn launch_image_forward(
     reduce: bool,
 ) -> CubeTensor {
     use burn::cubecl::prelude::CubeDim;
-    use burn::tensor::{DType, Shape};
 
     let pred = into_contiguous(pred);
     let gt_packed = into_contiguous(gt_packed);
     let (h, w, cn) = image_dims(&pred, &gt_packed);
-    let alpha_match = cfg.alpha_match && cn == 4;
+    let planes = planes(&cfg, cn);
+    let (rgb_weight, alpha_weight) = channel_weights(&cfg, h, w);
 
     let composite = cfg.composite_bg.is_some();
     let bg = cfg.composite_bg.unwrap_or(Vec3::ZERO);
     let client = pred.client.clone();
     let device = pred.device.clone();
-    // In reduce mode every one of the 4 rows is written by its own cubes (the
-    // alpha row as zeros without alpha matching), so nothing needs a fill.
-    let tiles = loss_tiles(h as usize, w as usize);
-    let (map, partials, planes) = if reduce {
+    // The kernel only touches the output its mode selects; the other is a
+    // placeholder. Every partial is written by its own cube, so no fill.
+    let (map, partials) = if reduce {
+        let tiles = loss_tiles(h as usize, w as usize);
         (
             create_tensor([1], &device, DType::F32),
-            create_tensor([4, tiles], &device, DType::F32),
-            4,
+            create_tensor([planes as usize, tiles], &device, DType::F32),
         )
     } else {
         (
@@ -905,7 +958,6 @@ fn launch_image_forward(
                 DType::F32,
             ),
             create_tensor([1], &device, DType::F32),
-            if alpha_match { 4 } else { 3 },
         )
     };
     kernels::image_loss_forward_kernel::launch::<f32>(
@@ -921,13 +973,14 @@ fn launch_image_forward(
         cn,
         cfg.l1_weight,
         cfg.ssim_weight,
+        rgb_weight,
+        alpha_weight,
         bg.x,
         bg.y,
         bg.z,
         composite,
         cfg.mask,
         reduce,
-        alpha_match,
     );
     if reduce { partials } else { map }
 }
@@ -939,17 +992,20 @@ fn launch_image_backward(
     cfg: ImageLossConfig,
 ) -> CubeTensor {
     use burn::cubecl::prelude::CubeDim;
-    use burn::tensor::DType;
 
     let pred = into_contiguous(pred);
     let gt_packed = into_contiguous(gt_packed);
     let dl_dpartials = into_contiguous(dl_dpartials);
     let (h, w, cn) = image_dims(&pred, &gt_packed);
-    let alpha_match = cfg.alpha_match && cn == 4;
+    let alpha_match = alpha_match(&cfg, cn);
+    let (rgb_weight, alpha_weight) = channel_weights(&cfg, h, w);
     assert_eq!(
         dl_dpartials.shape().as_slice(),
-        &[4, loss_tiles(h as usize, w as usize)],
-        "dl_dpartials must be [4, tiles]"
+        &[
+            planes(&cfg, cn) as usize,
+            loss_tiles(h as usize, w as usize)
+        ],
+        "dl_dpartials must be [planes, tiles]"
     );
 
     let composite = cfg.composite_bg.is_some();
@@ -976,6 +1032,8 @@ fn launch_image_backward(
         cn,
         cfg.l1_weight,
         cfg.ssim_weight,
+        rgb_weight,
+        alpha_weight,
         bg.x,
         bg.y,
         bg.z,
@@ -988,7 +1046,6 @@ fn launch_image_backward(
 
 fn launch_unpack_gt_rgb(gt_packed: CubeTensor, composite_bg: Option<Vec3>) -> CubeTensor {
     use burn::cubecl::prelude::{CubeCount, CubeDim};
-    use burn::tensor::{DType, Shape};
 
     let gt_packed = into_contiguous(gt_packed);
     let dims = gt_packed.shape().as_slice().to_vec();
@@ -1026,7 +1083,7 @@ fn launch_unpack_gt_rgb(gt_packed: CubeTensor, composite_bg: Option<Vec3>) -> Cu
 }
 
 impl LossOps for CubeBackend {
-    fn image_loss(
+    fn image_loss_map(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
@@ -1056,30 +1113,49 @@ impl LossOps for CubeBackend {
     }
 }
 
+/// One of the forward kernels as a fusion custom op with a single output.
+fn fused_forward(
+    name: &'static str,
+    pred: FusionTensor,
+    gt_packed: FusionTensor,
+    cfg: ImageLossConfig,
+    out_shape: Shape,
+    kernel: fn(CubeTensor, CubeTensor, ImageLossConfig) -> CubeTensor,
+) -> FusionTensor {
+    let client = pred.client.clone();
+    let [out] = register_custom(
+        &client,
+        name,
+        [pred, gt_packed],
+        [(out_shape, DType::F32)],
+        move |desc, h| {
+            let ([pred, gt_packed], [out]) = desc.as_fixed();
+            let res = kernel(
+                h.get_float_tensor::<CubeBackend>(pred),
+                h.get_int_tensor::<CubeBackend>(gt_packed),
+                cfg,
+            );
+            h.register_float_tensor::<CubeBackend>(&out.id, res);
+        },
+    );
+    out
+}
+
 impl LossOps for Fusion<CubeBackend> {
-    fn image_loss(
+    fn image_loss_map(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
         let shape = pred.shape();
-        let client = pred.client.clone();
-        let [map] = register_custom(
-            &client,
-            "image_loss",
-            [pred, gt_packed],
-            [(shape, DType::F32)],
-            move |desc, h| {
-                let ([pred, gt_packed], [map]) = desc.as_fixed();
-                let out = <CubeBackend as LossOps>::image_loss(
-                    h.get_float_tensor::<CubeBackend>(pred),
-                    h.get_int_tensor::<CubeBackend>(gt_packed),
-                    cfg,
-                );
-                h.register_float_tensor::<CubeBackend>(&map.id, out);
-            },
-        );
-        map
+        fused_forward(
+            "image_loss_map",
+            pred,
+            gt_packed,
+            cfg,
+            shape,
+            <CubeBackend as LossOps>::image_loss_map,
+        )
     }
 
     fn image_loss_partials(
@@ -1087,24 +1163,16 @@ impl LossOps for Fusion<CubeBackend> {
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
-        let [ph, pw, _] = pred.shape().dims();
-        let client = pred.client.clone();
-        let [partials] = register_custom(
-            &client,
+        let [ph, pw, pc] = pred.shape().dims();
+        let shape = Shape::new([planes(&cfg, pc as u32) as usize, loss_tiles(ph, pw)]);
+        fused_forward(
             "image_loss_partials",
-            [pred, gt_packed],
-            [(Shape::new([4, loss_tiles(ph, pw)]), DType::F32)],
-            move |desc, h| {
-                let ([pred, gt_packed], [partials]) = desc.as_fixed();
-                let out = <CubeBackend as LossOps>::image_loss_partials(
-                    h.get_float_tensor::<CubeBackend>(pred),
-                    h.get_int_tensor::<CubeBackend>(gt_packed),
-                    cfg,
-                );
-                h.register_float_tensor::<CubeBackend>(&partials.id, out);
-            },
-        );
-        partials
+            pred,
+            gt_packed,
+            cfg,
+            shape,
+            <CubeBackend as LossOps>::image_loss_partials,
+        )
     }
 
     fn image_loss_backward(
@@ -1184,14 +1252,17 @@ impl<B: Backend + LossOps> Backward<B, 1> for ImageLossBackward {
     }
 }
 
-/// L1 + SSIM image loss with optional bg-compositing and masking, folded into
-/// a single kernel that also reduces each 16×16 tile. Returns per-tile partial
-/// sums `[4, tiles]` (rows r, g, b, alpha; alpha is zero unless
-/// `cfg.alpha_match`), so the per-pixel map never touches memory and the
-/// caller finishes the reduction with one tiny op, e.g.
-/// `(partials * weights).sum()`.
-///
-/// `pred` is `[H, W, C]` with 3 or 4 channels, on an autodiff-enabled device.
+/// L1 + SSIM image loss with optional bg-compositing, masking and alpha
+/// matching, folded into a single kernel that also reduces each tile. `pred`
+/// is `[H, W, C]` with 3 or 4 channels, on an autodiff-enabled device.
+pub fn image_loss(pred: Tensor<3>, gt_packed: Tensor<2, Int>, cfg: ImageLossConfig) -> Tensor<1> {
+    image_loss_partials(pred, gt_packed, cfg).sum()
+}
+
+/// The pieces of [`image_loss`] before the final sum: weighted per-tile
+/// sums `[planes, tiles]` (rows r, g, b, and alpha when matching), tiles in
+/// row-major order with [`TILE_SIZE`] pixels a side. For tests that want to
+/// probe part of the image.
 pub fn image_loss_partials(
     pred: Tensor<3>,
     gt_packed: Tensor<2, Int>,
@@ -1206,13 +1277,13 @@ pub fn image_loss_partials(
 }
 
 impl<B: Backend + LossOps, C: CheckpointStrategy> LossOps for Autodiff<B, C> {
-    fn image_loss(
+    fn image_loss_map(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self> {
         // The per-pixel map is eval-only; gradients go through the partials.
-        <Self as AutodiffBackend>::from_inner(<B as LossOps>::image_loss(
+        <Self as AutodiffBackend>::from_inner(<B as LossOps>::image_loss_map(
             pred.into_primitive(),
             gt_packed,
             cfg,
@@ -1275,7 +1346,7 @@ pub fn image_loss_eval(
     gt_packed: Tensor<2, Int>,
     cfg: ImageLossConfig,
 ) -> Tensor<3> {
-    let map = <burn::backend::Dispatch as LossOps>::image_loss(
+    let map = <burn::backend::Dispatch as LossOps>::image_loss_map(
         pred.into_dispatch(),
         gt_packed.into_dispatch(),
         cfg,

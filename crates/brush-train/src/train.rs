@@ -10,7 +10,7 @@ use crate::{
     stats::RefineRecord,
 };
 use brush_dataset::scene::SceneBatch;
-use brush_loss::{ImageLossConfig, image_loss_partials};
+use brush_loss::{ImageLossConfig, image_loss};
 use brush_render::bwd::render_splats;
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, bounding_box::BoundingBox, sh::sh_coeffs_for_degree};
@@ -69,6 +69,12 @@ pub struct SplatTrainer {
     /// Per-step multiplier of the exponential mean-LR schedule:
     /// `lr(n) = lr_mean * decay^(n-1)`.
     lr_mean_decay: f64,
+    /// Per-column LR scales for `transforms` (`means(3) + rotations(4) +
+    /// log_scales(3)`) with the mean columns zeroed, and a mask of those
+    /// columns: the scheduled mean LR is mixed in on the device each step so
+    /// the optimizer never waits on a host upload.
+    lr_scaling_fixed: Tensor<2>,
+    lr_mean_columns: Tensor<2>,
     refine_record: Option<RefineRecord>,
     optim: Option<SplatOptim>,
     ssim_enabled: bool,
@@ -129,12 +135,10 @@ pub async fn get_splat_bounds(splats: Splats, percentile: f32) -> BoundingBox {
 }
 
 impl SplatTrainer {
-    #[allow(unused_variables)]
     pub fn new(config: &TrainConfig, device: &Device, bounds: BoundingBox) -> Self {
         Self::new_seeded(config, device, bounds, 42)
     }
 
-    #[allow(unused_variables)]
     pub fn new_seeded(
         config: &TrainConfig,
         device: &Device,
@@ -152,6 +156,20 @@ impl SplatTrainer {
 
         let ssim_enabled = config.ssim_weight > 0.0;
 
+        // Optimizer state lives on the inner device.
+        let opt_device = device.clone().inner();
+        let (rot, scale) = (config.lr_rotation as f32, config.lr_scale as f32);
+        let lr_scaling_fixed = Tensor::<1>::from_floats(
+            [0.0, 0.0, 0.0, rot, rot, rot, rot, scale, scale, scale],
+            &opt_device,
+        )
+        .reshape([1, 10]);
+        let lr_mean_columns = Tensor::<1>::from_floats(
+            [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            &opt_device,
+        )
+        .reshape([1, 10]);
+
         // Growth is gated on the global iter. LOD phases run past
         // total_train_iters but their refines should never grow — clamp
         // here so growth_stop is never effectively past end-of-training,
@@ -166,6 +184,8 @@ impl SplatTrainer {
         Self {
             config,
             lr_mean_decay: decay,
+            lr_scaling_fixed,
+            lr_mean_columns,
             optim: None,
             refine_record: None,
             ssim_enabled,
@@ -230,38 +250,9 @@ impl SplatTrainer {
         let masked_alpha = batch.alpha_mode == AlphaMode::Masked;
         let do_alpha_match = has_alpha && !masked_alpha && self.config.match_alpha_weight > 0.0;
 
-        // Per-step constants, uploaded before the render. A host upload
-        // (`from_data`) makes burn execute its pending fusion stream, so
-        // creating these later would cut the segment between the backward's
-        // gradient gathers and the optimizer step that should absorb them.
-        // transforms layout: means(3) + rotations(4) + log_scales(3); the
-        // optimizer runs with base LR 1 and these per-column scales.
-        let lr_scaling: Tensor<2> = {
-            let (rot, scale) = (self.config.lr_rotation as f32, self.config.lr_scale as f32);
-            let m = lr_mean as f32;
-            Tensor::from_data(
-                TensorData::new(
-                    vec![m, m, m, rot, rot, rot, rot, scale, scale, scale],
-                    [1, 10],
-                ),
-                &device.clone().inner(),
-            )
-        };
-        // Loss weights finish the per-tile partial sums into means: rgb over
-        // 3·H·W, alpha over H·W times its weight.
-        let loss_weights: Tensor<2> = {
-            let pixels = (img_h * img_w) as f32;
-            let rgb_w = 1.0 / (3.0 * pixels);
-            let alpha_w = if do_alpha_match {
-                self.config.match_alpha_weight / pixels
-            } else {
-                0.0
-            };
-            Tensor::from_data(
-                TensorData::new(vec![rgb_w, rgb_w, rgb_w, alpha_w], [4, 1]),
-                &device,
-            )
-        };
+        // The optimizer runs with base LR 1 and these per-column scales.
+        let lr_scaling =
+            self.lr_scaling_fixed.clone() + self.lr_mean_columns.clone() * lr_mean as f32;
 
         let (mut grads, visible, opacities, num_visible, loss_inner) = {
             // The splats already carry their 3D-filter floor (set at refine);
@@ -299,17 +290,17 @@ impl SplatTrainer {
                 ssim_weight: ssim_w,
                 composite_bg,
                 mask: masked_alpha,
-                alpha_match: do_alpha_match,
+                alpha_weight: if do_alpha_match {
+                    self.config.match_alpha_weight
+                } else {
+                    0.0
+                },
             };
-            // The kernel takes the RGBA image as rendered and returns per-tile
-            // partial sums [4, tiles]; one tiny weighted reduce finishes the
-            // means.
-            let partials = image_loss_partials(pred_image.clone(), gt_packed.clone(), cfg);
-
+            // The kernel takes the RGBA image as rendered.
             // `loss` is only reassigned by the LPIPS path below, which is
             // compiled out on wasm — so `mut` is unused there.
             #[cfg_attr(target_family = "wasm", allow(unused_mut))]
-            let mut loss = (partials * loss_weights).sum();
+            let mut loss = image_loss(pred_image.clone(), gt_packed.clone(), cfg);
 
             // LPIPS still needs an f32 RGB tensor for VGG. Materialising it
             // here costs ~99 MB at 4K, only when LPIPS is enabled.
