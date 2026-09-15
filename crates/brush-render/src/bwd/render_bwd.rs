@@ -15,7 +15,7 @@ use burn_cubecl::CubeBackend;
 use burn_cubecl::kernel::into_contiguous;
 use glam::{Vec3, uvec2};
 
-use crate::bwd::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};
+use crate::bwd::burn_glue::{SplatBwdOps, SplatGrads};
 use crate::bwd::kernels;
 use crate::shaders::helpers::ProjectUniforms;
 
@@ -29,7 +29,7 @@ impl SplatBwdOps for CubeBackend {
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
-    ) -> RasterizeGrads<Self> {
+    ) -> FloatTensor<Self> {
         let _span = tracing::trace_span!("rasterize_bwd").entered();
 
         let v_output = into_contiguous(v_output);
@@ -96,7 +96,7 @@ impl SplatBwdOps for CubeBackend {
             }
         });
 
-        RasterizeGrads { v_combined }
+        v_combined
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -208,14 +208,11 @@ impl SplatOps for CubeBackend {
         );
         tracing::trace_span!("ProjectVisible").in_scope(|| {
             let uniforms = project_uniforms.to_launch_object();
+            let cube_dim = CubeDim::new_1d(kernels::project_visible::WG_SIZE);
             kernels::project_visible::project_visible_kernel::launch(
                 &client,
-                calculate_cube_count_elemwise(
-                    &client,
-                    num_visible as usize,
-                    CubeDim::new_1d(kernels::project_visible::WG_SIZE),
-                ),
-                CubeDim::new_1d(kernels::project_visible::WG_SIZE),
+                calculate_cube_count_elemwise(&client, num_visible as usize, cube_dim),
+                cube_dim,
                 transforms.into_tensor_arg(),
                 sh_coeffs.into_tensor_arg(),
                 raw_opacities.into_tensor_arg(),
@@ -235,14 +232,11 @@ impl SplatOps for CubeBackend {
         let tile_id_from_isect = create_tensor([buffer_size], &device, DType::U32);
         let compact_gid_from_isect = create_tensor([buffer_size], &device, DType::U32);
         tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
+            let cube_dim = CubeDim::new_1d(kernels::map_gaussians::WG_SIZE);
             kernels::map_gaussians::map_gaussians_to_intersect_kernel::launch(
                 &client,
-                calculate_cube_count_elemwise(
-                    &client,
-                    num_visible as usize,
-                    CubeDim::new_1d(kernels::map_gaussians::WG_SIZE),
-                ),
-                CubeDim::new_1d(kernels::map_gaussians::WG_SIZE),
+                calculate_cube_count_elemwise(&client, num_visible as usize, cube_dim),
+                cube_dim,
                 projected_splats.clone().into_tensor_arg(),
                 cum_tiles_hit.clone().into_tensor_arg(),
                 tile_id_from_isect.clone().into_tensor_arg(),
@@ -305,15 +299,16 @@ impl SplatOps for CubeBackend {
                 background.y,
                 background.z,
             );
+            // One cube per tile, one thread per pixel in it.
+            let cube_dim = CubeDim::new_1d(shaders::helpers::TILE_SIZE);
             kernels::rasterize::rasterize_kernel::launch(
                 &client,
                 calculate_cube_count_elemwise(
                     &client,
-                    (num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH))
-                        as usize,
-                    CubeDim::new_1d(shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
+                    (num_tiles * shaders::helpers::TILE_SIZE) as usize,
+                    cube_dim,
                 ),
-                CubeDim::new_1d(shaders::helpers::TILE_SIZE),
+                cube_dim,
                 compact_gid_from_isect.clone().into_tensor_arg(),
                 tile_offsets.clone().into_tensor_arg(),
                 projected_splats.clone().into_tensor_arg(),

@@ -26,16 +26,6 @@ use burn_cubecl::CubeBackend;
 use burn_fusion::Fusion;
 use glam::Vec3;
 
-/// Intermediate gradients from the rasterize backward pass.
-///
-/// Sparse buffer of shape `[num_visible, 10]`, indexed by `compact_gid`.
-/// Slots 0..8 are projected splat gradients, slot 8 is the raw opacity
-/// gradient, slot 9 is the refinement weight.
-#[derive(Debug, Clone)]
-pub(crate) struct RasterizeGrads<B: Backend> {
-    pub v_combined: FloatTensor<B>,
-}
-
 /// Final gradients w.r.t. splat inputs from the project backward pass.
 #[derive(Debug, Clone)]
 pub(crate) struct SplatGrads<B: Backend> {
@@ -53,8 +43,10 @@ pub(crate) struct SplatGrads<B: Backend> {
 /// meaningful `rasterize_bwd`, since these run on concrete tensors and are
 /// called from the `Backward` impl on the inner backend.
 pub(crate) trait SplatBwdOps: Backend {
-    /// Backward pass for rasterization.
-    /// Returns sparse `v_combined` [`num_visible`, 10] indexed by `compact_gid`.
+    /// Backward pass for rasterization. Returns the sparse `v_combined`
+    /// buffer, `[num_visible, 10]` indexed by `compact_gid`: slots 0..8 are
+    /// projected splat gradients, slot 8 the raw opacity gradient, slot 9 the
+    /// refinement weight.
     #[allow(clippy::too_many_arguments)]
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
@@ -65,7 +57,7 @@ pub(crate) trait SplatBwdOps: Backend {
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
-    ) -> RasterizeGrads<Self>;
+    ) -> FloatTensor<Self>;
 
     /// Backward pass for projection.
     /// Reads sparse `v_combined` [`num_visible`, 10] and writes compact
@@ -142,7 +134,7 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
             raw_opacity_parent,
         ] = ops.parents;
 
-        let rasterize_grads = B::rasterize_bwd(
+        let v_combined = B::rasterize_bwd(
             state.out_img,
             state.projected_splats,
             state.compact_gid_from_isect,
@@ -162,7 +154,7 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
             state.global_from_compact_gid,
             state.project_uniforms,
             state.render_mode,
-            rasterize_grads.v_combined,
+            v_combined,
         );
 
         // The kernels write compact gradients with a zero row in front, and
@@ -396,7 +388,7 @@ impl SplatBwdOps for Fusion<CubeBackend> {
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
-    ) -> RasterizeGrads<Self> {
+    ) -> FloatTensor<Self> {
         // projected_splats is [num_visible, PROJECTED_LANES].
         let num_visible = projected_splats.shape()[0];
         let client = v_output.client.clone();
@@ -432,10 +424,10 @@ impl SplatBwdOps for Fusion<CubeBackend> {
                     h.get_float_tensor::<CubeBackend>(v_output),
                     smooth_cutoff,
                 );
-                h.register_float_tensor::<CubeBackend>(&v_combined.id, grads.v_combined);
+                h.register_float_tensor::<CubeBackend>(&v_combined.id, grads);
             },
         );
-        RasterizeGrads { v_combined }
+        v_combined
     }
 
     #[allow(clippy::too_many_arguments)]

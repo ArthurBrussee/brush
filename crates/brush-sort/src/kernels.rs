@@ -5,7 +5,7 @@ use burn::cubecl::frontend::IndexMutExpand;
 use burn::cubecl::prelude::*;
 
 pub use brush_scan::{BLOCK_SIZE, ELEMENTS_PER_THREAD, WG};
-use brush_scan::{cube_exclusive_sum, cube_sum};
+use brush_scan::{block_scan, cube_exclusive_sum, cube_sum, lds_index};
 
 pub const WG_USIZE: usize = WG as usize;
 pub const BITS_PER_PASS: u32 = 4;
@@ -104,37 +104,24 @@ pub fn sort_scan_kernel(num_keys_arr: &Tensor<u32>, reduced: &mut Tensor<u32>) {
     let mut chunk_start = 0u32;
     while chunk_start < num_reduce_wgs {
         for i in 0u32..ELEMENTS_PER_THREAD {
-            let data_index = chunk_start + i * WG + UNIT_POS;
-            let col = (i * WG + UNIT_POS) / ELEMENTS_PER_THREAD;
-            let row = (i * WG + UNIT_POS) % ELEMENTS_PER_THREAD;
+            let lin = i * WG + UNIT_POS;
+            let data_index = chunk_start + lin;
             let mut v = 0u32;
             if data_index < num_reduce_wgs {
                 v = reduced[data_index as usize];
             }
-            lds[(row * WG + col) as usize] = v;
+            lds[lds_index(lin) as usize] = v;
         }
         sync_cube();
 
-        let mut thread_sum = 0u32;
-        for i in 0u32..ELEMENTS_PER_THREAD {
-            let tmp = lds[(i * WG + UNIT_POS) as usize];
-            lds[(i * WG + UNIT_POS) as usize] = thread_sum;
-            thread_sum += tmp;
-        }
-
-        let (workgroup_exclusive, chunk_total) = cube_exclusive_sum(thread_sum);
-        let base = carry + workgroup_exclusive;
-        for i in 0u32..ELEMENTS_PER_THREAD {
-            lds[(i * WG + UNIT_POS) as usize] += base;
-        }
+        let chunk_total = block_scan(&mut lds, carry, false);
         sync_cube();
 
         for i in 0u32..ELEMENTS_PER_THREAD {
-            let data_index = chunk_start + i * WG + UNIT_POS;
-            let col = (i * WG + UNIT_POS) / ELEMENTS_PER_THREAD;
-            let row = (i * WG + UNIT_POS) % ELEMENTS_PER_THREAD;
+            let lin = i * WG + UNIT_POS;
+            let data_index = chunk_start + lin;
             if data_index < num_reduce_wgs {
-                reduced[data_index as usize] = lds[(row * WG + col) as usize];
+                reduced[data_index as usize] = lds[lds_index(lin) as usize];
             }
         }
         // Also orders this chunk's scan reads ahead of the next chunk's writes.
@@ -168,38 +155,26 @@ pub fn sort_scan_add_kernel(
     let mut lds = Shared::new_slice((WG * ELEMENTS_PER_THREAD) as usize);
 
     for i in 0u32..ELEMENTS_PER_THREAD {
-        let data_index = base_index + i * WG + UNIT_POS;
-        let col = (i * WG + UNIT_POS) / ELEMENTS_PER_THREAD;
-        let row = (i * WG + UNIT_POS) % ELEMENTS_PER_THREAD;
+        let lin = i * WG + UNIT_POS;
+        let data_index = base_index + lin;
         // Gate explicitly so a stray OOB read is impossible regardless of
         // whether the backend implements robust-access clamping.
         let mut v = 0u32;
         if data_index < num_wgs {
             v = counts[(bin_offset + data_index) as usize];
         }
-        lds[(row * WG + col) as usize] = v;
+        lds[lds_index(lin) as usize] = v;
     }
     sync_cube();
 
-    let mut thread_sum = 0u32;
-    for i in 0u32..ELEMENTS_PER_THREAD {
-        let tmp = lds[(i * WG + UNIT_POS) as usize];
-        lds[(i * WG + UNIT_POS) as usize] = thread_sum;
-        thread_sum += tmp;
-    }
-
-    let (workgroup_exclusive, _) = cube_exclusive_sum(thread_sum);
-    let total_base = reduced[group_id as usize] + workgroup_exclusive;
-    for i in 0u32..ELEMENTS_PER_THREAD {
-        lds[(i * WG + UNIT_POS) as usize] += total_base;
-    }
+    block_scan(&mut lds, reduced[group_id as usize], false);
     sync_cube();
+
     for i in 0u32..ELEMENTS_PER_THREAD {
-        let data_index = base_index + i * WG + UNIT_POS;
-        let col = (i * WG + UNIT_POS) / ELEMENTS_PER_THREAD;
-        let row = (i * WG + UNIT_POS) % ELEMENTS_PER_THREAD;
+        let lin = i * WG + UNIT_POS;
+        let data_index = base_index + lin;
         if data_index < num_wgs {
-            counts[(bin_offset + data_index) as usize] = lds[(row * WG + col) as usize];
+            counts[(bin_offset + data_index) as usize] = lds[lds_index(lin) as usize];
         }
     }
 }

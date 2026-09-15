@@ -223,47 +223,30 @@ impl SplatOps for Fusion<CubeBackend> {
             compact_gid_from_isect,
             global_from_compact_gid,
             compact_from_global,
-        ] = register_custom(
-            &client,
-            "render_bind",
-            [],
-            [
-                (out_img.shape(), DType::F32),
-                (visible.shape(), DType::F32),
-                (max_radius.shape(), DType::F32),
-                (opacities.shape(), DType::F32),
-                (projected_splats.shape(), DType::F32),
-                (tile_offsets.shape(), DType::U32),
-                (compact_gid_from_isect.shape(), DType::U32),
-                (global_from_compact_gid.shape(), DType::U32),
-                (compact_from_global.shape(), DType::U32),
-            ],
-            move |desc, h| {
-                let (
-                    _,
-                    [
-                        o_img,
-                        o_vis,
-                        o_rad,
-                        o_opac,
-                        o_proj,
-                        o_tiles,
-                        o_compact,
-                        o_global,
-                        o_inv,
-                    ],
-                ) = desc.as_fixed::<0, 9>();
-                h.register_float_tensor::<CubeBackend>(&o_img.id, out_img.clone());
-                h.register_float_tensor::<CubeBackend>(&o_vis.id, visible.clone());
-                h.register_float_tensor::<CubeBackend>(&o_rad.id, max_radius.clone());
-                h.register_float_tensor::<CubeBackend>(&o_opac.id, opacities.clone());
-                h.register_float_tensor::<CubeBackend>(&o_proj.id, projected_splats.clone());
-                h.register_int_tensor::<CubeBackend>(&o_tiles.id, tile_offsets.clone());
-                h.register_int_tensor::<CubeBackend>(&o_compact.id, compact_gid_from_isect.clone());
-                h.register_int_tensor::<CubeBackend>(&o_global.id, global_from_compact_gid.clone());
-                h.register_int_tensor::<CubeBackend>(&o_inv.id, compact_from_global.clone());
-            },
-        );
+        ] = {
+            // The float outputs first, then the int ones; `register_custom`
+            // hands back one stream tensor per entry, in order.
+            let floats = [out_img, visible, max_radius, opacities, projected_splats];
+            let ints = [
+                tile_offsets,
+                compact_gid_from_isect,
+                global_from_compact_gid,
+                compact_from_global,
+            ];
+            let shapes = std::array::from_fn(|i| match floats.get(i) {
+                Some(t) => (t.shape(), DType::F32),
+                None => (ints[i - floats.len()].shape(), DType::U32),
+            });
+            register_custom(&client, "render_bind", [], shapes, move |desc, h| {
+                let (_, outs) = desc.as_fixed::<0, 9>();
+                for (out, t) in outs.iter().zip(&floats) {
+                    h.register_float_tensor::<CubeBackend>(&out.id, t.clone());
+                }
+                for (out, t) in outs[floats.len()..].iter().zip(&ints) {
+                    h.register_int_tensor::<CubeBackend>(&out.id, t.clone());
+                }
+            })
+        };
 
         RenderOutput {
             out_img,

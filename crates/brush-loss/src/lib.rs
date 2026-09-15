@@ -20,7 +20,7 @@
 //! across the autograd tape.
 
 use brush_cube::create_tensor;
-use brush_cube::fusion::{FusionTensor, register_custom};
+use brush_cube::fusion::register_custom;
 use burn::backend::autodiff::checkpoint::strategy::CheckpointStrategy;
 use burn::backend::{Autodiff, AutodiffBackend};
 use burn::{
@@ -857,20 +857,16 @@ fn channel_weights(cfg: &ImageLossConfig, h: u32, w: u32) -> (f32, f32) {
 /// of SSIM + L1, folded into the same launch.
 #[burn::backend::backend_extension(Cube, Autodiff)]
 pub trait LossOps: Backend {
-    /// Per-pixel loss map `[H, W, C]`. Forward only; used for eval.
-    fn image_loss_map(
+    /// Forward loss. `reduce` picks the output: `false` writes the per-pixel
+    /// map `[H, W, C]` (eval only), `true` the weighted per-tile partial sums
+    /// `[planes, tiles]` (rows r, g, b, and alpha when matching) that add up
+    /// to the loss, so the per-pixel map never touches memory. Only the
+    /// reduced form carries a gradient.
+    fn image_loss_forward(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
-    ) -> FloatTensor<Self>;
-
-    /// Weighted per-tile partial sums of the loss, `[planes, tiles]` (rows
-    /// r, g, b, and alpha when matching), which sum to the loss. The
-    /// differentiable entry point: the per-pixel map never touches memory.
-    fn image_loss_partials(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        cfg: ImageLossConfig,
+        reduce: bool,
     ) -> FloatTensor<Self>;
 
     /// Gradient of the loss w.r.t. `pred` given the gradient w.r.t. the
@@ -1083,20 +1079,13 @@ fn launch_unpack_gt_rgb(gt_packed: CubeTensor, composite_bg: Option<Vec3>) -> Cu
 }
 
 impl LossOps for CubeBackend {
-    fn image_loss_map(
+    fn image_loss_forward(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
+        reduce: bool,
     ) -> FloatTensor<Self> {
-        launch_image_forward(pred, gt_packed, cfg, false)
-    }
-
-    fn image_loss_partials(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        cfg: ImageLossConfig,
-    ) -> FloatTensor<Self> {
-        launch_image_forward(pred, gt_packed, cfg, true)
+        launch_image_forward(pred, gt_packed, cfg, reduce)
     }
 
     fn image_loss_backward(
@@ -1113,66 +1102,37 @@ impl LossOps for CubeBackend {
     }
 }
 
-/// One of the forward kernels as a fusion custom op with a single output.
-fn fused_forward(
-    name: &'static str,
-    pred: FusionTensor,
-    gt_packed: FusionTensor,
-    cfg: ImageLossConfig,
-    out_shape: Shape,
-    kernel: fn(CubeTensor, CubeTensor, ImageLossConfig) -> CubeTensor,
-) -> FusionTensor {
-    let client = pred.client.clone();
-    let [out] = register_custom(
-        &client,
-        name,
-        [pred, gt_packed],
-        [(out_shape, DType::F32)],
-        move |desc, h| {
-            let ([pred, gt_packed], [out]) = desc.as_fixed();
-            let res = kernel(
-                h.get_float_tensor::<CubeBackend>(pred),
-                h.get_int_tensor::<CubeBackend>(gt_packed),
-                cfg,
-            );
-            h.register_float_tensor::<CubeBackend>(&out.id, res);
-        },
-    );
-    out
-}
-
 impl LossOps for Fusion<CubeBackend> {
-    fn image_loss_map(
+    fn image_loss_forward(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
-    ) -> FloatTensor<Self> {
-        let shape = pred.shape();
-        fused_forward(
-            "image_loss_map",
-            pred,
-            gt_packed,
-            cfg,
-            shape,
-            <CubeBackend as LossOps>::image_loss_map,
-        )
-    }
-
-    fn image_loss_partials(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        cfg: ImageLossConfig,
+        reduce: bool,
     ) -> FloatTensor<Self> {
         let [ph, pw, pc] = pred.shape().dims();
-        let shape = Shape::new([planes(&cfg, pc as u32) as usize, loss_tiles(ph, pw)]);
-        fused_forward(
-            "image_loss_partials",
-            pred,
-            gt_packed,
-            cfg,
-            shape,
-            <CubeBackend as LossOps>::image_loss_partials,
-        )
+        let shape = if reduce {
+            Shape::new([planes(&cfg, pc as u32) as usize, loss_tiles(ph, pw)])
+        } else {
+            pred.shape()
+        };
+        let client = pred.client.clone();
+        let [out] = register_custom(
+            &client,
+            "image_loss_forward",
+            [pred, gt_packed],
+            [(shape, DType::F32)],
+            move |desc, h| {
+                let ([pred, gt_packed], [out]) = desc.as_fixed();
+                let res = <CubeBackend as LossOps>::image_loss_forward(
+                    h.get_float_tensor::<CubeBackend>(pred),
+                    h.get_int_tensor::<CubeBackend>(gt_packed),
+                    cfg,
+                    reduce,
+                );
+                h.register_float_tensor::<CubeBackend>(&out.id, res);
+            },
+        );
+        out
     }
 
     fn image_loss_backward(
@@ -1268,40 +1228,41 @@ pub fn image_loss_partials(
     gt_packed: Tensor<2, Int>,
     cfg: ImageLossConfig,
 ) -> Tensor<2> {
-    let partials = <burn::backend::Dispatch as LossOps>::image_loss_partials(
+    let partials = <burn::backend::Dispatch as LossOps>::image_loss_forward(
         pred.into_dispatch(),
         gt_packed.into_dispatch(),
         cfg,
+        true,
     );
     Tensor::<2>::from_dispatch(partials)
 }
 
 impl<B: Backend + LossOps, C: CheckpointStrategy> LossOps for Autodiff<B, C> {
-    fn image_loss_map(
+    fn image_loss_forward(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
         cfg: ImageLossConfig,
+        reduce: bool,
     ) -> FloatTensor<Self> {
-        // The per-pixel map is eval-only; gradients go through the partials.
-        <Self as AutodiffBackend>::from_inner(<B as LossOps>::image_loss_map(
-            pred.into_primitive(),
-            gt_packed,
-            cfg,
-        ))
-    }
+        if !reduce {
+            // The per-pixel map is eval-only; gradients go through the
+            // reduced form.
+            return <Self as AutodiffBackend>::from_inner(<B as LossOps>::image_loss_forward(
+                pred.into_primitive(),
+                gt_packed,
+                cfg,
+                false,
+            ));
+        }
 
-    fn image_loss_partials(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        cfg: ImageLossConfig,
-    ) -> FloatTensor<Self> {
         let prep = ImageLossBackward
             .prepare::<NoCheckpointing>([pred.node()])
             .compute_bound()
             .stateful();
 
         let pred_p = pred.into_primitive();
-        let partials = <B as LossOps>::image_loss_partials(pred_p.clone(), gt_packed.clone(), cfg);
+        let partials =
+            <B as LossOps>::image_loss_forward(pred_p.clone(), gt_packed.clone(), cfg, true);
 
         match prep {
             OpsKind::Tracked(prep) => prep.finish(
@@ -1346,10 +1307,11 @@ pub fn image_loss_eval(
     gt_packed: Tensor<2, Int>,
     cfg: ImageLossConfig,
 ) -> Tensor<3> {
-    let map = <burn::backend::Dispatch as LossOps>::image_loss_map(
+    let map = <burn::backend::Dispatch as LossOps>::image_loss_forward(
         pred.into_dispatch(),
         gt_packed.into_dispatch(),
         cfg,
+        false,
     );
     Tensor::<3>::from_dispatch(map)
 }

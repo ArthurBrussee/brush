@@ -246,34 +246,31 @@ impl Splats {
         self.transforms.val().slice(s![.., 7..10])
     }
 
-    /// Post-activation opacity, with the 3D-filter energy compensation folded
-    /// in when a `min_scale` floor is set (see [`fold_min_scale`]). This is the
-    /// splat's *real* opacity — callers (export, refine decisions, viewer)
-    /// should use it rather than reaching for `raw_opacities`.
-    pub fn opacities(&self) -> Tensor<1> {
+    /// `(transforms, raw_opacities)` with the 3D-filter floor folded in when
+    /// a `min_scale` is set (see [`fold_min_scale`]), otherwise the params as
+    /// stored. What the splat really renders as.
+    fn folded(&self) -> (Tensor<2>, Tensor<1>) {
+        let (transforms, raw_opac) = (self.transforms.val(), self.raw_opacities.val());
         match &self.min_scale {
-            Some(f) => {
-                let (_, raw_opac) =
-                    fold_min_scale(self.transforms.val(), self.raw_opacities.val(), f.clone());
-                sigmoid(raw_opac)
-            }
-            None => sigmoid(self.raw_opacities.val()),
+            Some(f) => fold_min_scale(transforms, raw_opac, f.clone()),
+            None => (transforms, raw_opac),
         }
     }
 
-    /// World-space scales, with the 3D-filter floor folded in when `min_scale`
-    /// is set: `sqrt(scale² + f²)`. This is the splat's *real* size — the floor
-    /// is part of the splat's definition, so renders/exports use this, not the
+    /// Post-activation opacity, with the 3D-filter energy compensation folded
+    /// in. This is the splat's *real* opacity — callers (export, refine
+    /// decisions, viewer) should use it rather than reaching for
+    /// `raw_opacities`.
+    pub fn opacities(&self) -> Tensor<1> {
+        sigmoid(self.folded().1)
+    }
+
+    /// World-space scales, with the 3D-filter floor folded in:
+    /// `sqrt(scale² + f²)`. This is the splat's *real* size — the floor is
+    /// part of the splat's definition, so renders/exports use this, not the
     /// raw `log_scales`.
     pub fn scales(&self) -> Tensor<2> {
-        match &self.min_scale {
-            Some(f) => {
-                let (transforms, _) =
-                    fold_min_scale(self.transforms.val(), self.raw_opacities.val(), f.clone());
-                transforms.slice(s![.., 7..10]).exp()
-            }
-            None => self.log_scales().exp(),
-        }
+        self.folded().0.slice(s![.., 7..10]).exp()
     }
 
     /// Permanently fold the `min_scale` floor into the raw scale/opacity params
@@ -281,9 +278,9 @@ impl Splats {
     /// Used at ply export so the floor is written as ordinary derived scales —
     /// never as a separate field.
     pub fn bake_min_scale(mut self) -> Self {
-        if let Some(f) = self.min_scale.take() {
-            let (transforms, raw_opac) =
-                fold_min_scale(self.transforms.val(), self.raw_opacities.val(), f);
+        if self.min_scale.is_some() {
+            let (transforms, raw_opac) = self.folded();
+            self.min_scale = None;
             self.transforms = trainable_param(self.transforms.id, transforms);
             self.raw_opacities = trainable_param(self.raw_opacities.id, raw_opac);
         }

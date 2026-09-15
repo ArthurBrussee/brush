@@ -336,7 +336,7 @@ pub fn read_scale(transforms: &Tensor<f32>, base: usize) -> Vec3A {
 
 /// Opacity clamp applied after the floor compensation, matching
 /// `fold_min_scale` on the host.
-pub const FLOOR_OPACITY_EPS: f32 = 1e-6;
+const FLOOR_OPACITY_EPS: f32 = 1e-6;
 
 /// One splat's scale and opacity after the Mip-Splatting 3D filter, plus
 /// what the backward needs to differentiate through it.

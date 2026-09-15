@@ -4,7 +4,9 @@
 
 mod kernels;
 
-pub use kernels::{BLOCK_SIZE, ELEMENTS_PER_THREAD, WG, cube_exclusive_sum, cube_sum};
+pub use kernels::{
+    BLOCK_SIZE, ELEMENTS_PER_THREAD, WG, block_scan, cube_exclusive_sum, cube_sum, lds_index,
+};
 
 use brush_cube::create_tensor;
 use burn::backend::TensorMetadata;

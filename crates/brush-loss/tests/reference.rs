@@ -47,6 +47,15 @@ fn gt_packed_from_bytes(bytes: &[u8], h: usize, w: usize, device: &Device) -> Te
     Tensor::from_data(TensorData::new(packed, [h, w]), device)
 }
 
+/// Read a tensor back as a flat `f32` vec.
+async fn to_vec<const D: usize>(t: Tensor<D>) -> Vec<f32> {
+    t.into_data_async()
+        .await
+        .expect("readback")
+        .try_to_vec()
+        .expect("vec")
+}
+
 fn ssim_only_cfg() -> ImageLossConfig {
     ImageLossConfig {
         l1_weight: 0.0,
@@ -66,14 +75,8 @@ async fn ssim_identical_inputs_is_one() {
     let pred = pred_from_bytes(&bytes, h, w, &device);
     let gt = gt_packed_from_bytes(&bytes, h, w, &device);
 
-    let map = image_loss_eval(pred, gt, ssim_only_cfg());
-    let mean: f32 = map
-        .into_data_async()
-        .await
-        .expect("readback")
-        .iter::<f32>()
-        .sum::<f32>()
-        / (h * w * 3) as f32;
+    let map = to_vec(image_loss_eval(pred, gt, ssim_only_cfg())).await;
+    let mean: f32 = map.iter().sum::<f32>() / (h * w * 3) as f32;
     // Identical inputs SSIM saturates at 1; allow a sub-ULP roundoff.
     assert!(
         (mean - 1.0).abs() < 1e-4,
@@ -91,12 +94,7 @@ async fn ssim_in_clamp_range() {
     let pred = pred_from_bytes(&bytes_a, h, w, &device);
     let gt = gt_packed_from_bytes(&bytes_b, h, w, &device);
 
-    let data: Vec<f32> = image_loss_eval(pred, gt, ssim_only_cfg())
-        .into_data_async()
-        .await
-        .expect("readback")
-        .try_to_vec()
-        .expect("vec");
+    let data = to_vec(image_loss_eval(pred, gt, ssim_only_cfg())).await;
     let min = data.iter().copied().fold(f32::INFINITY, f32::min);
     let max = data.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     assert!(
@@ -127,13 +125,7 @@ async fn image_loss_backward_runs() {
         },
     );
     let grads = loss.backward();
-    let grad = pred.grad(&grads).expect("pred should have a gradient");
-    let data: Vec<f32> = grad
-        .into_data_async()
-        .await
-        .expect("readback")
-        .try_to_vec()
-        .expect("vec");
+    let data = to_vec(pred.grad(&grads).expect("pred should have a gradient")).await;
     let max_abs = data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
     assert!(
         max_abs > 0.0,
@@ -217,22 +209,8 @@ async fn partials_match_map_sums() {
         alpha_weight: 1.0,
     };
     let map = image_loss_eval(pred.clone(), gt.clone(), cfg);
-    let map_sums: Vec<f32> = map
-        .sum_dims(&[0, 1])
-        .reshape([4])
-        .into_data_async()
-        .await
-        .expect("readback")
-        .try_to_vec()
-        .expect("vec");
-    let partial_sums: Vec<f32> = image_loss_partials(pred, gt, cfg)
-        .sum_dim(1)
-        .reshape([4])
-        .into_data_async()
-        .await
-        .expect("readback")
-        .try_to_vec()
-        .expect("vec");
+    let map_sums = to_vec(map.sum_dims(&[0, 1]).reshape([4])).await;
+    let partial_sums = to_vec(image_loss_partials(pred, gt, cfg).sum_dim(1).reshape([4])).await;
     let pixels = (h * w) as f32;
     for c in 0..4 {
         let weight = if c < 3 {
@@ -249,10 +227,11 @@ async fn partials_match_map_sums() {
 }
 
 /// Finite-difference check of the loss gradient through the tile partials.
-/// Each probe weights only its own channel over the 3x3 tiles around it, so
-/// the summed loss is small enough for f32 finite differences to resolve
-/// (the full-image sum quantises them to ~0.03), and the per-tile upstream
-/// gradient path in the backward gets a non-uniform weighting to chew on.
+/// Each probe weights only its own channel, and gives every tile a slightly
+/// different weight so the backward's per-tile upstream gradient path has
+/// something non-uniform to pick up. Keeping it to one channel also keeps the
+/// summed loss small enough for f32 finite differences to resolve (weighting
+/// all four quantises them to ~0.03).
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn partials_gradient_matches_finite_difference() {
     let device =
@@ -273,23 +252,16 @@ async fn partials_gradient_matches_finite_difference() {
         mask: false,
         alpha_weight: 1.0,
     };
-    let tiles_x = w.div_ceil(TILE_SIZE);
-    let tiles_y = h.div_ceil(TILE_SIZE);
-    let tiles = tiles_x * tiles_y;
+    let tiles = w.div_ceil(TILE_SIZE) * h.div_ceil(TILE_SIZE);
 
     // A few pixels: interior, tile edges, and the alpha channel.
     let probes = [(5, 7, 0), (15, 16, 1), (16, 33, 2), (23, 39, 0), (9, 20, 3)];
     let eps = 2e-3_f32;
     let mut failed = Vec::new();
     for (y, x, c) in probes {
-        let (ty, tx) = (y / TILE_SIZE, x / TILE_SIZE);
         let mut wts = vec![0.0f32; 4 * tiles];
-        for oy in 0..tiles_y {
-            for ox in 0..tiles_x {
-                if oy.abs_diff(ty) <= 1 && ox.abs_diff(tx) <= 1 {
-                    wts[c * tiles + oy * tiles_x + ox] = 1.0;
-                }
-            }
+        for (tile, wt) in wts[c * tiles..(c + 1) * tiles].iter_mut().enumerate() {
+            *wt = 1.0 + tile as f32 / tiles as f32;
         }
         let weights = Tensor::<1>::from_floats(wts.as_slice(), &device).reshape([4, tiles]);
         let loss_of = |data: &[f32]| {
@@ -302,14 +274,7 @@ async fn partials_gradient_matches_finite_difference() {
             .require_grad();
         let loss = (image_loss_partials(pred.clone(), gt.clone(), cfg) * weights.clone()).sum();
         let grads = loss.backward();
-        let grad: Vec<f32> = pred
-            .grad(&grads)
-            .expect("grad")
-            .into_data_async()
-            .await
-            .expect("readback")
-            .try_to_vec()
-            .expect("vec");
+        let grad = to_vec(pred.grad(&grads).expect("grad")).await;
 
         let i = (y * w + x) * 4 + c;
         let mut plus = rgba.clone();

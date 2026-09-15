@@ -77,6 +77,46 @@ pub fn cube_sum(value: u32) -> u32 {
     total
 }
 
+/// Where the `lin`-th element of a block lives in a block-scan buffer.
+/// Consecutive threads load consecutive elements (coalesced), stored
+/// transposed so each thread then owns [`ELEMENTS_PER_THREAD`] consecutive
+/// values at a conflict-free stride.
+#[cube]
+pub fn lds_index(lin: u32) -> u32 {
+    (lin % ELEMENTS_PER_THREAD) * WG + lin / ELEMENTS_PER_THREAD
+}
+
+/// Scan the [`BLOCK_SIZE`] values this cube holds in `lds` (laid out by
+/// [`lds_index()`], so thread `UNIT_POS` owns `lds[j * WG + UNIT_POS]`), add
+/// `base` to every result, and return the cube's total. `inclusive` picks
+/// whether an element counts itself.
+///
+/// The caller syncs: once after filling `lds`, and again before reading the
+/// scanned values back out.
+#[cube]
+pub fn block_scan(lds: &mut Shared<[u32]>, base: u32, #[comptime] inclusive: bool) -> u32 {
+    let mut thread_sum = 0u32;
+    for j in 0u32..ELEMENTS_PER_THREAD {
+        let idx = (j * WG + UNIT_POS) as usize;
+        let v = lds[idx];
+        if inclusive {
+            thread_sum += v;
+            lds[idx] = thread_sum;
+        } else {
+            lds[idx] = thread_sum;
+            thread_sum += v;
+        }
+    }
+
+    let (exclusive, total) = cube_exclusive_sum(thread_sum);
+
+    let offset = base + exclusive;
+    for j in 0u32..ELEMENTS_PER_THREAD {
+        lds[(j * WG + UNIT_POS) as usize] += offset;
+    }
+    total
+}
+
 /// Inclusive scan within each block of [`BLOCK_SIZE`] elements. Each cube
 /// writes its block's total to `block_sums[CUBE_POS]` for the next level.
 #[cube(launch)]
@@ -89,8 +129,6 @@ pub fn scan_blocks_kernel(
     let block = CUBE_POS as u32;
     let base = block * BLOCK_SIZE;
 
-    // Coalesced load, stored transposed so each thread then owns
-    // ELEMENTS_PER_THREAD consecutive elements at a conflict-free stride.
     let mut lds = Shared::new_slice(BLOCK_SIZE_USIZE);
     for i in 0u32..ELEMENTS_PER_THREAD {
         let lin = i * WG + UNIT_POS;
@@ -99,29 +137,18 @@ pub fn scan_blocks_kernel(
         if idx < n {
             v = input[idx as usize];
         }
-        lds[((lin % ELEMENTS_PER_THREAD) * WG + lin / ELEMENTS_PER_THREAD) as usize] = v;
+        lds[lds_index(lin) as usize] = v;
     }
     sync_cube();
 
-    let mut thread_sum = 0u32;
-    for j in 0u32..ELEMENTS_PER_THREAD {
-        thread_sum += lds[(j * WG + UNIT_POS) as usize];
-        lds[(j * WG + UNIT_POS) as usize] = thread_sum;
-    }
-
-    let (exclusive, total) = cube_exclusive_sum(thread_sum);
-
-    for j in 0u32..ELEMENTS_PER_THREAD {
-        lds[(j * WG + UNIT_POS) as usize] += exclusive;
-    }
+    let total = block_scan(&mut lds, 0u32, true);
     sync_cube();
 
     for i in 0u32..ELEMENTS_PER_THREAD {
         let lin = i * WG + UNIT_POS;
         let idx = base + lin;
         if idx < n {
-            output[idx as usize] =
-                lds[((lin % ELEMENTS_PER_THREAD) * WG + lin / ELEMENTS_PER_THREAD) as usize];
+            output[idx as usize] = lds[lds_index(lin) as usize];
         }
     }
     if UNIT_POS == 0u32 {
