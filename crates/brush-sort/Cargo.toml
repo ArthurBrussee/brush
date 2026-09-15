@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 brush-cube.path = "../brush-cube"
+brush-scan.path = "../brush-scan"
 burn.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 burn-wgpu.workspace = true

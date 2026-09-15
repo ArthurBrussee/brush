@@ -1,20 +1,21 @@
 use crate::gaussian_splats::SplatRenderMode;
 use crate::kernels::types::RasterizeUniformsLaunch;
 use crate::sh::sh_coeffs_for_degree;
-use brush_cube::calc_cube_count_1d;
+use brush_cube::create_tensor;
 use burn::backend::TensorMetadata;
 use burn::backend::ops::FloatTensorOps;
 use burn::backend::tensor::{FloatTensor, IntTensor};
 use burn::cubecl::CubeCount;
 use burn::cubecl::CubeDim;
+use burn::cubecl::calculate_cube_count_elemwise;
 use burn::cubecl::features::AtomicUsage;
 use burn::cubecl::ir::{ElemType, FloatKind, Type};
-use burn::tensor::FloatDType;
+use burn::tensor::{DType, FloatDType};
 use burn_cubecl::CubeBackend;
 use burn_cubecl::kernel::into_contiguous;
 use glam::{Vec3, uvec2};
 
-use crate::bwd::burn_glue::{RasterizeGrads, SplatBwdOps, SplatGrads};
+use crate::bwd::burn_glue::{SplatBwdOps, SplatGrads};
 use crate::bwd::kernels;
 use crate::shaders::helpers::ProjectUniforms;
 
@@ -28,12 +29,12 @@ impl SplatBwdOps for CubeBackend {
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
-    ) -> RasterizeGrads<Self> {
+    ) -> FloatTensor<Self> {
         let _span = tracing::trace_span!("rasterize_bwd").entered();
 
         let v_output = into_contiguous(v_output);
         let device = out_img.device.clone();
-        let num_visible = projected_splats.shape()[0].max(1);
+        let num_visible = projected_splats.shape()[0];
         let client = projected_splats.client.clone();
 
         // Sparse [num_visible, 10] indexed by compact_gid.
@@ -95,7 +96,7 @@ impl SplatBwdOps for CubeBackend {
             }
         });
 
-        RasterizeGrads { v_combined }
+        v_combined
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -103,6 +104,8 @@ impl SplatBwdOps for CubeBackend {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
+        has_min_scale: bool,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         render_mode: SplatRenderMode,
@@ -115,40 +118,34 @@ impl SplatBwdOps for CubeBackend {
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
         let raw_opac = into_contiguous(raw_opac);
+        let min_scale = into_contiguous(min_scale);
 
         let device = transforms.device.clone();
-        let num_points = transforms.shape()[0];
         let client = transforms.client.clone();
-
-        // Dense outputs, the kernel scatters compact→global internally.
-        let v_transforms = Self::float_zeros([num_points, 10].into(), &device, FloatDType::F32);
-        let v_coeffs = Self::float_zeros(
-            [
-                num_points,
-                sh_coeffs_for_degree(project_uniforms.sh_degree) as usize,
-                3,
-            ]
-            .into(),
-            &device,
-            FloatDType::F32,
-        );
-        let v_raw_opac = Self::float_zeros([num_points].into(), &device, FloatDType::F32);
-        let v_refine_weight = Self::float_zeros([num_points].into(), &device, FloatDType::F32);
 
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
-        let num_visible = project_uniforms.num_visible;
+        // Compact outputs with the zero row in front (see the kernel); the
+        // kernel writes every row, so no fill.
+        let rows = project_uniforms.num_visible as usize + 1;
+        let coeffs = sh_coeffs_for_degree(project_uniforms.sh_degree) as usize;
+        let v_transforms = create_tensor([rows, 10], &device, DType::F32);
+        let v_coeffs = create_tensor([rows, coeffs, 3], &device, DType::F32);
+        let v_raw_opac = create_tensor([rows], &device, DType::F32);
+        let v_refine_weight = create_tensor([rows], &device, DType::F32);
 
         let uniforms = project_uniforms.to_launch_object();
+        let cube_dim = CubeDim::new_1d(kernels::project_backwards::WG_SIZE);
 
         tracing::trace_span!("ProjectBackwards").in_scope(|| {
             kernels::project_backwards::project_backwards_kernel::launch(
                 &client,
-                calc_cube_count_1d(num_visible, kernels::project_backwards::WG_SIZE),
-                CubeDim::new_1d(kernels::project_backwards::WG_SIZE),
+                calculate_cube_count_elemwise(&client, rows, cube_dim),
+                cube_dim,
                 transforms.into_tensor_arg(),
                 sh_coeffs.into_tensor_arg(),
                 raw_opac.into_tensor_arg(),
+                min_scale.into_tensor_arg(),
                 global_from_compact_gid.into_tensor_arg(),
                 v_combined.into_tensor_arg(),
                 v_transforms.clone().into_tensor_arg(),
@@ -157,6 +154,7 @@ impl SplatBwdOps for CubeBackend {
                 v_refine_weight.clone().into_tensor_arg(),
                 uniforms,
                 mip_splat,
+                has_min_scale,
                 project_uniforms.sh_degree,
                 project_uniforms.camera_model,
             );

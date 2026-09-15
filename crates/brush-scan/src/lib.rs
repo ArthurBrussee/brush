@@ -1,12 +1,26 @@
+//! GPU scans shared across brush: a cube-wide block scan for kernels that
+//! need a prefix sum in shared memory (the radix sort), and a device-wide
+//! inclusive prefix sum built on it.
+
 mod kernels;
 
-use brush_cube::calc_cube_count_1d;
+pub use kernels::{
+    BLOCK_SIZE, ELEMENTS_PER_THREAD, WG, block_scan, cube_exclusive_sum, cube_sum, lds_index,
+};
+
 use brush_cube::create_tensor;
 use burn::backend::TensorMetadata;
 use burn::cubecl::CubeDim;
+use burn::cubecl::calculate_cube_count_elemwise;
 use burn_wgpu::CubeTensor;
-use kernels::THREADS_PER_GROUP;
+use kernels::BLOCK_SIZE_USIZE;
 
+/// Inclusive prefix sum over a contiguous 1D `u32` tensor.
+///
+/// Each cube scans a block of 1024 elements and emits its total; the totals
+/// are scanned recursively the same way, then each level's offsets are added
+/// back down. One scan kernel per level plus one add per unwound level,
+/// `log_1024(n)` levels.
 pub fn prefix_sum(input: CubeTensor) -> CubeTensor {
     assert!(input.is_contiguous(), "Please ensure input is contiguous");
 
@@ -16,73 +30,52 @@ pub fn prefix_sum(input: CubeTensor) -> CubeTensor {
     }
 
     let client = input.client.clone();
-    let outputs = create_tensor(input.shape().dims::<1>(), &input.device, input.dtype);
+    let device = input.device.clone();
+    let dtype = input.dtype;
+    let cube_dim = CubeDim::new_1d(WG);
 
-    let cube_dim = CubeDim::new_1d(THREADS_PER_GROUP as u32);
-
-    kernels::prefix_sum_scan_kernel::launch(
-        &client,
-        calc_cube_count_1d(num as u32, THREADS_PER_GROUP as u32),
-        cube_dim,
-        input.into_tensor_arg(),
-        outputs.clone().into_tensor_arg(),
-    );
-
-    if num <= THREADS_PER_GROUP {
-        return outputs;
-    }
-
-    let mut group_buffer = vec![];
-    let mut work_size = vec![];
-    let mut work_sz = num;
-    while work_sz > THREADS_PER_GROUP {
-        work_sz = work_sz.div_ceil(THREADS_PER_GROUP);
-        group_buffer.push(create_tensor([work_sz], &outputs.device, outputs.dtype));
-        work_size.push(work_sz);
-    }
-
-    kernels::prefix_sum_scan_sums_kernel::launch(
-        &client,
-        calc_cube_count_1d(work_size[0] as u32, THREADS_PER_GROUP as u32),
-        cube_dim,
-        outputs.clone().into_tensor_arg(),
-        group_buffer[0].clone().into_tensor_arg(),
-    );
-
-    for l in 0..(group_buffer.len() - 1) {
-        kernels::prefix_sum_scan_sums_kernel::launch(
+    // Level 0 scans the input; each further level scans the previous level's
+    // block sums. `scanned[l]` is the inclusive scan at level `l`.
+    let mut scanned: Vec<CubeTensor> = vec![];
+    let mut level_input = input;
+    let mut level_len = num;
+    loop {
+        let blocks = level_len.div_ceil(BLOCK_SIZE_USIZE);
+        let out = create_tensor([level_len], &device, dtype);
+        let sums = create_tensor([blocks], &device, dtype);
+        kernels::scan_blocks_kernel::launch(
             &client,
-            calc_cube_count_1d(work_size[l + 1] as u32, THREADS_PER_GROUP as u32),
+            calculate_cube_count_elemwise(
+                &client,
+                level_len,
+                CubeDim::new_1d(BLOCK_SIZE_USIZE as u32),
+            ),
             cube_dim,
-            group_buffer[l].clone().into_tensor_arg(),
-            group_buffer[l + 1].clone().into_tensor_arg(),
+            level_input.into_tensor_arg(),
+            out.clone().into_tensor_arg(),
+            sums.clone().into_tensor_arg(),
+        );
+        scanned.push(out);
+        if blocks == 1 {
+            break;
+        }
+        level_input = sums;
+        level_len = blocks;
+    }
+
+    // Unwind: the scanned block sums of level l+1 are the offsets for level l.
+    for l in (0..scanned.len() - 1).rev() {
+        let len = scanned[l].shape()[0];
+        kernels::add_block_offsets_kernel::launch(
+            &client,
+            calculate_cube_count_elemwise(&client, len, cube_dim),
+            cube_dim,
+            scanned[l + 1].clone().into_tensor_arg(),
+            scanned[l].clone().into_tensor_arg(),
         );
     }
 
-    for l in (1..group_buffer.len()).rev() {
-        let work_sz = work_size[l - 1];
-
-        kernels::prefix_sum_add_scanned_sums_kernel::launch(
-            &client,
-            calc_cube_count_1d(work_sz as u32, THREADS_PER_GROUP as u32),
-            cube_dim,
-            group_buffer[l].clone().into_tensor_arg(),
-            group_buffer[l - 1].clone().into_tensor_arg(),
-        );
-    }
-
-    kernels::prefix_sum_add_scanned_sums_kernel::launch(
-        &client,
-        calc_cube_count_1d(
-            (work_size[0] * THREADS_PER_GROUP) as u32,
-            THREADS_PER_GROUP as u32,
-        ),
-        cube_dim,
-        group_buffer[0].clone().into_tensor_arg(),
-        outputs.clone().into_tensor_arg(),
-    );
-
-    outputs
+    scanned.swap_remove(0)
 }
 
 #[cfg(test)]
@@ -187,6 +180,30 @@ mod tests {
 
         for (summed, reff) in summed.iter().zip(prefix_sum_ref) {
             assert_eq!(*summed, reff);
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = tokio::test)]
+    async fn test_block_boundaries() {
+        let device = CubeDevice::Wgpu(brush_cube::test_helpers::test_device().await);
+        // Around one block, two blocks, and the first second-level block.
+        for len in [
+            1023usize,
+            1024,
+            1025,
+            2048,
+            2049,
+            1024 * 1024,
+            1024 * 1024 + 1,
+        ] {
+            let data: Vec<i32> = (0..len).map(|i| (i % 13) as i32).collect();
+            let keys = create_tensor_from_slice(&data, &device, DType::I32);
+            let summed = read_i32(prefix_sum(keys)).await;
+            let mut acc = 0;
+            for (i, (got, x)) in summed.iter().zip(&data).enumerate() {
+                acc += x;
+                assert_eq!(*got, acc, "length {len}, index {i}");
+            }
         }
     }
 
