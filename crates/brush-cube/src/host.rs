@@ -8,21 +8,6 @@ pub use burn_cubecl::{CubeDevice, tensor::CubeTensor};
 // Re-export bytemuck for use by generated code
 pub use bytemuck;
 
-/// Calculate workgroup count for a 1D dispatch, tiling into 2D if needed.
-/// Use this for kernels processing a 1D array of elements that may exceed 65535 workgroups.
-pub fn calc_cube_count_1d(num_elements: u32, workgroup_size: u32) -> CubeCount {
-    let total_wgs = num_elements.div_ceil(workgroup_size);
-
-    // WebGPU limit is 65535 workgroups per dimension.
-    if total_wgs > 65535 {
-        let wg_y = (total_wgs as f64).sqrt().ceil() as u32;
-        let wg_x = total_wgs.div_ceil(wg_y);
-        CubeCount::Static(wg_x, wg_y, 1)
-    } else {
-        CubeCount::Static(total_wgs, 1, 1)
-    }
-}
-
 // Reserve a buffer from the client for the given shape.
 pub fn create_tensor<const D: usize>(
     shape: [usize; D],

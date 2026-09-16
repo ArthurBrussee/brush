@@ -9,6 +9,7 @@ license.workspace = true
 # Provides `DeviceOps` for `WgpuDevice` in standalone builds.
 burn = { workspace = true, features = ["wgpu"] }
 burn-cubecl.workspace = true
+burn-fusion.workspace = true
 burn-wgpu.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 log.workspace = true

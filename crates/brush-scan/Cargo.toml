@@ -1,5 +1,5 @@
 [package]
-name = "brush-prefix-sum"
+name = "brush-scan"
 edition.workspace = true
 version.workspace = true
 readme.workspace = true
@@ -13,8 +13,14 @@ burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 
 [dev-dependencies]
+divan = "0.1.17"
 tokio = { workspace = true, features = ["macros", "rt"] }
 wasm-bindgen-test = "0.3"
+
+[[bench]]
+name = "scan_bench"
+harness = false
+path = "benches/scan_bench.rs"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }

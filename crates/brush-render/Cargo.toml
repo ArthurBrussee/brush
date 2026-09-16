@@ -8,7 +8,7 @@ license.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 brush-cube.path = "../brush-cube"
-brush-prefix-sum.path = "../brush-prefix-sum"
+brush-scan.path = "../brush-scan"
 brush-sort.path = "../brush-sort"
 
 # WebGPU everywhere. On macOS you can opt into native MSL with
@@ -19,7 +19,6 @@ burn = { workspace = true, features = ["wgpu", "autodiff"] }
 burn-wgpu.workspace = true
 burn-cubecl.workspace = true
 burn-fusion.workspace = true
-burn-ir.workspace = true
 
 glam.workspace = true
 clap.workspace = true

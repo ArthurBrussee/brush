@@ -98,16 +98,16 @@ pub async fn compute_pup_scores(
         splats.transforms = splats.transforms.map(|t: Tensor<2>| t.require_grad());
 
         let diff_out = render_splats(splats.clone(), &view.camera, img_size, Vec3::ZERO).await;
-        let pred_rgb = diff_out.img.slice(s![.., .., 0..3]);
-
         let gt_packed: Tensor<2, Int> = Tensor::from_data(gt_data, device);
         let l1_cfg = ImageLossConfig {
             l1_weight: 1.0,
             ssim_weight: 0.0,
             composite_bg: None,
             mask: false,
+            alpha_weight: 0.0,
         };
-        let loss = image_loss(pred_rgb, gt_packed, l1_cfg).mean();
+        // Mean L1 over the RGB channels of the RGBA render.
+        let loss = image_loss(diff_out.img, gt_packed, l1_cfg);
         let mut grads = loss.backward();
 
         let transforms_grad = splats

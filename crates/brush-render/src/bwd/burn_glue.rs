@@ -3,10 +3,11 @@
 use crate::{
     SplatOps,
     camera::Camera,
-    gaussian_splats::{SplatRenderMode, Splats, fold_min_scale},
+    gaussian_splats::{SplatRenderMode, Splats},
     sh::sh_coeffs_for_degree,
     shaders::helpers::ProjectUniforms,
 };
+use brush_cube::fusion::register_custom;
 use burn::backend::Autodiff;
 use burn::backend::autodiff::checkpoint::strategy::CheckpointStrategy;
 use burn::{
@@ -22,23 +23,8 @@ use burn::{
     tensor::{DType, Shape, Tensor},
 };
 use burn_cubecl::CubeBackend;
-use burn_cubecl::fusion::FusionCubeRuntime;
-use burn_fusion::{
-    ExecutionError, Fusion, FusionHandle,
-    stream::{Operation, StreamId},
-};
-use burn_ir::{CustomOpIr, HandleContainer, OperationIr, OperationOutput, TensorIr};
+use burn_fusion::Fusion;
 use glam::Vec3;
-
-/// Intermediate gradients from the rasterize backward pass.
-///
-/// Sparse buffer of shape `[num_visible, 10]`, indexed by `compact_gid`.
-/// Slots 0..8 are projected splat gradients, slot 8 is the raw opacity
-/// gradient, slot 9 is the refinement weight.
-#[derive(Debug, Clone)]
-pub(crate) struct RasterizeGrads<B: Backend> {
-    pub v_combined: FloatTensor<B>,
-}
 
 /// Final gradients w.r.t. splat inputs from the project backward pass.
 #[derive(Debug, Clone)]
@@ -57,8 +43,10 @@ pub(crate) struct SplatGrads<B: Backend> {
 /// meaningful `rasterize_bwd`, since these run on concrete tensors and are
 /// called from the `Backward` impl on the inner backend.
 pub(crate) trait SplatBwdOps: Backend {
-    /// Backward pass for rasterization.
-    /// Returns sparse `v_combined` [`num_visible`, 10] indexed by `compact_gid`.
+    /// Backward pass for rasterization. Returns the sparse `v_combined`
+    /// buffer, `[num_visible, 10]` indexed by `compact_gid`: slots 0..8 are
+    /// projected splat gradients, slot 8 the raw opacity gradient, slot 9 the
+    /// refinement weight.
     #[allow(clippy::too_many_arguments)]
     fn rasterize_bwd(
         out_img: FloatTensor<Self>,
@@ -69,10 +57,13 @@ pub(crate) trait SplatBwdOps: Backend {
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
-    ) -> RasterizeGrads<Self>;
+    ) -> FloatTensor<Self>;
 
     /// Backward pass for projection.
-    /// Reads sparse `v_combined` [`num_visible`, 9], writes dense outputs (scatter in kernel).
+    /// Reads sparse `v_combined` [`num_visible`, 10] and writes compact
+    /// outputs: a zero row, then one row per visible splat in `compact_gid`
+    /// order. The caller gathers them per global splat through
+    /// `compact_from_global`.
     /// `sh_coeffs` is the original (input) SH coefficient tensor — needed
     /// so the kernel can backprop `v_color` through the SH basis to the
     /// view direction and then to the mean.
@@ -81,6 +72,8 @@ pub(crate) trait SplatBwdOps: Backend {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
+        has_min_scale: bool,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         render_mode: SplatRenderMode,
@@ -94,10 +87,13 @@ struct GaussianBackwardState<B: Backend> {
     transforms: FloatTensor<B>,
     sh_coeffs: FloatTensor<B>,
     raw_opacity: FloatTensor<B>,
+    min_scale: FloatTensor<B>,
+    has_min_scale: bool,
 
     projected_splats: FloatTensor<B>,
     project_uniforms: ProjectUniforms,
     global_from_compact_gid: IntTensor<B>,
+    compact_from_global: IntTensor<B>,
 
     out_img: FloatTensor<B>,
     compact_gid_from_isect: IntTensor<B>,
@@ -138,7 +134,7 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
             raw_opacity_parent,
         ] = ops.parents;
 
-        let rasterize_grads = B::rasterize_bwd(
+        let v_combined = B::rasterize_bwd(
             state.out_img,
             state.projected_splats,
             state.compact_gid_from_isect,
@@ -153,27 +149,36 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
             state.transforms,
             state.sh_coeffs,
             state.raw_opacity,
+            state.min_scale,
+            state.has_min_scale,
             state.global_from_compact_gid,
             state.project_uniforms,
             state.render_mode,
-            rasterize_grads.v_combined,
+            v_combined,
         );
 
+        // The kernels write compact gradients with a zero row in front, and
+        // `compact_from_global` points culled splats at that row, so one
+        // gather expands each to the dense param shape. It's left as an
+        // unexecuted stream op: burn's fusion folds it into the optimizer's
+        // own kernel and nothing dense is materialised here.
+        let inv = state.compact_from_global;
+        let dense = |compact: FloatTensor<B>| B::float_select(compact, 0, inv.clone());
+
         if let Some(node) = transforms_parent {
-            grads.register::<B>(node.id, splat_grads.v_transforms);
+            grads.register::<B>(node.id, dense(splat_grads.v_transforms));
         }
 
-        // v_refine_weight is already dense [num_points], written by the kernel.
         if let Some(node) = refine_weight {
-            grads.register::<B>(node.id, splat_grads.v_refine_weight);
+            grads.register::<B>(node.id, dense(splat_grads.v_refine_weight));
         }
 
         if let Some(node) = coeffs_parent {
-            grads.register::<B>(node.id, splat_grads.v_coeffs);
+            grads.register::<B>(node.id, dense(splat_grads.v_coeffs));
         }
 
         if let Some(node) = raw_opacity_parent {
-            grads.register::<B>(node.id, splat_grads.v_raw_opac);
+            grads.register::<B>(node.id, dense(splat_grads.v_raw_opac));
         }
     }
 }
@@ -186,6 +191,9 @@ pub struct SplatOutputDiff {
     pub visible: Tensor<1>,
     /// Per-splat max screen radius aux — on the **inner** backend (no gradients).
     pub max_radius: Tensor<1>,
+    /// Per-splat opacity with the scale floor folded in — on the **inner**
+    /// backend (no gradients). Zero for culled splats.
+    pub opacities: Tensor<1>,
     pub refine_weight_holder: Tensor<1>,
 }
 
@@ -229,17 +237,10 @@ pub async fn render_splats_with_pass(
 
     let refine_weight_holder = Tensor::<1>::zeros([1], &device).require_grad();
 
-    // Fold the 3D-filter floor into scales/opacity for the render. `min_scale`
-    // lives on the inner backend; `fold_min_scale` lifts it onto the autodiff
-    // graph to match the param values.
-    let (transforms_val, raw_opac_val) = match &splats.min_scale {
-        Some(f) => fold_min_scale(
-            splats.transforms.val(),
-            splats.raw_opacities.val(),
-            f.clone(),
-        ),
-        None => (splats.transforms.val(), splats.raw_opacities.val()),
-    };
+    // The 3D-filter floor is applied inside the projection kernels. It lives
+    // on the inner backend and carries no gradient, so lifting it onto the
+    // autodiff device is just a wrap.
+    let (min_scale, has_min_scale) = splats.min_scale_arg();
 
     let render_mode = if splats.render_mip {
         SplatRenderMode::Mip
@@ -255,9 +256,11 @@ pub async fn render_splats_with_pass(
     let output = <burn::backend::Dispatch as SplatOps>::render(
         camera,
         img_size,
-        transforms_val.into_dispatch(),
+        splats.transforms.val().into_dispatch(),
         splats.sh_coeffs.val().into_dispatch(),
-        raw_opac_val.into_dispatch(),
+        splats.raw_opacities.val().into_dispatch(),
+        min_scale.autodiff().into_dispatch(),
+        has_min_scale,
         refine_weight_holder.clone().into_dispatch(),
         render_mode,
         background,
@@ -270,6 +273,7 @@ pub async fn render_splats_with_pass(
         num_visible: output.aux.num_visible,
         visible: Tensor::from_dispatch(output.aux.visible).without_autodiff(),
         max_radius: Tensor::from_dispatch(output.aux.max_radius).without_autodiff(),
+        opacities: Tensor::from_dispatch(output.aux.opacities).without_autodiff(),
         refine_weight_holder,
     }
 }
@@ -282,6 +286,8 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
+        has_min_scale: bool,
         refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
@@ -289,17 +295,18 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
     ) -> crate::RenderOutput<Self> {
         let prep_nodes = RenderBackwards
             .prepare::<NoCheckpointing>([
-                transforms.node.clone(),
-                refine_weight.node.clone(),
-                sh_coeffs.node.clone(),
-                raw_opacities.node.clone(),
+                transforms.node(),
+                refine_weight.node(),
+                sh_coeffs.node(),
+                raw_opacities.node(),
             ])
             .compute_bound()
             .stateful();
 
-        let transforms_inner: FloatTensor<B> = transforms.primitive.clone();
-        let sh_inner: FloatTensor<B> = sh_coeffs.primitive;
-        let raw_opac_inner: FloatTensor<B> = raw_opacities.primitive.clone();
+        let transforms_inner: FloatTensor<B> = transforms.primitive().clone();
+        let sh_inner: FloatTensor<B> = sh_coeffs.into_primitive();
+        let raw_opac_inner: FloatTensor<B> = raw_opacities.primitive().clone();
+        let min_scale_inner: FloatTensor<B> = min_scale.into_primitive();
 
         let output = <B as SplatOps>::render(
             camera,
@@ -307,7 +314,9 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
             transforms_inner.clone(),
             sh_inner.clone(),
             raw_opac_inner.clone(),
-            refine_weight.primitive,
+            min_scale_inner.clone(),
+            has_min_scale,
+            refine_weight.into_primitive(),
             render_mode,
             background,
             pass,
@@ -322,6 +331,8 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
                     transforms: transforms_inner,
                     sh_coeffs: sh_inner,
                     raw_opacity: raw_opac_inner,
+                    min_scale: min_scale_inner,
+                    has_min_scale,
                     out_img: output.out_img.clone(),
                     projected_splats: output.projected_splats.clone(),
                     project_uniforms: output.project_uniforms,
@@ -330,6 +341,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
                     render_mode,
                     pass,
                     global_from_compact_gid: output.global_from_compact_gid.clone(),
+                    compact_from_global: output.compact_from_global.clone(),
                     background,
                     img_size,
                 };
@@ -352,6 +364,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
                 num_intersections: output.aux.num_intersections,
                 visible: lift(output.aux.visible),
                 max_radius: lift(output.aux.max_radius),
+                opacities: lift(output.aux.opacities),
                 tile_offsets: output.aux.tile_offsets,
                 img_size: output.aux.img_size,
             },
@@ -359,6 +372,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
             compact_gid_from_isect: output.compact_gid_from_isect,
             project_uniforms: output.project_uniforms,
             global_from_compact_gid: output.global_from_compact_gid,
+            compact_from_global: output.compact_from_global,
         }
     }
 }
@@ -374,88 +388,46 @@ impl SplatBwdOps for Fusion<CubeBackend> {
         img_size: glam::UVec2,
         v_output: FloatTensor<Self>,
         smooth_cutoff: bool,
-    ) -> RasterizeGrads<Self> {
-        #[derive(Debug)]
-        struct CustomOp {
-            desc: CustomOpIr,
-            background: Vec3,
-            img_size: glam::UVec2,
-            smooth_cutoff: bool,
-        }
-
-        impl Operation<FusionCubeRuntime> for CustomOp {
-            fn execute(
-                &self,
-                h: &mut HandleContainer<FusionHandle<FusionCubeRuntime>>,
-            ) -> Result<(), ExecutionError> {
-                let (inputs, outputs) = self.desc.as_fixed();
-
-                let [
-                    v_output,
-                    out_img,
-                    projected_splats,
-                    compact_gid_from_isect,
-                    tile_offsets,
-                ] = inputs;
-
-                let [v_combined] = outputs;
-
+    ) -> FloatTensor<Self> {
+        // projected_splats is [num_visible, PROJECTED_LANES].
+        let num_visible = projected_splats.shape()[0];
+        let client = v_output.client.clone();
+        let [v_combined] = register_custom(
+            &client,
+            "rasterize_bwd",
+            [
+                v_output,
+                out_img,
+                projected_splats,
+                compact_gid_from_isect,
+                tile_offsets,
+            ],
+            [(Shape::new([num_visible, 10]), DType::F32)],
+            move |desc, h| {
+                let (
+                    [
+                        v_output,
+                        out_img,
+                        projected_splats,
+                        compact_gid_from_isect,
+                        tile_offsets,
+                    ],
+                    [v_combined],
+                ) = desc.as_fixed();
                 let grads = <CubeBackend as SplatBwdOps>::rasterize_bwd(
                     h.get_float_tensor::<CubeBackend>(out_img),
                     h.get_float_tensor::<CubeBackend>(projected_splats),
                     h.get_int_tensor::<CubeBackend>(compact_gid_from_isect),
                     h.get_int_tensor::<CubeBackend>(tile_offsets),
-                    self.background,
-                    self.img_size,
+                    background,
+                    img_size,
                     h.get_float_tensor::<CubeBackend>(v_output),
-                    self.smooth_cutoff,
+                    smooth_cutoff,
                 );
-
-                h.register_float_tensor::<CubeBackend>(&v_combined.id, grads.v_combined);
-                Ok(())
-            }
-        }
-
-        // projected_splats is [num_visible, PROJECTED_LANES], so shape[0] gives num_visible.
-        let num_visible_val = projected_splats.shape()[0] as u32;
-
-        let client = v_output.client.clone();
-        let num_visible = (num_visible_val as usize).max(1);
-
-        let input_tensors = [
-            v_output,
-            out_img,
-            projected_splats,
-            compact_gid_from_isect,
-            tile_offsets,
-        ];
-
-        let outputs = {
-            let v_combined_out = TensorIr::uninit(
-                client.create_empty_handle(),
-                Shape::new([num_visible, 10]),
-                DType::F32,
-            );
-            let stream = StreamId::current();
-            let desc = CustomOpIr::new(
-                "rasterize_bwd",
-                &input_tensors.map(|t| t.into_ir()),
-                &[v_combined_out],
-            );
-            let op = CustomOp {
-                desc: desc.clone(),
-                background,
-                img_size,
-                smooth_cutoff,
-            };
-            client
-                .register(stream, OperationIr::Custom(desc), op)
-                .outputs()
-        };
-
-        let [v_combined] = outputs;
-
-        RasterizeGrads { v_combined }
+                h.register_float_tensor::<CubeBackend>(&v_combined.id, grads);
+            },
+        );
+        v_combined
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -463,103 +435,62 @@ impl SplatBwdOps for Fusion<CubeBackend> {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opac: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
+        has_min_scale: bool,
         global_from_compact_gid: IntTensor<Self>,
         project_uniforms: ProjectUniforms,
         render_mode: SplatRenderMode,
         v_combined: FloatTensor<Self>,
     ) -> SplatGrads<Self> {
-        // The screen-area regulariser only acts in the backward kernel, so we
-        // stamp the weight onto the uniforms here rather than in the forward.
-        #[derive(Debug)]
-        struct CustomOp {
-            desc: CustomOpIr,
-            render_mode: SplatRenderMode,
-            project_uniforms: ProjectUniforms,
-        }
-
-        impl Operation<FusionCubeRuntime> for CustomOp {
-            fn execute(
-                &self,
-                h: &mut HandleContainer<FusionHandle<FusionCubeRuntime>>,
-            ) -> Result<(), ExecutionError> {
-                let (inputs, outputs) = self.desc.as_fixed();
-
-                let [
-                    transforms,
-                    sh_coeffs,
-                    raw_opac,
-                    global_from_compact_gid,
-                    v_combined_in,
-                ] = inputs;
-
-                let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
-
+        let client = transforms.client.clone();
+        let rows = project_uniforms.num_visible as usize + 1;
+        let coeffs = sh_coeffs_for_degree(project_uniforms.sh_degree) as usize;
+        let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = register_custom(
+            &client,
+            "project_bwd",
+            [
+                transforms,
+                sh_coeffs,
+                raw_opac,
+                min_scale,
+                global_from_compact_gid,
+                v_combined,
+            ],
+            [
+                (Shape::new([rows, 10]), DType::F32),
+                (Shape::new([rows, coeffs, 3]), DType::F32),
+                (Shape::new([rows]), DType::F32),
+                (Shape::new([rows]), DType::F32),
+            ],
+            move |desc, h| {
+                let (
+                    [
+                        transforms,
+                        sh_coeffs,
+                        raw_opac,
+                        min_scale,
+                        global_from_compact_gid,
+                        v_combined,
+                    ],
+                    [v_transforms, v_coeffs, v_raw_opac, v_refine_weight],
+                ) = desc.as_fixed();
                 let grads = <CubeBackend as SplatBwdOps>::project_bwd(
                     h.get_float_tensor::<CubeBackend>(transforms),
                     h.get_float_tensor::<CubeBackend>(sh_coeffs),
                     h.get_float_tensor::<CubeBackend>(raw_opac),
+                    h.get_float_tensor::<CubeBackend>(min_scale),
+                    has_min_scale,
                     h.get_int_tensor::<CubeBackend>(global_from_compact_gid),
-                    self.project_uniforms,
-                    self.render_mode,
-                    h.get_float_tensor::<CubeBackend>(v_combined_in),
+                    project_uniforms,
+                    render_mode,
+                    h.get_float_tensor::<CubeBackend>(v_combined),
                 );
-
                 h.register_float_tensor::<CubeBackend>(&v_transforms.id, grads.v_transforms);
                 h.register_float_tensor::<CubeBackend>(&v_coeffs.id, grads.v_coeffs);
                 h.register_float_tensor::<CubeBackend>(&v_raw_opac.id, grads.v_raw_opac);
                 h.register_float_tensor::<CubeBackend>(&v_refine_weight.id, grads.v_refine_weight);
-                Ok(())
-            }
-        }
-
-        let client = transforms.client.clone();
-        let num_points = transforms.shape[0];
-        let coeffs = sh_coeffs_for_degree(project_uniforms.sh_degree) as usize;
-
-        let input_tensors = [
-            transforms,
-            sh_coeffs,
-            raw_opac,
-            global_from_compact_gid,
-            v_combined,
-        ];
-
-        let outputs = {
-            // All four grads are fresh f32 handles; only the shape differs.
-            let new_grad =
-                |shape| TensorIr::uninit(client.create_empty_handle(), shape, DType::F32);
-            let v_transforms_out = new_grad(Shape::new([num_points, 10]));
-            let v_coeffs_out = new_grad(Shape::new([num_points, coeffs, 3]));
-            let v_raw_opac_out = new_grad(Shape::new([num_points]));
-            let v_refine_weight_out = new_grad(Shape::new([num_points]));
-
-            let stream = StreamId::current();
-            let desc = CustomOpIr::new(
-                "project_bwd",
-                &input_tensors.map(|t| t.into_ir()),
-                &[
-                    v_transforms_out,
-                    v_coeffs_out,
-                    v_raw_opac_out,
-                    v_refine_weight_out,
-                ],
-            );
-
-            client
-                .register(
-                    stream,
-                    OperationIr::Custom(desc.clone()),
-                    CustomOp {
-                        desc,
-                        render_mode,
-                        project_uniforms,
-                    },
-                )
-                .outputs()
-        };
-
-        let [v_transforms, v_coeffs, v_raw_opac, v_refine_weight] = outputs;
-
+            },
+        );
         SplatGrads {
             v_transforms,
             v_coeffs,
