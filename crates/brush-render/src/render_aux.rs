@@ -23,6 +23,11 @@ pub struct RenderOutput<B: Backend> {
     pub compact_gid_from_isect: IntTensor<B>,
     pub project_uniforms: ProjectUniforms,
     pub global_from_compact_gid: IntTensor<B>,
+    /// Inverse of `global_from_compact_gid` over all splats, offset by one:
+    /// visible splat `compact_gid` holds `compact_gid + 1`, culled splats 0.
+    /// Row 0 of the backward's compact gradient buffers is a zero row, so a
+    /// plain gather through this expands them to the dense param shape.
+    pub compact_from_global: IntTensor<B>,
 }
 
 impl<B: Backend> RenderOutput<B> {
@@ -63,6 +68,9 @@ pub struct RenderAuxInner<B: Backend> {
     /// Per-splat maximum screen-space radius in pixels (global-gid indexed).
     /// Zero for splats that were culled / invisible in this view.
     pub max_radius: FloatTensor<B>,
+    /// Per-splat opacity with the scale floor folded in (global-gid indexed),
+    /// zero for culled splats.
+    pub opacities: FloatTensor<B>,
     pub tile_offsets: IntTensor<B>,
     pub img_size: glam::UVec2,
 }
@@ -76,6 +84,9 @@ pub struct RenderAux {
     /// Per-splat maximum screen-space radius in pixels (global-gid indexed).
     /// Zero for splats that were culled / invisible in this view.
     pub max_radius: Tensor<1>,
+    /// Per-splat opacity with the scale floor folded in (global-gid indexed),
+    /// zero for culled splats.
+    pub opacities: Tensor<1>,
     pub tile_offsets: Tensor<3, Int>,
     pub img_size: glam::UVec2,
 }

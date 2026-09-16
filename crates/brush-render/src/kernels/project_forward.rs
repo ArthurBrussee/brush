@@ -6,8 +6,8 @@
 //! internally.
 
 use super::helpers::{
-    calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles, get_tile_bbox,
-    is_finite_f32, read_mean_viewspace, read_quat_unorm, read_scale, sigmoid,
+    apply_scale_floor, calc_cov2d, compensate_cov2d, compute_bbox_extent, count_contributing_tiles,
+    get_tile_bbox, is_finite_f32, read_mean_viewspace, read_quat_unorm, read_scale, sigmoid,
 };
 use super::types::ProjectUniforms;
 use crate::kernels::camera_model::{CameraModel, project};
@@ -22,7 +22,10 @@ pub const WG_SIZE: u32 = 256;
 pub fn project_forward_kernel(
     transforms: &Tensor<f32>,
     raw_opacities: &Tensor<f32>,
+    min_scale: &Tensor<f32>,
     global_from_compact_gid: &mut Tensor<u32>,
+    compact_from_global: &mut Tensor<u32>,
+    opacities: &mut Tensor<f32>,
     depths: &mut Tensor<f32>,
     num_visible: &mut Tensor<Atomic<u32>>,
     intersect_counts: &mut Tensor<u32>,
@@ -30,12 +33,18 @@ pub fn project_forward_kernel(
     max_radius: &mut Tensor<f32>,
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
+    #[comptime] has_min_scale: bool,
     #[comptime] camera_model: CameraModel,
 ) {
     let global_gid = ABSOLUTE_POS as u32;
     if global_gid >= u.total_splats {
         terminate!();
     }
+
+    // Defaults for culled splats: the backward's zero gradient row and a
+    // zero opacity. Visible splats overwrite both further down.
+    compact_from_global[global_gid as usize] = 0u32;
+    opacities[global_gid as usize] = 0.0f32;
 
     // means(3) + quats(4) + log_scales(3)
     let base = (global_gid * 10u32) as usize;
@@ -79,9 +88,21 @@ pub fn project_forward_kernel(
 
     let quat = quat_unorm.normalize();
 
-    let raw_cov = calc_cov2d(scale, quat, mean_c, u, camera_model);
+    // Mip-Splatting 3D filter, folded in here rather than on the host so
+    // the raw params stay the kernel inputs.
+    let floor = apply_scale_floor(
+        scale,
+        sigmoid(raw_opac),
+        min_scale,
+        global_gid,
+        has_min_scale,
+    );
+    // Per-splat opacity with the floor folded in, for the trainer's noise gate.
+    opacities[global_gid as usize] = floor.opac;
+
+    let raw_cov = calc_cov2d(floor.scale, quat, mean_c, u, camera_model);
     let (cov, filter_comp) = compensate_cov2d(raw_cov, mip_splatting);
-    let opac = sigmoid(raw_opac) * filter_comp;
+    let opac = floor.opac * filter_comp;
 
     if !cov.is_finite() {
         terminate!();
