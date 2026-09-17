@@ -70,6 +70,7 @@ pub fn calculate_projection_vjp_pinhole(
         lim_pos_y,
         lim_neg_x,
         lim_neg_y,
+        ..
     } = u.jacobian_clamp_limits;
 
     let mx = mean_c.x();

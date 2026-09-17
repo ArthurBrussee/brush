@@ -10,7 +10,7 @@ members = [
     "crates/brush-cube",
     "crates/brush-dataset",
     "crates/brush-loss",
-    "crates/brush-prefix-sum",
+    "crates/brush-scan",
     "crates/brush-process",
     "crates/brush-render",
     "crates/brush-rerun",
@@ -104,7 +104,6 @@ burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-fea
     'cubecl',
 ] }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn", branch = "main" }
-burn-ir = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", branch = "main", features = [
     "exclusive-memory-only",
 ] }

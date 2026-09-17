@@ -1,4 +1,4 @@
-use crate::camera::calculate_jacobian_clamp_limits;
+use crate::camera::{calculate_jacobian_clamp_limits, max_render_theta};
 use crate::{
     RenderAuxInner, SplatOps,
     camera::Camera,
@@ -10,15 +10,15 @@ use crate::{
     sh::sh_degree_from_coeffs,
     shaders,
 };
-use brush_cube::calc_cube_count_1d;
 use brush_cube::create_tensor;
-use brush_prefix_sum::prefix_sum;
+use brush_scan::prefix_sum;
 use brush_sort::radix_argsort;
 use burn::backend::TensorMetadata;
 use burn::backend::ops::TransactionPrimitive;
 use burn::backend::ops::{FloatTensorOps, IntTensorOps, TransactionOps};
 use burn::backend::tensor::FloatTensor;
 use burn::cubecl::CubeDim;
+use burn::cubecl::calculate_cube_count_elemwise;
 use burn::tensor::{DType, FloatDType, IntDType};
 use burn_cubecl::CubeBackend;
 use burn_cubecl::kernel::into_contiguous;
@@ -42,6 +42,8 @@ impl SplatOps for CubeBackend {
         transforms: FloatTensor<Self>,
         sh_coeffs: FloatTensor<Self>,
         raw_opacities: FloatTensor<Self>,
+        min_scale: FloatTensor<Self>,
+        has_min_scale: bool,
         _refine_weight: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
@@ -57,6 +59,7 @@ impl SplatOps for CubeBackend {
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
         let raw_opacities = into_contiguous(raw_opacities);
+        let min_scale = into_contiguous(min_scale);
 
         DimCheck::new()
             .check_dims("transforms", &transforms, &["D".into(), 10.into()])
@@ -67,8 +70,12 @@ impl SplatOps for CubeBackend {
         let sh_degree = sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32);
         let mip_splat = matches!(render_mode, SplatRenderMode::Mip);
 
+        // Cull splats beyond the lens' diagonal fov with some margin, but never
+        // past the angle where the distortion polynomial folds back on itself:
+        // those would project mirrored into the image with huge radii.
         let half_max_render_fov =
-            ((camera.fov_x as f32).hypot(camera.fov_y as f32) * 1.05).min(2.0 * PI - 1e-6) * 0.5;
+            (((camera.fov_x as f32).hypot(camera.fov_y as f32) * 1.05).min(2.0 * PI - 1e-6) * 0.5)
+                .min(max_render_theta(&camera.camera_model) as f32);
         let pinhole_params = camera.build_pinhole_params(img_size);
 
         let mut project_uniforms = shaders::helpers::ProjectUniforms {
@@ -94,6 +101,8 @@ impl SplatOps for CubeBackend {
 
         let (
             global_from_presort_gid,
+            compact_from_global,
+            opacities,
             depths,
             intersect_counts,
             max_radius,
@@ -110,20 +119,24 @@ impl SplatOps for CubeBackend {
             let max_radius = Self::float_zeros([total_splats].into(), &device, FloatDType::F32);
 
             let global_from_presort_gid = create_tensor([total_splats], &device, DType::U32);
+            // Written for every splat by the kernel, so no zero-fill.
+            let compact_from_global = create_tensor([total_splats], &device, DType::U32);
+            let opacities = create_tensor([total_splats], &device, DType::F32);
             let depths = create_tensor([total_splats], &device, DType::F32);
 
             let uniforms = project_uniforms.to_launch_object();
+            let cube_dim = CubeDim::new_1d(kernels::project_forward::WG_SIZE);
 
             kernels::project_forward::project_forward_kernel::launch(
                 &client,
-                calc_cube_count_1d(
-                    project_uniforms.total_splats,
-                    kernels::project_forward::WG_SIZE,
-                ),
-                CubeDim::new_1d(kernels::project_forward::WG_SIZE),
+                calculate_cube_count_elemwise(&client, total_splats, cube_dim),
+                cube_dim,
                 transforms.clone().into_tensor_arg(),
                 raw_opacities.clone().into_tensor_arg(),
+                min_scale.clone().into_tensor_arg(),
                 global_from_presort_gid.clone().into_tensor_arg(),
+                compact_from_global.clone().into_tensor_arg(),
+                opacities.clone().into_tensor_arg(),
                 depths.clone().into_tensor_arg(),
                 num_visible_buf.clone().into_tensor_arg(),
                 intersect_counts.clone().into_tensor_arg(),
@@ -131,10 +144,13 @@ impl SplatOps for CubeBackend {
                 max_radius.clone().into_tensor_arg(),
                 uniforms,
                 mip_splat,
+                has_min_scale,
                 camera.camera_model,
             );
             (
                 global_from_presort_gid,
+                compact_from_global,
+                opacities,
                 depths,
                 intersect_counts,
                 max_radius,
@@ -192,17 +208,21 @@ impl SplatOps for CubeBackend {
         );
         tracing::trace_span!("ProjectVisible").in_scope(|| {
             let uniforms = project_uniforms.to_launch_object();
+            let cube_dim = CubeDim::new_1d(kernels::project_visible::WG_SIZE);
             kernels::project_visible::project_visible_kernel::launch(
                 &client,
-                calc_cube_count_1d(num_visible, kernels::project_visible::WG_SIZE),
-                CubeDim::new_1d(kernels::project_visible::WG_SIZE),
+                calculate_cube_count_elemwise(&client, num_visible as usize, cube_dim),
+                cube_dim,
                 transforms.into_tensor_arg(),
                 sh_coeffs.into_tensor_arg(),
                 raw_opacities.into_tensor_arg(),
+                min_scale.into_tensor_arg(),
                 global_from_compact_gid.clone().into_tensor_arg(),
+                compact_from_global.clone().into_tensor_arg(),
                 projected_splats.clone().into_tensor_arg(),
                 uniforms,
                 mip_splat,
+                has_min_scale,
                 sh_degree,
                 camera.camera_model,
             );
@@ -212,10 +232,11 @@ impl SplatOps for CubeBackend {
         let tile_id_from_isect = create_tensor([buffer_size], &device, DType::U32);
         let compact_gid_from_isect = create_tensor([buffer_size], &device, DType::U32);
         tracing::trace_span!("MapGaussiansToIntersect").in_scope(|| {
+            let cube_dim = CubeDim::new_1d(kernels::map_gaussians::WG_SIZE);
             kernels::map_gaussians::map_gaussians_to_intersect_kernel::launch(
                 &client,
-                calc_cube_count_1d(num_visible, kernels::map_gaussians::WG_SIZE),
-                CubeDim::new_1d(kernels::map_gaussians::WG_SIZE),
+                calculate_cube_count_elemwise(&client, num_visible as usize, cube_dim),
+                cube_dim,
                 projected_splats.clone().into_tensor_arg(),
                 cum_tiles_hit.clone().into_tensor_arg(),
                 tile_id_from_isect.clone().into_tensor_arg(),
@@ -237,7 +258,11 @@ impl SplatOps for CubeBackend {
         tracing::trace_span!("GetTileOffsets").in_scope(|| {
             get_tile_offsets::launch(
                 &client,
-                calc_cube_count_1d(num_intersections, cube_dim.x * CHECKS_PER_ITER),
+                calculate_cube_count_elemwise(
+                    &client,
+                    num_intersections as usize,
+                    CubeDim::new_1d(cube_dim.x * CHECKS_PER_ITER),
+                ),
                 cube_dim,
                 num_intersections,
                 num_tiles,
@@ -274,13 +299,16 @@ impl SplatOps for CubeBackend {
                 background.y,
                 background.z,
             );
+            // One cube per tile, one thread per pixel in it.
+            let cube_dim = CubeDim::new_1d(shaders::helpers::TILE_SIZE);
             kernels::rasterize::rasterize_kernel::launch(
                 &client,
-                calc_cube_count_1d(
-                    num_tiles * (shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH),
-                    shaders::helpers::TILE_WIDTH * shaders::helpers::TILE_WIDTH,
+                calculate_cube_count_elemwise(
+                    &client,
+                    (num_tiles * shaders::helpers::TILE_SIZE) as usize,
+                    cube_dim,
                 ),
-                CubeDim::new_1d(shaders::helpers::TILE_SIZE),
+                cube_dim,
                 compact_gid_from_isect.clone().into_tensor_arg(),
                 tile_offsets.clone().into_tensor_arg(),
                 projected_splats.clone().into_tensor_arg(),
@@ -303,6 +331,7 @@ impl SplatOps for CubeBackend {
                 num_intersections,
                 visible,
                 max_radius,
+                opacities,
                 tile_offsets,
                 img_size,
             },
@@ -310,6 +339,7 @@ impl SplatOps for CubeBackend {
             compact_gid_from_isect,
             project_uniforms,
             global_from_compact_gid,
+            compact_from_global,
         }
     }
 }

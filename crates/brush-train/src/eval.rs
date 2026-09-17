@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use brush_dataset::scene::view_to_packed_data;
-use brush_loss::{ImageLossConfig, image_loss_eval};
+use brush_loss::{ImageLossConfig, image_loss_eval, psnr_from_mse};
 use brush_render::camera::Camera;
 use brush_render::gaussian_splats::Splats;
 use brush_render::{AlphaMode, RenderAux, TextureMode, render_splats};
@@ -44,12 +44,13 @@ pub async fn eval_stats(
         ssim_weight: ssim,
         composite_bg: None,
         mask: false,
+        alpha_weight: 0.0,
     };
     // MSE = mean(L1^2) since |a - b|^2 == (a - b)^2.
     let mse = image_loss_eval(render_rgb.clone(), gt_packed.clone(), cfg(1.0, 0.0))
         .powi_scalar(2)
         .mean();
-    let psnr = mse.recip().log() * 10.0 / std::f32::consts::LN_10;
+    let psnr = psnr_from_mse(mse);
     let ssim = image_loss_eval(render_rgb.clone(), gt_packed, cfg(0.0, 1.0)).mean();
 
     Ok(EvalSample {

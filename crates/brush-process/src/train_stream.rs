@@ -144,6 +144,7 @@ pub(crate) async fn train_stream(
     // clone to the `Slot` after every modification (train
     // step, refine, LOD decimation).
     let mut splats: Splats = init_splats.clone();
+    let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
     slot.set(0, splats.clone());
     emitter
         .emit(ProcessMessage::SplatsUpdated {
@@ -152,6 +153,7 @@ pub(crate) async fn train_stream(
             total_frames: 1,
             num_splats: init_splats.num_splats(),
             sh_degree: init_splats.sh_degree(),
+            scene_scale: bounds.median_size(),
         })
         .await;
 
@@ -168,8 +170,6 @@ pub(crate) async fn train_stream(
         process_config.seed,
         &train_stream_config.load_config,
     );
-    let bounds = get_splat_bounds(init_splats.clone(), BOUND_PERCENTILE).await;
-
     // Per-train-view (world center, focal-px at native res) for the
     // Mip-Splatting 3D filter (always on).
     let mut view_cams: Vec<(glam::Vec3, f32)> = Vec::with_capacity(dataset.train.views.len());
@@ -243,6 +243,7 @@ pub(crate) async fn train_stream(
                     exp_iter,
                     exp_total,
                     up_axis,
+                    train_stream_config.load_config.units_per_meter,
                 )
                 .await
                 .with_context(|| "Export at LOD boundary failed");
@@ -408,6 +409,7 @@ pub(crate) async fn train_stream(
                     exp_iter,
                     exp_total,
                     up_axis,
+                    train_stream_config.load_config.units_per_meter,
                 )
                 .await
                 .with_context(|| format!("Export at iteration {iter} failed"));
@@ -481,6 +483,7 @@ pub(crate) async fn train_stream(
                     total_frames: 1,
                     num_splats: refine.total_splats,
                     sh_degree,
+                    scene_scale: trainer.bounds().median_size(),
                 })
                 .await;
 
@@ -631,13 +634,15 @@ async fn export_checkpoint(
     iter: u32,
     total_steps: u32,
     up_axis: Option<glam::Vec3>,
+    units_per_meter: f32,
 ) -> Result<(), anyhow::Error> {
     tokio::fs::create_dir_all(&export_path)
         .await
         .with_context(|| format!("Creating export directory {}", export_path.display()))?;
     let digits = ((total_steps as f64).log10().floor() as usize) + 1;
     let export_name = export_name.replace("{iter}", &format!("{iter:0digits$}"));
-    let splat_data = brush_serde::splat_to_ply(splats, up_axis)
+    // Training runs in metres; write the file back in the dataset's units.
+    let splat_data = brush_serde::splat_to_ply(splats.scaled(units_per_meter), up_axis)
         .await
         .context("Serializing splat data")?;
     tokio::fs::write(export_path.join(&export_name), splat_data)
