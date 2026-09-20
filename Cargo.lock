@@ -989,6 +989,7 @@ dependencies = [
  "brush-train",
  "burn",
  "burn-cubecl",
+ "burn-fusion",
  "burn-wgpu",
  "bytemuck",
  "console_error_panic_hook",
