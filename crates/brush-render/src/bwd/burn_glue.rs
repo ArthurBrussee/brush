@@ -33,13 +33,9 @@ pub(crate) struct SplatGrads<B: Backend> {
     pub v_refine_weight: FloatTensor<B>,
 }
 
-/// Concrete backward kernels behind [`SplatOps::render`].
-///
-/// Deliberately not `: SplatOps`. This is the set of backends that have
-/// backward kernels, which is smaller than the set you can render on:
-/// `AutodiffMain` and the generated `Dispatch` impl `SplatOps` but have no
-/// meaningful `rasterize_bwd`, since these run on concrete tensors and are
-/// called from the `Backward` impl on the inner backend.
+/// Concrete backward kernels behind [`SplatOps::render`]. Deliberately not
+/// `: SplatOps`: fewer backends have backward kernels than can render, and
+/// these run on concrete tensors from the inner backend's `Backward` impl.
 /// Wrapped so the allow reaches the generated Fusion impl, which binds every
 /// ordinary argument whether its metadata expression reads it or not.
 mod bwd_ops {
@@ -250,10 +246,9 @@ pub async fn render_splats(
     .await
 }
 
-/// Like [`render_splats`] but lets the caller pick the
-/// [`crate::gaussian_splats::RasterPass`]. Used by the finite-diff
-/// test suite to enable the C^1 smooth-cutoff surrogate; production code
-/// should use [`render_splats`].
+/// Like [`render_splats`] but picks the
+/// [`crate::gaussian_splats::RasterPass`]. Only the finite-diff tests need
+/// this, for the C^1 smooth-cutoff surrogate.
 pub async fn render_splats_with_pass(
     splats: Splats,
     camera: &Camera,

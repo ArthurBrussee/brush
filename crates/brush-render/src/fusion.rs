@@ -22,11 +22,8 @@ type FusionTensor = burn_fusion::FusionTensor<FusionCubeRuntime>;
 type FusionClient = burn_fusion::Client<FusionCubeRuntime>;
 
 /// Register a concrete-backend function as a custom op on the fusion stream.
-///
-/// `inputs` are handed to the op once the stream reaches it, and each
-/// `(shape, dtype)` in `outputs` becomes a fresh handle the op must fill in
-/// through the handle container. The op gets the description so it can look
-/// both up by id with `desc.as_fixed()`.
+/// `inputs` reach the op once the stream gets to it; each `(shape, dtype)`
+/// becomes a handle the op fills in. `desc.as_fixed()` looks both up by id.
 pub(crate) fn register_custom<const N: usize, const M: usize, F>(
     client: &FusionClient,
     name: &'static str,

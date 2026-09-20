@@ -22,16 +22,10 @@ use burn_cubecl::CubeBackend;
 /// Used as the primitive backend for autodiff `Tensor<D>` operations.
 pub type AutodiffMain = Autodiff<MainBackend>;
 
-// ---------------------------------------------------------------------------
-// `Tensor<D>` ↔ backend-level primitive bridges.
-//
-// `Tensor<D>` is pinned to burn's `Dispatch` backend; brush only ever runs on
-// a wgpu device, so every helper here assumes a `DispatchTensorKind::Cube`
-// (optionally wrapped in `Autodiff`) and panics otherwise. The forward render
-// now goes through the `#[backend_extension]`-generated `Dispatch` impl
-// instead; these stay for the hand-rolled backward path (brush-render-bwd)
-// and the LPIPS custom ops (brush-loss).
-// ---------------------------------------------------------------------------
+// `Tensor<D>` is pinned to burn's `Dispatch` backend and brush only runs on
+// wgpu, so these bridges assume a `DispatchTensorKind::Cube` (optionally
+// wrapped in `Autodiff`) and panic otherwise. The forward render routes
+// through the generated `Dispatch` impl; these serve the hand-rolled backward.
 
 /// Extract the inner fusion-Wgpu float tensor from a non-autodiff
 /// `Tensor<D>`.
@@ -120,10 +114,9 @@ fn is_autodiff<const D: usize>(t: &Tensor<D>) -> bool {
     )
 }
 
-/// Put `t` on the same autodiff/inner backend variant as `reference`. Brush
-/// keeps some frozen tensors (e.g. the 3D-filter floor) on the inner backend
-/// but folds them against params that may be lifted to autodiff; this aligns
-/// both operands so dispatch ops don't trip a cross-backend assertion.
+/// Put `t` on the same autodiff/inner backend variant as `reference`. Frozen
+/// tensors like the 3D-filter floor live on the inner backend but get folded
+/// against params that may be lifted, and mixing the two trips an assertion.
 pub(crate) fn match_backend<const D: usize, const DR: usize>(
     t: Tensor<D>,
     reference: &Tensor<DR>,
