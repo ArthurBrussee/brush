@@ -73,10 +73,7 @@ skip = [
 
     # Other
     { name = "core-foundation" },     # Egui has two?
-    { name = 'windows_x86_64_msvc' }, # Old version from winit.
-    { name = 'windows_x86_64_gnu' },  # Old version from winit.
-    { name = 'windows-targets' },     # Old version from winit.
-    { name = 'windows-sys' },         # Old version from winit.
+    { name = 'windows-sys' }, # Old version from winit.
 
     { name = 'rustix' },        # Winit & clap
     { name = 'linux-raw-sys' }, # Winit & clap

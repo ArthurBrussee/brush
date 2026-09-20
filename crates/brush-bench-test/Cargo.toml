@@ -29,6 +29,9 @@ rerun = { workspace = true }
 brush-async = { path = "../brush-async" }
 brush-cube = { path = "../brush-cube" }
 
+# `inspect` is how the fusion test reads back what burn fused.
+burn-fusion = { workspace = true, features = ["test-util"] }
+
 burn-wgpu.workspace = true
 bytemuck.workspace = true
 

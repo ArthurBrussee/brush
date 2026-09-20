@@ -16,7 +16,7 @@ pub async fn test_device() -> WgpuDevice {
             wasm_logger::init(wasm_logger::Config::new(log::Level::Warn));
 
             let setup = burn_wgpu::init_setup_async::<burn_wgpu::graphics::AutoGraphicsApi>(
-                &WgpuDevice::DefaultDevice,
+                &WgpuDevice::default(),
                 burn_wgpu::RuntimeOptions {
                     tasks_max: 64,
                     memory_config: burn_wgpu::MemoryConfiguration::ExclusivePages,
@@ -44,5 +44,5 @@ pub async fn test_device() -> WgpuDevice {
             );
         }
     }
-    WgpuDevice::DefaultDevice
+    WgpuDevice::default()
 }

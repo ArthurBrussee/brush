@@ -102,6 +102,8 @@ burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-fea
     'optim',
     'extension',
     'cubecl',
+    # `backend_extension`'s generated Fusion impls live behind this.
+    'fusion',
 ] }
 burn-cubecl = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 burn-wgpu = { git = "https://github.com/tracel-ai/burn", branch = "main", features = [

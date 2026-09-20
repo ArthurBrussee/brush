@@ -478,7 +478,7 @@ pub async fn render_splats(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::module::AutodiffModule;
+    use burn::module::Module;
 
     /// Splats are built on the plain device and lifted with `train()` for each
     /// step. That lift must arm gradient tracking on every parameter, and keep
