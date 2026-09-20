@@ -54,12 +54,14 @@ fn step_param<const D: usize>(
     param: Param<Tensor<D>>,
     state: &mut AdamState<D>,
     grads: &mut Gradients,
+    grad_sq_mean: Option<Tensor<D>>,
 ) -> Param<Tensor<D>> {
+    let mut grad_sq_mean = grad_sq_mean;
     param.map(|t| {
         let Some(grad) = t.grad_remove(grads) else {
             return t;
         };
-        let stepped = adam.step(lr, t.inner(), &grad, state);
+        let stepped = adam.step(lr, t.inner(), &grad, grad_sq_mean.take(), state);
         Tensor::from_inner(stepped).require_grad()
     })
 }
@@ -254,7 +256,16 @@ impl SplatTrainer {
         let lr_scaling =
             self.lr_scaling_fixed.clone() + self.lr_mean_columns.clone() * lr_mean as f32;
 
-        let (mut grads, visible, opacities, num_visible, loss_inner) = {
+        let (
+            mut grads,
+            visible,
+            opacities,
+            num_visible,
+            loss_inner,
+            refine_weight,
+            max_radius,
+            coeffs_grad_sq,
+        ) = {
             // The splats already carry their 3D-filter floor (set at refine);
             // the render path folds it in. Optimizer/refine work on raw params.
             let render_input = splats.clone();
@@ -320,20 +331,27 @@ impl SplatTrainer {
             let loss_inner = loss.clone().inner();
             let mut grads = splats.bwd_validate(loss).await;
 
-            trace_span!("Housekeeping").in_scope(|| {
-                // Refine state accumulates on the inner (non-autodiff) device
-                let refine_weight = refine_weight_holder
-                    .grad_remove(&mut grads)
-                    .expect("XY gradients need to be calculated.")
-                    .without_autodiff();
-                let device = splats.device().inner();
-                let record = self
-                    .refine_record
-                    .get_or_insert_with(|| RefineRecord::new(splats.num_splats(), &device));
-                record.gather_stats(refine_weight, visible.clone(), max_radius);
-            });
+            let refine_weight = refine_weight_holder
+                .grad_remove(&mut grads)
+                .expect("XY gradients need to be calculated.")
+                .without_autodiff();
+            // Reduced in the backward off the compact rows, so the dense SH
+            // gradient never gets squared just to be summed away.
+            let coeffs_grad_sq = diff_out
+                .coeffs_grad_sq_holder
+                .grad_remove(&mut grads)
+                .map(Tensor::without_autodiff);
 
-            (grads, visible, opacities, diff_out.num_visible, loss_inner)
+            (
+                grads,
+                visible,
+                opacities,
+                diff_out.num_visible,
+                loss_inner,
+                refine_weight,
+                max_radius,
+                coeffs_grad_sq,
+            )
         };
 
         // The optimizer strips autodiff before stepping, so optimizer state
@@ -371,6 +389,7 @@ impl SplatTrainer {
                     splats.transforms,
                     &mut optimizer.transforms,
                     &mut grads,
+                    None,
                 )
             });
             splats.sh_coeffs = trace_span!("SH Coeffs step").in_scope(|| {
@@ -380,6 +399,7 @@ impl SplatTrainer {
                     splats.sh_coeffs,
                     &mut optimizer.sh_coeffs,
                     &mut grads,
+                    coeffs_grad_sq,
                 )
             });
             splats.raw_opacities = trace_span!("Opacity step").in_scope(|| {
@@ -389,9 +409,21 @@ impl SplatTrainer {
                     splats.raw_opacities,
                     &mut optimizer.opacities,
                     &mut grads,
+                    None,
                 )
             });
             splats
+        });
+
+        trace_span!("Housekeeping").in_scope(|| {
+            // Refine state accumulates on the inner (non-autodiff) device.
+            // Kept after the optimizer so it doesn't sit between the
+            // backward's gradient gathers and the step that consumes them.
+            let device = splats.device().inner();
+            let record = self
+                .refine_record
+                .get_or_insert_with(|| RefineRecord::new(splats.num_splats(), &device));
+            record.gather_stats(refine_weight, visible.clone(), max_radius);
         });
 
         // Add random noise. Only do this in the growth phase, otherwise
