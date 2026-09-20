@@ -1,6 +1,6 @@
 #![allow(clippy::match_wildcard_for_single_variants)]
 
-use brush_cube::fusion::register_custom;
+use crate::fusion::register_custom;
 use brush_cube::{MainBackend, MainBackendBase};
 use burn::backend::{
     Autodiff, BackendTensor, DispatchAutodiffContext, DispatchTensor, DispatchTensorKind,

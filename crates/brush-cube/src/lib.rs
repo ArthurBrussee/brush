@@ -17,7 +17,6 @@
 
 #![allow(clippy::should_implement_trait)]
 
-pub mod fusion;
 mod host;
 pub mod test_helpers;
 use burn_wgpu::CubeBackend;

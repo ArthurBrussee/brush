@@ -14,7 +14,7 @@ use brush_render::{
     kernels::camera_model::CameraModel::Pinhole,
 };
 use brush_train::{config::TrainConfig, train::SplatTrainer};
-use burn::module::{AutodiffModule, Module};
+use burn::module::Module;
 use burn::tensor::{Device, TensorData};
 use glam::{Quat, Vec3};
 use rand::{RngExt, SeedableRng};

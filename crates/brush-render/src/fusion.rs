@@ -2,6 +2,11 @@
 //!
 //! A custom op takes concrete `CubeTensor`s once the fusion stream reaches
 //! it, so the elementwise ops on either side still fuse among themselves.
+//!
+//! `#[backend_extension(.., Fusion)]` generates this plumbing for any op whose
+//! output shapes are known before it runs. `render` is the one that isn't: it
+//! sizes its outputs from a mid-pipeline readback, so it hands its finished
+//! tensors back to the stream through [`register_custom`] instead.
 
 use burn::tensor::{DType, Shape};
 use burn_cubecl::fusion::FusionCubeRuntime;
@@ -12,11 +17,11 @@ use burn_fusion::{
 };
 
 /// Handle container a fusion custom op executes against.
-pub type FusionHandles = HandleContainer<FusionHandle<FusionCubeRuntime>>;
+type FusionHandles = HandleContainer<FusionHandle<FusionCubeRuntime>>;
 /// A tensor living in the fusion stream.
-pub type FusionTensor = burn_fusion::FusionTensor<FusionCubeRuntime>;
+type FusionTensor = burn_fusion::FusionTensor<FusionCubeRuntime>;
 /// The fusion client that owns the stream.
-pub type FusionClient = burn_fusion::Client<FusionCubeRuntime>;
+type FusionClient = burn_fusion::Client<FusionCubeRuntime>;
 
 struct ClosureOp<F> {
     desc: CustomOpIr,
@@ -45,7 +50,7 @@ where
 /// `(shape, dtype)` in `outputs` becomes a fresh handle the op must fill in
 /// through the handle container. The op gets the description so it can look
 /// both up by id with `desc.as_fixed()`.
-pub fn register_custom<const N: usize, const M: usize, F>(
+pub(crate) fn register_custom<const N: usize, const M: usize, F>(
     client: &FusionClient,
     name: &'static str,
     inputs: [FusionTensor; N],
