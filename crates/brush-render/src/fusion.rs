@@ -1,19 +1,17 @@
-//! Running brush's own kernels under burn's `Fusion` backend.
-//!
-//! A custom op takes concrete `CubeTensor`s once the fusion stream reaches
-//! it, so the elementwise ops on either side still fuse among themselves.
+//! Running the render under burn's `Fusion` backend.
 //!
 //! `#[backend_extension(.., Fusion)]` generates this plumbing for any op whose
-//! output shapes are known before it runs. `render` is the one that isn't: it
-//! sizes its outputs from a mid-pipeline readback, so it hands its finished
-//! tensors back to the stream through [`register_custom`] instead.
+//! output shapes are known before it runs. The render is the one that isn't: it
+//! sizes its outputs from a mid-pipeline readback, so it runs eagerly and hands
+//! its finished tensors back to the stream through a custom op. Binding them as
+//! `Init` tensors instead would work, but an `Init` makes burn execute the
+//! pending queue, which costs ~640 unfused launches in each refine step.
 
 use burn::tensor::{DType, Shape};
 use burn_cubecl::fusion::FusionCubeRuntime;
-use burn_fusion::custom::{CustomOpIr, HandleContainer, OperationIr, TensorIr};
-use burn_fusion::{
-    ExecutionError, FusionHandle,
-    stream::{Operation, StreamId},
+use burn_fusion::FusionHandle;
+use burn_fusion::custom::{
+    CustomOpIr, HandleContainer, OperationFn, OperationIr, OperationOutput, StreamId, TensorIr,
 };
 
 /// Handle container a fusion custom op executes against.
@@ -22,27 +20,6 @@ type FusionHandles = HandleContainer<FusionHandle<FusionCubeRuntime>>;
 type FusionTensor = burn_fusion::FusionTensor<FusionCubeRuntime>;
 /// The fusion client that owns the stream.
 type FusionClient = burn_fusion::Client<FusionCubeRuntime>;
-
-struct ClosureOp<F> {
-    desc: CustomOpIr,
-    op: F,
-}
-
-impl<F> std::fmt::Debug for ClosureOp<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ClosureOp({:?})", self.desc)
-    }
-}
-
-impl<F> Operation<FusionCubeRuntime> for ClosureOp<F>
-where
-    F: Fn(&CustomOpIr, &mut FusionHandles) + Send + Sync + 'static,
-{
-    fn execute(&self, h: &mut FusionHandles) -> Result<(), ExecutionError> {
-        (self.op)(&self.desc, h);
-        Ok(())
-    }
-}
 
 /// Register a concrete-backend function as a custom op on the fusion stream.
 ///
@@ -60,16 +37,17 @@ pub(crate) fn register_custom<const N: usize, const M: usize, F>(
 where
     F: Fn(&CustomOpIr, &mut FusionHandles) + Send + Sync + 'static,
 {
-    use burn_fusion::custom::OperationOutput;
-
     let outputs =
         outputs.map(|(shape, dtype)| TensorIr::uninit(client.create_empty_handle(), shape, dtype));
     let desc = CustomOpIr::new(name, &inputs.map(|t| t.into_ir()), &outputs);
-    let op = ClosureOp {
-        desc: desc.clone(),
-        op,
+    let run = {
+        let desc = desc.clone();
+        OperationFn(move |handles: &mut FusionHandles| {
+            op(&desc, handles);
+            Ok(())
+        })
     };
     client
-        .register(StreamId::current(), OperationIr::Custom(desc), op)
+        .register(StreamId::current(), OperationIr::Custom(desc), run)
         .outputs()
 }

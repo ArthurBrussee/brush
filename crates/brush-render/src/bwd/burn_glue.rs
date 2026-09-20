@@ -40,10 +40,8 @@ pub(crate) struct SplatGrads<B: Backend> {
 /// `AutodiffMain` and the generated `Dispatch` impl `SplatOps` but have no
 /// meaningful `rasterize_bwd`, since these run on concrete tensors and are
 /// called from the `Backward` impl on the inner backend.
-/// Holds the trait so the module-level allow covers the code
-/// `#[backend_extension]` generates from it: the Fusion impl binds every
-/// ordinary argument into the scope that computes output metadata, whether or
-/// not that expression reads it.
+/// Wrapped so the allow reaches the generated Fusion impl, which binds every
+/// ordinary argument whether its metadata expression reads it or not.
 mod bwd_ops {
     #![allow(unused_variables)]
     use super::{ProjectUniforms, SplatGrads, SplatRenderMode, project_bwd_metadata};
@@ -56,10 +54,9 @@ mod bwd_ops {
 
     #[burn::backend::backend_extension(Fusion)]
     pub(crate) trait SplatBwdOps: Backend {
-        /// Backward pass for rasterization. Returns the sparse `v_combined`
-        /// buffer, `[num_visible, 10]` indexed by `compact_gid`: slots 0..8 are
-        /// projected splat gradients, slot 8 the raw opacity gradient, slot 9 the
-        /// refinement weight.
+        /// Returns sparse `v_combined` `[num_visible, 10]` indexed by
+        /// `compact_gid`: eight projected-splat gradients, then the raw opacity
+        /// gradient and the refinement weight.
         #[allow(clippy::too_many_arguments)]
         #[fusion(dtype = v_output, shape = Shape::new([projected_splats[0], 10]))]
         fn rasterize_bwd(
@@ -73,14 +70,10 @@ mod bwd_ops {
             smooth_cutoff: bool,
         ) -> FloatTensor<Self>;
 
-        /// Backward pass for projection.
-        /// Reads sparse `v_combined` [`num_visible`, 10] and writes compact
-        /// outputs: a zero row, then one row per visible splat in `compact_gid`
-        /// order. The caller gathers them per global splat through
-        /// `compact_from_global`.
-        /// `sh_coeffs` is the original (input) SH coefficient tensor — needed
-        /// so the kernel can backprop `v_color` through the SH basis to the
-        /// view direction and then to the mean.
+        /// Writes a zero row, then one row per visible splat in `compact_gid`
+        /// order; the caller gathers those per global splat through
+        /// `compact_from_global`. `sh_coeffs` is the forward's input, so the
+        /// kernel can backprop `v_color` through the SH basis to the mean.
         #[allow(clippy::too_many_arguments)]
         #[fusion(meta = project_bwd_metadata)]
         fn project_bwd(
@@ -98,9 +91,8 @@ mod bwd_ops {
 }
 pub(crate) use bwd_ops::SplatBwdOps;
 
-/// Output shapes of [`SplatBwdOps::project_bwd`], which Fusion needs before the
-/// kernel runs. Every one is a host value: the visible count and the SH degree
-/// come off the uniforms, so nothing here waits on a readback.
+/// Output shapes, which Fusion needs before the kernel runs. The visible count
+/// and SH degree are already host values, so none of this waits on a readback.
 fn project_bwd_metadata(
     _transforms: &TensorSpec,
     _sh_coeffs: &TensorSpec,
