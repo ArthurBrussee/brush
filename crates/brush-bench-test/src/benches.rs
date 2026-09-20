@@ -10,7 +10,7 @@ use brush_render::{
 };
 use brush_train::{config::TrainConfig, train::SplatTrainer};
 use burn::{
-    module::AutodiffModule,
+    module::Module,
     tensor::{Device, TensorData},
 };
 use glam::{Quat, Vec3};
