@@ -189,9 +189,10 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
 
         // The kernels write compact gradients with a zero row in front, and
         // `compact_from_global` points culled splats at that row, so one
-        // gather expands each to the dense param shape. It's left as an
-        // unexecuted stream op: burn's fusion folds it into the optimizer's
-        // own kernel and nothing dense is materialised here.
+        // gather expands each to the dense param shape. burn runs each as its
+        // own fused kernel rather than folding it into the optimizer's, so the
+        // dense gradient is still written, but only once and with no
+        // zero-fill. `tests/fusion.rs` holds that shape in place.
         let inv = state.compact_from_global;
         let dense = |compact: FloatTensor<B>| B::float_select(compact, 0, inv.clone());
 
