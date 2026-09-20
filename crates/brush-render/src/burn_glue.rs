@@ -3,8 +3,7 @@
 use crate::fusion::bind;
 use brush_cube::{MainBackend, MainBackendBase};
 use burn::backend::{
-    Autodiff, BackendTensor, DispatchAutodiffContext, DispatchTensor, DispatchTensorKind,
-    GradientCheckpointingStrategy,
+    DispatchTensor, DispatchTensorKind,
     tensor::{FloatTensor, IntTensor},
 };
 use burn::tensor::{Int, Tensor};
@@ -17,10 +16,6 @@ use crate::{
     render_aux::RenderOutput,
 };
 use burn_cubecl::CubeBackend;
-
-/// Inner Wgpu autodiff backend (same as `Autodiff<burn::backend::Wgpu>`).
-/// Used as the primitive backend for autodiff `Tensor<D>` operations.
-pub type AutodiffMain = Autodiff<MainBackend>;
 
 // `Tensor<D>` is pinned to burn's `Dispatch` backend and brush only runs on
 // wgpu, so these bridges assume a `DispatchTensorKind::Cube` (optionally
@@ -51,60 +46,6 @@ pub fn unwrap_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBacke
             std::mem::discriminant(&other)
         ),
     }
-}
-
-/// Inverse of [`unwrap_wgpu_float`]: wraps a fusion-Wgpu float tensor as a
-/// user-facing `Tensor<D>`.
-pub fn wrap_wgpu_float<const D: usize>(t: FloatTensor<MainBackend>) -> Tensor<D> {
-    Tensor::from_dispatch(DispatchTensor {
-        kind: backend_kind!(BackendTensor::Float(t)),
-        autodiff: DispatchAutodiffContext::Disabled,
-    })
-}
-
-/// Extract the inner `AutodiffTensor<MainBackend>` from a `Tensor<D>` on an
-/// autodiff-enabled Wgpu device. Panics on any other shape.
-pub fn unwrap_ad_wgpu_float<const D: usize>(t: Tensor<D>) -> FloatTensor<AutodiffMain> {
-    let prim: DispatchTensor = t.into_dispatch();
-    match prim.kind {
-        DispatchTensorKind::Autodiff(inner) => match *inner {
-            backend_kind!(BackendTensor::Autodiff(t)) => t,
-            other => panic!(
-                "autodiff inner kind is not Wgpu: {:?}",
-                std::mem::discriminant(&other)
-            ),
-        },
-        other => panic!(
-            "expected autodiff-enabled tensor; got: {:?}",
-            std::mem::discriminant(&other)
-        ),
-    }
-}
-
-/// Extract the inner Wgpu `IntTensor` regardless of whether the tensor is
-/// wrapped in an autodiff device — ints are never autodiff-tracked.
-pub fn unwrap_ad_wgpu_int<const D: usize>(t: Tensor<D, Int>) -> IntTensor<MainBackend> {
-    let dispatch: DispatchTensor = t.into_dispatch();
-    let kind = match dispatch.kind {
-        DispatchTensorKind::Autodiff(inner) => *inner,
-        other => other,
-    };
-    match kind {
-        backend_kind!(bt) => bt.int(),
-        other => panic!(
-            "expected Wgpu int tensor; got: {:?}",
-            std::mem::discriminant(&other)
-        ),
-    }
-}
-
-/// Inverse of [`unwrap_ad_wgpu_float`]: wraps an autodiff tensor as a
-/// user-facing `Tensor<D>` on the autodiff device.
-pub fn wrap_ad_wgpu_float<const D: usize>(t: FloatTensor<AutodiffMain>) -> Tensor<D> {
-    Tensor::from_dispatch(DispatchTensor {
-        kind: DispatchTensorKind::Autodiff(Box::new(backend_kind!(BackendTensor::Autodiff(t)))),
-        autodiff: DispatchAutodiffContext::Enabled(GradientCheckpointingStrategy::Disabled),
-    })
 }
 
 fn is_autodiff<const D: usize>(t: &Tensor<D>) -> bool {
