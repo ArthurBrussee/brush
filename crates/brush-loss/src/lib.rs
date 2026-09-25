@@ -20,7 +20,6 @@
 //! across the autograd tape.
 
 use brush_cube::create_tensor;
-use brush_cube::fusion::register_custom;
 use burn::backend::autodiff::checkpoint::strategy::CheckpointStrategy;
 use burn::backend::{Autodiff, AutodiffBackend};
 use burn::{
@@ -36,7 +35,6 @@ use burn::{
     tensor::{DType, Int, Shape, Tensor},
 };
 use burn_cubecl::{CubeBackend, kernel::into_contiguous, tensor::CubeTensor};
-use burn_fusion::Fusion;
 use glam::Vec3;
 
 mod kernels {
@@ -855,13 +853,23 @@ fn channel_weights(cfg: &ImageLossConfig, h: u32, w: u32) -> (f32, f32) {
 /// channels, the rasterizer's native layout. When alpha matching, the
 /// `c == 3` workgroup runs the alpha-match path (`|pred.a - gt.a|`) instead
 /// of SSIM + L1, folded into the same launch.
-#[burn::backend::backend_extension(Cube, Autodiff)]
+#[burn::backend::backend_extension(Cube, Autodiff, Fusion)]
 pub trait LossOps: Backend {
     /// Forward loss. `reduce` picks the output: `false` writes the per-pixel
     /// map `[H, W, C]` (eval only), `true` the weighted per-tile partial sums
     /// `[planes, tiles]` (rows r, g, b, and alpha when matching) that add up
     /// to the loss, so the per-pixel map never touches memory. Only the
     /// reduced form carries a gradient.
+    #[fusion(dtype = pred, shape = {
+        if *reduce {
+            Shape::new([
+                planes(cfg, pred[2] as u32) as usize,
+                loss_tiles(pred[0], pred[1]),
+            ])
+        } else {
+            pred.clone()
+        }
+    })]
     fn image_loss_forward(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
@@ -871,6 +879,7 @@ pub trait LossOps: Backend {
 
     /// Gradient of the loss w.r.t. `pred` given the gradient w.r.t. the
     /// partial sums `[planes, tiles]`.
+    #[fusion(dtype = pred, shape = pred)]
     fn image_loss_backward(
         pred: FloatTensor<Self>,
         gt_packed: IntTensor<Self>,
@@ -878,6 +887,7 @@ pub trait LossOps: Backend {
         cfg: ImageLossConfig,
     ) -> FloatTensor<Self>;
 
+    #[fusion(dtype = DType::F32, shape = Shape::new([gt_packed[0], gt_packed[1], 3]))]
     fn unpack_gt_rgb(gt_packed: IntTensor<Self>, composite_bg: Option<Vec3>) -> FloatTensor<Self>;
 }
 
@@ -1099,87 +1109,6 @@ impl LossOps for CubeBackend {
 
     fn unpack_gt_rgb(gt_packed: IntTensor<Self>, composite_bg: Option<Vec3>) -> FloatTensor<Self> {
         launch_unpack_gt_rgb(gt_packed, composite_bg)
-    }
-}
-
-impl LossOps for Fusion<CubeBackend> {
-    fn image_loss_forward(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        cfg: ImageLossConfig,
-        reduce: bool,
-    ) -> FloatTensor<Self> {
-        let [ph, pw, pc] = pred.shape().dims();
-        let shape = if reduce {
-            Shape::new([planes(&cfg, pc as u32) as usize, loss_tiles(ph, pw)])
-        } else {
-            pred.shape()
-        };
-        let client = pred.client.clone();
-        let [out] = register_custom(
-            &client,
-            "image_loss_forward",
-            [pred, gt_packed],
-            [(shape, DType::F32)],
-            move |desc, h| {
-                let ([pred, gt_packed], [out]) = desc.as_fixed();
-                let res = <CubeBackend as LossOps>::image_loss_forward(
-                    h.get_float_tensor::<CubeBackend>(pred),
-                    h.get_int_tensor::<CubeBackend>(gt_packed),
-                    cfg,
-                    reduce,
-                );
-                h.register_float_tensor::<CubeBackend>(&out.id, res);
-            },
-        );
-        out
-    }
-
-    fn image_loss_backward(
-        pred: FloatTensor<Self>,
-        gt_packed: IntTensor<Self>,
-        dl_dpartials: FloatTensor<Self>,
-        cfg: ImageLossConfig,
-    ) -> FloatTensor<Self> {
-        let shape = pred.shape();
-        let client = pred.client.clone();
-        let [dl_dpred] = register_custom(
-            &client,
-            "image_loss_backward",
-            [pred, gt_packed, dl_dpartials],
-            [(shape, DType::F32)],
-            move |desc, h| {
-                let ([pred, gt_packed, dl_dpartials], [dl_dpred]) = desc.as_fixed();
-                let out = <CubeBackend as LossOps>::image_loss_backward(
-                    h.get_float_tensor::<CubeBackend>(pred),
-                    h.get_int_tensor::<CubeBackend>(gt_packed),
-                    h.get_float_tensor::<CubeBackend>(dl_dpartials),
-                    cfg,
-                );
-                h.register_float_tensor::<CubeBackend>(&dl_dpred.id, out);
-            },
-        );
-        dl_dpred
-    }
-
-    fn unpack_gt_rgb(gt_packed: IntTensor<Self>, composite_bg: Option<Vec3>) -> FloatTensor<Self> {
-        let [gh, gw] = gt_packed.shape().dims();
-        let client = gt_packed.client.clone();
-        let [rgb] = register_custom(
-            &client,
-            "unpack_gt_rgb",
-            [gt_packed],
-            [(Shape::new([gh, gw, 3]), DType::F32)],
-            move |desc, h| {
-                let ([gt_packed], [out]) = desc.as_fixed();
-                let res = <CubeBackend as LossOps>::unpack_gt_rgb(
-                    h.get_int_tensor::<CubeBackend>(gt_packed),
-                    composite_bg,
-                );
-                h.register_float_tensor::<CubeBackend>(&out.id, res);
-            },
-        );
-        rgb
     }
 }
 

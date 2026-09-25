@@ -8,7 +8,7 @@ pub use brush_vfs::DataSource;
 pub type ProcessDevice = burn::tensor::Device;
 
 pub fn default_device() -> ProcessDevice {
-    WgpuDevice::DefaultDevice.into()
+    WgpuDevice::default().into()
 }
 
 use burn_wgpu::{
@@ -35,8 +35,7 @@ fn burn_options() -> RuntimeOptions {
 }
 
 pub async fn burn_init_setup() -> ProcessDevice {
-    burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::DefaultDevice, burn_options())
-        .await;
+    burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::default(), burn_options()).await;
     default_device()
 }
 

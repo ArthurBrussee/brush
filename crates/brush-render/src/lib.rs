@@ -14,6 +14,7 @@ pub mod burn_glue;
 pub mod bwd;
 #[doc(hidden)]
 pub mod dim_check;
+mod fusion;
 #[doc(hidden)]
 pub mod kernels;
 pub mod render_aux;
