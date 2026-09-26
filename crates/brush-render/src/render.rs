@@ -45,6 +45,7 @@ impl SplatOps for CubeBackend {
         min_scale: FloatTensor<Self>,
         has_min_scale: bool,
         _refine_weight: FloatTensor<Self>,
+        _coeffs_grad_sq: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: RasterPass,

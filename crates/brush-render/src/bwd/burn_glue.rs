@@ -138,7 +138,7 @@ struct GaussianBackwardState<B: Backend> {
 #[derive(Debug)]
 struct RenderBackwards;
 
-const NUM_BWD_ARGS: usize = 4;
+const NUM_BWD_ARGS: usize = 5;
 
 // Implement gradient registration when rendering backwards.
 impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
@@ -162,6 +162,7 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
             refine_weight,
             coeffs_parent,
             raw_opacity_parent,
+            coeffs_grad_sq_parent,
         ] = ops.parents;
 
         let v_combined = B::rasterize_bwd(
@@ -195,6 +196,7 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
         // zero-fill. `tests/fusion.rs` holds that shape in place.
         let inv = state.compact_from_global;
         let dense = |compact: FloatTensor<B>| B::float_select(compact, 0, inv.clone());
+        let compact_coeffs = splat_grads.v_coeffs.clone();
 
         if let Some(node) = transforms_parent {
             grads.register::<B>(node.id, dense(splat_grads.v_transforms));
@@ -211,6 +213,19 @@ impl<B: Backend + SplatBwdOps> Backward<B, NUM_BWD_ARGS> for RenderBackwards {
         if let Some(node) = raw_opacity_parent {
             grads.register::<B>(node.id, dense(splat_grads.v_raw_opac));
         }
+
+        // The SH second moment Adam wants is a mean over each splat's
+        // coefficients. Reducing the compact rows and gathering the small
+        // result skips squaring the dense `[N, coeffs, 3]` gradient, which
+        // burn will not fuse into the reduce that consumes it.
+        if let Some(node) = coeffs_grad_sq_parent {
+            let coeffs = state.project_uniforms.sh_degree;
+            let trailing = (sh_coeffs_for_degree(coeffs) * 3) as f32;
+            let sq = B::float_mul(compact_coeffs.clone(), compact_coeffs);
+            let sq = B::float_sum_dims(sq, &[1, 2]);
+            let mean = B::float_div_scalar(sq, burn::tensor::Scalar::Float(trailing as f64));
+            grads.register::<B>(node.id, B::float_select(mean, 0, inv));
+        }
     }
 }
 
@@ -226,6 +241,12 @@ pub struct SplatOutputDiff {
     /// backend (no gradients). Zero for culled splats.
     pub opacities: Tensor<1>,
     pub refine_weight_holder: Tensor<1>,
+    /// Catches the per-splat mean square of the SH gradient (see
+    /// [`SplatOps::render`]). Its gradient is `[N, 1, 1]`, broadcasting over
+    /// the coefficients, so it feeds Adam's second moment directly.
+    /// This statistic is for one render/backward; it cannot be added across
+    /// renders to obtain the mean square of an accumulated SH gradient.
+    pub coeffs_grad_sq_holder: Tensor<3>,
 }
 
 /// Render splats on a differentiable device.
@@ -266,6 +287,7 @@ pub async fn render_splats_with_pass(
     );
 
     let refine_weight_holder = Tensor::<1>::zeros([1], &device).require_grad();
+    let coeffs_grad_sq_holder = Tensor::<3>::zeros([1, 1, 1], &device).require_grad();
 
     // The 3D-filter floor is applied inside the projection kernels. It lives
     // on the inner backend and carries no gradient, so lifting it onto the
@@ -292,6 +314,7 @@ pub async fn render_splats_with_pass(
         min_scale.autodiff().into_dispatch(),
         has_min_scale,
         refine_weight_holder.clone().into_dispatch(),
+        coeffs_grad_sq_holder.clone().into_dispatch(),
         render_mode,
         background,
         pass,
@@ -305,6 +328,7 @@ pub async fn render_splats_with_pass(
         max_radius: Tensor::from_dispatch(output.aux.max_radius).without_autodiff(),
         opacities: Tensor::from_dispatch(output.aux.opacities).without_autodiff(),
         refine_weight_holder,
+        coeffs_grad_sq_holder,
     }
 }
 
@@ -319,6 +343,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
         min_scale: FloatTensor<Self>,
         has_min_scale: bool,
         refine_weight: FloatTensor<Self>,
+        coeffs_grad_sq: FloatTensor<Self>,
         render_mode: SplatRenderMode,
         background: Vec3,
         pass: crate::gaussian_splats::RasterPass,
@@ -329,6 +354,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
                 refine_weight.node(),
                 sh_coeffs.node(),
                 raw_opacities.node(),
+                coeffs_grad_sq.node(),
             ])
             .compute_bound()
             .stateful();
@@ -347,6 +373,7 @@ impl<B: Backend + SplatOps + SplatBwdOps, C: CheckpointStrategy> SplatOps for Au
             min_scale_inner.clone(),
             has_min_scale,
             refine_weight.into_primitive(),
+            coeffs_grad_sq.into_primitive(),
             render_mode,
             background,
             pass,

@@ -74,11 +74,11 @@ impl UiProcess {
             .map_or(Slot::default(), |s| s.splat_view.clone())
     }
 
-    pub(crate) fn device_memory_usage(&self) -> Option<burn::cubecl::MemoryUsage> {
+    pub(crate) fn device_memory_usage(&self) -> Option<burn::tensor::MemoryPoolUsage> {
         self.read()
             .process_handle
             .as_ref()
-            .and_then(|process| brush_process::device_memory_usage(&process.device))
+            .and_then(|process| process.device.memory_pool_usage())
     }
 
     pub fn is_loading(&self) -> bool {

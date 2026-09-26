@@ -84,11 +84,12 @@ fn is_select(op: &OperationIr) -> bool {
     matches!(op, OperationIr::BaseFloat(BaseOperationIr::Select(_)))
 }
 
-/// `transforms`, `sh_coeffs`, `raw_opacities` and the refine-weight holder.
-const GRADIENT_PARAMS: usize = 4;
+/// `transforms`, `sh_coeffs`, `raw_opacities`, the refine-weight holder, and
+/// the SH second moment, which is reduced compact and gathered the same way.
+const GRADIENT_EXPANSIONS: usize = 5;
 
 #[tokio::test]
-async fn gradient_gathers_fuse_into_their_consumer() {
+async fn gradient_expansions_are_fused() {
     let device =
         burn::tensor::Device::from(brush_cube::test_helpers::test_device().await).autodiff();
     let config = TrainConfig::default();
@@ -135,7 +136,7 @@ async fn gradient_gathers_fuse_into_their_consumer() {
     );
     assert_eq!(
         gathers,
-        GRADIENT_PARAMS,
+        GRADIENT_EXPANSIONS,
         "expected one gather per parameter; more means the expansion grew \
          extra ops, fewer means a gradient stopped reaching its parameter:\n{}",
         reports
