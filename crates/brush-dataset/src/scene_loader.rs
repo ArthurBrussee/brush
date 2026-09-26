@@ -176,6 +176,5 @@ async fn run_loader(
 /// cache doesn't copy them. Uploading to the GPU is unaffected: that copies
 /// into a staging buffer either way.
 fn share_packed(data: TensorData) -> TensorData {
-    let (bytes, shape, dtype) = data.into_parts();
-    TensorData::from_bytes(bytes.shared(), shape, dtype)
+    TensorData::from_bytes(data.bytes.shared(), data.shape, data.dtype)
 }

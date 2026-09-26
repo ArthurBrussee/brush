@@ -56,12 +56,11 @@ fn step_param<const D: usize>(
     grads: &mut Gradients,
     grad_sq_mean: Option<Tensor<D>>,
 ) -> Param<Tensor<D>> {
-    let mut grad_sq_mean = grad_sq_mean;
     param.map(|t| {
         let Some(grad) = t.grad_remove(grads) else {
             return t;
         };
-        let stepped = adam.step(lr, t.inner(), &grad, grad_sq_mean.take(), state);
+        let stepped = adam.step(lr, t.inner(), &grad, grad_sq_mean, state);
         Tensor::from_inner(stepped).require_grad()
     })
 }

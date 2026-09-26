@@ -157,7 +157,7 @@ impl SceneBatch {
     }
 
     pub fn img_size(&self) -> [usize; 2] {
-        [self.img_packed.shape()[0], self.img_packed.shape()[1]]
+        [self.img_packed.shape[0], self.img_packed.shape[1]]
     }
 }
 
@@ -176,7 +176,7 @@ mod tests {
             view_to_packed_data(DynamicImage::ImageRgba8(image), AlphaMode::Masked);
 
         assert!(has_alpha);
-        assert_eq!(packed.shape().dims(), [1, 2]);
+        assert_eq!(packed.shape.dims(), [1, 2]);
         assert_eq!(
             packed.as_slice::<i32>().expect("i32 tensor"),
             &[0x0403_0201, 0x0807_0605]
@@ -192,7 +192,7 @@ mod tests {
             view_to_packed_data(DynamicImage::ImageRgb8(image), AlphaMode::Transparent);
 
         assert!(!has_alpha);
-        assert_eq!(packed.shape().dims(), [1, 2]);
+        assert_eq!(packed.shape.dims(), [1, 2]);
         assert_eq!(
             packed.as_slice::<i32>().expect("i32 tensor"),
             &[0xff0b_0a09_u32 as i32, 0xff0e_0d0c_u32 as i32]

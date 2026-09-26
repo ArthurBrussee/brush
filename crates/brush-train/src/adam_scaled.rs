@@ -108,20 +108,10 @@ impl AdamScaled {
         momentum_state: Option<MomentumState<D>>,
         reduce_moment_2: bool,
     ) -> (Tensor<D>, MomentumState<D>) {
-        let reduce = reduce_moment_2 && D > 1;
-        let grad_sq_for_moment = match grad_sq_mean {
-            // Squaring the dense gradient just to reduce it away writes a
-            // full-size tensor the reduce reads once; a caller that can hand
-            // the reduction over skips both.
-            Some(mean) if reduce => mean,
-            _ => {
-                let grad_sq = grad.clone().powi_scalar(2);
-                if reduce {
-                    mean_trailing_dims(grad_sq)
-                } else {
-                    grad_sq
-                }
-            }
+        let grad_sq_for_moment = if reduce_moment_2 && D > 1 {
+            grad_sq_mean.unwrap_or_else(|| mean_trailing_dims(grad.clone().powi_scalar(2)))
+        } else {
+            grad.clone().powi_scalar(2)
         };
 
         let state = if let Some(mut state) = momentum_state {

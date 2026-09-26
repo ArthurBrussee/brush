@@ -371,7 +371,7 @@ mod visualize_tools_impl {
             // Read the rendered f32 tensor and convert straight to u8 RGB,
             // skipping the intermediate Rgb32FImage allocation.
             let data = eval.rendered.clone().into_data_async().await?;
-            let [h, w, c] = [data.shape()[0], data.shape()[1], data.shape()[2]];
+            let [h, w, c] = [data.shape[0], data.shape[1], data.shape[2]];
             assert!(
                 c == 3,
                 "Expected 3-channel eval render, got {c} (would need updating to log alpha)"

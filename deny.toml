@@ -71,6 +71,13 @@ skip = [
     # eframe 0.36 moved to pollster 1.0, rfd (latest 0.17.2) still on 0.4.
     { name = 'pollster' },
 
+    # CubeCL persistence pulls Turso's bindgen 0.69, alongside newer tooling.
+    { name = 'nom', version = '7' },
+    { name = 'prettyplease', version = '0.2' },
+    { name = 'shlex', version = '1' },
+    # Turso's miette 7 still uses unicode-width 0.1.
+    { name = 'unicode-width', version = '0.1' },
+
     # Other
     { name = "core-foundation" },     # Egui has two?
     { name = 'windows-sys' }, # Old version from winit.
@@ -84,6 +91,8 @@ skip = [
     { name = 'objc2-foundation' }, # eframe & rfd
 
     { name = 'hashbrown' },
+    # Older hashbrown (via internment) and Turso use different allocator-api2 lines.
+    { name = 'allocator-api2', version = '0.2' },
     { name = "rustc-hash" },
     { name = "smithay-client-toolkit" },
     { name = "foldhash" },
