@@ -185,6 +185,7 @@ async fn render_raw(
         false,
         // Unused on the non-autodiff path.
         cube_tensor(device, [1], &[0.0]),
+        cube_tensor(device, [1], &[0.0]),
         mode,
         glam::Vec3::ZERO,
         brush_render::gaussian_splats::RasterPass::Forward,
