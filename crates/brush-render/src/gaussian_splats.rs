@@ -447,8 +447,9 @@ pub async fn render_splats(
         raw_opacities.into_dispatch(),
         min_scale.into_dispatch(),
         has_min_scale,
-        // Inference path: no gradients, so the refine-weight accumulator is a
-        // throwaway scalar the concrete backends ignore.
+        // Inference path: no gradients, so the backward accumulators are
+        // throwaway scalars the concrete backends ignore.
+        Tensor::<1>::zeros([1], &render_device).into_dispatch(),
         Tensor::<1>::zeros([1], &render_device).into_dispatch(),
         render_mode,
         background,

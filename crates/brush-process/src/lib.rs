@@ -71,21 +71,6 @@ pub struct RunningProcess {
 /// machine, so this is just the channel for `emit(msg).await`.
 pub(crate) type Emitter = TryStreamEmitter<ProcessMessage, Error>;
 
-pub fn device_memory_cleanup(device: &ProcessDevice) {
-    use burn::backend::DispatchDevice;
-    if let DispatchDevice::Cube(d) = device.as_dispatch() {
-        d.client().memory_cleanup();
-    }
-}
-
-pub fn device_memory_usage(device: &ProcessDevice) -> Option<burn::cubecl::MemoryUsage> {
-    use burn::backend::DispatchDevice;
-    match device.as_dispatch() {
-        DispatchDevice::Cube(d) => Some(d.client().memory_usage()),
-        DispatchDevice::Autodiff(_) => None,
-    }
-}
-
 /// Create a running process from a datasource and args.
 ///
 /// The `config_fn` callback receives the initial config (loaded from
@@ -207,7 +192,7 @@ async fn run_process<
 
                 // As loading concatenates splats each time, memory usage tends to accumulate a lot
                 // over time. Clear out memory after each step to prevent this buildup.
-                device_memory_cleanup(device);
+                device.memory_cleanup();
 
                 // For the first frame of a new file, clear existing frames
                 if frame == 0 {
