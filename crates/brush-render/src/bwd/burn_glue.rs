@@ -244,6 +244,8 @@ pub struct SplatOutputDiff {
     /// Catches the per-splat mean square of the SH gradient (see
     /// [`SplatOps::render`]). Its gradient is `[N, 1, 1]`, broadcasting over
     /// the coefficients, so it feeds Adam's second moment directly.
+    /// This statistic is for one render/backward; it cannot be added across
+    /// renders to obtain the mean square of an accumulated SH gradient.
     pub coeffs_grad_sq_holder: Tensor<3>,
 }
 

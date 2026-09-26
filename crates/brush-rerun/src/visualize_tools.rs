@@ -24,7 +24,7 @@ mod visualize_tools_impl {
 
     use anyhow::Result;
 
-    use burn::cubecl::MemoryUsage;
+    use burn::tensor::MemoryPoolUsage;
     use image::imageops::FilterType;
     use rerun::external::glam;
 
@@ -371,7 +371,7 @@ mod visualize_tools_impl {
             // Read the rendered f32 tensor and convert straight to u8 RGB,
             // skipping the intermediate Rgb32FImage allocation.
             let data = eval.rendered.clone().into_data_async().await?;
-            let [h, w, c] = [data.shape[0], data.shape[1], data.shape[2]];
+            let [h, w, c] = [data.shape()[0], data.shape()[1], data.shape()[2]];
             assert!(
                 c == 3,
                 "Expected 3-channel eval render, got {c} (would need updating to log alpha)"
@@ -671,7 +671,7 @@ mod visualize_tools_impl {
             Ok(())
         }
 
-        pub fn log_memory(&self, iter: u32, memory: &MemoryUsage) -> Result<()> {
+        pub fn log_memory(&self, iter: u32, memory: &MemoryPoolUsage) -> Result<()> {
             if self.rec.is_enabled() {
                 self.rec.set_time_sequence("iterations", iter);
 
@@ -707,7 +707,7 @@ mod visualize_tools_impl {
 
     use super::VisualizeTools;
     use anyhow::Result;
-    use burn::cubecl::MemoryUsage;
+    use burn::tensor::MemoryPoolUsage;
 
     impl VisualizeTools {
         pub async fn new(_enabled: bool) -> Self {
@@ -787,7 +787,7 @@ mod visualize_tools_impl {
         }
 
         #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
-        pub fn log_memory(&self, _iter: u32, _memory: &MemoryUsage) -> Result<()> {
+        pub fn log_memory(&self, _iter: u32, _memory: &MemoryPoolUsage) -> Result<()> {
             Ok(())
         }
     }
