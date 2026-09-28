@@ -200,7 +200,9 @@ fn decode_with_cap(
     if is_jpeg && let Some(img) = decode_jpeg_scaled(bytes, max_resolution) {
         return Ok(img);
     }
-    image::load_from_memory(bytes)
+    let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    reader.no_limits();
+    reader.decode()
 }
 
 fn decode_jpeg_scaled(bytes: &[u8], max_resolution: u32) -> Option<DynamicImage> {
