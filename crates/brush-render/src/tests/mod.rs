@@ -283,6 +283,102 @@ async fn render_scene(
     read_finite(output).await
 }
 
+/// The viewer offset must match materializing adjusted log-scales, including
+/// the floor's opacity compensation and all public projection auxiliaries.
+#[wasm_bindgen_test(unsupported = tokio::test)]
+async fn viewer_scale_matches_materialized_transforms() {
+    let device: burn::tensor::Device = brush_cube::test_helpers::test_device().await.into();
+    let cam = Camera::new(
+        Vec3::ZERO,
+        glam::Quat::IDENTITY,
+        0.5,
+        0.5,
+        glam::vec2(0.5, 0.5),
+        CameraModel::Pinhole,
+    );
+    // Distinct depths avoid atomic presort ties. Include a culled global ID
+    // and visible IDs > 0, exercising the forward inverse-map placeholder.
+    let scene = Scene {
+        means: vec![[0.0, 0.0, -1.0], [-0.1, 0.0, 3.0], [0.1, 0.0, 4.0]],
+        quats: vec![glam::Quat::IDENTITY.to_array(); 3],
+        log_scales: vec![[-3.0, -2.5, -2.0]; 3],
+        sh_dc: vec![[0.5, 0.2, 0.1]; 3],
+        raw_opacity: vec![2.0; 3],
+    };
+    for mip in [false, true] {
+        for floor in [false, true] {
+            let mut splats = scene_to_splats(&scene, &device);
+            splats.render_mip = mip;
+            if floor {
+                splats = splats.with_min_scale(Tensor::from_floats([0.1, 0.1, 0.1], &device));
+            }
+            for scale in [None, Some(1.0f32), Some(0.5), Some(2.0)] {
+                let mut materialized = splats.clone();
+                if let Some(scale) = scale {
+                    let transforms = materialized.transforms.val();
+                    let adjusted = transforms.clone().slice([0..3, 7..10]) + scale.ln();
+                    materialized.transforms = burn::module::Param::from_tensor(
+                        transforms.slice_assign([0..3, 7..10], adjusted),
+                    );
+                }
+                for texture_mode in [TextureMode::Float, TextureMode::Packed] {
+                    let (actual, aux) = render_splats(
+                        splats.clone(),
+                        &cam,
+                        glam::uvec2(32, 32),
+                        Vec3::ZERO,
+                        scale,
+                        texture_mode,
+                    )
+                    .await;
+                    let (expected, expected_aux) = render_splats(
+                        materialized.clone(),
+                        &cam,
+                        glam::uvec2(32, 32),
+                        Vec3::ZERO,
+                        None,
+                        texture_mode,
+                    )
+                    .await;
+                    // Packed pixels can have NaN bit patterns when viewed as f32.
+                    let actual = actual
+                        .into_data_async()
+                        .await
+                        .unwrap()
+                        .try_to_vec::<f32>()
+                        .unwrap();
+                    let expected = expected
+                        .into_data_async()
+                        .await
+                        .unwrap()
+                        .try_to_vec::<f32>()
+                        .unwrap();
+                    assert_eq!(
+                        actual.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                        expected.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                    );
+                    assert_eq!(aux.num_visible, 2);
+                    assert_eq!(aux.num_visible, expected_aux.num_visible);
+                    assert_eq!(aux.num_intersections, expected_aux.num_intersections);
+                    for (actual, expected) in [
+                        (aux.max_radius, expected_aux.max_radius),
+                        (aux.opacities, expected_aux.opacities),
+                    ] {
+                        assert_eq!(
+                            actual.into_data_async().await.unwrap(),
+                            expected.into_data_async().await.unwrap()
+                        );
+                    }
+                    assert_eq!(
+                        aux.tile_offsets.into_data_async().await.unwrap(),
+                        expected_aux.tile_offsets.into_data_async().await.unwrap()
+                    );
+                }
+            }
+        }
+    }
+}
+
 // Same scene rendered twice must produce bit-identical output.
 #[wasm_bindgen_test(unsupported = tokio::test)]
 async fn render_is_deterministic_on_large_splats() {

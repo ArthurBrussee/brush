@@ -347,12 +347,12 @@ fn accumulate_grads_for_batch(
                         // Chain through the cutoff. Hard step (production):
                         // w' = 0 and w == 1 in-branch, so the factor is 1.
                         let v_alpha_eff = dot_rgb + v_o_w * ra;
-                        let dw_dalpha = if comptime![smooth_cutoff] {
-                            alpha_cutoff_weight_deriv(alpha)
+                        let v_alpha = if comptime![smooth_cutoff] {
+                            let dw_dalpha = alpha_cutoff_weight_deriv(alpha);
+                            v_alpha_eff * (w_cut + alpha * dw_dalpha)
                         } else {
-                            0.0f32 * alpha
+                            v_alpha_eff
                         };
-                        let v_alpha = v_alpha_eff * (w_cut + alpha * dw_dalpha);
                         let v_sigma = -alpha * v_alpha;
                         let vxy_x = v_sigma * (conic.c00 * dx + conic.c01 * dy);
                         let vxy_y = v_sigma * (conic.c01 * dx + conic.c11 * dy);

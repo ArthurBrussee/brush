@@ -27,6 +27,7 @@ pub struct RenderOutput<B: Backend> {
     /// visible splat `compact_gid` holds `compact_gid + 1`, culled splats 0.
     /// Row 0 of the backward's compact gradient buffers is a zero row, so a
     /// plain gather through this expands them to the dense param shape.
+    /// Forward-only passes keep an unused one-element placeholder instead.
     pub compact_from_global: IntTensor<B>,
 }
 

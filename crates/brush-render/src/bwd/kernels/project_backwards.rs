@@ -203,7 +203,7 @@ pub fn project_backwards_kernel(
         transforms[tbase + 1],
         transforms[tbase + 2],
     );
-    let scale_raw = read_scale(transforms, tbase);
+    let scale_raw = read_scale(transforms, tbase, u.log_scale_offset);
     let quat_unorm = read_quat_unorm(transforms, tbase);
     let quat = quat_unorm.normalize();
 

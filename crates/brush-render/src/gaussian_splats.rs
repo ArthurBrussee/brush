@@ -412,12 +412,8 @@ pub async fn render_splats(
     let transforms = splats.transforms.val();
     let raw_opacities = splats.raw_opacities.val();
 
-    let transforms = if let Some(scale) = splat_scale {
-        let adjusted = transforms.clone().slice(s![.., 7..10]) + scale.ln();
-        transforms.slice_assign(s![.., 7..10], adjusted)
-    } else {
-        transforms
-    };
+    // Apply in projection before the 3D floor, without copying [N, 10].
+    let log_scale_offset = splat_scale.map_or(0.0, f32::ln);
 
     let render_mode = if splats.render_mip {
         SplatRenderMode::Mip
@@ -447,6 +443,7 @@ pub async fn render_splats(
         raw_opacities.into_dispatch(),
         min_scale.into_dispatch(),
         has_min_scale,
+        log_scale_offset,
         // Inference path: no gradients, so the backward accumulators are
         // throwaway scalars the concrete backends ignore.
         Tensor::<1>::zeros([1], &render_device).into_dispatch(),

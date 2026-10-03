@@ -147,11 +147,11 @@ impl AdamScaled {
         let moment_1_corrected = state
             .moment_1
             .clone()
-            .div_scalar(1f32 - self.beta_1.powi(time));
+            .mul_scalar(1f32 / (1f32 - self.beta_1.powi(time)));
         let moment_2_corrected = state
             .moment_2
             .clone()
-            .div_scalar(1f32 - self.beta_2.powi(time));
+            .mul_scalar(1f32 / (1f32 - self.beta_2.powi(time)));
         // moment_2_corrected broadcasts when it has reduced trailing dims
         let grad = moment_1_corrected.div(moment_2_corrected.sqrt().add_scalar(self.epsilon));
         (grad, state)

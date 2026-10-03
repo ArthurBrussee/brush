@@ -326,11 +326,11 @@ pub fn read_mean_viewspace(transforms: &Tensor<f32>, base: usize, u: ProjectUnif
 }
 
 #[cube]
-pub fn read_scale(transforms: &Tensor<f32>, base: usize) -> Vec3A {
+pub fn read_scale(transforms: &Tensor<f32>, base: usize, log_scale_offset: f32) -> Vec3A {
     Vec3A::new(
-        f32::exp(transforms[base + 7]),
-        f32::exp(transforms[base + 8]),
-        f32::exp(transforms[base + 9]),
+        f32::exp(transforms[base + 7] + log_scale_offset),
+        f32::exp(transforms[base + 8] + log_scale_offset),
+        f32::exp(transforms[base + 9] + log_scale_offset),
     )
 }
 

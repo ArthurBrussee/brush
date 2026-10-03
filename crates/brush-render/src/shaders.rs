@@ -25,6 +25,7 @@ pub mod helpers {
         pub sh_degree: u32,
         pub total_splats: u32,
         pub num_visible: u32,
+        pub log_scale_offset: f32,
 
         // precomputed limits used for clamping the projection Jacobian
         pub jacobian_clamp_limits: JacobianClampLimits,
@@ -60,6 +61,7 @@ pub mod helpers {
                 self.sh_degree,
                 self.total_splats,
                 self.num_visible,
+                self.log_scale_offset,
             )
         }
     }

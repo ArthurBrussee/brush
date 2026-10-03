@@ -645,6 +645,8 @@ mod kernels {
                 let b = sigma1_sq + sigma2_sq + F::new(C2);
                 let c_top = two * mu1 * mu2 + F::new(C1);
                 let d_top = two * sigma12 + F::new(C2);
+                // Preserve inv_ab's arithmetic: cd also controls the gradient clamp.
+                let inv_b = F::cast_from(1.0_f32) / b;
                 let inv_ab = F::cast_from(1.0_f32) / (a * b);
                 let cd = c_top * d_top * inv_ab;
                 let raw = cd;
@@ -653,10 +655,9 @@ mod kernels {
                 let dmu1 = if clamped {
                     zero
                 } else {
-                    two * mu2 * inv_ab * (d_top - c_top)
-                        - two * mu1 * cd * (F::cast_from(1.0_f32) / a - F::cast_from(1.0_f32) / b)
+                    two * inv_ab * (mu2 * (d_top - c_top) - mu1 * cd * (b - a))
                 };
-                let dsigma1 = if clamped { zero } else { -cd / b };
+                let dsigma1 = if clamped { zero } else { -cd * inv_b };
                 let dsigma12 = if clamped { zero } else { two * c_top * inv_ab };
 
                 let (gy, gx, oob) = coords(tile_y0, tile_x0, part_y, part_x, HALO, h, w);
