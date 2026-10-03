@@ -64,6 +64,8 @@ pub trait SplatOps: Backend {
     /// into scales and opacity inside the projection kernels (and their
     /// backward). With `has_min_scale` false it is a placeholder the kernels
     /// never read; [`Splats::min_scale_arg`] builds the pair.
+    /// `log_scale_offset` adjusts log-scales before the floor without copying
+    /// transforms. Training supplies zero; the viewer uses `ln(splat_scale)`.
     /// `pass` picks forward-only vs. forward+backward-bookkeeping, and (only
     /// for tests) toggles the C^1 smoothstep around the alpha cutoff.
     #[allow(clippy::too_many_arguments)]
@@ -75,6 +77,7 @@ pub trait SplatOps: Backend {
         raw_opacities: FloatTensor<Self>,
         min_scale: FloatTensor<Self>,
         has_min_scale: bool,
+        log_scale_offset: f32,
         refine_weight: FloatTensor<Self>,
         coeffs_grad_sq: FloatTensor<Self>,
         render_mode: SplatRenderMode,

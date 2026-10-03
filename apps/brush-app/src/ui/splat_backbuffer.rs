@@ -3,7 +3,7 @@ use brush_process::slot::Slot;
 use brush_render::{TextureMode, camera::Camera, gaussian_splats::Splats, render_splats};
 use egui::Rect;
 use glam::{UVec2, Vec3};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 
@@ -69,11 +69,13 @@ impl SplatBackbuffer {
                     .into_data_async()
                     .await
                     .expect("Failed to read back frame");
+                // Materialize lazy readback here and release its GPU allocation.
+                let pixels = data.into_bytes().to_vec();
 
                 Frame {
                     width,
                     height,
-                    pixels: Arc::new(data.into_bytes().to_vec()),
+                    pixels: Arc::new(pixels),
                 }
             },
             |req: &RenderRequest| req.ctx.request_repaint(),
@@ -141,9 +143,11 @@ pub struct SplatBackbufferResources {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
-    // Per-frame bind group - created in prepare() with the current tensor buffer
+    // The bind group remains valid until the upload buffer grows.
     bind_group: Option<wgpu::BindGroup>,
     upload_buffer: Option<wgpu::Buffer>,
+    // Track identity without retaining a previous frame's CPU pixel allocation.
+    uploaded_pixels: Weak<Vec<u8>>,
 }
 
 impl SplatBackbufferResources {
@@ -230,6 +234,7 @@ impl SplatBackbufferResources {
             bind_group_layout,
             bind_group: None,
             upload_buffer: None,
+            uploaded_pixels: Weak::new(),
         }
     }
 
@@ -245,6 +250,26 @@ impl SplatBackbufferResources {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }));
+            self.bind_group = Some(
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Splat Backbuffer Bind Group"),
+                    layout: &self.bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: self.uniform_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self
+                                .upload_buffer
+                                .as_ref()
+                                .expect("just reserved")
+                                .as_entire_binding(),
+                        },
+                    ],
+                }),
+            );
         }
     }
 }
@@ -266,6 +291,13 @@ impl CallbackTrait for SplatBackbufferPainter {
             return Vec::new();
         };
 
+        // Repaints can reuse a frame. Weak identity doesn't retain its pixels
+        // and cannot match a new allocation at a recycled address.
+        let pixels = Arc::downgrade(&self.frame.pixels);
+        if res.uploaded_pixels.ptr_eq(&pixels) {
+            return Vec::new();
+        }
+
         // Update uniform buffer with image dimensions
         queue.write_buffer(
             &res.uniform_buffer,
@@ -280,22 +312,7 @@ impl CallbackTrait for SplatBackbufferPainter {
         let img_buffer = res.upload_buffer.as_ref().expect("just reserved");
         queue.write_buffer(img_buffer, 0, &self.frame.pixels);
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Splat Backbuffer Bind Group"),
-            layout: &res.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: res.uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: img_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
-        res.bind_group = Some(bind_group);
+        res.uploaded_pixels = pixels;
         Vec::new()
     }
 
@@ -316,5 +333,94 @@ impl CallbackTrait for SplatBackbufferPainter {
         render_pass.set_pipeline(&res.pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
         render_pass.draw(0..3, 0..1);
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires a WGPU adapter"]
+    async fn upload_resources_follow_frame_and_buffer_identity() {
+        let instance = wgpu::Instance::default();
+        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let mut resources = egui_wgpu::CallbackResources::default();
+        resources.insert(SplatBackbufferResources::new(
+            &device,
+            wgpu::TextureFormat::Rgba8Unorm,
+        ));
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [2, 2],
+            pixels_per_point: 1.0,
+        };
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let frame = Frame {
+            width: 1,
+            height: 1,
+            pixels: Arc::new(vec![0, 0, 0, 255]),
+        };
+        let mut painter = SplatBackbufferPainter { frame };
+        let prepare = |painter: &SplatBackbufferPainter,
+                       resources: &mut egui_wgpu::CallbackResources,
+                       encoder: &mut wgpu::CommandEncoder| {
+            assert!(
+                painter
+                    .prepare(&device, &queue, &screen, encoder, resources)
+                    .is_empty()
+            );
+        };
+        prepare(&painter, &mut resources, &mut encoder);
+        let res = resources.get::<SplatBackbufferResources>().unwrap();
+        let first_group = res.bind_group.clone().unwrap();
+        let first_upload = res.uploaded_pixels.clone();
+        assert!(first_upload.ptr_eq(&Arc::downgrade(&painter.frame.pixels)));
+        assert_eq!(Arc::strong_count(&painter.frame.pixels), 1);
+
+        // Repaint the same frame, then a different frame that fits the buffer.
+        prepare(&painter, &mut resources, &mut encoder);
+        assert_eq!(
+            resources
+                .get::<SplatBackbufferResources>()
+                .unwrap()
+                .bind_group
+                .as_ref(),
+            Some(&first_group)
+        );
+        painter.frame.pixels = Arc::new(vec![255, 0, 0, 255]);
+        assert!(first_upload.upgrade().is_none());
+        prepare(&painter, &mut resources, &mut encoder);
+        let res = resources.get::<SplatBackbufferResources>().unwrap();
+        assert!(
+            res.uploaded_pixels
+                .ptr_eq(&Arc::downgrade(&painter.frame.pixels))
+        );
+        assert_eq!(res.bind_group.as_ref(), Some(&first_group));
+
+        // Growing replaces the binding, shrinking can reuse it.
+        painter.frame.width = 2;
+        painter.frame.pixels = Arc::new(vec![255; 8]);
+        prepare(&painter, &mut resources, &mut encoder);
+        let grown_group = resources
+            .get::<SplatBackbufferResources>()
+            .unwrap()
+            .bind_group
+            .clone()
+            .unwrap();
+        assert_ne!(grown_group, first_group);
+        painter.frame.width = 1;
+        painter.frame.pixels = Arc::new(vec![255; 4]);
+        prepare(&painter, &mut resources, &mut encoder);
+        assert_eq!(
+            resources
+                .get::<SplatBackbufferResources>()
+                .unwrap()
+                .bind_group
+                .as_ref(),
+            Some(&grown_group)
+        );
+        queue.submit([encoder.finish()]);
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     }
 }

@@ -1,20 +1,12 @@
-//! Pinned single-threaded async executors that hide the native/wasm
-//! split behind one API.
+//! Local async executors with a shared native/wasm API.
 //!
-//! Brush's GPU layer (cubecl/burn-fusion) keys ordering on the current
-//! OS thread (`StreamId::current()` is thread-local). tokio's
-//! work-stealing scheduler moves async tasks across threads at every
-//! `.await`, so a single logical render that issues GPU work before
-//! and after an await ends up registering ops against two different
-//! `StreamId`s. The resulting cross-stream dispatch produces visible
-//! corruption (duplicate IDs, NaNs, stale buffers) even when the
-//! underlying handle bookkeeping stays consistent.
+//! [`Actor`] owns one OS thread on native and uses the JS event loop on
+//! wasm, so its futures need not be `Send`. This also keeps `CubeCL`'s
+//! default per-thread stream identity stable.
 //!
-//! [`Actor`] sidesteps that: it owns one OS thread (native) or runs
-//! against one JS event loop (wasm) and pins every future it executes
-//! to that single context. Futures spawned on an `Actor` therefore do
-//! NOT need to be `Send`, and `StreamId::current()` is invariant for
-//! their entire lifetime.
+//! `CubeCL`'s explicit stream scopes can instead preserve GPU stream identity
+//! across Tokio worker hops. Migrating GPU callers to those scopes does not
+//! remove the general Actor API's support for `!Send` jobs.
 
 #[cfg(not(target_family = "wasm"))]
 mod native;

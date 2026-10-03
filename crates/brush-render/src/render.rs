@@ -44,6 +44,7 @@ impl SplatOps for CubeBackend {
         raw_opacities: FloatTensor<Self>,
         min_scale: FloatTensor<Self>,
         has_min_scale: bool,
+        log_scale_offset: f32,
         _refine_weight: FloatTensor<Self>,
         _coeffs_grad_sq: FloatTensor<Self>,
         render_mode: SplatRenderMode,
@@ -90,6 +91,7 @@ impl SplatOps for CubeBackend {
             sh_degree,
             total_splats,
             num_visible: 0, // num_visible — not yet known.
+            log_scale_offset,
             jacobian_clamp_limits: calculate_jacobian_clamp_limits(
                 img_size,
                 pinhole_params,
@@ -120,8 +122,10 @@ impl SplatOps for CubeBackend {
             let max_radius = Self::float_zeros([total_splats].into(), &device, FloatDType::F32);
 
             let global_from_presort_gid = create_tensor([total_splats], &device, DType::U32);
-            // Written for every splat by the kernel, so no zero-fill.
-            let compact_from_global = create_tensor([total_splats], &device, DType::U32);
+            // Only backward needs the inverse map. Forward kernels never access
+            // this placeholder; backward writes every entry, so no zero-fill.
+            let inverse_map_len = if bwd_info { total_splats } else { 1 };
+            let compact_from_global = create_tensor([inverse_map_len], &device, DType::U32);
             let opacities = create_tensor([total_splats], &device, DType::F32);
             let depths = create_tensor([total_splats], &device, DType::F32);
 
@@ -146,6 +150,7 @@ impl SplatOps for CubeBackend {
                 uniforms,
                 mip_splat,
                 has_min_scale,
+                bwd_info,
                 camera.camera_model,
             );
             (
@@ -224,6 +229,7 @@ impl SplatOps for CubeBackend {
                 uniforms,
                 mip_splat,
                 has_min_scale,
+                bwd_info,
                 sh_degree,
                 camera.camera_model,
             );

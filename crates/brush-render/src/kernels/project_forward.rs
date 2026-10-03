@@ -34,6 +34,7 @@ pub fn project_forward_kernel(
     u: ProjectUniforms,
     #[comptime] mip_splatting: bool,
     #[comptime] has_min_scale: bool,
+    #[comptime] bwd_info: bool,
     #[comptime] camera_model: CameraModel,
 ) {
     let global_gid = ABSOLUTE_POS as u32;
@@ -43,7 +44,9 @@ pub fn project_forward_kernel(
 
     // Defaults for culled splats: the backward's zero gradient row and a
     // zero opacity. Visible splats overwrite both further down.
-    compact_from_global[global_gid as usize] = 0u32;
+    if bwd_info {
+        compact_from_global[global_gid as usize] = 0u32;
+    }
     opacities[global_gid as usize] = 0.0f32;
 
     // means(3) + quats(4) + log_scales(3)
@@ -70,7 +73,7 @@ pub fn project_forward_kernel(
         }
     }
 
-    let scale = read_scale(transforms, base);
+    let scale = read_scale(transforms, base, u.log_scale_offset);
     if !scale.is_finite() {
         terminate!();
     }

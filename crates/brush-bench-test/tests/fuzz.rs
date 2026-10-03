@@ -183,6 +183,7 @@ async fn render_raw(
         // No scale floor: a placeholder the kernels never read.
         cube_tensor(device, [1], &[0.0]),
         false,
+        0.0,
         // Unused on the non-autodiff path.
         cube_tensor(device, [1], &[0.0]),
         cube_tensor(device, [1], &[0.0]),
