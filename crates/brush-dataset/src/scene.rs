@@ -17,6 +17,7 @@ pub enum ViewType {
 pub struct SceneView {
     pub image: LoadImage,
     pub camera: Camera,
+    pub image_size: glam::UVec2,
 }
 
 // Encapsulates a multi-view scene including cameras and the splats.
@@ -64,6 +65,7 @@ impl Scene {
             .map(|v| SceneView {
                 image: v.image.with_scale(scale),
                 camera: v.camera,
+                image_size: v.image_size,
             })
             .collect();
         Self::new(views)
