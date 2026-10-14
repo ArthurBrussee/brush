@@ -46,10 +46,10 @@ where
             Ok(Some(value))
         }
         fn visit_u8<E>(self, value: u8) -> Result<Option<f32>, E> {
-            Ok(Some(value as f32 / (u8::MAX - 1) as f32))
+            Ok(Some(value as f32 / u8::MAX as f32))
         }
         fn visit_u16<E>(self, value: u16) -> Result<Option<f32>, E> {
-            Ok(Some(value as f32 / (u16::MAX - 1) as f32))
+            Ok(Some(value as f32 / u16::MAX as f32))
         }
     }
     deserializer.deserialize_any(Dequant)
@@ -106,7 +106,7 @@ fn de_quant_sh<'de, D>(deserializer: D) -> Result<f32, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let value = u8::deserialize(deserializer)? as f32 / (u8::MAX - 1) as f32;
+    let value = u8::deserialize(deserializer)? as f32 / u8::MAX as f32;
     Ok((value - 0.5) * 8.0)
 }
 
@@ -120,3 +120,32 @@ pub struct QuantSh {
 
 // Generate the coeffs() method using proc macro
 brush_serde_macros::impl_coeffs!(QuantSh);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::value::{Error, U8Deserializer, U16Deserializer};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn decode_sh(q: u8) -> f32 {
+        de_quant_sh(U8Deserializer::<Error>::new(q)).unwrap()
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_de_quant_color_range() {
+        let decode_u8 = |q| de_quant(U8Deserializer::<Error>::new(q)).unwrap();
+        let decode_u16 = |q| de_quant(U16Deserializer::<Error>::new(q)).unwrap();
+        assert_eq!(decode_u8(0), Some(0.0));
+        assert_eq!(decode_u8(u8::MAX), Some(1.0));
+        assert_eq!(decode_u16(0), Some(0.0));
+        assert_eq!(decode_u16(u16::MAX), Some(1.0));
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_de_quant_sh_range() {
+        assert_eq!(decode_sh(0), -4.0);
+        assert_eq!(decode_sh(255), 4.0);
+        // A coefficient of 0 is stored as 128, which must decode close to 0.
+        assert!(decode_sh(128).abs() < 0.02);
+    }
+}
