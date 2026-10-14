@@ -120,3 +120,22 @@ pub struct QuantSh {
 
 // Generate the coeffs() method using proc macro
 brush_serde_macros::impl_coeffs!(QuantSh);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::value::{Error, U8Deserializer};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn decode_sh(q: u8) -> f32 {
+        de_quant_sh(U8Deserializer::<Error>::new(q)).unwrap()
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_de_quant_sh_range() {
+        assert_eq!(decode_sh(0), -4.0);
+        assert_eq!(decode_sh(255), 4.0);
+        // A coefficient of 0 is stored as 128, which must decode close to 0.
+        assert!(decode_sh(128).abs() < 0.02);
+    }
+}
