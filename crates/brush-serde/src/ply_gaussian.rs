@@ -46,10 +46,10 @@ where
             Ok(Some(value))
         }
         fn visit_u8<E>(self, value: u8) -> Result<Option<f32>, E> {
-            Ok(Some(value as f32 / (u8::MAX - 1) as f32))
+            Ok(Some(value as f32 / u8::MAX as f32))
         }
         fn visit_u16<E>(self, value: u16) -> Result<Option<f32>, E> {
-            Ok(Some(value as f32 / (u16::MAX - 1) as f32))
+            Ok(Some(value as f32 / u16::MAX as f32))
         }
     }
     deserializer.deserialize_any(Dequant)
