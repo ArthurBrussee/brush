@@ -12,7 +12,7 @@ The headless executable is `target/release/brush-cli.exe`; the desktop executabl
 is `target/release/brush.exe`. Keep `Cargo.lock` when building. It includes the
 CubeCL fixes for WebAssembly subgroup declarations and browser GPU initialization.
 
-Windows ARM64 selects DirectX 12 for training and splat rendering. On the Adreno
+Windows ARM64 selects DirectX 12 for training, splat rendering, and the desktop viewer. On the Adreno
 X1-45 with driver 31.0.148.0, automatic backend selection in the upstream build
 failed after splat refinement. Native runs log the selected adapter and backend
 when `RUST_LOG=info` is set.
@@ -43,7 +43,7 @@ Check that refinement messages appear, training reports completion, and
 if ($LASTEXITCODE -ne 0) { throw 'Brush training failed' }
 ```
 
-For driver diagnosis, `BRUSH_WGPU_BACKEND` can override the native backend with
+For driver diagnosis, `BRUSH_WGPU_BACKEND` can override both native backends with
 `auto`, `dx12`, `vulkan`, `metal`, or `gl`. Only select an API supported on the
 machine. For example:
 
@@ -213,3 +213,27 @@ binding before shader execution. Brush derives the browser splat budget
 from that advertised limit. The native buffer-address defect alone does not
 explain the public demo's separate failure at the first refinement with a
 large number of images. The public deployment has not been changed.
+
+## Desktop viewer and sleep/wake
+
+The desktop viewer creates its own GPU device, independently of the training
+backend. Before this follow-up, eframe selected Vulkan on the X1-45 even while
+training used DirectX 12. It also initialized an unused OpenGL context. The
+viewer now shares the Windows ARM64 DirectX 12 policy and restricts its instance
+to that backend. `BRUSH_WGPU_BACKEND` applies to both devices; `WGPU_BACKEND`
+remains an explicit viewer-only override and takes precedence for the viewer.
+On other platforms, automatic viewer selection remains unchanged by default.
+
+A reported crash occurred after pausing training and letting the laptop sleep.
+Egui failed to allocate a 38,496-byte index staging buffer even though its
+existing index buffer had 82,248 bytes of capacity, then panicked again while
+tearing down the unused OpenGL context. The first failure is consistent with a
+lost viewer device, and matches [egui issue 8450](https://github.com/emilk/egui/issues/8450).
+It does not establish memory exhaustion or the large-model address-wrap defect.
+
+The viewer logs its selected adapter and the device-loss reason. Logging starts
+before compute initialization so both devices are identifiable with
+`RUST_LOG=info`. Eframe 0.36 does not automatically rebuild a lost device: this
+backend change is a mitigation, not recovery from arbitrary GPU resets. If a
+device is lost, restart Brush and load the latest exported checkpoint. Actual
+system sleep/wake still needs validation on the affected laptop.

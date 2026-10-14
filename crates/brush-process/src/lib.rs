@@ -12,9 +12,15 @@ pub fn default_device() -> ProcessDevice {
 }
 
 fn wgpu_device() -> WgpuDevice {
-    use burn::cubecl::wgpu::WgpuBackend;
-
     configure_runtime();
+    WgpuDevice::default().on(preferred_wgpu_backend())
+}
+
+/// Backend policy shared by training and the native viewer.
+/// `Auto` leaves adapter selection to the caller; `BRUSH_WGPU_BACKEND`
+/// overrides the platform default for diagnosis.
+pub fn preferred_wgpu_backend() -> burn::cubecl::wgpu::WgpuBackend {
+    use burn::cubecl::wgpu::WgpuBackend;
 
     // Keep the API in the device identity as well as its initial setup. On
     // Windows ARM64, the Adreno Vulkan path fails after splat refinement.
@@ -39,7 +45,7 @@ fn wgpu_device() -> WgpuDevice {
         Err(_) => backend,
     };
 
-    WgpuDevice::default().on(backend)
+    backend
 }
 
 use burn_wgpu::{RuntimeOptions, WgpuDevice, graphics::AutoGraphicsApi};

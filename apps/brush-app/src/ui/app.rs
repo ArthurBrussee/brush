@@ -208,6 +208,21 @@ impl App {
             .as_ref()
             .expect("Must use wgpu to render UI.");
 
+        let adapter = state.adapter.get_info();
+        log::info!("Viewer GPU adapter: {adapter:?}");
+        state.device.set_device_lost_callback(move |reason, message| {
+            if reason == wgpu::DeviceLostReason::Destroyed {
+                log::debug!("Viewer GPU device destroyed: {message}");
+            } else {
+                // Eframe cannot recreate a lost device yet. Record the actual
+                // failure before its next upload reports a staging-buffer panic.
+                log::error!(
+                    "Viewer GPU device lost ({:?}, {}): {reason:?}: {message}. Restart Brush and load the latest exported checkpoint.",
+                    adapter.backend, adapter.name
+                );
+            }
+        });
+
         let context = std::sync::Arc::new(UiProcess::new(cc.egui_ctx.clone()));
 
         if let Some(process) = init_process {
