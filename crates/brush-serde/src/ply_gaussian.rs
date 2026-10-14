@@ -124,11 +124,21 @@ brush_serde_macros::impl_coeffs!(QuantSh);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::de::value::{Error, U8Deserializer};
+    use serde::de::value::{Error, U8Deserializer, U16Deserializer};
     use wasm_bindgen_test::wasm_bindgen_test;
 
     fn decode_sh(q: u8) -> f32 {
         de_quant_sh(U8Deserializer::<Error>::new(q)).unwrap()
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_de_quant_color_range() {
+        let decode_u8 = |q| de_quant(U8Deserializer::<Error>::new(q)).unwrap();
+        let decode_u16 = |q| de_quant(U16Deserializer::<Error>::new(q)).unwrap();
+        assert_eq!(decode_u8(0), Some(0.0));
+        assert_eq!(decode_u8(u8::MAX), Some(1.0));
+        assert_eq!(decode_u16(0), Some(0.0));
+        assert_eq!(decode_u16(u16::MAX), Some(1.0));
     }
 
     #[wasm_bindgen_test(unsupported = test)]
