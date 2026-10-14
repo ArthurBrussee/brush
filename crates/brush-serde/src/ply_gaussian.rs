@@ -106,7 +106,7 @@ fn de_quant_sh<'de, D>(deserializer: D) -> Result<f32, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let value = u8::deserialize(deserializer)? as f32 / (u8::MAX - 1) as f32;
+    let value = u8::deserialize(deserializer)? as f32 / u8::MAX as f32;
     Ok((value - 0.5) * 8.0)
 }
 
