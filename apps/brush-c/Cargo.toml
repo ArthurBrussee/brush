@@ -4,6 +4,7 @@ edition.workspace = true
 version.workspace = true
 readme.workspace = true
 license.workspace = true
+build = "../../build/macos-dylib.rs"
 
 [lib]
 name = "brush_c"

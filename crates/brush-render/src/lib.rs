@@ -30,6 +30,7 @@ pub mod camera;
 pub mod gaussian_splats;
 #[doc(hidden)]
 pub mod get_tile_offset;
+pub mod gpu_limits;
 pub mod render;
 pub mod validation;
 

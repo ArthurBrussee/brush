@@ -30,12 +30,32 @@ use web_time::{Duration, Instant};
 #[allow(clippy::large_stack_frames)]
 pub(crate) async fn train_stream(
     vfs: Arc<BrushVfs>,
-    train_stream_config: TrainStreamConfig,
+    mut train_stream_config: TrainStreamConfig,
     emitter: &Emitter,
     slot: SlotSender<Splats>,
     device: &crate::ProcessDevice,
 ) -> anyhow::Result<()> {
     log::info!("Start of training stream");
+
+    let degree = train_stream_config.model_config.sh_degree;
+    anyhow::ensure!(degree <= 4, "SH degree must be between 0 and 4");
+    let safe_max = brush_render::gpu_limits::max_splats(
+        device,
+        degree,
+        train_stream_config.train_config.lod_levels > 0,
+    );
+    anyhow::ensure!(
+        safe_max > 0,
+        "GPU storage buffers are too small for splat training"
+    );
+    if train_stream_config.train_config.max_splats > safe_max {
+        train_stream_config.train_config.max_splats = safe_max;
+        emitter.emit(ProcessMessage::Warning {
+            error: anyhow::anyhow!(
+                "GPU buffer limit restricts training to {safe_max} splats at SH degree {degree}. Growth will stop at this limit to prevent data corruption. A lower SH degree allows more splats."
+            ),
+        }).await;
+    }
 
     let visualize = VisualizeTools::new(train_stream_config.rerun_config.rerun_enabled).await;
 
@@ -98,14 +118,32 @@ pub(crate) async fn train_stream(
             .render_mode
             .or(msg.meta.render_mode)
             .unwrap_or(SplatRenderMode::Default);
-        let max_splats = train_stream_config.train_config.max_splats as usize;
+        let input_degree = msg
+            .data
+            .sh_coeffs
+            .as_ref()
+            .filter(|_| msg.data.num_splats() > 0)
+            .map_or(0, |sh| {
+                brush_render::sh::sh_degree_from_coeffs(
+                    (sh.len() / msg.data.num_splats() / 3) as u32,
+                )
+            });
+        let max_splats =
+            train_stream_config
+                .train_config
+                .max_splats
+                .min(brush_render::gpu_limits::max_splats(
+                    device,
+                    input_degree,
+                    train_stream_config.train_config.lod_levels > 0,
+                )) as usize;
         let original = msg.data.num_splats();
         let data = msg.data.subsample(max_splats);
         if data.num_splats() < original {
             emitter
                 .emit(ProcessMessage::Warning {
                     error: anyhow::anyhow!(
-                        "Initial point cloud has {original} points, exceeding --max-splats ({max_splats}). Subsampled to {}; the remaining points were discarded. Raise --max-splats to keep more.",
+                        "Initial point cloud has {original} points, exceeding the effective splat budget ({max_splats}, limited by --max-splats and GPU buffer capacity). Subsampled to {}; the remaining points were discarded.",
                         data.num_splats()
                     ),
                 })
@@ -333,6 +371,14 @@ pub(crate) async fn train_stream(
             && phase_progress <= 0.95
         {
             let (new_splats, refine_stats) = trainer.refine(iter, splats).await;
+            if refine_stats.num_pruned_non_finite > 0 {
+                emitter.emit(ProcessMessage::Warning {
+                    error: anyhow::anyhow!(
+                        "Removed {} splats with non-finite parameters at iteration {}. Training may be unstable; check the GPU driver and earlier checkpoints.",
+                        refine_stats.num_pruned_non_finite, iter + 1
+                    ),
+                }).await;
+            }
             splats = new_splats;
             refine_stats
         } else {

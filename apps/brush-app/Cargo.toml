@@ -5,6 +5,7 @@ version.workspace = true
 readme.workspace = true
 license.workspace = true
 repository.workspace = true
+build = "../../build/macos-dylib.rs"
 
 # Lib for android NDK and WASM.
 [lib]

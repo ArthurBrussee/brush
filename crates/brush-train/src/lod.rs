@@ -81,6 +81,11 @@ pub async fn compute_pup_scores(
     device: &Device,
 ) -> Vec<f32> {
     let num_splats = splats.num_splats() as usize;
+    let safe_max = brush_render::gpu_limits::max_splats(device, splats.sh_degree(), true);
+    assert!(
+        num_splats <= safe_max as usize,
+        "LOD scoring exceeds this GPU's safe limit of {safe_max} splats"
+    );
     let mut hessian_accum: Tensor<3> = Tensor::zeros([num_splats, 6, 6], device);
 
     for (vi, view) in scene.views.iter().enumerate() {

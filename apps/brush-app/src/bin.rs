@@ -50,13 +50,36 @@ fn main() -> Result<(), anyhow::Error> {
             if args.with_viewer {
                 use crate::ui::app::App;
 
-                brush_process::burn_init_setup().await;
-
                 let logger = env_logger::Builder::from_default_env()
                     .target(env_logger::Target::Stdout)
                     .build();
                 let max = logger.filter();
                 crate::ui::log_panel::install_global_logger(Box::new(logger), max);
+
+                // Install the logger before initializing either GPU device so
+                // diagnostics identify the compute and presentation backends.
+                brush_process::burn_init_setup().await;
+
+                let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+                if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup
+                {
+                    use burn::cubecl::wgpu::WgpuBackend;
+                    // Eframe defaults to Vulkan on this Windows ARM64 GPU even
+                    // when training uses DX12. Restrict the viewer's instance
+                    // too, avoiding unused GL contexts during teardown. Keep
+                    // WGPU_BACKEND as an explicit viewer-only diagnostic override.
+                    setup.instance_descriptor.backends =
+                        wgpu::Backends::from_env().unwrap_or_else(|| {
+                            match brush_process::preferred_wgpu_backend() {
+                                WgpuBackend::Auto => setup.instance_descriptor.backends,
+                                WgpuBackend::Dx12 => wgpu::Backends::DX12,
+                                WgpuBackend::Vulkan => wgpu::Backends::VULKAN,
+                                WgpuBackend::Metal => wgpu::Backends::METAL,
+                                WgpuBackend::Gl => wgpu::Backends::GL,
+                                WgpuBackend::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
+                            }
+                        });
+                }
 
                 let icon = eframe::icon_data::from_png_bytes(
                     &include_bytes!("../assets/icon-256.png")[..],
@@ -64,6 +87,7 @@ fn main() -> Result<(), anyhow::Error> {
                 .expect("Failed to load icon");
 
                 let native_options = eframe::NativeOptions {
+                    wgpu_options,
                     viewport: egui::ViewportBuilder::default()
                         .with_inner_size(egui::Vec2::new(1450.0, 1200.0))
                         .with_active(true)

@@ -58,6 +58,15 @@ impl SplatOps for CubeBackend {
         let bwd_info = pass.bwd_info();
         let smooth_cutoff = pass.smooth_cutoff();
 
+        let safe_max = crate::gpu_limits::max_splats(
+            &transforms.device.clone().into(),
+            sh_degree_from_coeffs(sh_coeffs.shape()[1] as u32),
+            false,
+        );
+        assert!(
+            transforms.shape()[0] <= safe_max as usize,
+            "Model exceeds this GPU's safe limit of {safe_max} splats"
+        );
         let transforms = into_contiguous(transforms);
         let sh_coeffs = into_contiguous(sh_coeffs);
         let raw_opacities = into_contiguous(raw_opacities);

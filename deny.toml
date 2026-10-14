@@ -14,6 +14,7 @@ targets = [
     { triple = "wasm32-unknown-unknown" },
     { triple = "x86_64-apple-darwin" },
     { triple = "x86_64-pc-windows-msvc" },
+    { triple = "aarch64-pc-windows-msvc" },
     { triple = "x86_64-unknown-linux-gnu" },
     { triple = "x86_64-unknown-linux-musl" },
     { triple = "aarch64-linux-android" },
@@ -61,6 +62,18 @@ skip = [
 
     # syn 2 -> 3 ecosystem transition (async-trait is on 3, most derives on 2).
     { name = 'syn' },
+
+    # CubeCL's Turso cache needs allocator-api2 0.4; hashbrown still uses 0.2.
+    { name = 'allocator-api2', version = '=0.2.21' },
+
+    # CubeCL's bindgen dependency uses nom 7, prettyplease 0.2, and shlex 1;
+    # tynm, cubecl-macros, and cc respectively require their newer majors.
+    { name = 'nom', version = '=7.1.3' },
+    { name = 'prettyplease', version = '=0.2.37' },
+    { name = 'shlex', version = '=1.3.0' },
+
+    # Turso's miette diagnostics use unicode-width 0.1; the UI uses 0.2.
+    { name = 'unicode-width', version = '=0.1.14' },
 
     # pliron (via cubecl) is on downcast-rs 2, wayland-backend still on 1.
     { name = 'downcast-rs' },

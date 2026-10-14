@@ -44,10 +44,13 @@ https://github.com/user-attachments/assets/f679fec0-935d-4dd2-87e1-c301db9cdc2c
 While training, additional data can be visualized with the excellent [rerun](https://rerun.io/). To install rerun on your machine, please follow their [instructions](https://rerun.io/docs/getting-started/installing-viewer). Open the ./brush_blueprint.rbl in the viewer for best results.
 
 ## Building Brush
-First install rust 1.88+. You can run tests with `cargo test --all`. Brush uses the wonderful [rerun](https://rerun.io/) for additional visualizations while training, run `cargo install rerun-cli` if you want to use it.
+First install Rust 1.95+. You can run tests with `cargo test --all`. Brush uses the wonderful [rerun](https://rerun.io/) for additional visualizations while training, run `cargo install rerun-cli` if you want to use it.
 
 ### Windows/macOS/Linux
 Use `cargo run --release` from the workspace root to make an optimized build. Use `cargo run` to run a debug build. 
+
+For Windows ARM64 build instructions and a headless refinement regression check,
+see [Windows ARM64](docs/windows-arm64.md).
 
 ### Web
 Brush can be compiled to WASM. Run `npm run dev` to start the demo website using Next.js, see the web directory in app/brush-app/web.
