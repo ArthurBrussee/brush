@@ -9,8 +9,12 @@ license.workspace = true
 name = "brush_c"
 crate-type = ["cdylib", "rlib", "staticlib"]
 
+[features]
+default = ["rerun"]
+rerun = ["brush-process/rerun"]
+
 [dependencies]
-brush-process.path = "../../crates/brush-process"
+brush-process = { path = "../../crates/brush-process", default-features = false }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] }
