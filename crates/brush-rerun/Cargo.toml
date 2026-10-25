@@ -5,6 +5,12 @@ version.workspace = true
 readme.workspace = true
 license.workspace = true
 
+[features]
+default = ["rerun"]
+# Log training to rerun.io. Without it, `VisualizeTools` is a no-op and the
+# rerun SDK (and its dependencies) is not linked.
+rerun = ["dep:rerun", "dep:glam", "dep:image", "dep:log"]
+
 [dependencies]
 clap.workspace = true
 anyhow.workspace = true
@@ -19,10 +25,10 @@ brush-dataset.path = "../brush-dataset"
 tokio.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-rerun.workspace = true
-glam.workspace = true
-image.workspace = true
-log.workspace = true
+rerun = { workspace = true, optional = true }
+glam = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
 
 [lints]
 workspace = true

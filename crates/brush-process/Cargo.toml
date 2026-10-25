@@ -7,6 +7,8 @@ readme.workspace = true
 license.workspace = true
 
 [features]
+default = ["rerun"]
+rerun = ["brush-rerun/rerun"]
 debug-validation = ["brush-train/debug-validation"]
 
 [dependencies]
@@ -39,7 +41,7 @@ brush-async.path = "../brush-async"
 
 brush-train = { path = "../brush-train" }
 brush-dataset = { path = "../brush-dataset"}
-brush-rerun = { path = "../brush-rerun" }
+brush-rerun = { path = "../brush-rerun", default-features = false }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
