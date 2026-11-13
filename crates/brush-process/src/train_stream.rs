@@ -716,7 +716,7 @@ mod tests {
 
     #[test]
     fn vram_guard_triggers_on_memory_budget() {
-        let mut guard = VramGuard::new(1.0, 0.0);
+        let guard = VramGuard::new(1.0, 0.0);
         assert!(
             guard
                 .should_dump(VRAM_MEM_CHECK_EVERY + 1, || u64::MAX)
