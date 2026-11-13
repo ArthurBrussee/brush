@@ -29,6 +29,27 @@ It also supports masking images:
 - A folder of images called 'masks'. This ignores parts of the image that are masked out.
   Black pixels in the mask are ignored, white pixels are kept. Pass `--invert-masks` if your masks are the other way around.
 
+### Checkpoints
+
+Training can be stopped and later continued without quality loss. Pass `--checkpoint-every 1000` to write a full checkpoint
+(splat parameters, optimizer momentum, and trainer state) as `checkpoint.safetensors` in the export folder every 1000 steps.
+The file is replaced atomically, so a crash mid-write never loses the previous checkpoint.
+
+To continue, either pass `--resume path/to/checkpoint.safetensors`, or copy the file into the dataset folder — a
+`checkpoint.safetensors` next to the training data is picked up automatically, which also works when training through the
+viewer (and `--checkpoint-every` can go in the dataset's `args.txt`). Unlike restarting from an exported ply, resuming from
+a checkpoint keeps the learning-rate schedule position and Adam momentum, so the result matches an uninterrupted run.
+You can also raise `--total-train-iters` when resuming to train a finished model for longer.
+
+Checkpoints cover the main training phase; LOD refinement phases restart from their decimation step.
+
+On GPUs with limited VRAM, training can also dump and reload GPU memory automatically. `--vram-dump-above-gb 7` does it
+whenever the GPU memory pool grows past 7 GB; `--vram-dump-slow-factor 2` does it when training steps become twice as slow
+as their own baseline, which is what VRAM overcommit spilling into system memory looks like. Either trigger checkpoints the
+training state (also to disk, as a crash-safety copy), releases every GPU allocation, and resumes in place a few seconds
+later — the memory pool starts over compact instead of fragmented. After a slowdown-triggered dump the baseline re-learns,
+so a slowdown the dump cannot fix does not cause a dump loop.
+
 ## Viewer
 Brush also works well as a splat viewer, including on the web. It can load .ply & .compressed.ply files. You can stream in data from a URL (for a web app, simply append `?url=`).
 

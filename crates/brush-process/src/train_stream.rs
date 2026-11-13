@@ -19,7 +19,7 @@ use brush_train::{
 use brush_vfs::BrushVfs;
 use burn::module::Module;
 use rand::SeedableRng;
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
 #[allow(unused)]
 use std::path::Path;
@@ -90,8 +90,21 @@ pub(crate) async fn train_stream(
     log::info!("Loading initial splats if any.");
     let estimated_up = dataset.estimate_up();
 
+    // A full checkpoint (from --checkpoint-every) trumps any other
+    // initialization: it restores the splats *and* the optimizer state, so
+    // training continues as if it was never interrupted.
+    let resume_ckpt = load_resume_checkpoint(&vfs, &train_stream_config, device).await?;
+
     // Convert SplatData to Splats using KNN initialization
-    let (up_axis, init_splats) = if let Some(msg) = load_result.init_splat {
+    let (up_axis, init_splats) = if let Some(ckpt) = &resume_ckpt {
+        if load_result.init_splat.is_some() {
+            log::info!(
+                "Both a checkpoint and an init ply are present; resuming from the checkpoint."
+            );
+        }
+        // A resumed model keeps its own SH degree and render mode.
+        (None, ckpt.splats.clone())
+    } else if let Some(msg) = load_result.init_splat {
         // Use loaded splats with KNN init
         let render_mode = train_stream_config
             .train_config
@@ -134,7 +147,13 @@ pub(crate) async fn train_stream(
         (None, splats)
     };
 
-    let init_splats = init_splats.with_sh_degree(train_stream_config.model_config.sh_degree);
+    // Fresh inits grow to the configured SH degree; a resumed model already
+    // carries its trained coefficients and stays as-is.
+    let init_splats = if resume_ckpt.is_some() {
+        init_splats
+    } else {
+        init_splats.with_sh_degree(train_stream_config.model_config.sh_degree)
+    };
 
     // If the metadata has an up axis prefer that, otherwise estimate the up direction.
     let up_axis = up_axis.or(Some(estimated_up));
@@ -178,12 +197,42 @@ pub(crate) async fn train_stream(
         view_cams.push((view.camera.position, focal));
     }
 
-    let mut trainer = SplatTrainer::new_seeded(
-        &train_stream_config.train_config,
-        device,
-        bounds,
-        process_config.seed,
-    );
+    let (mut trainer, start_iter) = if let Some(ckpt) = resume_ckpt {
+        // The restored trainer carries the optimizer momentum, LR-schedule
+        // position and refine bounds from the checkpoint.
+        if process_config.start_iter != 0 && process_config.start_iter != ckpt.next_iter {
+            log::info!(
+                "--start-iter {} is ignored; resuming at iteration {} from the checkpoint.",
+                process_config.start_iter,
+                ckpt.next_iter
+            );
+        }
+        let current_args = crate::args_file::config_to_args(&train_stream_config).join(" ");
+        if let Some(saved_args) = &ckpt.config_args
+            && saved_args != &current_args
+        {
+            emitter
+                .emit(ProcessMessage::Warning {
+                    error: anyhow::anyhow!(
+                        "Resuming with different settings than the checkpoint was trained with.\nCheckpoint: {saved_args}\nCurrent: {current_args}"
+                    ),
+                })
+                .await;
+        }
+        log::info!(
+            "Resumed training from checkpoint at iteration {}.",
+            ckpt.next_iter
+        );
+        (ckpt.trainer, ckpt.next_iter)
+    } else {
+        let trainer = SplatTrainer::new_seeded(
+            &train_stream_config.train_config,
+            device,
+            bounds,
+            process_config.seed,
+        );
+        (trainer, process_config.start_iter)
+    };
     trainer.set_view_cams(view_cams.clone());
 
     // Get the dataset name from the base path (if available) for interpolation.
@@ -216,8 +265,13 @@ pub(crate) async fn train_stream(
 
     let process_config = &train_stream_config.process_config;
 
+    let mut vram_guard = VramGuard::new(
+        process_config.vram_dump_above_gb,
+        process_config.vram_dump_slow_factor,
+    );
+
     log::info!("Start training loop.");
-    for iter in process_config.start_iter..train_stream_config.train_config.total_iters() {
+    for iter in start_iter..train_stream_config.train_config.total_iters() {
         let target_lod = if lod_levels == 0 || iter < training_steps {
             0u32
         } else {
@@ -328,10 +382,10 @@ pub(crate) async fn train_stream(
         let phase_progress = (phase_iter as f32 / phase_total as f32).clamp(0.0, 1.0);
 
         let refine_start = Instant::now();
-        let refine = if phase_iter > 0
+        let did_refine = phase_iter > 0
             && phase_iter.is_multiple_of(train_stream_config.train_config.refine_every)
-            && phase_progress <= 0.95
-        {
+            && phase_progress <= 0.95;
+        let refine = if did_refine {
             let (new_splats, refine_stats) = trainer.refine(iter, splats).await;
             splats = new_splats;
             refine_stats
@@ -415,6 +469,63 @@ pub(crate) async fn train_stream(
 
                 if let Err(error) = res {
                     emitter.emit(ProcessMessage::Warning { error }).await;
+                }
+            }
+
+            // Full training checkpoints for resuming. Only in the main phase:
+            // LOD phases restart from a decimated model anyway.
+            let should_checkpoint = process_config.checkpoint_every > 0
+                && current_lod == 0
+                && (iter.is_multiple_of(process_config.checkpoint_every) || is_last_step);
+            if should_checkpoint {
+                let res =
+                    write_checkpoint(&trainer, &splats, iter, &export_path, &train_stream_config)
+                        .await
+                        .with_context(|| format!("Checkpoint at iteration {iter} failed"));
+
+                if let Err(error) = res {
+                    emitter.emit(ProcessMessage::Warning { error }).await;
+                }
+            }
+        }
+
+        // Auto VRAM dump-and-reload: when the memory pool outgrows its budget
+        // or steps get sustainably slower than their own baseline (VRAM
+        // spilling into system memory), checkpoint in place, release every
+        // GPU allocation, and reload. Main phase only, like checkpoints.
+        if vram_guard.enabled() && current_lod == 0 {
+            if !did_refine {
+                vram_guard.record(step_dur);
+            }
+            if let Some(reason) = vram_guard.should_dump(iter, || {
+                device
+                    .memory_pool_usage()
+                    .unwrap_or_default()
+                    .bytes_reserved
+            }) {
+                log::info!("{reason}; dumping and reloading GPU memory at iteration {iter}.");
+                let dump_start = Instant::now();
+                let res = dump_and_reload(
+                    &mut splats,
+                    &mut trainer,
+                    &slot,
+                    &train_stream_config,
+                    device,
+                    iter,
+                    &view_cams,
+                    &export_path,
+                )
+                .await
+                .with_context(|| format!("VRAM dump at iteration {iter} failed"));
+                match res {
+                    Ok(()) => {
+                        vram_guard.mark_dumped(iter);
+                        log::info!(
+                            "GPU memory reloaded in {:.1}s.",
+                            dump_start.elapsed().as_secs_f32()
+                        );
+                    }
+                    Err(error) => emitter.emit(ProcessMessage::Warning { error }).await,
                 }
             }
         }
@@ -549,6 +660,99 @@ mod tests {
             assert!(eval_output_path(base, 1, Path::new(invalid)).is_err());
         }
     }
+
+    /// Feed `guard` `n` plain-step samples of `ms` milliseconds.
+    fn feed(guard: &mut VramGuard, n: usize, ms: u64) {
+        for _ in 0..n {
+            guard.record(Duration::from_millis(ms));
+        }
+    }
+
+    #[test]
+    fn vram_guard_disabled_by_default() {
+        let mut guard = VramGuard::new(0.0, 0.0);
+        assert!(!guard.enabled(), "both triggers off means disabled");
+        feed(&mut guard, 200, 500);
+        assert!(
+            guard.should_dump(100, || u64::MAX).is_none(),
+            "disabled guard never dumps"
+        );
+    }
+
+    #[test]
+    fn vram_guard_triggers_on_sustained_slowdown() {
+        let mut guard = VramGuard::new(0.0, 2.0);
+        assert!(guard.enabled(), "slow factor alone enables the guard");
+        // Warmup + baseline at 100 ms.
+        feed(
+            &mut guard,
+            VRAM_WARMUP_STEPS as usize + VRAM_BASELINE_LEN,
+            100,
+        );
+        // A fast rolling window must not trigger.
+        feed(&mut guard, VRAM_WINDOW_LEN, 150);
+        assert!(
+            guard.should_dump(1000, || 0).is_none(),
+            "1.5x is under the 2x threshold"
+        );
+        // A sustained 3x slowdown must trigger.
+        feed(&mut guard, VRAM_WINDOW_LEN, 300);
+        let reason = guard.should_dump(1001, || 0);
+        assert!(reason.is_some(), "3x slowdown over a full window triggers");
+
+        // After a dump the baseline re-learns: the same slow pace becomes the
+        // new normal instead of a dump loop.
+        guard.mark_dumped(1001);
+        feed(
+            &mut guard,
+            VRAM_WARMUP_STEPS as usize + VRAM_BASELINE_LEN + VRAM_WINDOW_LEN,
+            300,
+        );
+        assert!(
+            guard.should_dump(2000, || 0).is_none(),
+            "steady state after re-baseline must not re-trigger"
+        );
+    }
+
+    #[test]
+    fn vram_guard_triggers_on_memory_budget() {
+        let guard = VramGuard::new(1.0, 0.0);
+        assert!(
+            guard
+                .should_dump(VRAM_MEM_CHECK_EVERY + 1, || u64::MAX)
+                .is_none(),
+            "memory is only checked on the sparse cadence"
+        );
+        assert!(
+            guard
+                .should_dump(VRAM_MEM_CHECK_EVERY, || 2_000_000_000)
+                .is_some(),
+            "2 GB reserved over a 1 GB budget triggers"
+        );
+        assert!(
+            guard
+                .should_dump(VRAM_MEM_CHECK_EVERY, || 500_000_000)
+                .is_none(),
+            "0.5 GB reserved under a 1 GB budget does not trigger"
+        );
+    }
+
+    #[test]
+    fn vram_guard_respects_cooldown() {
+        let mut guard = VramGuard::new(1.0, 0.0);
+        guard.mark_dumped(1000);
+        assert!(
+            guard
+                .should_dump(1000 + VRAM_MEM_CHECK_EVERY, || u64::MAX)
+                .is_none(),
+            "within cooldown no dump may trigger"
+        );
+        let after = 1000 + VRAM_DUMP_COOLDOWN.next_multiple_of(VRAM_MEM_CHECK_EVERY);
+        assert!(
+            guard.should_dump(after, || u64::MAX).is_some(),
+            "after cooldown the memory trigger works again"
+        );
+    }
 }
 
 async fn run_eval(
@@ -621,6 +825,318 @@ async fn run_eval(
         .await;
 
     Ok(())
+}
+
+/// Look for a resume checkpoint: an explicit `--resume` path, or a
+/// `checkpoint.safetensors` inside the dataset. Returns the restored state,
+/// or `None` to start fresh. A checkpoint that exists but fails to load is an
+/// error rather than a silent restart from scratch.
+async fn load_resume_checkpoint(
+    vfs: &BrushVfs,
+    config: &TrainStreamConfig,
+    device: &crate::ProcessDevice,
+) -> anyhow::Result<Option<brush_train::checkpoint::LoadedCheckpoint>> {
+    use brush_train::checkpoint::{CHECKPOINT_FILE_NAME, checkpoint_from_bytes};
+
+    let bytes: Option<Vec<u8>> = if let Some(path) = &config.process_config.resume {
+        #[cfg(target_family = "wasm")]
+        {
+            anyhow::bail!(
+                "--resume with a file path isn't supported on the web; add {CHECKPOINT_FILE_NAME} to the dataset files instead (ignored path: {path})."
+            );
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            Some(
+                tokio::fs::read(path)
+                    .await
+                    .with_context(|| format!("Reading checkpoint {path}"))?,
+            )
+        }
+    } else if let Some(ckpt_path) = vfs
+        .file_paths()
+        .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(CHECKPOINT_FILE_NAME))
+    {
+        use tokio::io::AsyncReadExt;
+        let mut reader = vfs.reader_at_path(&ckpt_path).await?;
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .with_context(|| format!("Reading checkpoint {}", ckpt_path.display()))?;
+        Some(bytes)
+    } else {
+        None
+    };
+
+    let Some(bytes) = bytes else {
+        return Ok(None);
+    };
+
+    let ckpt = checkpoint_from_bytes(
+        &bytes,
+        &config.train_config,
+        device,
+        config.process_config.seed,
+    )?;
+    anyhow::ensure!(
+        ckpt.next_iter <= config.train_config.total_train_iters,
+        "Checkpoint is at iteration {} but --total-train-iters is {}. Raise --total-train-iters to continue training this model.",
+        ckpt.next_iter,
+        config.train_config.total_train_iters,
+    );
+    // Loading uploads the full model and optimizer state in one burst. Flush
+    // it and trim the pool now, so startup's own allocations and the first
+    // training steps don't stack on top of the load's staging pages. Resuming
+    // a model near the VRAM limit is exactly when this matters.
+    // (Blocking sync isn't available on the web; cleanup alone still helps.)
+    #[cfg(not(target_family = "wasm"))]
+    device
+        .sync()
+        .map_err(|e| anyhow::anyhow!("Device sync failed after checkpoint load: {e:?}"))?;
+    device.memory_cleanup();
+    Ok(Some(ckpt))
+}
+
+/// Write a full training checkpoint atomically (via a temp file + rename), so
+/// a crash mid-write never destroys the previous checkpoint.
+#[cfg(not(target_family = "wasm"))]
+async fn write_checkpoint(
+    trainer: &SplatTrainer,
+    splats: &Splats,
+    next_iter: u32,
+    export_path: &Path,
+    config: &TrainStreamConfig,
+) -> Result<(), anyhow::Error> {
+    use brush_train::checkpoint::{META_CONFIG_ARGS, checkpoint_to_bytes};
+
+    let args = crate::args_file::config_to_args(config).join(" ");
+    let bytes = checkpoint_to_bytes(
+        trainer,
+        splats,
+        next_iter,
+        &[(META_CONFIG_ARGS.to_owned(), args)],
+    )
+    .await?;
+    write_checkpoint_bytes(&bytes, export_path).await?;
+    log::info!("Wrote checkpoint at iteration {next_iter}.");
+    Ok(())
+}
+
+/// Atomically place already-serialized checkpoint bytes as
+/// `checkpoint.safetensors` in the export directory.
+#[cfg(not(target_family = "wasm"))]
+async fn write_checkpoint_bytes(bytes: &[u8], export_path: &Path) -> Result<(), anyhow::Error> {
+    use brush_train::checkpoint::CHECKPOINT_FILE_NAME;
+
+    tokio::fs::create_dir_all(&export_path)
+        .await
+        .with_context(|| format!("Creating export directory {}", export_path.display()))?;
+    let final_path = export_path.join(CHECKPOINT_FILE_NAME);
+    let tmp_path = export_path.join(format!("{CHECKPOINT_FILE_NAME}.tmp"));
+    tokio::fs::write(&tmp_path, bytes)
+        .await
+        .with_context(|| format!("Writing checkpoint {}", tmp_path.display()))?;
+    tokio::fs::rename(&tmp_path, &final_path)
+        .await
+        .with_context(|| format!("Moving checkpoint into place at {}", final_path.display()))?;
+    Ok(())
+}
+
+/// Checkpoint the full training state to host memory (and disk, where there
+/// is one), release every GPU allocation the trainer and the published splats
+/// hold, and reload through the same path a disk resume takes. Training
+/// continues as if uninterrupted; the burn memory pool gets to start over
+/// compact, which counters fragmentation and VRAM overcommit.
+async fn dump_and_reload(
+    splats: &mut Splats,
+    trainer: &mut SplatTrainer,
+    slot: &SlotSender<Splats>,
+    train_stream_config: &TrainStreamConfig,
+    device: &crate::ProcessDevice,
+    next_iter: u32,
+    view_cams: &[(glam::Vec3, f32)],
+    export_path: &Path,
+) -> Result<(), anyhow::Error> {
+    use brush_train::checkpoint::{META_CONFIG_ARGS, checkpoint_from_bytes, checkpoint_to_bytes};
+
+    let args = crate::args_file::config_to_args(train_stream_config).join(" ");
+    let bytes = checkpoint_to_bytes(
+        trainer,
+        splats,
+        next_iter,
+        &[(META_CONFIG_ARGS.to_owned(), args)],
+    )
+    .await?;
+
+    // Crash-safety copy on disk while the bytes are in hand; best-effort.
+    #[cfg(not(target_family = "wasm"))]
+    if let Err(e) = write_checkpoint_bytes(&bytes, export_path).await {
+        log::warn!("Could not write checkpoint during VRAM dump: {e:?}");
+    }
+    #[cfg(target_family = "wasm")]
+    let _ = export_path;
+
+    // Swap the published splats for a tiny placeholder so the viewer slot
+    // doesn't pin the old buffers, drop the optimizer momentum, and hand the
+    // pool's pages back.
+    let placeholder = Splats::from_raw(
+        vec![0.0; 3],
+        vec![1.0, 0.0, 0.0, 0.0],
+        vec![0.0; 3],
+        vec![0.0; 3],
+        vec![0.0],
+        SplatRenderMode::Default,
+        device,
+    );
+    *splats = placeholder.clone();
+    slot.set(0, placeholder);
+    trainer.release_gpu_state();
+    // Wait for in-flight work to finish so the dropped tensors' pool pages
+    // are actually reclaimable, not still referenced by queued kernels.
+    // (Blocking sync isn't available on the web; cleanup alone still helps.)
+    #[cfg(not(target_family = "wasm"))]
+    device
+        .sync()
+        .map_err(|e| anyhow::anyhow!("Device sync failed during VRAM dump: {e:?}"))?;
+    device.memory_cleanup();
+
+    let ckpt = checkpoint_from_bytes(
+        &bytes,
+        &train_stream_config.train_config,
+        device,
+        train_stream_config.process_config.seed,
+    )?;
+    *splats = ckpt.splats;
+    *trainer = ckpt.trainer;
+    trainer.set_view_cams(view_cams.to_vec());
+    slot.set(0, splats.clone());
+    // The reload uploads the full model and optimizer state in one burst;
+    // flush it and return the staging pages before training allocates its
+    // step transients on top.
+    #[cfg(not(target_family = "wasm"))]
+    device
+        .sync()
+        .map_err(|e| anyhow::anyhow!("Device sync failed after VRAM reload: {e:?}"))?;
+    device.memory_cleanup();
+    Ok(())
+}
+
+/// Decides when to dump-and-reload GPU memory. Two independent triggers:
+/// the burn memory pool reserving more than a configured budget, and training
+/// steps getting sustainably slower than their own baseline (VRAM overcommit
+/// spilling into system memory shows up exactly this way). Timing samples
+/// only count plain steps — refine iterations are excluded by the caller, and
+/// a warmup is skipped after every (re)start so shader compilation and cache
+/// warming don't skew the baseline.
+struct VramGuard {
+    budget_bytes: u64,
+    slow_factor: f64,
+    /// Plain-step samples still to ignore before collecting.
+    warmup_left: u32,
+    /// First `BASELINE_LEN` post-warmup samples; the reference speed.
+    baseline: Vec<f64>,
+    /// Rolling window of the most recent samples.
+    window: VecDeque<f64>,
+    last_dump_iter: Option<u32>,
+}
+
+/// Samples forming the reference speed after each (re)start.
+const VRAM_BASELINE_LEN: usize = 50;
+/// Rolling window compared against the baseline.
+const VRAM_WINDOW_LEN: usize = 25;
+/// Plain steps ignored after every (re)start.
+const VRAM_WARMUP_STEPS: u32 = 20;
+/// The pool-size query stalls behind queued GPU work, so it doesn't run every
+/// step — but it must run often enough to beat an allocation spike to the
+/// budget. 25 steps is a few seconds at worst.
+const VRAM_MEM_CHECK_EVERY: u32 = 25;
+/// Minimum iterations between two dumps.
+const VRAM_DUMP_COOLDOWN: u32 = 500;
+
+fn median(samples: impl IntoIterator<Item = f64>) -> f64 {
+    let mut v: Vec<f64> = samples.into_iter().collect();
+    v.sort_by(f64::total_cmp);
+    if v.is_empty() { 0.0 } else { v[v.len() / 2] }
+}
+
+impl VramGuard {
+    fn new(budget_gb: f32, slow_factor: f32) -> Self {
+        Self {
+            budget_bytes: (f64::from(budget_gb.max(0.0)) * 1e9) as u64,
+            slow_factor: f64::from(slow_factor.max(0.0)),
+            warmup_left: VRAM_WARMUP_STEPS,
+            baseline: Vec::new(),
+            window: VecDeque::new(),
+            last_dump_iter: None,
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.budget_bytes > 0 || self.slow_factor > 0.0
+    }
+
+    /// Record one plain (non-refine) step's duration.
+    fn record(&mut self, duration: Duration) {
+        if self.warmup_left > 0 {
+            self.warmup_left -= 1;
+            return;
+        }
+        let secs = duration.as_secs_f64();
+        if self.baseline.len() < VRAM_BASELINE_LEN {
+            self.baseline.push(secs);
+            return;
+        }
+        self.window.push_back(secs);
+        if self.window.len() > VRAM_WINDOW_LEN {
+            self.window.pop_front();
+        }
+    }
+
+    /// A dump just ran: start a cooldown and re-learn the timing baseline, so
+    /// an unfixable slowdown becomes the new normal instead of a dump loop.
+    fn mark_dumped(&mut self, iter: u32) {
+        self.last_dump_iter = Some(iter);
+        self.warmup_left = VRAM_WARMUP_STEPS;
+        self.baseline.clear();
+        self.window.clear();
+    }
+
+    /// Returns a human-readable reason when a dump should happen now.
+    /// `pool_reserved` is only queried on the sparse check cadence.
+    fn should_dump(&self, iter: u32, pool_reserved: impl FnOnce() -> u64) -> Option<String> {
+        if let Some(last) = self.last_dump_iter
+            && iter < last.saturating_add(VRAM_DUMP_COOLDOWN)
+        {
+            return None;
+        }
+        if self.slow_factor > 0.0
+            && self.baseline.len() == VRAM_BASELINE_LEN
+            && self.window.len() == VRAM_WINDOW_LEN
+        {
+            let base = median(self.baseline.iter().copied());
+            let rolling = median(self.window.iter().copied());
+            if base > 0.0 && rolling > base * self.slow_factor {
+                return Some(format!(
+                    "Training steps slowed to {:.0} ms (baseline {:.0} ms, over {:.1}x)",
+                    rolling * 1000.0,
+                    base * 1000.0,
+                    self.slow_factor
+                ));
+            }
+        }
+        if self.budget_bytes > 0 && iter.is_multiple_of(VRAM_MEM_CHECK_EVERY) {
+            let reserved = pool_reserved();
+            if reserved > self.budget_bytes {
+                return Some(format!(
+                    "GPU memory pool at {:.2} GB exceeds the {:.2} GB budget",
+                    reserved as f64 / 1e9,
+                    self.budget_bytes as f64 / 1e9
+                ));
+            }
+        }
+        None
+    }
 }
 
 // TODO: Want to support this on WASM somehow. Maybe have user pick a file once,

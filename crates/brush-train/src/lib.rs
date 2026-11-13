@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 
+pub mod checkpoint;
 pub mod config;
 pub mod eval;
 pub mod lod;
