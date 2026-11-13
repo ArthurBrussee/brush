@@ -43,6 +43,13 @@ You can also raise `--total-train-iters` when resuming to train a finished model
 
 Checkpoints cover the main training phase; LOD refinement phases restart from their decimation step.
 
+On GPUs with limited VRAM, training can also dump and reload GPU memory automatically. `--vram-dump-above-gb 7` does it
+whenever the GPU memory pool grows past 7 GB; `--vram-dump-slow-factor 2` does it when training steps become twice as slow
+as their own baseline, which is what VRAM overcommit spilling into system memory looks like. Either trigger checkpoints the
+training state (also to disk, as a crash-safety copy), releases every GPU allocation, and resumes in place a few seconds
+later — the memory pool starts over compact instead of fragmented. After a slowdown-triggered dump the baseline re-learns,
+so a slowdown the dump cannot fix does not cause a dump loop.
+
 ## Viewer
 Brush also works well as a splat viewer, including on the web. It can load .ply & .compressed.ply files. You can stream in data from a URL (for a web app, simply append `?url=`).
 

@@ -236,6 +236,14 @@ impl SplatTrainer {
         self.view_cams = view_cams;
     }
 
+    /// Drop the GPU-side optimizer momentum and refine statistics, e.g. ahead
+    /// of a memory compaction. Both re-initialize lazily on the next step, so
+    /// only call this when the state has been checkpointed (or is disposable).
+    pub fn release_gpu_state(&mut self) {
+        self.optim = None;
+        self.refine_record = None;
+    }
+
     pub async fn step(&mut self, batch: SceneBatch, splats: Splats) -> (Splats, TrainStepStats) {
         let mut splats = splats;
 

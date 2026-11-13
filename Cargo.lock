@@ -1180,6 +1180,7 @@ dependencies = [
  "glam",
  "image",
  "log",
+ "rerun",
  "serde",
  "tokio",
 ]

@@ -19,7 +19,7 @@ use brush_train::{
 use brush_vfs::BrushVfs;
 use burn::module::Module;
 use rand::SeedableRng;
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
 #[allow(unused)]
 use std::path::Path;
@@ -260,6 +260,11 @@ pub(crate) async fn train_stream(
 
     let process_config = &train_stream_config.process_config;
 
+    let mut vram_guard = VramGuard::new(
+        process_config.vram_dump_above_gb,
+        process_config.vram_dump_slow_factor,
+    );
+
     log::info!("Start training loop.");
     for iter in start_iter..train_stream_config.train_config.total_iters() {
         let target_lod = if lod_levels == 0 || iter < training_steps {
@@ -372,10 +377,10 @@ pub(crate) async fn train_stream(
         let phase_progress = (phase_iter as f32 / phase_total as f32).clamp(0.0, 1.0);
 
         let refine_start = Instant::now();
-        let refine = if phase_iter > 0
+        let did_refine = phase_iter > 0
             && phase_iter.is_multiple_of(train_stream_config.train_config.refine_every)
-            && phase_progress <= 0.95
-        {
+            && phase_progress <= 0.95;
+        let refine = if did_refine {
             let (new_splats, refine_stats) = trainer.refine(iter, splats).await;
             splats = new_splats;
             refine_stats
@@ -475,6 +480,44 @@ pub(crate) async fn train_stream(
 
                 if let Err(error) = res {
                     emitter.emit(ProcessMessage::Warning { error }).await;
+                }
+            }
+        }
+
+        // Auto VRAM dump-and-reload: when the memory pool outgrows its budget
+        // or steps get sustainably slower than their own baseline (VRAM
+        // spilling into system memory), checkpoint in place, release every
+        // GPU allocation, and reload. Main phase only, like checkpoints.
+        if vram_guard.enabled() && current_lod == 0 {
+            if !did_refine {
+                vram_guard.record(step_dur);
+            }
+            if let Some(reason) = vram_guard.should_dump(iter, || {
+                device.memory_pool_usage().unwrap_or_default().bytes_reserved
+            }) {
+                log::info!("{reason}; dumping and reloading GPU memory at iteration {iter}.");
+                let dump_start = Instant::now();
+                let res = dump_and_reload(
+                    &mut splats,
+                    &mut trainer,
+                    &slot,
+                    &train_stream_config,
+                    device,
+                    iter,
+                    &view_cams,
+                    &export_path,
+                )
+                .await
+                .with_context(|| format!("VRAM dump at iteration {iter} failed"));
+                match res {
+                    Ok(()) => {
+                        vram_guard.mark_dumped(iter);
+                        log::info!(
+                            "GPU memory reloaded in {:.1}s.",
+                            dump_start.elapsed().as_secs_f32()
+                        );
+                    }
+                    Err(error) => emitter.emit(ProcessMessage::Warning { error }).await,
                 }
             }
         }
@@ -608,6 +651,97 @@ mod tests {
         for invalid in ["../frame.jpg", "/tmp/frame.jpg", "."] {
             assert!(eval_output_path(base, 1, Path::new(invalid)).is_err());
         }
+    }
+
+    /// Feed `guard` `n` plain-step samples of `ms` milliseconds.
+    fn feed(guard: &mut VramGuard, n: usize, ms: u64) {
+        for _ in 0..n {
+            guard.record(Duration::from_millis(ms));
+        }
+    }
+
+    #[test]
+    fn vram_guard_disabled_by_default() {
+        let mut guard = VramGuard::new(0.0, 0.0);
+        assert!(!guard.enabled(), "both triggers off means disabled");
+        feed(&mut guard, 200, 500);
+        assert!(
+            guard.should_dump(100, || u64::MAX).is_none(),
+            "disabled guard never dumps"
+        );
+    }
+
+    #[test]
+    fn vram_guard_triggers_on_sustained_slowdown() {
+        let mut guard = VramGuard::new(0.0, 2.0);
+        assert!(guard.enabled(), "slow factor alone enables the guard");
+        // Warmup + baseline at 100 ms.
+        feed(
+            &mut guard,
+            VRAM_WARMUP_STEPS as usize + VRAM_BASELINE_LEN,
+            100,
+        );
+        // A fast rolling window must not trigger.
+        feed(&mut guard, VRAM_WINDOW_LEN, 150);
+        assert!(
+            guard.should_dump(1000, || 0).is_none(),
+            "1.5x is under the 2x threshold"
+        );
+        // A sustained 3x slowdown must trigger.
+        feed(&mut guard, VRAM_WINDOW_LEN, 300);
+        let reason = guard.should_dump(1001, || 0);
+        assert!(reason.is_some(), "3x slowdown over a full window triggers");
+
+        // After a dump the baseline re-learns: the same slow pace becomes the
+        // new normal instead of a dump loop.
+        guard.mark_dumped(1001);
+        feed(
+            &mut guard,
+            VRAM_WARMUP_STEPS as usize + VRAM_BASELINE_LEN + VRAM_WINDOW_LEN,
+            300,
+        );
+        assert!(
+            guard.should_dump(2000, || 0).is_none(),
+            "steady state after re-baseline must not re-trigger"
+        );
+    }
+
+    #[test]
+    fn vram_guard_triggers_on_memory_budget() {
+        let mut guard = VramGuard::new(1.0, 0.0);
+        assert!(
+            guard.should_dump(150, || u64::MAX).is_none(),
+            "memory is only checked on the sparse cadence"
+        );
+        assert!(
+            guard
+                .should_dump(VRAM_MEM_CHECK_EVERY, || 2_000_000_000)
+                .is_some(),
+            "2 GB reserved over a 1 GB budget triggers"
+        );
+        assert!(
+            guard
+                .should_dump(VRAM_MEM_CHECK_EVERY, || 500_000_000)
+                .is_none(),
+            "0.5 GB reserved under a 1 GB budget does not trigger"
+        );
+    }
+
+    #[test]
+    fn vram_guard_respects_cooldown() {
+        let mut guard = VramGuard::new(1.0, 0.0);
+        guard.mark_dumped(1000);
+        assert!(
+            guard
+                .should_dump(1000 + VRAM_MEM_CHECK_EVERY, || u64::MAX)
+                .is_none(),
+            "within cooldown no dump may trigger"
+        );
+        let after = 1000 + VRAM_DUMP_COOLDOWN.next_multiple_of(VRAM_MEM_CHECK_EVERY);
+        assert!(
+            guard.should_dump(after, || u64::MAX).is_some(),
+            "after cooldown the memory trigger works again"
+        );
     }
 }
 
@@ -754,11 +888,7 @@ async fn write_checkpoint(
     export_path: &Path,
     config: &TrainStreamConfig,
 ) -> Result<(), anyhow::Error> {
-    use brush_train::checkpoint::{CHECKPOINT_FILE_NAME, META_CONFIG_ARGS, checkpoint_to_bytes};
-
-    tokio::fs::create_dir_all(&export_path)
-        .await
-        .with_context(|| format!("Creating export directory {}", export_path.display()))?;
+    use brush_train::checkpoint::{META_CONFIG_ARGS, checkpoint_to_bytes};
 
     let args = crate::args_file::config_to_args(config).join(" ");
     let bytes = checkpoint_to_bytes(
@@ -768,7 +898,20 @@ async fn write_checkpoint(
         &[(META_CONFIG_ARGS.to_owned(), args)],
     )
     .await?;
+    write_checkpoint_bytes(&bytes, export_path).await?;
+    log::info!("Wrote checkpoint at iteration {next_iter}.");
+    Ok(())
+}
 
+/// Atomically place already-serialized checkpoint bytes as
+/// `checkpoint.safetensors` in the export directory.
+#[cfg(not(target_family = "wasm"))]
+async fn write_checkpoint_bytes(bytes: &[u8], export_path: &Path) -> Result<(), anyhow::Error> {
+    use brush_train::checkpoint::CHECKPOINT_FILE_NAME;
+
+    tokio::fs::create_dir_all(&export_path)
+        .await
+        .with_context(|| format!("Creating export directory {}", export_path.display()))?;
     let final_path = export_path.join(CHECKPOINT_FILE_NAME);
     let tmp_path = export_path.join(format!("{CHECKPOINT_FILE_NAME}.tmp"));
     tokio::fs::write(&tmp_path, bytes)
@@ -777,8 +920,187 @@ async fn write_checkpoint(
     tokio::fs::rename(&tmp_path, &final_path)
         .await
         .with_context(|| format!("Moving checkpoint into place at {}", final_path.display()))?;
-    log::info!("Wrote checkpoint at iteration {next_iter} to {}", final_path.display());
     Ok(())
+}
+
+/// Checkpoint the full training state to host memory (and disk, where there
+/// is one), release every GPU allocation the trainer and the published splats
+/// hold, and reload through the same path a disk resume takes. Training
+/// continues as if uninterrupted; the burn memory pool gets to start over
+/// compact, which counters fragmentation and VRAM overcommit.
+async fn dump_and_reload(
+    splats: &mut Splats,
+    trainer: &mut SplatTrainer,
+    slot: &SlotSender<Splats>,
+    train_stream_config: &TrainStreamConfig,
+    device: &crate::ProcessDevice,
+    next_iter: u32,
+    view_cams: &[(glam::Vec3, f32)],
+    export_path: &Path,
+) -> Result<(), anyhow::Error> {
+    use brush_train::checkpoint::{META_CONFIG_ARGS, checkpoint_from_bytes, checkpoint_to_bytes};
+
+    let args = crate::args_file::config_to_args(train_stream_config).join(" ");
+    let bytes = checkpoint_to_bytes(
+        trainer,
+        splats,
+        next_iter,
+        &[(META_CONFIG_ARGS.to_owned(), args)],
+    )
+    .await?;
+
+    // Crash-safety copy on disk while the bytes are in hand; best-effort.
+    #[cfg(not(target_family = "wasm"))]
+    if let Err(e) = write_checkpoint_bytes(&bytes, export_path).await {
+        log::warn!("Could not write checkpoint during VRAM dump: {e:?}");
+    }
+    #[cfg(target_family = "wasm")]
+    let _ = export_path;
+
+    // Swap the published splats for a tiny placeholder so the viewer slot
+    // doesn't pin the old buffers, drop the optimizer momentum, and hand the
+    // pool's pages back.
+    let placeholder = Splats::from_raw(
+        vec![0.0; 3],
+        vec![1.0, 0.0, 0.0, 0.0],
+        vec![0.0; 3],
+        vec![0.0; 3],
+        vec![0.0],
+        SplatRenderMode::Default,
+        device,
+    );
+    *splats = placeholder.clone();
+    slot.set(0, placeholder);
+    trainer.release_gpu_state();
+    device.memory_cleanup();
+
+    let ckpt = checkpoint_from_bytes(
+        &bytes,
+        &train_stream_config.train_config,
+        device,
+        train_stream_config.process_config.seed,
+    )?;
+    *splats = ckpt.splats;
+    *trainer = ckpt.trainer;
+    trainer.set_view_cams(view_cams.to_vec());
+    slot.set(0, splats.clone());
+    device.memory_cleanup();
+    Ok(())
+}
+
+/// Decides when to dump-and-reload GPU memory. Two independent triggers:
+/// the burn memory pool reserving more than a configured budget, and training
+/// steps getting sustainably slower than their own baseline (VRAM overcommit
+/// spilling into system memory shows up exactly this way). Timing samples
+/// only count plain steps — refine iterations are excluded by the caller, and
+/// a warmup is skipped after every (re)start so shader compilation and cache
+/// warming don't skew the baseline.
+struct VramGuard {
+    budget_bytes: u64,
+    slow_factor: f64,
+    /// Plain-step samples still to ignore before collecting.
+    warmup_left: u32,
+    /// First `BASELINE_LEN` post-warmup samples; the reference speed.
+    baseline: Vec<f64>,
+    /// Rolling window of the most recent samples.
+    window: VecDeque<f64>,
+    last_dump_iter: Option<u32>,
+}
+
+/// Samples forming the reference speed after each (re)start.
+const VRAM_BASELINE_LEN: usize = 50;
+/// Rolling window compared against the baseline.
+const VRAM_WINDOW_LEN: usize = 25;
+/// Plain steps ignored after every (re)start.
+const VRAM_WARMUP_STEPS: u32 = 20;
+/// The pool-size query stalls behind queued GPU work, so it runs sparsely.
+const VRAM_MEM_CHECK_EVERY: u32 = 100;
+/// Minimum iterations between two dumps.
+const VRAM_DUMP_COOLDOWN: u32 = 500;
+
+fn median(samples: impl IntoIterator<Item = f64>) -> f64 {
+    let mut v: Vec<f64> = samples.into_iter().collect();
+    v.sort_by(f64::total_cmp);
+    if v.is_empty() { 0.0 } else { v[v.len() / 2] }
+}
+
+impl VramGuard {
+    fn new(budget_gb: f32, slow_factor: f32) -> Self {
+        Self {
+            budget_bytes: (f64::from(budget_gb.max(0.0)) * 1e9) as u64,
+            slow_factor: f64::from(slow_factor.max(0.0)),
+            warmup_left: VRAM_WARMUP_STEPS,
+            baseline: Vec::new(),
+            window: VecDeque::new(),
+            last_dump_iter: None,
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.budget_bytes > 0 || self.slow_factor > 0.0
+    }
+
+    /// Record one plain (non-refine) step's duration.
+    fn record(&mut self, duration: Duration) {
+        if self.warmup_left > 0 {
+            self.warmup_left -= 1;
+            return;
+        }
+        let secs = duration.as_secs_f64();
+        if self.baseline.len() < VRAM_BASELINE_LEN {
+            self.baseline.push(secs);
+            return;
+        }
+        self.window.push_back(secs);
+        if self.window.len() > VRAM_WINDOW_LEN {
+            self.window.pop_front();
+        }
+    }
+
+    /// A dump just ran: start a cooldown and re-learn the timing baseline, so
+    /// an unfixable slowdown becomes the new normal instead of a dump loop.
+    fn mark_dumped(&mut self, iter: u32) {
+        self.last_dump_iter = Some(iter);
+        self.warmup_left = VRAM_WARMUP_STEPS;
+        self.baseline.clear();
+        self.window.clear();
+    }
+
+    /// Returns a human-readable reason when a dump should happen now.
+    /// `pool_reserved` is only queried on the sparse check cadence.
+    fn should_dump(&mut self, iter: u32, pool_reserved: impl FnOnce() -> u64) -> Option<String> {
+        if let Some(last) = self.last_dump_iter
+            && iter < last.saturating_add(VRAM_DUMP_COOLDOWN)
+        {
+            return None;
+        }
+        if self.slow_factor > 0.0
+            && self.baseline.len() == VRAM_BASELINE_LEN
+            && self.window.len() == VRAM_WINDOW_LEN
+        {
+            let base = median(self.baseline.iter().copied());
+            let rolling = median(self.window.iter().copied());
+            if base > 0.0 && rolling > base * self.slow_factor {
+                return Some(format!(
+                    "Training steps slowed to {:.0} ms (baseline {:.0} ms, over {:.1}x)",
+                    rolling * 1000.0,
+                    base * 1000.0,
+                    self.slow_factor
+                ));
+            }
+        }
+        if self.budget_bytes > 0 && iter.is_multiple_of(VRAM_MEM_CHECK_EVERY) {
+            let reserved = pool_reserved();
+            if reserved > self.budget_bytes {
+                return Some(format!(
+                    "GPU memory pool at {:.2} GB exceeds the {:.2} GB budget",
+                    reserved as f64 / 1e9,
+                    self.budget_bytes as f64 / 1e9
+                ));
+            }
+        }
+        None
+    }
 }
 
 // TODO: Want to support this on WASM somehow. Maybe have user pick a file once,

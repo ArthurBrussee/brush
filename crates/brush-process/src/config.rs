@@ -56,6 +56,17 @@ pub struct ProcessConfig {
     /// automatically without this flag.
     #[arg(long, help_heading = "Process options")]
     pub resume: Option<String>,
+    /// Automatically dump and reload GPU memory when the GPU memory pool
+    /// grows beyond this many gigabytes: training state is checkpointed,
+    /// all GPU allocations are released, and training resumes in place.
+    /// Counters fragmentation and VRAM overcommit on limited GPUs. 0 disables.
+    #[arg(long, help_heading = "Process options", default_value = "0")]
+    pub vram_dump_above_gb: f32,
+    /// Automatically dump and reload GPU memory when training steps become
+    /// this many times slower than their own baseline (e.g. 2.0) — the
+    /// signature of VRAM spilling into system memory. 0 disables.
+    #[arg(long, help_heading = "Process options", default_value = "0")]
+    pub vram_dump_slow_factor: f32,
 }
 
 #[derive(Parser, Clone, Serialize, Deserialize)]
