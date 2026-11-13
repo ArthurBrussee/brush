@@ -169,8 +169,10 @@ fn tensor_from<const D: usize>(
     );
     let floats: Vec<f32> = view
         .data()
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| f32::from_le_bytes(*c))
         .collect();
     let data = TensorData::new(floats, view.shape().to_vec());
     Ok(Tensor::from_data(data, device))
@@ -195,7 +197,7 @@ fn parse_meta<T: std::str::FromStr>(
         .get(key)
         .ok_or_else(|| anyhow::anyhow!("Checkpoint is missing metadata entry {key}"))?
         .parse::<T>()
-        .map_err(|_| anyhow::anyhow!("Checkpoint metadata entry {key} is malformed"))
+        .map_err(|_e| anyhow::anyhow!("Checkpoint metadata entry {key} is malformed"))
 }
 
 /// Rebuild live training state from checkpoint bytes. The trainer is seeded
@@ -235,7 +237,7 @@ pub fn checkpoint_from_bytes(
         .split_whitespace()
         .map(str::parse::<f32>)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| anyhow::anyhow!("Checkpoint bounds are malformed"))?;
+        .map_err(|_e| anyhow::anyhow!("Checkpoint bounds are malformed"))?;
     anyhow::ensure!(
         bounds_vals.len() == 6,
         "Checkpoint bounds must have 6 values, got {}",
@@ -395,10 +397,15 @@ mod tests {
         });
         trainer.optim = Some(optim);
 
-        let bytes = checkpoint_to_bytes(&trainer, &splats, 5000, &[(
-            META_CONFIG_ARGS.to_owned(),
-            "--total-train-iters 30000".to_owned(),
-        )])
+        let bytes = checkpoint_to_bytes(
+            &trainer,
+            &splats,
+            5000,
+            &[(
+                META_CONFIG_ARGS.to_owned(),
+                "--total-train-iters 30000".to_owned(),
+            )],
+        )
         .await
         .expect("serialize checkpoint");
 

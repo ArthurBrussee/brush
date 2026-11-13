@@ -98,7 +98,9 @@ pub(crate) async fn train_stream(
     // Convert SplatData to Splats using KNN initialization
     let (up_axis, init_splats) = if let Some(ckpt) = &resume_ckpt {
         if load_result.init_splat.is_some() {
-            log::info!("Both a checkpoint and an init ply are present; resuming from the checkpoint.");
+            log::info!(
+                "Both a checkpoint and an init ply are present; resuming from the checkpoint."
+            );
         }
         // A resumed model keeps its own SH degree and render mode.
         (None, ckpt.splats.clone())
@@ -217,7 +219,10 @@ pub(crate) async fn train_stream(
                 })
                 .await;
         }
-        log::info!("Resumed training from checkpoint at iteration {}.", ckpt.next_iter);
+        log::info!(
+            "Resumed training from checkpoint at iteration {}.",
+            ckpt.next_iter
+        );
         (ckpt.trainer, ckpt.next_iter)
     } else {
         let trainer = SplatTrainer::new_seeded(
@@ -493,7 +498,10 @@ pub(crate) async fn train_stream(
                 vram_guard.record(step_dur);
             }
             if let Some(reason) = vram_guard.should_dump(iter, || {
-                device.memory_pool_usage().unwrap_or_default().bytes_reserved
+                device
+                    .memory_pool_usage()
+                    .unwrap_or_default()
+                    .bytes_reserved
             }) {
                 log::info!("{reason}; dumping and reloading GPU memory at iteration {iter}.");
                 let dump_start = Instant::now();
@@ -710,7 +718,9 @@ mod tests {
     fn vram_guard_triggers_on_memory_budget() {
         let mut guard = VramGuard::new(1.0, 0.0);
         assert!(
-            guard.should_dump(150, || u64::MAX).is_none(),
+            guard
+                .should_dump(VRAM_MEM_CHECK_EVERY + 1, || u64::MAX)
+                .is_none(),
             "memory is only checked on the sparse cadence"
         );
         assert!(
@@ -875,6 +885,16 @@ async fn load_resume_checkpoint(
         ckpt.next_iter,
         config.train_config.total_train_iters,
     );
+    // Loading uploads the full model and optimizer state in one burst. Flush
+    // it and trim the pool now, so startup's own allocations and the first
+    // training steps don't stack on top of the load's staging pages. Resuming
+    // a model near the VRAM limit is exactly when this matters.
+    // (Blocking sync isn't available on the web; cleanup alone still helps.)
+    #[cfg(not(target_family = "wasm"))]
+    device
+        .sync()
+        .map_err(|e| anyhow::anyhow!("Device sync failed after checkpoint load: {e:?}"))?;
+    device.memory_cleanup();
     Ok(Some(ckpt))
 }
 
@@ -972,6 +992,13 @@ async fn dump_and_reload(
     *splats = placeholder.clone();
     slot.set(0, placeholder);
     trainer.release_gpu_state();
+    // Wait for in-flight work to finish so the dropped tensors' pool pages
+    // are actually reclaimable, not still referenced by queued kernels.
+    // (Blocking sync isn't available on the web; cleanup alone still helps.)
+    #[cfg(not(target_family = "wasm"))]
+    device
+        .sync()
+        .map_err(|e| anyhow::anyhow!("Device sync failed during VRAM dump: {e:?}"))?;
     device.memory_cleanup();
 
     let ckpt = checkpoint_from_bytes(
@@ -984,6 +1011,13 @@ async fn dump_and_reload(
     *trainer = ckpt.trainer;
     trainer.set_view_cams(view_cams.to_vec());
     slot.set(0, splats.clone());
+    // The reload uploads the full model and optimizer state in one burst;
+    // flush it and return the staging pages before training allocates its
+    // step transients on top.
+    #[cfg(not(target_family = "wasm"))]
+    device
+        .sync()
+        .map_err(|e| anyhow::anyhow!("Device sync failed after VRAM reload: {e:?}"))?;
     device.memory_cleanup();
     Ok(())
 }
@@ -1013,8 +1047,10 @@ const VRAM_BASELINE_LEN: usize = 50;
 const VRAM_WINDOW_LEN: usize = 25;
 /// Plain steps ignored after every (re)start.
 const VRAM_WARMUP_STEPS: u32 = 20;
-/// The pool-size query stalls behind queued GPU work, so it runs sparsely.
-const VRAM_MEM_CHECK_EVERY: u32 = 100;
+/// The pool-size query stalls behind queued GPU work, so it doesn't run every
+/// step — but it must run often enough to beat an allocation spike to the
+/// budget. 25 steps is a few seconds at worst.
+const VRAM_MEM_CHECK_EVERY: u32 = 25;
 /// Minimum iterations between two dumps.
 const VRAM_DUMP_COOLDOWN: u32 = 500;
 
@@ -1068,7 +1104,7 @@ impl VramGuard {
 
     /// Returns a human-readable reason when a dump should happen now.
     /// `pool_reserved` is only queried on the sparse check cadence.
-    fn should_dump(&mut self, iter: u32, pool_reserved: impl FnOnce() -> u64) -> Option<String> {
+    fn should_dump(&self, iter: u32, pool_reserved: impl FnOnce() -> u64) -> Option<String> {
         if let Some(last) = self.last_dump_iter
             && iter < last.saturating_add(VRAM_DUMP_COOLDOWN)
         {

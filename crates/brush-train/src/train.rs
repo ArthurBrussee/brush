@@ -58,8 +58,11 @@ impl SplatOptim {
         for s in &mut scales[1..] {
             *s = rest_scale;
         }
-        let sh_lr_scales =
-            Tensor::<1>::from_floats(scales.as_slice(), opt_device).reshape([1, num_coeffs as i32, 1]);
+        let sh_lr_scales = Tensor::<1>::from_floats(scales.as_slice(), opt_device).reshape([
+            1,
+            num_coeffs as i32,
+            1,
+        ]);
 
         Self {
             adam: AdamScaled::new(1e-15),
