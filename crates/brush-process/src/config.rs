@@ -45,6 +45,17 @@ pub struct ProcessConfig {
         default_value = "export_{iter}.ply"
     )]
     pub export_name: String,
+    /// Write a full training checkpoint (splats + optimizer state) every this
+    /// many steps, as `checkpoint.safetensors` in the export path. Unlike ply
+    /// exports this captures everything needed to resume training without
+    /// quality loss. 0 disables checkpointing.
+    #[arg(long, help_heading = "Process options", default_value = "0")]
+    pub checkpoint_every: u32,
+    /// Resume training from a checkpoint file written by --checkpoint-every.
+    /// A `checkpoint.safetensors` inside the dataset is picked up
+    /// automatically without this flag.
+    #[arg(long, help_heading = "Process options")]
+    pub resume: Option<String>,
 }
 
 #[derive(Parser, Clone, Serialize, Deserialize)]

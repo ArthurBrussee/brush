@@ -4,6 +4,10 @@
 
 ### Highlights
 
+#### Training checkpoints
+
+Training can now be paused and resumed without quality loss ([#176](https://github.com/ArthurBrussee/brush/issues/176)). `--checkpoint-every N` writes a full checkpoint — splat parameters, Adam momentum, and trainer state — as a single `checkpoint.safetensors` in the export folder, replaced atomically each time. Resume with `--resume <path>`, or drop the file into the dataset folder to have it picked up automatically (which also works in the viewer). Unlike the old ply-reimport workaround, resuming keeps the learning-rate schedule position and optimizer momentum, so the result matches an uninterrupted run; `--total-train-iters` can also be raised on resume to train a finished model for longer.
+
 #### Training performance
 
 Most of the loss and backward path was rewritten over the cycle. SSIM moved to a dedicated fused kernel and was then folded together with L1 into a single forward pass ([#394](https://github.com/ArthurBrussee/brush/pull/394), [#401](https://github.com/ArthurBrussee/brush/pull/401)). SSIM's saved-for-backward tensors are now recomputed on the fly ([#409](https://github.com/ArthurBrussee/brush/pull/409)). The per-splat backward early-outs for splats that don't actually contribute to any pixel ([#394](https://github.com/ArthurBrussee/brush/pull/394)). Internal gradients and buffers are sparse where they used to be dense ([#378](https://github.com/ArthurBrussee/brush/pull/378)). Ground-truth images are packed to u32 RGBA on the GPU with background compositing and masking folded into the loss kernel, roughly 4x less pixel-side memory plus a chain of mixed-dtype Burn ops gone ([#410](https://github.com/ArthurBrussee/brush/pull/410)). The radix sort was rewritten to be ~50% faster, which also lifted rendering ~10-15% ([#386](https://github.com/ArthurBrussee/brush/pull/386)). Loading throughput and peak memory both improved meaningfully ([#280](https://github.com/ArthurBrussee/brush/pull/280), [#325](https://github.com/ArthurBrussee/brush/pull/325)).

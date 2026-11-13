@@ -16,6 +16,7 @@ brush-serde.path = "../brush-serde"
 lpips.path = "../lpips"
 
 anyhow.workspace = true
+safetensors.workspace = true
 image.workspace = true
 clap.workspace = true
 serde.workspace = true

@@ -90,8 +90,19 @@ pub(crate) async fn train_stream(
     log::info!("Loading initial splats if any.");
     let estimated_up = dataset.estimate_up();
 
+    // A full checkpoint (from --checkpoint-every) trumps any other
+    // initialization: it restores the splats *and* the optimizer state, so
+    // training continues as if it was never interrupted.
+    let resume_ckpt = load_resume_checkpoint(&vfs, &train_stream_config, device).await?;
+
     // Convert SplatData to Splats using KNN initialization
-    let (up_axis, init_splats) = if let Some(msg) = load_result.init_splat {
+    let (up_axis, init_splats) = if let Some(ckpt) = &resume_ckpt {
+        if load_result.init_splat.is_some() {
+            log::info!("Both a checkpoint and an init ply are present; resuming from the checkpoint.");
+        }
+        // A resumed model keeps its own SH degree and render mode.
+        (None, ckpt.splats.clone())
+    } else if let Some(msg) = load_result.init_splat {
         // Use loaded splats with KNN init
         let render_mode = train_stream_config
             .train_config
@@ -134,7 +145,13 @@ pub(crate) async fn train_stream(
         (None, splats)
     };
 
-    let init_splats = init_splats.with_sh_degree(train_stream_config.model_config.sh_degree);
+    // Fresh inits grow to the configured SH degree; a resumed model already
+    // carries its trained coefficients and stays as-is.
+    let init_splats = if resume_ckpt.is_some() {
+        init_splats
+    } else {
+        init_splats.with_sh_degree(train_stream_config.model_config.sh_degree)
+    };
 
     // If the metadata has an up axis prefer that, otherwise estimate the up direction.
     let up_axis = up_axis.or(Some(estimated_up));
@@ -178,12 +195,39 @@ pub(crate) async fn train_stream(
         view_cams.push((view.camera.position, focal));
     }
 
-    let mut trainer = SplatTrainer::new_seeded(
-        &train_stream_config.train_config,
-        device,
-        bounds,
-        process_config.seed,
-    );
+    let (mut trainer, start_iter) = if let Some(ckpt) = resume_ckpt {
+        // The restored trainer carries the optimizer momentum, LR-schedule
+        // position and refine bounds from the checkpoint.
+        if process_config.start_iter != 0 && process_config.start_iter != ckpt.next_iter {
+            log::info!(
+                "--start-iter {} is ignored; resuming at iteration {} from the checkpoint.",
+                process_config.start_iter,
+                ckpt.next_iter
+            );
+        }
+        let current_args = crate::args_file::config_to_args(&train_stream_config).join(" ");
+        if let Some(saved_args) = &ckpt.config_args
+            && saved_args != &current_args
+        {
+            emitter
+                .emit(ProcessMessage::Warning {
+                    error: anyhow::anyhow!(
+                        "Resuming with different settings than the checkpoint was trained with.\nCheckpoint: {saved_args}\nCurrent: {current_args}"
+                    ),
+                })
+                .await;
+        }
+        log::info!("Resumed training from checkpoint at iteration {}.", ckpt.next_iter);
+        (ckpt.trainer, ckpt.next_iter)
+    } else {
+        let trainer = SplatTrainer::new_seeded(
+            &train_stream_config.train_config,
+            device,
+            bounds,
+            process_config.seed,
+        );
+        (trainer, process_config.start_iter)
+    };
     trainer.set_view_cams(view_cams.clone());
 
     // Get the dataset name from the base path (if available) for interpolation.
@@ -217,7 +261,7 @@ pub(crate) async fn train_stream(
     let process_config = &train_stream_config.process_config;
 
     log::info!("Start training loop.");
-    for iter in process_config.start_iter..train_stream_config.train_config.total_iters() {
+    for iter in start_iter..train_stream_config.train_config.total_iters() {
         let target_lod = if lod_levels == 0 || iter < training_steps {
             0u32
         } else {
@@ -412,6 +456,22 @@ pub(crate) async fn train_stream(
                 )
                 .await
                 .with_context(|| format!("Export at iteration {iter} failed"));
+
+                if let Err(error) = res {
+                    emitter.emit(ProcessMessage::Warning { error }).await;
+                }
+            }
+
+            // Full training checkpoints for resuming. Only in the main phase:
+            // LOD phases restart from a decimated model anyway.
+            let should_checkpoint = process_config.checkpoint_every > 0
+                && current_lod == 0
+                && (iter.is_multiple_of(process_config.checkpoint_every) || is_last_step);
+            if should_checkpoint {
+                let res =
+                    write_checkpoint(&trainer, &splats, iter, &export_path, &train_stream_config)
+                        .await
+                        .with_context(|| format!("Checkpoint at iteration {iter} failed"));
 
                 if let Err(error) = res {
                     emitter.emit(ProcessMessage::Warning { error }).await;
@@ -620,6 +680,104 @@ async fn run_eval(
         }))
         .await;
 
+    Ok(())
+}
+
+/// Look for a resume checkpoint: an explicit `--resume` path, or a
+/// `checkpoint.safetensors` inside the dataset. Returns the restored state,
+/// or `None` to start fresh. A checkpoint that exists but fails to load is an
+/// error rather than a silent restart from scratch.
+async fn load_resume_checkpoint(
+    vfs: &BrushVfs,
+    config: &TrainStreamConfig,
+    device: &crate::ProcessDevice,
+) -> anyhow::Result<Option<brush_train::checkpoint::LoadedCheckpoint>> {
+    use brush_train::checkpoint::{CHECKPOINT_FILE_NAME, checkpoint_from_bytes};
+
+    let bytes: Option<Vec<u8>> = if let Some(path) = &config.process_config.resume {
+        #[cfg(target_family = "wasm")]
+        {
+            anyhow::bail!(
+                "--resume with a file path isn't supported on the web; add {CHECKPOINT_FILE_NAME} to the dataset files instead (ignored path: {path})."
+            );
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            Some(
+                tokio::fs::read(path)
+                    .await
+                    .with_context(|| format!("Reading checkpoint {path}"))?,
+            )
+        }
+    } else if let Some(ckpt_path) = vfs
+        .file_paths()
+        .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(CHECKPOINT_FILE_NAME))
+    {
+        use tokio::io::AsyncReadExt;
+        let mut reader = vfs.reader_at_path(&ckpt_path).await?;
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .with_context(|| format!("Reading checkpoint {}", ckpt_path.display()))?;
+        Some(bytes)
+    } else {
+        None
+    };
+
+    let Some(bytes) = bytes else {
+        return Ok(None);
+    };
+
+    let ckpt = checkpoint_from_bytes(
+        &bytes,
+        &config.train_config,
+        device,
+        config.process_config.seed,
+    )?;
+    anyhow::ensure!(
+        ckpt.next_iter <= config.train_config.total_train_iters,
+        "Checkpoint is at iteration {} but --total-train-iters is {}. Raise --total-train-iters to continue training this model.",
+        ckpt.next_iter,
+        config.train_config.total_train_iters,
+    );
+    Ok(Some(ckpt))
+}
+
+/// Write a full training checkpoint atomically (via a temp file + rename), so
+/// a crash mid-write never destroys the previous checkpoint.
+#[cfg(not(target_family = "wasm"))]
+async fn write_checkpoint(
+    trainer: &SplatTrainer,
+    splats: &Splats,
+    next_iter: u32,
+    export_path: &Path,
+    config: &TrainStreamConfig,
+) -> Result<(), anyhow::Error> {
+    use brush_train::checkpoint::{CHECKPOINT_FILE_NAME, META_CONFIG_ARGS, checkpoint_to_bytes};
+
+    tokio::fs::create_dir_all(&export_path)
+        .await
+        .with_context(|| format!("Creating export directory {}", export_path.display()))?;
+
+    let args = crate::args_file::config_to_args(config).join(" ");
+    let bytes = checkpoint_to_bytes(
+        trainer,
+        splats,
+        next_iter,
+        &[(META_CONFIG_ARGS.to_owned(), args)],
+    )
+    .await?;
+
+    let final_path = export_path.join(CHECKPOINT_FILE_NAME);
+    let tmp_path = export_path.join(format!("{CHECKPOINT_FILE_NAME}.tmp"));
+    tokio::fs::write(&tmp_path, bytes)
+        .await
+        .with_context(|| format!("Writing checkpoint {}", tmp_path.display()))?;
+    tokio::fs::rename(&tmp_path, &final_path)
+        .await
+        .with_context(|| format!("Moving checkpoint into place at {}", final_path.display()))?;
+    log::info!("Wrote checkpoint at iteration {next_iter} to {}", final_path.display());
     Ok(())
 }
 

@@ -38,11 +38,36 @@ const MIN_SCALE_FREEZE_FRAC: f32 = 0.9;
 /// The three per-parameter Adam states of a [`Splats`] module, owned directly
 /// so the trainer can update LR scaling every step and surgically edit the
 /// momentum tensors during refine — all GPU-side, no record round-trips.
-struct SplatOptim {
-    adam: AdamScaled,
-    transforms: AdamState<2>,
-    sh_coeffs: AdamState<3>,
-    opacities: AdamState<1>,
+pub(crate) struct SplatOptim {
+    pub(crate) adam: AdamScaled,
+    pub(crate) transforms: AdamState<2>,
+    pub(crate) sh_coeffs: AdamState<3>,
+    pub(crate) opacities: AdamState<1>,
+}
+
+impl SplatOptim {
+    /// Fresh optimizer state for a splat module of the given SH degree.
+    /// Momentum starts empty; the transforms LR scaling is attached by the
+    /// trainer each step.
+    pub(crate) fn new(config: &TrainConfig, sh_degree: u32, opt_device: &Device) -> Self {
+        let num_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
+
+        // DC (band 0) uses full LR; bands 1+ are scaled down.
+        let mut scales = vec![1.0f32; num_coeffs];
+        let rest_scale = 1.0 / config.lr_coeffs_sh_scale;
+        for s in &mut scales[1..] {
+            *s = rest_scale;
+        }
+        let sh_lr_scales =
+            Tensor::<1>::from_floats(scales.as_slice(), opt_device).reshape([1, num_coeffs as i32, 1]);
+
+        Self {
+            adam: AdamScaled::new(1e-15),
+            transforms: AdamState::new(None, false),
+            sh_coeffs: AdamState::new(Some(sh_lr_scales), true),
+            opacities: AdamState::new(None, false),
+        }
+    }
 }
 
 /// Step one parameter: pull its gradient, run Adam on the inner
@@ -77,11 +102,11 @@ pub struct SplatTrainer {
     lr_scaling_fixed: Tensor<2>,
     lr_mean_columns: Tensor<2>,
     refine_record: Option<RefineRecord>,
-    optim: Option<SplatOptim>,
+    pub(crate) optim: Option<SplatOptim>,
     ssim_enabled: bool,
-    bounds: BoundingBox,
-    step_count: u32,
-    max_sh_degree: u32,
+    pub(crate) bounds: BoundingBox,
+    pub(crate) step_count: u32,
+    pub(crate) max_sh_degree: u32,
     rng: rand::rngs::StdRng,
     /// Per-train-view (world center, focal in px at native res) for the
     /// Mip-Splatting 3D filter. Empty disables it. The floor itself lives on
@@ -356,27 +381,9 @@ impl SplatTrainer {
         // The optimizer strips autodiff before stepping, so optimizer state
         // (scaling, momentum) lives on the inner device.
         let opt_device = device.clone().inner();
-        let optimizer =
-            self.optim.get_or_insert_with(|| {
-                let sh_degree = splats.sh_degree();
-                let num_coeffs = sh_coeffs_for_degree(sh_degree) as usize;
-
-                // DC (band 0) uses full LR; bands 1+ are scaled down.
-                let mut scales = vec![1.0f32; num_coeffs];
-                let rest_scale = 1.0 / self.config.lr_coeffs_sh_scale;
-                for s in &mut scales[1..] {
-                    *s = rest_scale;
-                }
-                let sh_lr_scales = Tensor::<1>::from_floats(scales.as_slice(), &opt_device)
-                    .reshape([1, num_coeffs as i32, 1]);
-
-                SplatOptim {
-                    adam: AdamScaled::new(1e-15),
-                    transforms: AdamState::new(None, false),
-                    sh_coeffs: AdamState::new(Some(sh_lr_scales), true),
-                    opacities: AdamState::new(None, false),
-                }
-            });
+        let optimizer = self
+            .optim
+            .get_or_insert_with(|| SplatOptim::new(&self.config, splats.sh_degree(), &opt_device));
 
         optimizer.transforms.scaling = Some(lr_scaling);
 

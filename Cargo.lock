@@ -1180,7 +1180,6 @@ dependencies = [
  "glam",
  "image",
  "log",
- "rerun",
  "serde",
  "tokio",
 ]
@@ -1269,6 +1268,7 @@ dependencies = [
  "lpips",
  "rand 0.10.2",
  "rayon",
+ "safetensors 0.8.0",
  "serde",
  "tokio",
  "tracing",
