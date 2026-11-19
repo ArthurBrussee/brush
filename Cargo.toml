@@ -333,3 +333,28 @@ wgpu-core            = { git = "https://github.com/ArthurBrussee/wgpu", branch =
 wgpu-hal             = { git = "https://github.com/ArthurBrussee/wgpu", branch = "fix/webgpu-errors-v30.0.1" }
 wgpu-types           = { git = "https://github.com/ArthurBrussee/wgpu", branch = "fix/webgpu-errors-v30.0.1" }
 naga                 = { git = "https://github.com/ArthurBrussee/wgpu", branch = "fix/webgpu-errors-v30.0.1" }
+
+# burn's pinned cubecl rev plus fixes for the wasm build and an abort at exit on macOS.
+[patch."https://github.com/tracel-ai/cubecl"]
+cubecl                 = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-common          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-core            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-cpp             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-cpu             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-cuda            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-environment     = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-hip             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-ir              = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-llvm            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-macros          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-macros-internal = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-metal           = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-monitoring      = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-opt             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-runtime         = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-server          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-spirv           = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-std             = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-tile            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-wgpu            = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }
+cubecl-zspace          = { git = "https://github.com/ArthurBrussee/cubecl", branch = "brush/fixes-68fff47" }

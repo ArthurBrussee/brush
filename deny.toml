@@ -30,6 +30,10 @@ ignore = [
     "RUSTSEC-2024-0436",
     # ttf-parser is unmaintained, used transitively by winit.
     "RUSTSEC-2026-0192",
+    # chrono is unmaintained, used by arrow (via rerun).
+    "RUSTSEC-2026-0543",
+    # humantime is unmaintained, used for brush's duration args.
+    "RUSTSEC-2026-0542",
 ]
 
 [bans]
@@ -93,6 +97,20 @@ skip = [
     { name = "console" },
     { name = "jni-sys" },
     { name = "wasm-streams" },
+
+    # cubecl's turso cache pulls an older crypto and bindgen stack.
+    { name = "allocator-api2" },
+    { name = "block-buffer" },
+    { name = "crypto-common" },
+    { name = "digest" },
+    { name = "nom" },
+    { name = "prettyplease" },
+    { name = "shlex" },
+    { name = "unicode-width" },
+    # cubecl-opt and pliron disagree.
+    { name = "hi_sparse_bitset" },
+    # icu's derives are split across synstructure 0.13 and 0.14.
+    { name = "synstructure" },
 ]
 
 [licenses]
