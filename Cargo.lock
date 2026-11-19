@@ -2317,7 +2317,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2720,7 +2720,7 @@ dependencies = [
 [[package]]
 name = "cubecl"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "cubecl-core",
  "cubecl-cpu",
@@ -2740,7 +2740,7 @@ dependencies = [
 [[package]]
 name = "cubecl-common"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bytemuck",
  "cfg_aliases",
@@ -2764,7 +2764,7 @@ dependencies = [
 [[package]]
 name = "cubecl-core"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bitflags 2.13.2",
  "bytemuck",
@@ -2794,7 +2794,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cpp"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2816,7 +2816,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cpu"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bytemuck",
  "crossbeam-utils",
@@ -2838,7 +2838,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cuda"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2858,7 +2858,7 @@ dependencies = [
 [[package]]
 name = "cubecl-environment"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "async-channel",
  "backtrace",
@@ -2898,7 +2898,7 @@ dependencies = [
 [[package]]
 name = "cubecl-hip"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bytemuck",
  "cubecl-common",
@@ -2931,7 +2931,7 @@ dependencies = [
 [[package]]
 name = "cubecl-ir"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bumpalo",
  "cubecl-common",
@@ -2962,7 +2962,7 @@ dependencies = [
 [[package]]
 name = "cubecl-llvm"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "cc",
  "cubecl-core",
@@ -2982,7 +2982,7 @@ dependencies = [
 [[package]]
 name = "cubecl-macros"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "darling 0.24.1",
  "derive-new",
@@ -2999,7 +2999,7 @@ dependencies = [
 [[package]]
 name = "cubecl-macros-internal"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "darling 0.24.1",
  "inflections",
@@ -3011,7 +3011,7 @@ dependencies = [
 [[package]]
 name = "cubecl-metal"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "block2 0.6.2",
  "bytemuck",
@@ -3035,7 +3035,7 @@ dependencies = [
 [[package]]
 name = "cubecl-monitoring"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "cfg_aliases",
  "cubecl-ir",
@@ -3048,7 +3048,7 @@ dependencies = [
 [[package]]
 name = "cubecl-opt"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "cubecl-common",
  "cubecl-environment",
@@ -3069,7 +3069,7 @@ dependencies = [
 [[package]]
 name = "cubecl-runtime"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -3100,7 +3100,7 @@ dependencies = [
 [[package]]
 name = "cubecl-server"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -3128,7 +3128,7 @@ dependencies = [
 [[package]]
 name = "cubecl-spirv"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bitflags 2.13.2",
  "cubecl-common",
@@ -3151,7 +3151,7 @@ dependencies = [
 [[package]]
 name = "cubecl-std"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "cubecl-common",
  "cubecl-core",
@@ -3168,7 +3168,7 @@ dependencies = [
 [[package]]
 name = "cubecl-tile"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "cubecl-core",
  "cubecl-ir",
@@ -3182,7 +3182,7 @@ dependencies = [
 [[package]]
 name = "cubecl-wgpu"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -3214,7 +3214,7 @@ dependencies = [
 [[package]]
 name = "cubecl-zspace"
 version = "0.12.0-pre.2"
-source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#d920e11e5ac3fedac923ce97b2b189e857d32c43"
+source = "git+https://github.com/ArthurBrussee/cubecl?branch=brush%2Ffixes-68fff47#303a491e6901907e5310fb84fb67b42d287630fd"
 dependencies = [
  "serde",
  "smallvec",
@@ -3640,7 +3640,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4137,7 +4137,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6505,7 +6505,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9330,7 +9330,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10073,10 +10073,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10095,7 +10095,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -11710,7 +11710,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
