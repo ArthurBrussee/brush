@@ -41,6 +41,9 @@ brush-train = { path = "../brush-train" }
 brush-dataset = { path = "../brush-dataset"}
 brush-rerun = { path = "../brush-rerun" }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+burn = { workspace = true, features = ["metal"] }
+
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 

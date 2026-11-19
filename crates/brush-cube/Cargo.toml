@@ -32,4 +32,4 @@ workspace = true
 #  * CI runners are exactly that case, so they build without this.
 #
 # Use it on real hardware: `cargo test --features brush-cube/metal`.
-metal = ["burn-wgpu/metal"]
+metal = ["burn-wgpu/wgpu-msl"]

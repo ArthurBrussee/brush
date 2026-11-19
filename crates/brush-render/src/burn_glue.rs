@@ -73,7 +73,9 @@ pub(crate) fn match_backend<const D: usize, const DR: usize>(
 pub fn resolve_to_cube_float<const D: usize>(tensor: Tensor<D>) -> CubeTensor {
     let fusion = unwrap_wgpu_float(tensor);
     let client = fusion.client.clone();
-    client.resolve_tensor_float::<MainBackendBase>(fusion)
+    client
+        .resolve_tensor_float::<MainBackendBase>(fusion)
+        .expect("Failed to resolve fusion tensor")
 }
 
 impl SplatOps for Fusion<CubeBackend> {
@@ -96,24 +98,18 @@ impl SplatOps for Fusion<CubeBackend> {
 
         // Resolve fusion inputs to MainBackendBase tensors. This
         // drains any pending fusion operations into a concrete buffer.
-        let base_transforms = client
-            .clone()
-            .resolve_tensor_float::<CubeBackend>(transforms);
-        let base_sh_coeffs = client
-            .clone()
-            .resolve_tensor_float::<CubeBackend>(sh_coeffs);
-        let base_raw_opac = client
-            .clone()
-            .resolve_tensor_float::<CubeBackend>(raw_opacities);
-        let base_min_scale = client
-            .clone()
-            .resolve_tensor_float::<CubeBackend>(min_scale);
-        let base_refine_weight = client
-            .clone()
-            .resolve_tensor_float::<CubeBackend>(refine_weight);
-        let base_coeffs_grad_sq = client
-            .clone()
-            .resolve_tensor_float::<CubeBackend>(coeffs_grad_sq);
+        let resolve = |t| {
+            client
+                .clone()
+                .resolve_tensor_float::<CubeBackend>(t)
+                .expect("Failed to resolve fusion tensor")
+        };
+        let base_transforms = resolve(transforms);
+        let base_sh_coeffs = resolve(sh_coeffs);
+        let base_raw_opac = resolve(raw_opacities);
+        let base_min_scale = resolve(min_scale);
+        let base_refine_weight = resolve(refine_weight);
+        let base_coeffs_grad_sq = resolve(coeffs_grad_sq);
 
         let out = <CubeBackend as SplatOps>::render(
             camera,

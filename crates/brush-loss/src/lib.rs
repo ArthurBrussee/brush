@@ -88,8 +88,9 @@ mod kernels {
     const PARTIAL_ITERS_BWD: u32 = (SHARED_Y_BWD * SHARED_X_BWD).div_ceil(THREADS_BWD); // 6
     const INNER_H_PASSES_BWD: u32 = SHARED_Y_BWD.div_ceil(BLOCK_Y_BWD); // 3
 
-    const C1: f32 = 0.01 * 0.01;
-    const C2: f32 = 0.03 * 0.03;
+    // f64 for `F::new`, rounded through f32 to keep the kernel constants unchanged.
+    const C1: f64 = (0.01_f32 * 0.01) as f64;
+    const C2: f64 = (0.03_f32 * 0.03) as f64;
     const INV_255: f32 = 1.0 / 255.0;
 
     /// Read `pred[y, x, c]` (`[H, W, C]` layout, `cn` channels) returning
@@ -212,7 +213,7 @@ mod kernels {
 
     #[cube]
     fn gw<F: Float>(#[comptime] i: u32) -> F {
-        F::new(comptime![gauss_taps()[i as usize]])
+        F::new(comptime![gauss_taps()[i as usize] as f64])
     }
 
     /// Forward: produce the L1 + SSIM loss map. When dispatched with `C = 4`,
