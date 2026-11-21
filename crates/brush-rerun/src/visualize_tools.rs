@@ -1,16 +1,16 @@
 #![allow(unused_imports)]
 
 pub struct VisualizeTools {
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(rerun)]
     rec: rerun::RecordingStream,
     /// Tracks which eval view indices have had their GT image logged. GT
     /// images never change, so we log them once as static instead of paying
     /// the full readback + send cost every eval iter.
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(rerun)]
     gt_logged: std::sync::Mutex<std::collections::HashSet<u32>>,
 }
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(rerun)]
 mod visualize_tools_impl {
     use std::sync::Arc;
 
@@ -695,7 +695,7 @@ mod visualize_tools_impl {
     }
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(not(rerun))]
 mod visualize_tools_impl {
     use std::sync::Arc;
 
