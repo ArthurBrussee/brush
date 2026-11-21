@@ -8,7 +8,7 @@ use burn::cubecl::prelude::*;
 
 use crate::kernels::camera_model::JacobianClampLimits;
 use crate::kernels::camera_model::pinhole::PinholeParams;
-pub use brush_cube::{Mat2x3, Mat3, PixelRect, Quat, Sym2, TileBbox, Vec3A};
+pub use brush_cube::{Mat2x3, Mat3, Quat, Sym2, TileBbox, Vec3A};
 
 /// One projected splat as the kernel sees it. The on-device storage is
 /// a flat `Tensor<f32>` of `9 * num_visible` lanes (see
