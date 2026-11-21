@@ -445,7 +445,13 @@ pub(crate) async fn train_stream(
             if rerun_config.rerun_enabled
                 && (iter.is_multiple_of(rerun_config.rerun_log_train_stats_every) || is_last_step)
             {
-                visualize.log_memory(iter, &device.memory_pool_usage().unwrap_or_default())?;
+                visualize.log_memory(
+                    iter,
+                    &device
+                        .measure_memory()
+                        .map(|report| report.usage)
+                        .unwrap_or_default(),
+                )?;
             }
 
             if refine.num_added > 0 {

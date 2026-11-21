@@ -78,7 +78,7 @@ impl UiProcess {
         self.read()
             .process_handle
             .as_ref()
-            .and_then(|process| process.device.memory_pool_usage())
+            .and_then(|process| process.device.measure_memory().map(|report| report.usage))
     }
 
     pub fn is_loading(&self) -> bool {

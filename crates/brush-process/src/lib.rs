@@ -7,8 +7,14 @@ pub mod train_stream;
 pub use brush_vfs::DataSource;
 pub type ProcessDevice = burn::tensor::Device;
 
+/// On macOS, the native Metal runtime if the GPU supports it, else wgpu.
+/// Everywhere else, wgpu.
 pub fn default_device() -> ProcessDevice {
-    WgpuDevice::default().into()
+    if cfg!(target_os = "macos") {
+        burn::cubecl::Device::default().into()
+    } else {
+        WgpuDevice::default().into()
+    }
 }
 
 use burn_wgpu::{
@@ -35,8 +41,15 @@ fn burn_options() -> RuntimeOptions {
 }
 
 pub async fn burn_init_setup() -> ProcessDevice {
-    burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::default(), burn_options()).await;
-    default_device()
+    let device = default_device();
+    if matches!(
+        device.as_dispatch(),
+        burn::backend::DispatchDevice::Cube(burn::cubecl::Device::Wgpu(_))
+    ) {
+        burn_wgpu::init_setup_async::<AutoGraphicsApi>(&WgpuDevice::default(), burn_options())
+            .await;
+    }
+    device
 }
 
 pub fn burn_init_device(adapter: Adapter, device: Device, queue: Queue) -> ProcessDevice {
