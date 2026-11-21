@@ -10,7 +10,7 @@ clap.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 
-# These are needed for visualize_tools API (even noop on WASM)
+# These are needed for visualize_tools API (even where it's a noop)
 burn = { workspace = true, features = ["autodiff"] }
 brush-render.path = "../brush-render"
 brush-train.path = "../brush-train"
@@ -18,7 +18,8 @@ brush-dataset.path = "../brush-dataset"
 
 tokio.workspace = true
 
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# No rerun on wasm or mobile. Keep in sync with build.rs.
+[target.'cfg(not(any(target_family = "wasm", target_os = "ios", target_os = "android")))'.dependencies]
 rerun.workspace = true
 glam.workspace = true
 image.workspace = true
