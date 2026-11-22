@@ -5,9 +5,7 @@ use burn::cubecl;
 use burn::cubecl::cube;
 use burn::cubecl::prelude::*;
 
-use super::helpers::{
-    compute_bbox_extent, get_tile_bbox, read_main_splat, tile_rect, will_primitive_contribute,
-};
+use super::helpers::{compute_bbox_extent, get_tile_bbox, read_main_splat, tile_row_span};
 
 pub const WG_SIZE: u32 = 256;
 
@@ -41,10 +39,10 @@ pub fn map_gaussians_to_intersect_kernel(
         splat_cum_hit_counts[prev_idx as usize],
     );
     // Slot budget reserved for this splat in PF. PF ran the same
-    // `will_primitive_contribute` walk, so the emission loop below should
-    // count the same tiles — but the two dispatches go through separate
-    // shader optimisation passes, so cap emission at `pf_count` and pad any
-    // leftover budget (belt and suspenders).
+    // `tile_row_span` walk, so the emission loop below should count the same
+    // tiles. But the two dispatches go through separate shader optimisation
+    // passes, so cap emission at `pf_count` and pad any leftover budget (belt
+    // and suspenders).
     let pf_count = splat_cum_hit_counts[compact_gid as usize] - base_isect_id;
 
     // Tile id past the valid range — radix-sorts after every real tile
@@ -52,21 +50,16 @@ pub fn map_gaussians_to_intersect_kernel(
     // visits these padded slots.
     let sentinel_tile_id = tile_bw * tile_bh;
 
-    let bb_w = bb.max_x - bb.min_x;
-    let num_tiles_bbox = (bb.max_y - bb.min_y) * bb_w;
     let mut num_tiles_hit = 0u32;
-    for tile_idx in 0u32..num_tiles_bbox {
-        let tx = (tile_idx % bb_w) + bb.min_x;
-        let ty = (tile_idx / bb_w) + bb.min_y;
-        let rect = tile_rect(tx, ty);
-        if will_primitive_contribute(rect, xy_x, xy_y, conic, power_threshold)
-            && num_tiles_hit < pf_count
-        {
-            let tile_id = tx + ty * tile_bw;
-            let isect_id = base_isect_id + num_tiles_hit;
-            tile_id_from_isect[isect_id as usize] = tile_id;
-            compact_gid_from_isect[isect_id as usize] = compact_gid;
-            num_tiles_hit += 1u32;
+    for ty in bb.min_y..bb.max_y {
+        let (lo, hi) = tile_row_span(bb, ty, xy_x, xy_y, conic, ex, ey);
+        for tx in lo..hi {
+            if num_tiles_hit < pf_count {
+                let isect_id = base_isect_id + num_tiles_hit;
+                tile_id_from_isect[isect_id as usize] = tx + ty * tile_bw;
+                compact_gid_from_isect[isect_id as usize] = compact_gid;
+                num_tiles_hit += 1u32;
+            }
         }
     }
 

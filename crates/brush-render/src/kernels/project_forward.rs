@@ -135,7 +135,7 @@ pub fn project_forward_kernel(
     }
 
     let bb = get_tile_bbox(mean2d_x, mean2d_y, ex, ey, u.tile_bw, u.tile_bh);
-    let num_tiles_hit = count_contributing_tiles(bb, mean2d_x, mean2d_y, conic, power_threshold);
+    let num_tiles_hit = count_contributing_tiles(bb, mean2d_x, mean2d_y, conic, ex, ey);
 
     intersect_counts[global_gid as usize] = num_tiles_hit;
     Atomic::fetch_add(&num_intersections[0], num_tiles_hit);

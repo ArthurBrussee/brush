@@ -546,16 +546,6 @@ pub struct TileBbox {
     pub max_y: u32,
 }
 
-/// 2D pixel bbox as a rect (min/max corners in pixel coords).
-#[derive(CubeType, Copy, Clone)]
-#[expand(derive(Clone, Copy))]
-pub struct PixelRect {
-    pub min_x: f32,
-    pub min_y: f32,
-    pub max_x: f32,
-    pub max_y: f32,
-}
-
 #[cube]
 pub fn sigmoid(x: f32) -> f32 {
     1.0f32 / (1.0f32 + f32::exp(-x))

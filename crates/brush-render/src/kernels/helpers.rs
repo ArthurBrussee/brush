@@ -8,7 +8,7 @@ use burn::cubecl::cube;
 use burn::cubecl::prelude::*;
 use burn::cubecl::std::FastDivmod;
 
-use super::types::{PixelRect, ProjectUniforms, Quat, Splat, Sym2, TileBbox, Vec3A};
+use super::types::{ProjectUniforms, Quat, Splat, Sym2, TileBbox, Vec3A};
 use crate::kernels::camera_model::{CameraModel, calculate_project_jacobian};
 pub use brush_cube::{calc_sigma, is_finite_f32, sigmoid};
 
@@ -91,18 +91,6 @@ pub fn compute_bbox_extent(conic: Sym2, power_threshold: f32) -> (f32, f32) {
         select(degenerate, -1.0f32, ex),
         select(degenerate, -1.0f32, ey),
     )
-}
-
-#[cube]
-pub fn tile_rect(tx: u32, ty: u32) -> PixelRect {
-    let min_x = (tx * TILE_WIDTH) as f32;
-    let min_y = (ty * TILE_WIDTH) as f32;
-    PixelRect {
-        min_x,
-        min_y,
-        max_x: min_x + TILE_WIDTH as f32,
-        max_y: min_y + TILE_WIDTH as f32,
-    }
 }
 
 /// Pixel-space center +/- dims clamped to a `(bw, bh)` viewport. Used by
@@ -194,73 +182,65 @@ pub fn compensate_cov2d(c: Sym2, #[comptime] mip_splatting: bool) -> (Sym2, f32)
     (blurred, filter_comp)
 }
 
-/// Walk the tiles in `bb` in linearised mod/div order and count those
-/// that pass `will_primitive_contribute`. Shared between
-/// `project_forward` and `map_gaussians_to_intersect` so both dispatches
-/// run *byte-identical* loop bodies. Drift between the two counts would
-/// leave uninitialised slots in `compact_gid_from_isect`; map_gaussians
-/// pads with a sentinel `tile_id` defensively in case it still happens.
+/// Tile columns `[lo, hi)` that a splat touches within tile row `ty`.
+///
+/// The splat's footprint is the ellipse where it still clears the alpha
+/// cutoff, with half-extents `(ex, ey)` from `compute_bbox_extent`. Its
+/// left edge is convex in y and leftmost at `y = b·ex / c` from the mean, and
+/// the right edge mirrors that. So within the row's strip each edge is at its
+/// extreme at that y clamped to the strip, which gives the exact x range
+/// without testing every tile.
 #[cube]
-pub fn count_contributing_tiles(
+pub fn tile_row_span(
     bb: TileBbox,
-    xy_x: f32,
-    xy_y: f32,
-    conic: Sym2,
-    power_threshold: f32,
-) -> u32 {
-    let bb_w = bb.max_x - bb.min_x;
-    let num_tiles_bbox = (bb.max_y - bb.min_y) * bb_w;
-    let mut num_tiles_hit = 0u32;
-    for tile_idx in 0u32..num_tiles_bbox {
-        let tx = (tile_idx % bb_w) + bb.min_x;
-        let ty = (tile_idx / bb_w) + bb.min_y;
-        let rect = tile_rect(tx, ty);
-        if will_primitive_contribute(rect, xy_x, xy_y, conic, power_threshold) {
-            num_tiles_hit += 1u32;
-        }
-    }
-    num_tiles_hit
-}
-
-/// Conservative tile-vs-gaussian intersection test (StopThePop).
-#[cube]
-pub fn will_primitive_contribute(
-    rect: PixelRect,
+    ty: u32,
     mx: f32,
     my: f32,
     conic: Sym2,
-    power_threshold: f32,
-) -> bool {
-    let x_left = mx < rect.min_x;
-    let x_right = mx > rect.max_x;
-    let in_x_range = !(x_left || x_right);
-    let y_above = my < rect.min_y;
-    let y_below = my > rect.max_y;
-    let in_y_range = !(y_above || y_below);
+    ex: f32,
+    ey: f32,
+) -> (u32, u32) {
+    let tw = TILE_WIDTH as f32;
+    // The strip's y range relative to the mean, cut to the ellipse's.
+    let y0 = max((ty * TILE_WIDTH) as f32 - my, -ey);
+    let y1 = min(((ty + 1u32) * TILE_WIDTH) as f32 - my, ey);
+    let y_peak = conic.c01 * ex / conic.c11;
+    let yl = clamp(y_peak, y0, y1);
+    let yr = clamp(-y_peak, y0, y1);
 
-    let mut hit = in_x_range && in_y_range;
-    if !hit {
-        let corner_x = select(x_left, rect.min_x, rect.max_x);
-        let corner_y = select(y_above, rect.min_y, rect.max_y);
-        let width = rect.max_x - rect.min_x;
-        let height = rect.max_y - rect.min_y;
-        let dxf = select(x_left, width, -width);
-        let dyf = select(y_above, height, -height);
-        let diff_x = mx - corner_x;
-        let diff_y = my - corner_y;
+    // On the ellipse, x = (-b·y ± sqrt(det · (ey² - y²))) / a.
+    let det = conic.c00 * conic.c11 - conic.c01 * conic.c01;
+    let half_l = f32::sqrt(max(det * (ey * ey - yl * yl), 0.0f32));
+    let half_r = f32::sqrt(max(det * (ey * ey - yr * yr), 0.0f32));
+    let x_min = mx + (-conic.c01 * yl - half_l) / conic.c00;
+    let x_max = mx + (-conic.c01 * yr + half_r) / conic.c00;
 
-        let tx_raw =
-            (dxf * conic.c00 * diff_x + dxf * conic.c01 * diff_y) / (dxf * conic.c00 * dxf);
-        let ty_raw =
-            (dyf * conic.c01 * diff_x + dyf * conic.c11 * diff_y) / (dyf * conic.c11 * dyf);
-        let tx = select(in_y_range, 0.0f32, clamp(tx_raw, 0.0f32, 1.0f32));
-        let ty = select(in_x_range, 0.0f32, clamp(ty_raw, 0.0f32, 1.0f32));
+    let min_x = bb.min_x as f32;
+    let max_x = bb.max_x as f32;
+    let lo = clamp(f32::floor(x_min / tw), min_x, max_x) as u32;
+    let hi = clamp(f32::floor(x_max / tw) + 1.0f32, min_x, max_x) as u32;
+    // Rounding can leave the bbox's first or last row just off the ellipse.
+    (lo, select(y0 <= y1, max(hi, lo), lo))
+}
 
-        let max_x = corner_x + tx * dxf;
-        let max_y = corner_y + ty * dyf;
-        hit = calc_sigma(max_x, max_y, conic, mx, my) <= power_threshold;
+/// Number of tiles a splat touches. `project_forward` reserves this many
+/// slots and `map_gaussians_to_intersect` fills them from the same
+/// `tile_row_span` walk.
+#[cube]
+pub fn count_contributing_tiles(
+    bb: TileBbox,
+    mx: f32,
+    my: f32,
+    conic: Sym2,
+    ex: f32,
+    ey: f32,
+) -> u32 {
+    let mut num_tiles_hit = 0u32;
+    for ty in bb.min_y..bb.max_y {
+        let (lo, hi) = tile_row_span(bb, ty, mx, my, conic, ex, ey);
+        num_tiles_hit += hi - lo;
     }
-    hit
+    num_tiles_hit
 }
 
 /// Read just the spatial fields (xy + conic + alpha) of a projected
