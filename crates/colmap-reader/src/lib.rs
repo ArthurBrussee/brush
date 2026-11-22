@@ -706,7 +706,7 @@ mod tests {
 
         let cam2 = &cameras[1];
         assert_eq!(cam2.params.len(), 8);
-        assert!(matches!(cam2.model, ColmapCameraModel::OpenCV));
+        std::assert_matches!(cam2.model, ColmapCameraModel::OpenCV);
 
         // Test error cases - should fail
         let invalid_model = "1 INVALID_MODEL 800 600 500.0 500.0 400.0 300.0\n";

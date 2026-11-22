@@ -582,13 +582,13 @@ mod tests {
         assert_eq!(content, "ply\nformat ascii 1.0\nend_header\nvertex data");
 
         // Test error cases
-        assert!(matches!(
+        std::assert_matches!(
             BrushVfs::from_reader(Cursor::new(b"unknown"), None).await,
             Err(VfsConstructError::UnknownDataType)
-        ));
-        assert!(matches!(
+        );
+        std::assert_matches!(
             BrushVfs::from_reader(Cursor::new(b"<!DOCTYPE html>"), None).await,
             Err(VfsConstructError::ReceivedHTML(_))
-        ));
+        );
     }
 }

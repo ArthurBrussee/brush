@@ -504,7 +504,7 @@ mod tests {
 
         // Intrinsics: fov derives from the written focal, and roundtrips back.
         let cam = &views[0].camera;
-        assert!(matches!(cam.camera_model, CameraModel::Pinhole));
+        std::assert_matches!(cam.camera_model, CameraModel::Pinhole);
         let expected_fov_x = focal_to_fov(FX, IMG_W, &CameraModel::Pinhole);
         let expected_fov_y = focal_to_fov(FY, IMG_H, &CameraModel::Pinhole);
         assert!((cam.fov_x - expected_fov_x).abs() < 1e-6);

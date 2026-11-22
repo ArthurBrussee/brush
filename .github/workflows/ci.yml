@@ -6,7 +6,9 @@ on:
 name: Rust
 
 env:
-  RUSTFLAGS: -D warnings
+  # Fail on warnings in our own crates, without changing the flags (and so the
+  # build cache) of dependencies.
+  CARGO_BUILD_WARNINGS: deny
   RUSTDOCFLAGS: -D warnings
 
 jobs:

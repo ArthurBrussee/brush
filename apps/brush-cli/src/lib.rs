@@ -323,10 +323,9 @@ mod tests {
         ])
         .unwrap();
 
-        assert!(matches!(
+        std::assert_matches!(
             &cli.source,
-            Some(DataSource::Path(p)) if p == "some/dataset/path"
-        ));
+            Some(DataSource::Path(p)) if p == "some/dataset/path");
         // Passing a source flips the viewer default off.
         assert!(!cli.with_viewer);
 
@@ -345,10 +344,9 @@ mod tests {
     #[test]
     fn parses_url_source() {
         let cli = Cli::try_parse_from(["brush-cli", "https://example.com/data.zip"]).unwrap();
-        assert!(matches!(
+        std::assert_matches!(
             &cli.source,
-            Some(DataSource::Url(u)) if u == "https://example.com/data.zip"
-        ));
+            Some(DataSource::Url(u)) if u == "https://example.com/data.zip");
     }
 
     #[test]
