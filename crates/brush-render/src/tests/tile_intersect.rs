@@ -50,7 +50,7 @@ async fn emitted_tiles(splats: &[Splat]) -> Vec<Vec<u32>> {
     let mut projected = vec![0.0f32; splats.len() * PROJECTED_LANES_USIZE];
     for (s, lanes) in splats
         .iter()
-        .zip(projected.chunks_exact_mut(PROJECTED_LANES_USIZE))
+        .zip(projected.as_chunks_mut::<PROJECTED_LANES_USIZE>().0)
     {
         lanes[..2].copy_from_slice(&s.xy);
         lanes[2..5].copy_from_slice(&s.conic);
@@ -83,7 +83,9 @@ async fn emitted_tiles(splats: &[Splat]) -> Vec<Vec<u32>> {
     tile_ids
         .as_slice::<u32>()
         .expect("u32 tile ids")
-        .chunks_exact(NUM_TILES as usize)
+        .as_chunks::<{ NUM_TILES as usize }>()
+        .0
+        .iter()
         .map(|slots| {
             let mut ids: Vec<u32> = slots.iter().copied().filter(|&id| id < NUM_TILES).collect();
             ids.sort_unstable();

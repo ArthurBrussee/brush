@@ -22,10 +22,10 @@ pub fn sh_field_names(_input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Generates SH rest coefficient fields (f_rest_0 through f_rest_71) for structs.
+/// Generates SH rest coefficient fields (`f_rest_0` through `f_rest_71`) for structs.
 ///
 /// The macro looks for a marker field `_sh_rest_fields: ()` and replaces it with
-/// the actual 72 f_rest_N fields, preserving any attributes on the marker field.
+/// the actual 72 `f_rest_N` fields, preserving any attributes on the marker field.
 #[proc_macro_attribute]
 pub fn generate_sh_fields(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -47,7 +47,7 @@ pub fn generate_sh_fields(_attr: TokenStream, item: TokenStream) -> TokenStream 
     let mut new_fields = vec![];
     let mut found_marker = false;
 
-    for field in fields.iter() {
+    for field in fields {
         if let Some(ident) = &field.ident {
             if ident == "_sh_rest_fields" {
                 found_marker = true;
@@ -73,9 +73,10 @@ pub fn generate_sh_fields(_attr: TokenStream, item: TokenStream) -> TokenStream 
         }
     }
 
-    if !found_marker {
-        panic!("GenerateShFields requires a marker field `_sh_rest_fields: ()`");
-    }
+    assert!(
+        found_marker,
+        "GenerateShFields requires a marker field `_sh_rest_fields: ()`"
+    );
 
     let attrs = &input.attrs;
 
@@ -89,7 +90,7 @@ pub fn generate_sh_fields(_attr: TokenStream, item: TokenStream) -> TokenStream 
     TokenStream::from(expanded)
 }
 
-/// Helper macro to generate the sh_rest_coeffs() method that returns all 72 coefficients
+/// Helper macro to generate the `sh_rest_coeffs()` method that returns all 72 coefficients
 #[proc_macro]
 pub fn impl_coeffs(input: TokenStream) -> TokenStream {
     let type_name: syn::Ident = parse_macro_input!(input);

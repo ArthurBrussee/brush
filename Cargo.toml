@@ -34,7 +34,7 @@ license = "Apache-2.0"
 repository = "https://github.com/ArthurBrussee/brush"
 
 [workspace.dependencies]
-glam = { version = "0.30", features = ["serde"] }
+glam = { version = "0.33", features = ["serde"] }
 bytemuck = "1.20"
 image = { version = "0.25", default-features = false, features = [
     'png',
@@ -126,7 +126,7 @@ eframe = { version = "0.36", default-features = false, features = [
 
 egui_tiles = { version = "0.17", features = ["serde"] }
 
-rerun = { version = "0.36", default-features = false, features = [
+rerun = { version = "0.43", default-features = false, features = [
     'sdk',
     'glam',
 ] }
@@ -192,7 +192,6 @@ flat_map_option = "warn"
 float_cmp_const = "warn"
 fn_params_excessive_bools = "warn"
 fn_to_numeric_cast_any = "warn"
-from_iter_instead_of_collect = "warn"
 get_unwrap = "warn"
 if_let_mutex = "warn"
 implicit_clone = "warn"

@@ -449,8 +449,7 @@ pub(crate) async fn train_stream(
                     iter,
                     &device
                         .measure_memory()
-                        .map(|report| report.usage)
-                        .unwrap_or_default(),
+                        .map_or_default(|report| report.usage),
                 )?;
             }
 

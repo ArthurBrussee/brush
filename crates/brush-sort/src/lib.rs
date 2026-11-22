@@ -101,7 +101,7 @@ pub fn radix_argsort(
                 num_reduce_wgs.clone(),
                 cube_dim,
                 num_keys_buf.clone().into_tensor_arg(),
-                reduced_buf.clone().into_tensor_arg(),
+                reduced_buf.into_tensor_arg(),
                 count_buf.clone().into_tensor_arg(),
             );
         }
@@ -116,7 +116,7 @@ pub fn radix_argsort(
             num_keys_buf.clone().into_tensor_arg(),
             cur_keys.clone().into_tensor_arg(),
             cur_vals.clone().into_tensor_arg(),
-            count_buf.clone().into_tensor_arg(),
+            count_buf.into_tensor_arg(),
             output_keys.clone().into_tensor_arg(),
             output_values.clone().into_tensor_arg(),
             pass * 4,

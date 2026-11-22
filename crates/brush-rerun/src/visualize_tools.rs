@@ -331,7 +331,7 @@ mod visualize_tools_impl {
                         ),
                     )?;
                     self.rec.log_static(
-                        path.clone(),
+                        path,
                         &rerun::Transform3D::from_translation_rotation(
                             view.camera.position,
                             view.camera.rotation,

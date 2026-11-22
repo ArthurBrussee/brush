@@ -1,4 +1,6 @@
 #![recursion_limit = "256"]
+// burn's `Config` derive expands to `field: field` initializers.
+#![allow(clippy::redundant_field_names)]
 
 use burn::nn::PaddingConfig2d;
 use burn::nn::conv::Conv2d;

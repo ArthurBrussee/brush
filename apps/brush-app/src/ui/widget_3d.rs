@@ -247,7 +247,12 @@ impl egui_wgpu::CallbackTrait for GridWidgetPainter {
 
         let aspect =
             screen_descriptor.size_in_pixels[0] as f32 / screen_descriptor.size_in_pixels[1] as f32;
-        let proj_matrix = Mat4::perspective_lh(self.camera.fov_y as f32, aspect, 0.1, 1000.0);
+        let proj_matrix = glam::camera::lh::proj::directx::perspective(
+            self.camera.fov_y as f32,
+            aspect,
+            0.1,
+            1000.0,
+        );
         let y_flip = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
         let view_matrix = self.camera.world_to_local();
         let world_view = Mat4::from(view_matrix) * Mat4::from(self.model_transform.inverse());
