@@ -9,7 +9,8 @@ license.workspace = true
 name = "brush_js"
 crate-type = ["cdylib", "rlib"]
 
-[dependencies]
+# The whole crate is wasm-only (see the `cfg` at the top of lib.rs).
+[target.'cfg(target_family = "wasm")'.dependencies]
 brush-process.path = "../../crates/brush-process"
 brush-render.path = "../../crates/brush-render"
 rrfd.path = "../../crates/rrfd"
@@ -21,7 +22,6 @@ tokio-stream.workspace = true
 serde.workspace = true
 log.workspace = true
 
-[target.'cfg(target_family = "wasm")'.dependencies]
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 serde-wasm-bindgen = "0.6"

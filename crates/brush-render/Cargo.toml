@@ -27,13 +27,12 @@ tracing.workspace = true
 log.workspace = true
 bytemuck.workspace = true
 
-tokio = { workspace = true, features = ["macros", "rt", "sync"] }
-
 [features]
 debug-validation = []
 
 [dev-dependencies]
 assert_approx_eq.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 wasm-bindgen-test = "0.3"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]

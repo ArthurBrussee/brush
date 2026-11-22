@@ -75,6 +75,12 @@ skip = [
     # eframe 0.36 moved to pollster 1.0, rfd (latest 0.17.2) still on 0.4.
     { name = 'pollster' },
 
+    # rerun 0.40 is on emath 0.37, egui still on 0.36.
+    { name = 'emath' },
+
+    # rerun's re_protos pulls ordered-float 2 through prost-reflect.
+    { name = 'ordered-float' },
+
     # Other
     { name = "core-foundation" },     # Egui has two?
     { name = 'windows-sys' }, # Old version from winit.

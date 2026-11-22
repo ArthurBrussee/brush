@@ -77,7 +77,7 @@ fn test_train_and_save_ffi_short() {
         )
     };
 
-    assert!(matches!(status, TrainExitCode::Success));
+    std::assert_matches!(status, TrainExitCode::Success);
     assert!(callback_state.call_count.load(Ordering::SeqCst) > 2);
 
     let output_files: Vec<_> = fs::read_dir(output_path)
@@ -121,7 +121,7 @@ fn test_train_and_save_ffi_invalid_path() {
         )
     };
 
-    assert!(matches!(status, TrainExitCode::Error));
+    std::assert_matches!(status, TrainExitCode::Error);
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn test_train_and_save_ffi_null_options() {
         )
     };
 
-    assert!(matches!(status, TrainExitCode::Error));
+    std::assert_matches!(status, TrainExitCode::Error);
 }
 
 #[test]
@@ -179,5 +179,5 @@ fn test_train_and_save_ffi_null_dataset() {
         )
     };
 
-    assert!(matches!(status_null_dataset, TrainExitCode::Error));
+    std::assert_matches!(status_null_dataset, TrainExitCode::Error);
 }

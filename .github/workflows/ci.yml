@@ -6,7 +6,9 @@ on:
 name: Rust
 
 env:
-  RUSTFLAGS: -D warnings
+  # Fail on warnings in our own crates, without changing the flags (and so the
+  # build cache) of dependencies.
+  CARGO_BUILD_WARNINGS: deny
   RUSTDOCFLAGS: -D warnings
 
 jobs:
@@ -14,18 +16,18 @@ jobs:
     name: Format + check
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           lfs: true
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
           components: rustfmt, clippy
 
       - name: Install packages (Linux)
         if: runner.os == 'Linux'
-        uses: awalsh128/cache-apt-pkgs-action@v1.6.0
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
           packages: libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgtk-3-dev # libgtk-3-dev is used by rfd
           version: 1.0
@@ -59,13 +61,13 @@ jobs:
     name: Check wasm32
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           lfs: true
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
@@ -89,10 +91,10 @@ jobs:
     name: cargo-deny
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          rust-version: "1.95.0"
+          rust-version: "1.100.0"
           log-level: error
           command: check
 
@@ -103,13 +105,13 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           lfs: true
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.95.0
+          toolchain: 1.100.0
 
       - uses: Swatinem/rust-cache@v2
         with:

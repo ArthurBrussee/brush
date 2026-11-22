@@ -261,7 +261,7 @@ mod tests {
         assert!((1.0..2.0).contains(&cam.fov_x));
 
         // Non-zero radial coeffs select the distortion model.
-        assert!(matches!(cam.camera_model, RadialTangential8(_)));
+        std::assert_matches!(cam.camera_model, RadialTangential8(_));
     }
 
     #[wasm_bindgen_test(unsupported = test)]
@@ -273,17 +273,14 @@ mod tests {
         let fields: Vec<&str> = "img.png,1,2,3,10,20,30,20.0".split(',').collect();
         let cam = row_to_camera(&fields, &header, 1920, 1080);
         assert!(cam.is_valid());
-        assert!(matches!(cam.camera_model, Pinhole));
+        std::assert_matches!(cam.camera_model, Pinhole);
         assert!((cam.center_uv - glam::vec2(0.5, 0.5)).length() < 1e-6);
         assert!((cam.position - glam::vec3(1.0, 2.0, 3.0)).length() < 1e-3);
     }
 
     #[wasm_bindgen_test(unsupported = test)]
     fn test_build_camera_model() {
-        assert!(matches!(
-            build_camera_model(0.0, 0.0, 0.0, 0.0, 0.0),
-            Pinhole
-        ));
+        std::assert_matches!(build_camera_model(0.0, 0.0, 0.0, 0.0, 0.0), Pinhole);
         // brown3 radial (k1,k2,k3) -> numerator; tangential (t1,t2) -> p1,p2;
         // the rational denominator (k4,k5,k6) stays zero so it's a pure
         // polynomial.

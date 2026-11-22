@@ -3,9 +3,8 @@ use burn::tensor::{Device, Float, Tensor, TensorData};
 use safetensors::{SafeTensors, tensor::TensorView};
 
 fn float_from_u8(data: &[u8]) -> Vec<f32> {
-    data.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
+    let (floats, _) = data.as_chunks::<4>();
+    floats.iter().map(|&c| f32::from_le_bytes(c)).collect()
 }
 
 pub(crate) fn safetensor_to_burn<const D: usize>(

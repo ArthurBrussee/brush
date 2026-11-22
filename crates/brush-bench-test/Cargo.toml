@@ -5,7 +5,9 @@ version.workspace = true
 readme.workspace = true
 license.workspace = true
 
-[dependencies]
+# Everything in this crate is tests and benches, so there are no normal
+# dependencies.
+[dev-dependencies]
 brush-render = { path = "../brush-render", features = ["debug-validation"] }
 brush-train.path = "../brush-train"
 brush-dataset.path = "../brush-dataset"
@@ -17,15 +19,8 @@ burn = { workspace = true, features = ["autodiff"] }
 burn-cubecl.workspace = true
 rand.workspace = true
 
-divan = "0.1.17"
-safetensors.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-brush-rerun = { path = "../brush-rerun" }
-rerun = { workspace = true }
-
-[dev-dependencies]
 brush-async = { path = "../brush-async" }
 brush-cube = { path = "../brush-cube" }
 
@@ -34,6 +29,8 @@ burn-fusion = { workspace = true, features = ["test-util"] }
 
 burn-wgpu.workspace = true
 bytemuck.workspace = true
+divan = "0.1.17"
+safetensors.workspace = true
 
 wasm-bindgen-test = "0.3"
 
@@ -46,6 +43,8 @@ wasm-logger = "0.2"
 console_error_panic_hook = "0.1"
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+brush-rerun = { path = "../brush-rerun" }
+rerun = { workspace = true }
 env_logger = "0.11"
 
 [[bench]]

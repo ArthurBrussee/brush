@@ -567,7 +567,7 @@ mod tests {
             KannalaBrandt4(ULTRAWIDE),
         );
         let pin = cam.with_pinhole();
-        assert!(matches!(pin.camera_model, Pinhole));
+        std::assert_matches!(pin.camera_model, Pinhole);
         assert_eq!(
             pin,
             Camera {

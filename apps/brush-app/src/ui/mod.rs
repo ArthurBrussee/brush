@@ -17,19 +17,25 @@ mod training_panel;
 mod settings_panel;
 mod settings_popup;
 
-use wasm_bindgen::prelude::*;
+// `wasm_bindgen` expands to a float comparison against a constant, and an
+// allow on the enum itself doesn't reach the generated code.
+#[allow(clippy::float_cmp_const)]
+mod ui_mode {
+    use wasm_bindgen::prelude::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[wasm_bindgen]
-pub enum UiMode {
-    // Default UI with data loading, stats view etc.
-    #[default]
-    Default,
-    // Show the splat fullscreen, but allow toggling, and control panels.
-    FullScreenSplat,
-    // Render as an embedded viewer which does nothing except render the splat.
-    EmbeddedViewer,
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    #[wasm_bindgen]
+    pub enum UiMode {
+        // Default UI with data loading, stats view etc.
+        #[default]
+        Default,
+        // Show the splat fullscreen, but allow toggling, and control panels.
+        FullScreenSplat,
+        // Render as an embedded viewer which does nothing except render the splat.
+        EmbeddedViewer,
+    }
 }
+pub use ui_mode::UiMode;
 
 pub(crate) fn draw_checkerboard(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32) {
     let id = egui::Id::new("checkerboard");
