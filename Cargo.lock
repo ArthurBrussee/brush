@@ -1092,7 +1092,7 @@ dependencies = [
  "env_logger",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
- "glam",
+ "glam 0.34.3",
  "humantime",
  "image",
  "jni",
@@ -1146,7 +1146,7 @@ dependencies = [
  "env_logger",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
- "glam",
+ "glam 0.34.3",
  "log",
  "rand 0.10.4",
  "rerun",
@@ -1210,7 +1210,7 @@ dependencies = [
  "clap",
  "colmap-reader",
  "getrandom 0.4.3",
- "glam",
+ "glam 0.34.3",
  "image",
  "itertools 0.15.0",
  "jpeg-decoder",
@@ -1257,7 +1257,7 @@ dependencies = [
  "burn",
  "burn-cubecl",
  "getrandom 0.4.3",
- "glam",
+ "glam 0.34.3",
  "tokio",
  "wasm-bindgen-test",
 ]
@@ -1280,7 +1280,7 @@ dependencies = [
  "burn-wgpu",
  "clap",
  "getrandom 0.4.3",
- "glam",
+ "glam 0.34.3",
  "log",
  "rand 0.10.4",
  "serde",
@@ -1308,7 +1308,7 @@ dependencies = [
  "bytemuck",
  "clap",
  "getrandom 0.4.3",
- "glam",
+ "glam 0.34.3",
  "log",
  "serde",
  "tokio",
@@ -1326,7 +1326,7 @@ dependencies = [
  "brush-train",
  "burn",
  "clap",
- "glam",
+ "glam 0.34.3",
  "image",
  "log",
  "rerun",
@@ -1360,7 +1360,7 @@ dependencies = [
  "brush-serde-macros",
  "burn",
  "getrandom 0.4.3",
- "glam",
+ "glam 0.34.3",
  "serde",
  "serde-ply",
  "thiserror 2.0.21",
@@ -1411,7 +1411,7 @@ dependencies = [
  "burn",
  "clap",
  "getrandom 0.4.3",
- "glam",
+ "glam 0.34.3",
  "hashbrown 0.16.1",
  "image",
  "log",
@@ -2279,7 +2279,7 @@ name = "colmap-reader"
 version = "1.0.0"
 dependencies = [
  "brush-async",
- "glam",
+ "glam 0.34.3",
  "log",
  "tokio",
  "wasm-bindgen-test",
@@ -4720,6 +4720,15 @@ name = "glam"
 version = "0.33.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37bfe73dc8ec21f54d181e5a60554327ec3f1c600c455a75ccbfc65d2106a6c4"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "glam"
+version = "0.34.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "627003914c6057c9c8f0832ee4f870b5a4f599d0cfa83f4072675114860cd0ff"
 dependencies = [
  "serde_core",
 ]
@@ -8083,7 +8092,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4337360b8802a2972aa52c8df216425e933c82a337fcf66423635eff9696dd9d"
 dependencies = [
  "arrow",
- "glam",
+ "glam 0.33.12",
  "half",
  "parking_lot",
  "re_byte_size_derive",
@@ -8517,7 +8526,7 @@ version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "609679e93d655cdb9aed706a98319a3e3fc65eafff0862fa1f56e1be0474a439"
 dependencies = [
- "glam",
+ "glam 0.33.12",
  "num-traits",
 ]
 
@@ -8755,7 +8764,7 @@ dependencies = [
  "bytemuck",
  "document-features",
  "emath 0.37.0",
- "glam",
+ "glam 0.33.12",
  "half",
  "infer",
  "itertools 0.15.0",
