@@ -115,7 +115,7 @@ burn-fusion = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 # crypto family (digest 0.11, hmac 0.13, ...).
 burn-store = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 
-egui = { version = "0.36" }
+egui = { version = "0.37" }
 eframe = { version = "0.36", default-features = false, features = [
     "wgpu",
     "android-game-activity",
